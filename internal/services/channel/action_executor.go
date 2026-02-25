@@ -1,0 +1,517 @@
+package channel
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"dalek/internal/contracts"
+	"dalek/internal/services/core"
+	pmsvc "dalek/internal/services/pm"
+	ticketsvc "dalek/internal/services/ticket"
+	workersvc "dalek/internal/services/worker"
+	"dalek/internal/store"
+
+	"gorm.io/gorm"
+)
+
+const actionDispatchTicket = "dispatch_ticket"
+
+// ActionResult 表示单个 action 的执行结果。
+type ActionResult struct {
+	ActionName string         `json:"action_name"`
+	Success    bool           `json:"success"`
+	Message    string         `json:"message"`
+	Data       map[string]any `json:"data,omitempty"`
+}
+
+type ActionExecutor struct {
+	project *core.Project
+}
+
+func newActionExecutor(project *core.Project) *ActionExecutor {
+	return &ActionExecutor{project: project}
+}
+
+func (e *ActionExecutor) Execute(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if e == nil || e.project == nil || e.project.DB == nil {
+		return ActionResult{}, fmt.Errorf("action executor 缺少 project/db 上下文")
+	}
+
+	action.Normalize()
+	name := strings.ToLower(strings.TrimSpace(action.Name))
+	if name == "" {
+		return ActionResult{}, fmt.Errorf("action.name 不能为空")
+	}
+
+	switch name {
+	case contracts.ActionListTickets:
+		return e.executeListTickets(ctx, action)
+	case contracts.ActionTicketDetail:
+		return e.executeTicketDetail(ctx, action)
+	case contracts.ActionCreateTicket:
+		return e.executeCreateTicket(ctx, action)
+	case contracts.ActionStartTicket:
+		return e.executeStartTicket(ctx, action)
+	case actionDispatchTicket:
+		return e.executeDispatchTicket(ctx, action)
+	case contracts.ActionInterruptTicket:
+		return e.executeInterruptTicket(ctx, action)
+	case contracts.ActionStopTicket:
+		return e.executeStopTicket(ctx, action)
+	case contracts.ActionArchiveTicket:
+		return e.executeArchiveTicket(ctx, action)
+	case contracts.ActionListMergeItems:
+		return e.executeListMergeItems(ctx, action)
+	case contracts.ActionApproveMerge:
+		return e.executeApproveMerge(ctx, action)
+	case contracts.ActionRejectMerge:
+		return e.executeRejectMerge(ctx, action)
+	default:
+		return ActionResult{}, fmt.Errorf("不支持的 action: %s", name)
+	}
+}
+
+func (e *ActionExecutor) executeListTickets(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	includeArchived := actionArgBool(action.Args, false, "include_archived", "includeArchived")
+	limit := actionArgInt(action.Args, 20, 1, 200, "limit")
+	tickets, err := ticketsvc.New(e.project.DB).List(ctx, includeArchived)
+	if err != nil {
+		return ActionResult{}, err
+	}
+
+	total := len(tickets)
+	if total > limit {
+		tickets = tickets[:limit]
+	}
+	views := make([]map[string]any, 0, len(tickets))
+	for _, tk := range tickets {
+		views = append(views, map[string]any{
+			"id":       tk.ID,
+			"title":    tk.Title,
+			"status":   tk.WorkflowStatus,
+			"priority": tk.Priority,
+		})
+	}
+	msg := fmt.Sprintf("ticket 共 %d 条，返回 %d 条。", total, len(views))
+	return ActionResult{
+		ActionName: contracts.ActionListTickets,
+		Success:    true,
+		Message:    msg,
+		Data: map[string]any{
+			"total":   total,
+			"tickets": views,
+		},
+	}, nil
+}
+
+func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
+	if err != nil {
+		return ActionResult{}, err
+	}
+	var tk store.Ticket
+	if err := e.project.DB.WithContext(ctx).First(&tk, ticketID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ActionResult{}, fmt.Errorf("ticket 不存在: t%d", ticketID)
+		}
+		return ActionResult{}, err
+	}
+	msg := fmt.Sprintf("t%d %s（状态=%s，优先级=%d）", tk.ID, strings.TrimSpace(tk.Title), tk.WorkflowStatus, tk.Priority)
+	return ActionResult{
+		ActionName: contracts.ActionTicketDetail,
+		Success:    true,
+		Message:    msg,
+		Data: map[string]any{
+			"ticket": map[string]any{
+				"id":          tk.ID,
+				"title":       tk.Title,
+				"description": tk.Description,
+				"status":      tk.WorkflowStatus,
+				"priority":    tk.Priority,
+			},
+		},
+	}, nil
+}
+
+func (e *ActionExecutor) executeCreateTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	title := actionArgString(action.Args, "title", "name")
+	if title == "" {
+		return ActionResult{}, fmt.Errorf("create_ticket 缺少 title")
+	}
+	description := actionArgString(action.Args, "description", "body", "detail")
+	if description == "" {
+		description = title
+	}
+
+	tk, err := ticketsvc.New(e.project.DB).CreateWithDescription(ctx, title, description)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	msg := fmt.Sprintf("已创建 t%d：%s", tk.ID, strings.TrimSpace(tk.Title))
+	return ActionResult{
+		ActionName: contracts.ActionCreateTicket,
+		Success:    true,
+		Message:    msg,
+		Data: map[string]any{
+			"ticket": map[string]any{
+				"id":       tk.ID,
+				"title":    tk.Title,
+				"status":   tk.WorkflowStatus,
+				"priority": tk.Priority,
+			},
+		},
+	}, nil
+}
+
+func (e *ActionExecutor) executeStartTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
+	if err != nil {
+		return ActionResult{}, err
+	}
+	baseBranch := actionArgString(action.Args, "base_branch", "baseBranch", "base")
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	worker, err := pmSvc.StartTicketWithOptions(ctx, ticketID, pmsvc.StartOptions{
+		BaseBranch: strings.TrimSpace(baseBranch),
+	})
+	if err != nil {
+		return ActionResult{}, err
+	}
+	if worker == nil {
+		return ActionResult{}, fmt.Errorf("start_ticket 执行失败：未返回 worker")
+	}
+	msg := fmt.Sprintf("已启动 t%d，对应 w%d（status=%s）。", ticketID, worker.ID, worker.Status)
+	return ActionResult{
+		ActionName: contracts.ActionStartTicket,
+		Success:    true,
+		Message:    msg,
+		Data: map[string]any{
+			"worker": map[string]any{
+				"id":           worker.ID,
+				"ticket_id":    worker.TicketID,
+				"status":       worker.Status,
+				"tmux_session": worker.TmuxSession,
+			},
+		},
+	}, nil
+}
+
+func (e *ActionExecutor) executeDispatchTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
+	if err != nil {
+		return ActionResult{}, err
+	}
+	entryPrompt := actionArgString(action.Args, "entry_prompt", "entryPrompt", "prompt")
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	res, err := pmSvc.DispatchTicketWithOptions(ctx, ticketID, pmsvc.DispatchOptions{EntryPrompt: entryPrompt})
+	if err != nil {
+		return ActionResult{}, err
+	}
+	msg := fmt.Sprintf("已派发 t%d -> w%d。", res.TicketID, res.WorkerID)
+	return ActionResult{
+		ActionName: actionDispatchTicket,
+		Success:    true,
+		Message:    msg,
+		Data: map[string]any{
+			"dispatch": map[string]any{
+				"ticket_id":    res.TicketID,
+				"worker_id":    res.WorkerID,
+				"task_run_id":  res.TaskRunID,
+				"tmux_socket":  res.TmuxSocket,
+				"tmux_session": res.TmuxSession,
+			},
+		},
+	}, nil
+}
+
+func (e *ActionExecutor) executeInterruptTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
+	if err != nil {
+		return ActionResult{}, err
+	}
+	res, err := workersvc.New(e.project).InterruptTicket(ctx, ticketID)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	msg := fmt.Sprintf("已向 t%d（w%d）发送中断。", res.TicketID, res.WorkerID)
+	return ActionResult{
+		ActionName: contracts.ActionInterruptTicket,
+		Success:    true,
+		Message:    msg,
+		Data: map[string]any{
+			"interrupt": map[string]any{
+				"ticket_id":    res.TicketID,
+				"worker_id":    res.WorkerID,
+				"target_pane":  res.TargetPane,
+				"tmux_socket":  res.TmuxSocket,
+				"tmux_session": res.TmuxSession,
+			},
+		},
+	}, nil
+}
+
+func (e *ActionExecutor) executeStopTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
+	if err != nil {
+		return ActionResult{}, err
+	}
+	if err := workersvc.New(e.project).StopTicket(ctx, ticketID); err != nil {
+		return ActionResult{}, err
+	}
+	return ActionResult{
+		ActionName: contracts.ActionStopTicket,
+		Success:    true,
+		Message:    fmt.Sprintf("已停止 t%d 的 worker。", ticketID),
+	}, nil
+}
+
+func (e *ActionExecutor) executeArchiveTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
+	if err != nil {
+		return ActionResult{}, err
+	}
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	if err := pmSvc.ArchiveTicket(ctx, ticketID); err != nil {
+		return ActionResult{}, err
+	}
+	return ActionResult{
+		ActionName: contracts.ActionArchiveTicket,
+		Success:    true,
+		Message:    fmt.Sprintf("已归档 t%d。", ticketID),
+	}, nil
+}
+
+func (e *ActionExecutor) executeListMergeItems(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	limit := actionArgInt(action.Args, 20, 1, 200, "limit")
+	statusRaw := strings.ToLower(strings.TrimSpace(actionArgString(action.Args, "status")))
+	opt := pmsvc.ListMergeOptions{Limit: limit}
+	if statusRaw != "" {
+		opt.Status = store.MergeStatus(statusRaw)
+	}
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	items, err := pmSvc.ListMergeItems(ctx, opt)
+	if err != nil {
+		return ActionResult{}, err
+	}
+	views := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		views = append(views, map[string]any{
+			"id":        it.ID,
+			"ticket_id": it.TicketID,
+			"worker_id": it.WorkerID,
+			"status":    it.Status,
+			"branch":    it.Branch,
+		})
+	}
+	msg := fmt.Sprintf("merge item 共 %d 条。", len(items))
+	return ActionResult{
+		ActionName: contracts.ActionListMergeItems,
+		Success:    true,
+		Message:    msg,
+		Data: map[string]any{
+			"merge_items": views,
+		},
+	}, nil
+}
+
+func (e *ActionExecutor) executeApproveMerge(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	mergeItemID, err := actionArgUintRequired(action.Args, "merge_item_id", "mergeItemId", "id")
+	if err != nil {
+		return ActionResult{}, err
+	}
+	approvedBy := actionArgString(action.Args, "approved_by", "approvedBy", "decider")
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	if err := pmSvc.ApproveMerge(ctx, mergeItemID, approvedBy); err != nil {
+		return ActionResult{}, err
+	}
+	return ActionResult{
+		ActionName: contracts.ActionApproveMerge,
+		Success:    true,
+		Message:    fmt.Sprintf("已批准 merge#%d。", mergeItemID),
+	}, nil
+}
+
+func (e *ActionExecutor) executeRejectMerge(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	mergeItemID, err := actionArgUintRequired(action.Args, "merge_item_id", "mergeItemId", "id")
+	if err != nil {
+		return ActionResult{}, err
+	}
+	note := actionArgString(action.Args, "note", "reason")
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	if err := pmSvc.DiscardMerge(ctx, mergeItemID, note); err != nil {
+		return ActionResult{}, err
+	}
+	return ActionResult{
+		ActionName: contracts.ActionRejectMerge,
+		Success:    true,
+		Message:    fmt.Sprintf("已拒绝 merge#%d。", mergeItemID),
+	}, nil
+}
+
+func actionArgString(args map[string]any, keys ...string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if v, ok := args[key]; ok {
+			switch x := v.(type) {
+			case string:
+				if s := strings.TrimSpace(x); s != "" {
+					return s
+				}
+			default:
+				raw := strings.TrimSpace(fmt.Sprint(v))
+				if raw != "" && raw != "<nil>" {
+					return raw
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func actionArgBool(args map[string]any, defaultValue bool, keys ...string) bool {
+	if len(args) == 0 {
+		return defaultValue
+	}
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		v, ok := args[key]
+		if !ok {
+			continue
+		}
+		switch x := v.(type) {
+		case bool:
+			return x
+		case string:
+			s := strings.TrimSpace(strings.ToLower(x))
+			if s == "1" || s == "true" || s == "yes" || s == "y" {
+				return true
+			}
+			if s == "0" || s == "false" || s == "no" || s == "n" {
+				return false
+			}
+		case float64:
+			return x != 0
+		case int:
+			return x != 0
+		}
+	}
+	return defaultValue
+}
+
+func actionArgInt(args map[string]any, defaultValue, minValue, maxValue int, keys ...string) int {
+	if len(args) == 0 {
+		return defaultValue
+	}
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		v, ok := args[key]
+		if !ok {
+			continue
+		}
+		switch x := v.(type) {
+		case int:
+			return clampInt(x, minValue, maxValue)
+		case int64:
+			return clampInt(int(x), minValue, maxValue)
+		case float64:
+			return clampInt(int(x), minValue, maxValue)
+		case string:
+			if n, err := strconv.Atoi(strings.TrimSpace(x)); err == nil {
+				return clampInt(n, minValue, maxValue)
+			}
+		}
+	}
+	return defaultValue
+}
+
+func actionArgUintRequired(args map[string]any, keys ...string) (uint, error) {
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		v, ok := args[key]
+		if !ok {
+			continue
+		}
+		if out, ok := anyToUint(v); ok && out > 0 {
+			return out, nil
+		}
+	}
+	return 0, fmt.Errorf("action 参数缺少有效 ID（%s）", strings.Join(keys, "/"))
+}
+
+func anyToUint(v any) (uint, bool) {
+	switch x := v.(type) {
+	case uint:
+		return x, true
+	case uint64:
+		return uint(x), true
+	case int:
+		if x < 0 {
+			return 0, false
+		}
+		return uint(x), true
+	case int64:
+		if x < 0 {
+			return 0, false
+		}
+		return uint(x), true
+	case float64:
+		if x < 0 {
+			return 0, false
+		}
+		return uint(x), true
+	case json.Number:
+		if i, err := x.Int64(); err == nil && i >= 0 {
+			return uint(i), true
+		}
+		return 0, false
+	case string:
+		s := strings.TrimSpace(strings.ToLower(x))
+		if s == "" {
+			return 0, false
+		}
+		for len(s) > 0 && (s[0] < '0' || s[0] > '9') {
+			s = s[1:]
+		}
+		if s == "" {
+			return 0, false
+		}
+		u, err := strconv.ParseUint(s, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return uint(u), true
+	default:
+		return 0, false
+	}
+}
+
+func clampInt(v, minValue, maxValue int) int {
+	if maxValue > 0 && v > maxValue {
+		return maxValue
+	}
+	if minValue > 0 && v < minValue {
+		return minValue
+	}
+	return v
+}

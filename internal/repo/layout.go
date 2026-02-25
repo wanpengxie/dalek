@@ -1,0 +1,49 @@
+package repo
+
+import (
+	"path/filepath"
+	"strings"
+)
+
+type Layout struct {
+	RepoRoot   string
+	ProjectDir string
+
+	ControlDir           string
+	ControlWorkerDir     string
+	ControlSkillsDir     string
+	ControlKnowledgeDir  string
+	ControlToolsDir      string
+	RuntimeDir           string
+	RuntimeWorkersDir    string
+	ConfigPath           string
+	DBPath               string
+	ProjectGitignorePath string
+	ProjectAgentsPath    string
+}
+
+func NewLayout(repoRoot string) Layout {
+	repoRoot = strings.TrimSpace(repoRoot)
+	projectDir := filepath.Join(repoRoot, ".dalek")
+	controlDir := filepath.Join(projectDir, "control")
+	runtimeDir := filepath.Join(projectDir, "runtime")
+	return Layout{
+		RepoRoot:   repoRoot,
+		ProjectDir: projectDir,
+
+		ControlDir:          controlDir,
+		ControlWorkerDir:    filepath.Join(controlDir, "worker"),
+		ControlSkillsDir:    filepath.Join(controlDir, "skills"),
+		ControlKnowledgeDir: filepath.Join(controlDir, "knowledge"),
+		ControlToolsDir:     filepath.Join(controlDir, "tools"),
+
+		RuntimeDir:        runtimeDir,
+		RuntimeWorkersDir: filepath.Join(runtimeDir, "workers"),
+
+		ConfigPath:           filepath.Join(projectDir, "config.json"),
+		DBPath:               filepath.Join(runtimeDir, "dalek.sqlite3"),
+		ProjectGitignorePath: filepath.Join(projectDir, ".gitignore"),
+
+		ProjectAgentsPath: filepath.Join(projectDir, "AGENTS.md"),
+	}
+}

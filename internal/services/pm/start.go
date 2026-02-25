@@ -1,0 +1,127 @@
+package pm
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	workersvc "dalek/internal/services/worker"
+	"dalek/internal/store"
+
+	"gorm.io/gorm"
+)
+
+type StartOptions struct {
+	BaseBranch string
+}
+
+// StartTicket 是 PM 视角的 start：编排 worker 资源启动，并把 worker 置为可 dispatch 的 running。
+//
+// 约束：
+// - worker 只负责“资源启动”（worktree + tmux session）。
+func (s *Service) StartTicket(ctx context.Context, ticketID uint) (*store.Worker, error) {
+	return s.StartTicketWithOptions(ctx, ticketID, StartOptions{})
+}
+
+func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt StartOptions) (*store.Worker, error) {
+	_, db, err := s.require()
+	if err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ticketID == 0 {
+		return nil, fmt.Errorf("ticket_id 不能为空")
+	}
+
+	var t store.Ticket
+	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
+		return nil, err
+	}
+	if t.WorkflowStatus == store.TicketArchived {
+		return nil, fmt.Errorf("ticket 已归档，不能启动（start）：t%d", ticketID)
+	}
+	if t.WorkflowStatus == store.TicketDone {
+		return nil, fmt.Errorf("ticket 已完成，不能启动（start）：t%d", ticketID)
+	}
+
+	// 1) 启动 worker 资源（worktree + tmux session），不做 PM bootstrap。
+	w, err := s.worker.StartTicketResourcesWithOptions(ctx, ticketID, workersvc.StartOptions{
+		BaseBranch: strings.TrimSpace(opt.BaseBranch),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if w == nil {
+		return nil, fmt.Errorf("start 失败：未返回 worker")
+	}
+
+	// start 本身是“纳入系统执行”的动作：把 workflow 从 backlog 推进到 queued（仅 PM reducer 写）。
+	// 注意：不要覆盖 done/blocked/active/archived 等更高阶段。
+	now := time.Now()
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.WithContext(ctx).Model(&store.Ticket{}).
+			Where("id = ? AND (workflow_status = ? OR TRIM(COALESCE(workflow_status, '')) = '')", ticketID, store.TicketBacklog).
+			Updates(map[string]any{
+				"workflow_status": store.TicketQueued,
+				"updated_at":      now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected > 0 {
+			from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
+			if from == "" {
+				from = store.TicketBacklog
+			}
+			if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, store.TicketQueued, "pm.start", "start 推进 backlog->queued", map[string]any{
+				"ticket_id": ticketID,
+				"worker_id": w.ID,
+			}, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("更新 ticket workflow 失败（t%d w%d）：%w", ticketID, w.ID, err)
+	}
+
+	// 已经是 running 则直接返回。
+	if w.Status == store.WorkerRunning && strings.TrimSpace(w.TmuxSession) != "" {
+		return w, nil
+	}
+
+	// 2) start 初始化 hook（当前 no-op，仅保留接口）。
+	if err := s.executePMBootstrapEntrypoint(ctx, t, *w); err != nil {
+		return nil, err
+	}
+
+	// 3) 标记 worker 为 running。
+	// ticket 状态由 dispatch/report 流程推进，start 不做业务状态跳变。
+	now = time.Now()
+	if err := s.worker.MarkWorkerRunning(ctx, w.ID, now); err != nil {
+		return nil, fmt.Errorf("标记 worker 为 running 失败（w%d）：%w", w.ID, err)
+	}
+
+	// 4) 返回最新 worker，并确保 contract：Start 返回时 worker 必须为 running。
+	out, err := s.worker.WorkerByID(ctx, w.ID)
+	if err != nil {
+		return nil, fmt.Errorf("读取 worker 失败（w%d）：%w", w.ID, err)
+	}
+	if out.Status != store.WorkerRunning {
+		retryAt := time.Now()
+		if err := s.worker.MarkWorkerRunning(ctx, w.ID, retryAt); err != nil {
+			return nil, fmt.Errorf("start 后 worker 未进入 running（w%d status=%s），重试失败：%w", out.ID, out.Status, err)
+		}
+		out, err = s.worker.WorkerByID(ctx, w.ID)
+		if err != nil {
+			return nil, fmt.Errorf("读取 worker 失败（w%d）：%w", w.ID, err)
+		}
+		if out.Status != store.WorkerRunning {
+			return nil, fmt.Errorf("start 后 worker 未进入 running（w%d status=%s）", out.ID, out.Status)
+		}
+	}
+	return out, nil
+}

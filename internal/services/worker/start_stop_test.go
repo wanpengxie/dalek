@@ -1,0 +1,708 @@
+package worker
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	tasksvc "dalek/internal/services/task"
+	"dalek/internal/store"
+)
+
+func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
+	svc, p, fTmux, fGit := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "ticket-start")
+	w, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicketResources failed: %v", err)
+	}
+	if w.ID == 0 {
+		t.Fatalf("expected worker ID")
+	}
+	if strings.TrimSpace(w.TmuxSession) == "" {
+		t.Fatalf("expected tmux session")
+	}
+	if w.Status != store.WorkerCreating {
+		t.Fatalf("unexpected worker status: %s", w.Status)
+	}
+
+	var cnt int64
+	if err := p.DB.Model(&store.Worker{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
+		t.Fatalf("count workers failed: %v", err)
+	}
+	if cnt != 1 {
+		t.Fatalf("expected 1 worker, got %d", cnt)
+	}
+
+	var ticket store.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("query ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != store.TicketBacklog {
+		t.Fatalf("expected ticket backlog, got %s", ticket.WorkflowStatus)
+	}
+	if fTmux.newSessionCalls != 1 {
+		t.Fatalf("expected one tmux new-session call, got %d", fTmux.newSessionCalls)
+	}
+	if fGit.addCalls != 1 {
+		t.Fatalf("expected one git worktree add call, got %d", fGit.addCalls)
+	}
+
+	var ev store.WorkerStatusEvent
+	if err := p.DB.Where("worker_id = ?", w.ID).Order("id desc").First(&ev).Error; err != nil {
+		t.Fatalf("query worker status event failed: %v", err)
+	}
+	if ev.FromStatus != store.WorkerStopped || ev.ToStatus != store.WorkerCreating {
+		t.Fatalf("unexpected worker status event transition: %s -> %s", ev.FromStatus, ev.ToStatus)
+	}
+}
+
+func TestStartTicket_NewWorkerUsesRunScopedBranchAndWorktree(t *testing.T) {
+	svc, p, _, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "Worker PM Dispatch")
+	w, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicketResources failed: %v", err)
+	}
+
+	wantBranchPrefix := fmt.Sprintf("ts/%s/t%d-", p.Key, tk.ID)
+	if !strings.HasPrefix(strings.TrimSpace(w.Branch), wantBranchPrefix) {
+		t.Fatalf("unexpected branch naming: got=%q want_prefix=%q", w.Branch, wantBranchPrefix)
+	}
+	if strings.TrimSpace(w.Branch) == fmt.Sprintf("ts/%s/t%d", p.Key, tk.ID) {
+		t.Fatalf("branch should be run-scoped with nonce, got=%q", w.Branch)
+	}
+
+	base := filepath.Base(strings.TrimSpace(w.WorktreePath))
+	wantWorktreePrefix := fmt.Sprintf("ticket-t%d-", tk.ID)
+	if !strings.HasPrefix(base, wantWorktreePrefix) {
+		t.Fatalf("unexpected worktree path naming: got=%q want_prefix=%q", base, wantWorktreePrefix)
+	}
+	if base == fmt.Sprintf("ticket-%d", tk.ID) {
+		t.Fatalf("worktree path should not reuse static ticket-%d naming", tk.ID)
+	}
+}
+
+func TestStartTicket_DefaultBaseUsesCurrentBranch(t *testing.T) {
+	svc, p, _, fGit := newServiceForTest(t)
+	fGit.currentBranch = "feature/current"
+
+	tk := createTicket(t, p.DB, "base-current-branch")
+	if _, err := svc.StartTicketResources(context.Background(), tk.ID); err != nil {
+		t.Fatalf("StartTicketResources failed: %v", err)
+	}
+	if got := strings.TrimSpace(fGit.lastBaseBranch); got != "feature/current" {
+		t.Fatalf("expected base branch from current branch, got=%q", got)
+	}
+}
+
+func TestStartTicket_BaseOverrideTakesPrecedence(t *testing.T) {
+	svc, p, _, fGit := newServiceForTest(t)
+	fGit.currentBranch = "feature/current"
+
+	tk := createTicket(t, p.DB, "base-override")
+	if _, err := svc.StartTicketResourcesWithOptions(context.Background(), tk.ID, StartOptions{
+		BaseBranch: "release/v1",
+	}); err != nil {
+		t.Fatalf("StartTicketResourcesWithOptions failed: %v", err)
+	}
+	if got := strings.TrimSpace(fGit.lastBaseBranch); got != "release/v1" {
+		t.Fatalf("expected base override release/v1, got=%q", got)
+	}
+}
+
+func TestStartTicket_RollbackWorktreeWhenEnsureContractFails(t *testing.T) {
+	svc, p, _, fGit := newServiceForTest(t)
+	fGit.afterAdd = func(path string) error {
+		return os.WriteFile(filepath.Join(path, ".dalek"), []byte("conflict"), 0o644)
+	}
+
+	tk := createTicket(t, p.DB, "ticket-rollback-worktree")
+	_, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err == nil {
+		t.Fatalf("StartTicketResources should fail when EnsureWorktreeContract fails")
+	}
+	if fGit.addCalls != 1 {
+		t.Fatalf("expected one worktree add call, got=%d", fGit.addCalls)
+	}
+	if fGit.removeCalls != 1 {
+		t.Fatalf("expected rollback remove worktree once, got=%d", fGit.removeCalls)
+	}
+}
+
+func TestStartTicket_RollbackSessionAndWorktreeWhenNewSessionFails(t *testing.T) {
+	svc, p, fTmux, fGit := newServiceForTest(t)
+	fTmux.newSessionErr = errors.New("tmux new-session failed")
+
+	tk := createTicket(t, p.DB, "ticket-rollback-session")
+	_, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err == nil || !strings.Contains(err.Error(), "tmux new-session failed") {
+		t.Fatalf("StartTicketResources should return tmux error, got=%v", err)
+	}
+	if fTmux.killSessionCalls < 1 {
+		t.Fatalf("expected rollback kill session, got=%d", fTmux.killSessionCalls)
+	}
+	if fGit.removeCalls != 1 {
+		t.Fatalf("expected rollback remove worktree once, got=%d", fGit.removeCalls)
+	}
+}
+
+func TestStartTicket_RollbackCleanupFailureDoesNotOverrideMainError(t *testing.T) {
+	svc, p, fTmux, fGit := newServiceForTest(t)
+	fTmux.newSessionErr = errors.New("tmux new-session failed")
+	fGit.removeErr = errors.New("remove worktree failed")
+
+	tk := createTicket(t, p.DB, "ticket-rollback-best-effort")
+	_, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err == nil || !strings.Contains(err.Error(), "tmux new-session failed") {
+		t.Fatalf("main error should remain tmux failure, got=%v", err)
+	}
+	if fGit.removeCalls != 1 {
+		t.Fatalf("expected rollback remove attempt once, got=%d", fGit.removeCalls)
+	}
+}
+
+func TestStartTicket_FreshWorkerCleansStaleSameNameSession(t *testing.T) {
+	svc, p, fTmux, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "ticket-fresh-clean-stale-session")
+	staleSession := fmt.Sprintf("ts-%s-t%d-w1", p.Key, tk.ID)
+	fTmux.sessions[staleSession] = true
+
+	w, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicketResources failed: %v", err)
+	}
+	if strings.TrimSpace(w.TmuxSession) != staleSession {
+		t.Fatalf("unexpected session name: got=%q want=%q", strings.TrimSpace(w.TmuxSession), staleSession)
+	}
+	if fTmux.killSessionCalls < 1 {
+		t.Fatalf("expected stale session cleanup before start, killSessionCalls=%d", fTmux.killSessionCalls)
+	}
+	if !fTmux.sessions[staleSession] {
+		t.Fatalf("expected session recreated after cleanup")
+	}
+}
+
+func TestStartTicket_RestartReusesWorkerRecord(t *testing.T) {
+	svc, p, fTmux, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "ticket-restart")
+
+	first, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("first StartTicketResources failed: %v", err)
+	}
+	if first.ID == 0 {
+		t.Fatalf("expected first worker ID")
+	}
+
+	if err := svc.StopTicket(context.Background(), tk.ID); err != nil {
+		t.Fatalf("StopTicket failed: %v", err)
+	}
+
+	second, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("second StartTicketResources failed: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("expected restart reuse same worker record id=%d, got %d", first.ID, second.ID)
+	}
+
+	var cnt int64
+	if err := p.DB.Model(&store.Worker{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
+		t.Fatalf("count workers failed: %v", err)
+	}
+	if cnt != 1 {
+		t.Fatalf("expected single worker record after restart, got %d", cnt)
+	}
+	if fTmux.newSessionCalls != 2 {
+		t.Fatalf("expected tmux new-session called twice after restart, got %d", fTmux.newSessionCalls)
+	}
+}
+
+func TestStartTicket_RunningSessionDoesNotPromoteTicketStatus(t *testing.T) {
+	svc, p, _, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "ticket-running-no-promote")
+	w, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("first StartTicketResources failed: %v", err)
+	}
+	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Update("status", store.WorkerRunning).Error; err != nil {
+		t.Fatalf("set worker running failed: %v", err)
+	}
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketBacklog).Error; err != nil {
+		t.Fatalf("reset ticket backlog failed: %v", err)
+	}
+
+	if _, err := svc.StartTicketResources(context.Background(), tk.ID); err != nil {
+		t.Fatalf("second StartTicketResources failed: %v", err)
+	}
+
+	var got store.Ticket
+	if err := p.DB.First(&got, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if got.WorkflowStatus != store.TicketBacklog {
+		t.Fatalf("running session restart should not promote ticket workflow status, got=%s", got.WorkflowStatus)
+	}
+}
+
+func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
+	svc, p, fTmux, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "ticket-stop")
+	w, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicketResources failed: %v", err)
+	}
+	rt := tasksvc.New(p.DB)
+	now := time.Now().UTC().Truncate(time.Second)
+	run, err := rt.CreateRun(context.Background(), tasksvc.CreateRunInput{
+		OwnerType:          store.TaskOwnerWorker,
+		TaskType:           "deliver_ticket",
+		ProjectKey:         p.Key,
+		TicketID:           tk.ID,
+		WorkerID:           w.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", tk.ID),
+		RequestID:          "stop-worker-run-1",
+		OrchestrationState: store.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("create task run failed: %v", err)
+	}
+	if err := rt.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
+		TaskRunID:  run.ID,
+		State:      store.TaskHealthBusy,
+		NeedsUser:  false,
+		Summary:    "running",
+		Source:     "test",
+		ObservedAt: now,
+	}); err != nil {
+		t.Fatalf("seed runtime sample failed: %v", err)
+	}
+
+	if err := svc.StopWorker(context.Background(), w.ID); err != nil {
+		t.Fatalf("StopWorker failed: %v", err)
+	}
+
+	var got store.Worker
+	if err := p.DB.First(&got, w.ID).Error; err != nil {
+		t.Fatalf("query worker failed: %v", err)
+	}
+	if got.Status != store.WorkerStopped {
+		t.Fatalf("expected stopped worker, got %s", got.Status)
+	}
+
+	var ticket store.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("query ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != store.TicketBacklog {
+		t.Fatalf("expected ticket workflow backlog, got %s", ticket.WorkflowStatus)
+	}
+	if fTmux.killSessionCalls != 1 {
+		t.Fatalf("expected one kill-session call, got %d", fTmux.killSessionCalls)
+	}
+	statusRows, err := rt.ListStatus(context.Background(), tasksvc.ListStatusOptions{
+		OwnerType:       store.TaskOwnerWorker,
+		WorkerID:        w.ID,
+		IncludeTerminal: true,
+		Limit:           5,
+	})
+	if err != nil || len(statusRows) == 0 {
+		t.Fatalf("load task status failed: %v", err)
+	}
+	latest := statusRows[0]
+	if latest.OrchestrationState != string(store.TaskCanceled) {
+		t.Fatalf("expected task canceled after stop, got=%s", latest.OrchestrationState)
+	}
+	if latest.RuntimeHealthState != string(store.TaskHealthDead) {
+		t.Fatalf("expected task runtime dead after stop, got=%s", latest.RuntimeHealthState)
+	}
+	if strings.TrimSpace(latest.LastEventType) != "task_canceled" {
+		t.Fatalf("expected last event task_canceled, got=%s", latest.LastEventType)
+	}
+}
+
+func TestStopTicket_KillsOrphanTmuxSessionsWhenNoWorkerRecord(t *testing.T) {
+	svc, _, fTmux, _ := newServiceForTest(t)
+
+	tk := createTicket(t, svc.p.DB, "ticket-orphan-session")
+	// 模拟“DB 被清空/缺记录，但 tmux socket 里还残留旧 session”的情况。
+	// stop -ticket 应该能按命名约定清理掉这类 session。
+	orphan := "ts-demo-t" + strconv.Itoa(int(tk.ID)) + "-w999"
+	fTmux.sessions[orphan] = true
+
+	if err := svc.StopTicket(context.Background(), tk.ID); err != nil {
+		t.Fatalf("StopTicket failed: %v", err)
+	}
+	if fTmux.sessions[orphan] {
+		t.Fatalf("expected orphan session killed")
+	}
+	if fTmux.killSessionCalls != 1 {
+		t.Fatalf("expected one kill-session call, got %d", fTmux.killSessionCalls)
+	}
+}
+
+func TestListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
+	svc, p, fTmux, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "ticket-view")
+	a := store.Worker{
+		TicketID:     tk.ID,
+		Status:       store.WorkerRunning,
+		WorktreePath: "/tmp/w1",
+		Branch:       "ts/demo-ticket-1",
+		TmuxSocket:   "dalek",
+		TmuxSession:  "s-ticket-1",
+	}
+	if err := p.DB.Create(&a).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+	run := store.TaskRun{
+		OwnerType:          store.TaskOwnerWorker,
+		TaskType:           "deliver_ticket",
+		ProjectKey:         p.Key,
+		TicketID:           tk.ID,
+		WorkerID:           a.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", tk.ID),
+		RequestID:          "test-view-run-1",
+		OrchestrationState: store.TaskRunning,
+	}
+	if err := p.DB.Create(&run).Error; err != nil {
+		t.Fatalf("create task run failed: %v", err)
+	}
+	if err := p.DB.Create(&store.TaskRuntimeSample{
+		TaskRunID:  run.ID,
+		State:      store.TaskHealthBusy,
+		NeedsUser:  false,
+		Summary:    "working",
+		Source:     "test",
+		ObservedAt: time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("create runtime sample failed: %v", err)
+	}
+	fTmux.sessions[a.TmuxSession] = true
+
+	views, err := svc.ListTicketViews(context.Background())
+	if err != nil {
+		t.Fatalf("ListTicketViews failed: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("expected 1 view, got %d", len(views))
+	}
+	if !views[0].SessionAlive {
+		t.Fatalf("expected session alive")
+	}
+	if views[0].RuntimeHealthState != store.TaskHealthBusy {
+		t.Fatalf("expected runtime busy, got %s", views[0].RuntimeHealthState)
+	}
+
+	// session 不在 + worker stopped => 运行态派生为 dead
+	delete(fTmux.sessions, a.TmuxSession)
+	if err := p.DB.Model(&store.Worker{}).Where("id = ?", a.ID).Update("status", store.WorkerStopped).Error; err != nil {
+		t.Fatalf("update worker failed: %v", err)
+	}
+	views, err = svc.ListTicketViews(context.Background())
+	if err != nil {
+		t.Fatalf("ListTicketViews failed: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("expected 1 view, got %d", len(views))
+	}
+	if views[0].RuntimeHealthState != store.TaskHealthDead {
+		t.Fatalf("expected runtime dead when session gone, got %s", views[0].RuntimeHealthState)
+	}
+}
+
+func TestListTicketViews_UsesWorkerSocketForSessionAlive(t *testing.T) {
+	svc, p, fTmux, _ := newServiceForTest(t)
+	p.Config.TmuxSocket = "dalek-default"
+
+	tk := createTicket(t, p.DB, "ticket-view-socket")
+	a := store.Worker{
+		TicketID:     tk.ID,
+		Status:       store.WorkerRunning,
+		WorktreePath: "/tmp/w2",
+		Branch:       "ts/demo-ticket-2",
+		TmuxSocket:   "dalek-alt",
+		TmuxSession:  "s-ticket-2",
+	}
+	if err := p.DB.Create(&a).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+	run := store.TaskRun{
+		OwnerType:          store.TaskOwnerWorker,
+		TaskType:           "deliver_ticket",
+		ProjectKey:         p.Key,
+		TicketID:           tk.ID,
+		WorkerID:           a.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", tk.ID),
+		RequestID:          "test-view-run-2",
+		OrchestrationState: store.TaskRunning,
+	}
+	if err := p.DB.Create(&run).Error; err != nil {
+		t.Fatalf("create task run failed: %v", err)
+	}
+	if err := p.DB.Create(&store.TaskRuntimeSample{
+		TaskRunID:  run.ID,
+		State:      store.TaskHealthBusy,
+		NeedsUser:  false,
+		Summary:    "working",
+		Source:     "test",
+		ObservedAt: time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("create runtime sample failed: %v", err)
+	}
+	fTmux.ensure()
+	fTmux.sessionsBySocket["dalek-default"] = map[string]bool{}
+	fTmux.sessionsBySocket["dalek-alt"] = map[string]bool{
+		"s-ticket-2": true,
+	}
+
+	views, err := svc.ListTicketViews(context.Background())
+	if err != nil {
+		t.Fatalf("ListTicketViews failed: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("expected 1 view, got %d", len(views))
+	}
+	if !views[0].SessionAlive {
+		t.Fatalf("expected session alive by worker tmux_socket")
+	}
+	if views[0].RuntimeHealthState != store.TaskHealthBusy {
+		t.Fatalf("expected runtime busy, got %s", views[0].RuntimeHealthState)
+	}
+}
+
+func TestListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflowBacklog(t *testing.T) {
+	svc, p, fTmux, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "ticket-derived-running")
+	w := store.Worker{
+		TicketID:     tk.ID,
+		Status:       store.WorkerRunning,
+		WorktreePath: "/tmp/w3",
+		Branch:       "ts/demo-ticket-3",
+		TmuxSocket:   "dalek",
+		TmuxSession:  "s-ticket-3",
+	}
+	if err := p.DB.Create(&w).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+	fTmux.ensure()
+	fTmux.sessionsBySocket["dalek"] = map[string]bool{
+		"s-ticket-3": true,
+	}
+
+	views, err := svc.ListTicketViews(context.Background())
+	if err != nil {
+		t.Fatalf("ListTicketViews failed: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("expected 1 view, got %d", len(views))
+	}
+	if views[0].DerivedStatus != store.TicketBacklog {
+		t.Fatalf("expected workflow backlog, got %s", views[0].DerivedStatus)
+	}
+	if !views[0].SessionAlive {
+		t.Fatalf("expected session alive")
+	}
+}
+
+func TestListTicketViews_SessionProbeFailureKeepsWorkflow(t *testing.T) {
+	svc, p, fTmux, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "ticket-probe-failed")
+	w := store.Worker{
+		TicketID:     tk.ID,
+		Status:       store.WorkerRunning,
+		WorktreePath: "/tmp/w4",
+		Branch:       "ts/demo-ticket-4",
+		TmuxSocket:   "dalek",
+		TmuxSession:  "s-ticket-4",
+	}
+	if err := p.DB.Create(&w).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+	fTmux.ensure()
+	fTmux.listErrBySocket["dalek"] = context.DeadlineExceeded
+
+	views, err := svc.ListTicketViews(context.Background())
+	if err != nil {
+		t.Fatalf("ListTicketViews failed: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("expected 1 view, got %d", len(views))
+	}
+	if views[0].DerivedStatus != store.TicketBacklog {
+		t.Fatalf("expected workflow backlog when probe failed, got %s", views[0].DerivedStatus)
+	}
+	if views[0].RuntimeHealthState == store.TaskHealthDead {
+		t.Fatalf("probe failure should not degrade runtime to dead")
+	}
+}
+
+func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t *testing.T) {
+	svc, p, _, _ := newServiceForTest(t)
+
+	tkRunning := createTicket(t, p.DB, "reconcile-running")
+	tkDone := createTicket(t, p.DB, "reconcile-done")
+	tkBlocked := createTicket(t, p.DB, "reconcile-blocked")
+	tkBacklog := createTicket(t, p.DB, "reconcile-backlog")
+
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkRunning.ID).Update("workflow_status", store.TicketActive).Error; err != nil {
+		t.Fatalf("set active ticket failed: %v", err)
+	}
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkDone.ID).Update("workflow_status", store.TicketDone).Error; err != nil {
+		t.Fatalf("set done ticket failed: %v", err)
+	}
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkBlocked.ID).Update("workflow_status", store.TicketBlocked).Error; err != nil {
+		t.Fatalf("set blocked ticket failed: %v", err)
+	}
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkBacklog.ID).Update("workflow_status", store.TicketBacklog).Error; err != nil {
+		t.Fatalf("set backlog ticket failed: %v", err)
+	}
+
+	workers := []store.Worker{
+		{
+			TicketID:     tkRunning.ID,
+			Status:       store.WorkerRunning,
+			WorktreePath: "/tmp/w-running",
+			Branch:       "ts/demo-ticket-running",
+			TmuxSocket:   "dalek-test",
+			TmuxSession:  "s-running",
+		},
+		{
+			TicketID:     tkDone.ID,
+			Status:       store.WorkerRunning,
+			WorktreePath: "/tmp/w-done",
+			Branch:       "ts/demo-ticket-done",
+			TmuxSocket:   "dalek-test",
+			TmuxSession:  "s-done",
+		},
+		{
+			TicketID:     tkBlocked.ID,
+			Status:       store.WorkerRunning,
+			WorktreePath: "/tmp/w-blocked",
+			Branch:       "ts/demo-ticket-blocked",
+			TmuxSocket:   "dalek-test",
+			TmuxSession:  "s-blocked",
+		},
+		{
+			TicketID:     tkBacklog.ID,
+			Status:       store.WorkerRunning,
+			WorktreePath: "/tmp/w-backlog",
+			Branch:       "ts/demo-ticket-backlog",
+			TmuxSocket:   "dalek-test",
+			TmuxSession:  "s-backlog",
+		},
+	}
+	if err := p.DB.Create(&workers).Error; err != nil {
+		t.Fatalf("create workers failed: %v", err)
+	}
+	rt := tasksvc.New(p.DB)
+	for i, w := range workers {
+		now := time.Now().UTC().Add(time.Duration(i) * time.Second)
+		run, err := rt.CreateRun(context.Background(), tasksvc.CreateRunInput{
+			OwnerType:          store.TaskOwnerWorker,
+			TaskType:           "deliver_ticket",
+			ProjectKey:         p.Key,
+			TicketID:           w.TicketID,
+			WorkerID:           w.ID,
+			SubjectType:        "ticket",
+			SubjectID:          fmt.Sprintf("%d", w.TicketID),
+			RequestID:          fmt.Sprintf("reconcile-run-%d", w.ID),
+			OrchestrationState: store.TaskRunning,
+			StartedAt:          &now,
+		})
+		if err != nil {
+			t.Fatalf("create task run failed: %v", err)
+		}
+		if err := rt.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
+			TaskRunID:  run.ID,
+			State:      store.TaskHealthBusy,
+			NeedsUser:  false,
+			Summary:    "running",
+			Source:     "test",
+			ObservedAt: now,
+		}); err != nil {
+			t.Fatalf("seed runtime sample failed: %v", err)
+		}
+	}
+
+	rows, err := svc.ReconcileRunningWorkersAfterKillAll(context.Background(), "dalek-test")
+	if err != nil {
+		t.Fatalf("ReconcileRunningWorkersAfterKillAll failed: %v", err)
+	}
+	if rows != int64(len(workers)) {
+		t.Fatalf("expected reconciled workers=%d, got=%d", len(workers), rows)
+	}
+
+	var tickets []store.Ticket
+	if err := p.DB.Where("id IN ?", []uint{tkRunning.ID, tkDone.ID, tkBlocked.ID, tkBacklog.ID}).Order("id asc").Find(&tickets).Error; err != nil {
+		t.Fatalf("query tickets failed: %v", err)
+	}
+	got := map[uint]store.TicketWorkflowStatus{}
+	for _, tk := range tickets {
+		got[tk.ID] = tk.WorkflowStatus
+	}
+
+	if got[tkRunning.ID] != store.TicketActive {
+		t.Fatalf("active ticket should be preserved, got=%s", got[tkRunning.ID])
+	}
+	if got[tkDone.ID] != store.TicketDone {
+		t.Fatalf("done ticket should be preserved, got=%s", got[tkDone.ID])
+	}
+	if got[tkBlocked.ID] != store.TicketBlocked {
+		t.Fatalf("blocked ticket should be preserved, got=%s", got[tkBlocked.ID])
+	}
+	if got[tkBacklog.ID] != store.TicketBacklog {
+		t.Fatalf("backlog ticket should stay backlog, got=%s", got[tkBacklog.ID])
+	}
+
+	statusRows, err := rt.ListStatus(context.Background(), tasksvc.ListStatusOptions{
+		OwnerType:       store.TaskOwnerWorker,
+		IncludeTerminal: true,
+		Limit:           20,
+	})
+	if err != nil {
+		t.Fatalf("list task status failed: %v", err)
+	}
+	byWorker := map[uint]store.TaskStatusView{}
+	for _, it := range statusRows {
+		if it.WorkerID == 0 {
+			continue
+		}
+		if _, ok := byWorker[it.WorkerID]; ok {
+			continue
+		}
+		byWorker[it.WorkerID] = it
+	}
+	for _, w := range workers {
+		st, ok := byWorker[w.ID]
+		if !ok {
+			t.Fatalf("missing task status for worker=%d", w.ID)
+		}
+		if st.OrchestrationState != string(store.TaskCanceled) {
+			t.Fatalf("worker=%d expected canceled, got=%s", w.ID, st.OrchestrationState)
+		}
+		if st.RuntimeHealthState != string(store.TaskHealthDead) {
+			t.Fatalf("worker=%d expected dead runtime, got=%s", w.ID, st.RuntimeHealthState)
+		}
+	}
+}

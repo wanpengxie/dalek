@@ -1,0 +1,14 @@
+.dalek/
+.dalek_home/
+.cache/
+third_party/
+bin/
+!internal/repo/templates/manager/bin/
+!internal/repo/templates/manager/bin/ts
+!internal/repo/templates/manager/bin/ts_ro
+dist/
+/dalek
+.env
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,119 @@
+package app
+
+import (
+	"context"
+	"log"
+	"path/filepath"
+	"strings"
+	"time"
+
+	daemonsvc "dalek/internal/services/daemon"
+	pmsvc "dalek/internal/services/pm"
+	"dalek/internal/store"
+)
+
+type DaemonPaths = daemonsvc.ProcessPaths
+type DaemonStatus = daemonsvc.ProcessStatus
+
+func (h *Home) ResolveDaemonPaths() (DaemonPaths, error) {
+	if h == nil {
+		return DaemonPaths{}, ErrNotInitialized
+	}
+	cfg := h.Config.WithDefaults().Daemon
+	return daemonsvc.ResolveProcessPaths(h.Root, daemonsvc.ProcessPathConfig{
+		PIDFile:  strings.TrimSpace(cfg.PIDFile),
+		LockFile: strings.TrimSpace(cfg.LockFile),
+		LogFile:  strings.TrimSpace(cfg.LogFile),
+	})
+}
+
+func EnsureDaemonPaths(paths DaemonPaths) error {
+	return daemonsvc.EnsureProcessPaths(paths)
+}
+
+func InspectDaemon(paths DaemonPaths) (DaemonStatus, error) {
+	return daemonsvc.Inspect(paths)
+}
+
+func RemoveDaemonPID(paths DaemonPaths) error {
+	return daemonsvc.RemovePID(strings.TrimSpace(paths.PIDFile))
+}
+
+func TerminateDaemonPID(pid int) error {
+	return daemonsvc.TerminatePID(pid)
+}
+
+func WaitDaemonExit(pid int, timeout time.Duration) error {
+	return daemonsvc.WaitForExit(pid, timeout)
+}
+
+func RunDaemon(ctx context.Context, paths DaemonPaths, logger *log.Logger) error {
+	home, err := OpenHome(paths.HomeDir)
+	if err != nil {
+		return err
+	}
+	if err := EnsureHomeSecrets(home); err != nil {
+		return err
+	}
+	cfg := home.Config.WithDefaults()
+
+	resolver := newDaemonProjectResolver(home)
+	manager := newDaemonManagerComponent(home, logger)
+	notebook := newDaemonNotebookComponent(home, logger, cfg.Daemon.Notebook.WorkerCount)
+	host, err := daemonsvc.NewExecutionHost(resolver, daemonsvc.ExecutionHostOptions{
+		Logger:        logger,
+		MaxConcurrent: cfg.Daemon.MaxConcurrent,
+		OnRunSettled:  manager.NotifyProject,
+		OnNoteAdded:   notebook.NotifyProject,
+	})
+	if err != nil {
+		return err
+	}
+	manager.setDispatchHost(host)
+	gatewayDBPath := strings.TrimSpace(home.GatewayDBPath)
+	if gatewayDBPath == "" {
+		gatewayDBPath = filepath.Join(home.Root, "gateway.db")
+	}
+	internalSendDB, err := store.OpenGatewayDB(gatewayDBPath)
+	if err != nil {
+		return err
+	}
+	gatewayResolver := newDaemonGatewayProjectResolver(home)
+	gatewaySender := newDaemonFeishuSender(cfg.Daemon.Public.Feishu, logger)
+	manager.setStatusChangeHookFactory(func(projectName string, p *Project) pmsvc.WorkflowStatusChangeHook {
+		if p == nil || p.core == nil || p.core.DB == nil {
+			return nil
+		}
+		return pmsvc.NewGatewayStatusNotifier(projectName, p.core.DB, internalSendDB, gatewayResolver, gatewaySender)
+	})
+	internalAPI, err := daemonsvc.NewInternalAPI(host, daemonsvc.InternalAPIConfig{
+		ListenAddr: strings.TrimSpace(cfg.Daemon.Internal.Listen),
+	}, daemonsvc.InternalAPIOptions{
+		Logger:              logger,
+		GatewaySendDB:       internalSendDB,
+		GatewayResolver:     gatewayResolver,
+		GatewaySendResolver: gatewayResolver,
+		GatewaySendSender:   gatewaySender,
+		GatewayQueueDepth:   cfg.Gateway.QueueDepth,
+		CloseGatewaySendDB:  true,
+	})
+	if err != nil {
+		_ = closeDaemonGatewayDB(internalSendDB)
+		return err
+	}
+
+	d, err := daemonsvc.New(paths, daemonsvc.Options{
+		Logger: logger,
+		Components: []daemonsvc.Component{
+			host,
+			internalAPI,
+			newDaemonPublicGatewayComponent(home, logger),
+			manager,
+			notebook,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return d.Run(ctx)
+}

@@ -1,0 +1,182 @@
+package channel
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	claude "github.com/wanpengxie/go-claude-agent-sdk"
+)
+
+type fakeRecordedConnectClaudeClient struct {
+	connectCtx context.Context
+	sessionID  string
+}
+
+func (f *fakeRecordedConnectClaudeClient) Connect(ctx context.Context) error {
+	f.connectCtx = ctx
+	return nil
+}
+
+func (f *fakeRecordedConnectClaudeClient) QueryWithSession(ctx context.Context, prompt string, sessionID string) error {
+	_ = ctx
+	_ = prompt
+	f.sessionID = sessionID
+	return nil
+}
+
+func (f *fakeRecordedConnectClaudeClient) ReceiveResponseWithErrors(ctx context.Context) (<-chan claude.Message, <-chan error) {
+	_ = ctx
+	msgs := make(chan claude.Message, 1)
+	errs := make(chan error, 1)
+	msgs <- &claude.ResultMessage{
+		Subtype:          "success",
+		DurationMS:       1,
+		DurationAPIMS:    1,
+		IsError:          false,
+		NumTurns:         1,
+		SessionID:        f.sessionID,
+		TotalCostUSD:     nil,
+		Usage:            map[string]any{},
+		Result:           "ok",
+		StructuredOutput: nil,
+	}
+	close(msgs)
+	close(errs)
+	return msgs, errs
+}
+
+func (f *fakeRecordedConnectClaudeClient) Interrupt(ctx context.Context) error {
+	_ = ctx
+	return nil
+}
+
+func (f *fakeRecordedConnectClaudeClient) Close() error { return nil }
+
+func TestClaudeChatRunner_ConnectUsesTurnContextAndReusesClient(t *testing.T) {
+	origFactory := createClaudeClient
+	t.Cleanup(func() { createClaudeClient = origFactory })
+
+	fakeClient := &fakeRecordedConnectClaudeClient{}
+	createClaudeClient = func(opts ...claude.Option) claudeClient {
+		_ = opts
+		return fakeClient
+	}
+
+	r := &claudeChatRunner{}
+
+	firstCtx, firstCancel := context.WithCancel(context.Background())
+	res1, err := r.RunTurn(firstCtx, ChatRunRequest{
+		Prompt:    "hello-1",
+		SessionID: "sess-1",
+	}, nil)
+	if err != nil {
+		t.Fatalf("first turn failed: %v", err)
+	}
+	if res1.Text != "ok" {
+		t.Fatalf("first turn text mismatch: %q", res1.Text)
+	}
+	if fakeClient.connectCtx != firstCtx {
+		t.Fatalf("connect should use turn context")
+	}
+	firstCancel()
+
+	time.Sleep(10 * time.Millisecond)
+
+	secondCtx, secondCancel := context.WithCancel(context.Background())
+	defer secondCancel()
+	res2, err := r.RunTurn(secondCtx, ChatRunRequest{
+		Prompt:    "hello-2",
+		SessionID: "sess-1",
+	}, nil)
+	if err != nil {
+		t.Fatalf("second turn failed: %v", err)
+	}
+	if res2.Text != "ok" {
+		t.Fatalf("second turn should still produce text, got=%q", res2.Text)
+	}
+}
+
+type fakeRetryClaudeClient struct {
+	queryErr  error
+	sessionID string
+}
+
+func (f *fakeRetryClaudeClient) Connect(ctx context.Context) error {
+	_ = ctx
+	return nil
+}
+
+func (f *fakeRetryClaudeClient) QueryWithSession(ctx context.Context, prompt string, sessionID string) error {
+	_ = ctx
+	_ = prompt
+	f.sessionID = sessionID
+	if f.queryErr != nil {
+		return f.queryErr
+	}
+	return nil
+}
+
+func (f *fakeRetryClaudeClient) ReceiveResponseWithErrors(ctx context.Context) (<-chan claude.Message, <-chan error) {
+	_ = ctx
+	msgs := make(chan claude.Message, 1)
+	errs := make(chan error, 1)
+	msgs <- &claude.ResultMessage{
+		Subtype:       "success",
+		SessionID:     f.sessionID,
+		Result:        "ok",
+		Usage:         map[string]any{},
+		DurationMS:    1,
+		DurationAPIMS: 1,
+		NumTurns:      1,
+	}
+	close(msgs)
+	close(errs)
+	return msgs, errs
+}
+
+func (f *fakeRetryClaudeClient) Interrupt(ctx context.Context) error {
+	_ = ctx
+	return nil
+}
+
+func (f *fakeRetryClaudeClient) Close() error { return nil }
+
+func TestClaudeChatRunner_ReconnectAfterInactiveConnectionError(t *testing.T) {
+	origFactory := createClaudeClient
+	t.Cleanup(func() { createClaudeClient = origFactory })
+
+	created := 0
+	createClaudeClient = func(opts ...claude.Option) claudeClient {
+		_ = opts
+		created++
+		if created == 1 {
+			return &fakeRetryClaudeClient{queryErr: errors.New("Connection is no longer active")}
+		}
+		return &fakeRetryClaudeClient{}
+	}
+
+	r := &claudeChatRunner{}
+	_, err := r.RunTurn(context.Background(), ChatRunRequest{
+		Prompt:    "hello-1",
+		SessionID: "sess-1",
+	}, nil)
+	if err == nil {
+		t.Fatalf("first turn should fail on inactive connection")
+	}
+
+	res2, err := r.RunTurn(context.Background(), ChatRunRequest{
+		Prompt:    "hello-2",
+		SessionID: "sess-1",
+	}, nil)
+	if err != nil {
+		t.Fatalf("second turn should reconnect and succeed: %v", err)
+	}
+	if res2.Text != "ok" {
+		t.Fatalf("second turn text mismatch: %q", res2.Text)
+	}
+	if created != 2 {
+		t.Fatalf("expected client recreation after failure, got created=%d", created)
+	}
+}
