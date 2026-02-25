@@ -62,7 +62,10 @@ func (r *homeProjectResolver) Resolve(name string) (*channelsvc.ProjectContext, 
 	ctx := &channelsvc.ProjectContext{
 		Name:     strings.TrimSpace(p.Name()),
 		RepoRoot: strings.TrimSpace(p.RepoRoot()),
-		Runtime:  &appProjectRuntime{project: p},
+		Runtime: &appProjectRuntime{
+			project: p,
+			channel: p.ChannelService(),
+		},
 	}
 
 	r.mu.Lock()
@@ -93,33 +96,14 @@ func (r *homeProjectResolver) ListProjects() ([]string, error) {
 
 type appProjectRuntime struct {
 	project *app.Project
+	channel *channelsvc.Service
 }
 
 func (r *appProjectRuntime) ProcessInbound(ctx context.Context, env contracts.InboundEnvelope) (channelsvc.ProcessResult, error) {
-	if r == nil || r.project == nil {
+	if r == nil || r.channel == nil {
 		return channelsvc.ProcessResult{}, fmt.Errorf("project runtime 为空")
 	}
-	res, err := r.project.ProcessChannelInbound(ctx, env)
-	if err != nil {
-		return channelsvc.ProcessResult{}, err
-	}
-	return channelsvc.ProcessResult{
-		BindingID:         res.BindingID,
-		ConversationID:    res.ConversationID,
-		InboundMessageID:  res.InboundMessageID,
-		JobID:             res.JobID,
-		RunID:             strings.TrimSpace(res.RunID),
-		JobStatus:         res.JobStatus,
-		JobError:          strings.TrimSpace(res.JobError),
-		JobErrorType:      strings.TrimSpace(res.JobErrorType),
-		OutboundMessageID: res.OutboundMessageID,
-		OutboxID:          res.OutboxID,
-		ReplyText:         strings.TrimSpace(res.ReplyText),
-		AgentProvider:     strings.TrimSpace(res.AgentProvider),
-		AgentModel:        strings.TrimSpace(res.AgentModel),
-		AgentOutputMode:   strings.TrimSpace(res.AgentOutputMode),
-		AgentCommand:      strings.TrimSpace(res.AgentCommand),
-	}, nil
+	return r.channel.ProcessInbound(ctx, env)
 }
 
 func (r *appProjectRuntime) GatewayTurnTimeout() time.Duration {

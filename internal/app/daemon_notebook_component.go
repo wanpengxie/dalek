@@ -17,8 +17,9 @@ const (
 )
 
 type daemonNotebookComponent struct {
-	home   *Home
-	logger *log.Logger
+	home     *Home
+	registry *ProjectRegistry
+	logger   *log.Logger
 
 	workerCount int
 	pollGap     time.Duration
@@ -31,9 +32,17 @@ type daemonNotebookComponent struct {
 	wg       sync.WaitGroup
 }
 
-func newDaemonNotebookComponent(home *Home, logger *log.Logger, workerCount int) *daemonNotebookComponent {
+func newDaemonNotebookComponent(home *Home, logger *log.Logger, workerCount int, registries ...*ProjectRegistry) *daemonNotebookComponent {
+	var registry *ProjectRegistry
+	if len(registries) > 0 {
+		registry = registries[0]
+	}
+	if registry == nil && home != nil {
+		registry = NewProjectRegistry(home)
+	}
 	return &daemonNotebookComponent{
 		home:        home,
+		registry:    registry,
 		logger:      logger,
 		workerCount: workerCount,
 		pollGap:     defaultNotebookPollGap,
@@ -48,7 +57,7 @@ func (c *daemonNotebookComponent) Name() string {
 }
 
 func (c *daemonNotebookComponent) Start(ctx context.Context) error {
-	if c == nil || c.home == nil {
+	if c == nil || c.home == nil || c.registry == nil {
 		return fmt.Errorf("notebook component 未初始化")
 	}
 	workers := c.workerCount
@@ -144,7 +153,7 @@ func (c *daemonNotebookComponent) processProject(ctx context.Context, idx int, p
 	if name == "" {
 		return false
 	}
-	p, err := c.home.OpenProjectByName(name)
+	p, err := c.registry.Open(name)
 	if err != nil {
 		c.logf("notebook worker open project failed: project=%s err=%v", name, err)
 		return false

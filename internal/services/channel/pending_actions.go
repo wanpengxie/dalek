@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -309,15 +310,21 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 		}, nil
 	}
 	if isSDKToolApprovalAction(action) {
-		if s.toolApprovalBridge != nil && s.toolApprovalBridge.HasWaiter(actionID) {
-			s.toolApprovalBridge.Notify(actionID, PendingActionApprove)
-			return PendingActionDecisionResult{
-				Action:           pendingActionRowToView(approvedRow),
-				Decision:         PendingActionApprove,
-				Message:          "已批准，已通知会话继续执行该工具请求。",
-				ExecutionMessage: "已批准，等待会话执行结果。",
-			}, nil
+		if s.toolApprovalBridge != nil {
+			notified, hasWaiter := s.toolApprovalBridge.NotifyIfWaiting(actionID, PendingActionApprove)
+			if hasWaiter {
+				if !notified {
+					log.Printf("tool_approval approve notify skipped: action=%d", actionID)
+				}
+				return PendingActionDecisionResult{
+					Action:           pendingActionRowToView(approvedRow),
+					Decision:         PendingActionApprove,
+					Message:          "已批准，已通知会话继续执行该工具请求。",
+					ExecutionMessage: "已批准，等待会话执行结果。",
+				}, nil
+			}
 		}
+		log.Printf("tool_approval approve waiter missing: action=%d", actionID)
 		failMsg := "当前会话已结束，该工具审批已失效。"
 		if err := s.finishPendingActionExecution(ctx, actionID, store.ChannelPendingActionFailed, failMsg); err != nil {
 			return PendingActionDecisionResult{}, err
@@ -419,7 +426,10 @@ func (s *Service) RejectPendingAction(ctx context.Context, actionID uint, decide
 		return PendingActionDecisionResult{}, err
 	}
 	if s.toolApprovalBridge != nil {
-		s.toolApprovalBridge.Notify(actionID, PendingActionReject)
+		notified, hasWaiter := s.toolApprovalBridge.NotifyIfWaiting(actionID, PendingActionReject)
+		if hasWaiter && !notified {
+			log.Printf("tool_approval reject notify skipped: action=%d", actionID)
+		}
 	}
 	return PendingActionDecisionResult{
 		Action:   pendingActionRowToView(rejectedRow),

@@ -57,9 +57,10 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *log.Logger) error
 	}
 	cfg := home.Config.WithDefaults()
 
-	resolver := newDaemonProjectResolver(home)
-	manager := newDaemonManagerComponent(home, logger)
-	notebook := newDaemonNotebookComponent(home, logger, cfg.Daemon.Notebook.WorkerCount)
+	registry := NewProjectRegistry(home)
+	resolver := newDaemonProjectResolver(home, registry)
+	manager := newDaemonManagerComponent(home, logger, registry)
+	notebook := newDaemonNotebookComponent(home, logger, cfg.Daemon.Notebook.WorkerCount, registry)
 	host, err := daemonsvc.NewExecutionHost(resolver, daemonsvc.ExecutionHostOptions{
 		Logger:        logger,
 		MaxConcurrent: cfg.Daemon.MaxConcurrent,
@@ -78,7 +79,7 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *log.Logger) error
 	if err != nil {
 		return err
 	}
-	gatewayResolver := newDaemonGatewayProjectResolver(home)
+	gatewayResolver := newDaemonGatewayProjectResolver(home, registry)
 	gatewaySender := newDaemonFeishuSender(cfg.Daemon.Public.Feishu, logger)
 	manager.setStatusChangeHookFactory(func(projectName string, p *Project) pmsvc.WorkflowStatusChangeHook {
 		if p == nil || p.core == nil || p.core.DB == nil {
@@ -105,9 +106,10 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *log.Logger) error
 	d, err := daemonsvc.New(paths, daemonsvc.Options{
 		Logger: logger,
 		Components: []daemonsvc.Component{
+			newProjectRegistryComponent(registry),
 			host,
 			internalAPI,
-			newDaemonPublicGatewayComponent(home, logger),
+			newDaemonPublicGatewayComponent(home, logger, gatewayResolver),
 			manager,
 			notebook,
 		},

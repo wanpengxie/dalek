@@ -29,6 +29,7 @@ type managerRunProjectIndexWarmer interface {
 
 type daemonManagerComponent struct {
 	home     *Home
+	registry *ProjectRegistry
 	logger   *log.Logger
 	interval time.Duration
 	host     managerDispatchHost
@@ -52,10 +53,18 @@ type recoveryProjectSummary struct {
 	TicketsBlocked int
 }
 
-func newDaemonManagerComponent(home *Home, logger *log.Logger) *daemonManagerComponent {
+func newDaemonManagerComponent(home *Home, logger *log.Logger, registries ...*ProjectRegistry) *daemonManagerComponent {
+	var registry *ProjectRegistry
+	if len(registries) > 0 {
+		registry = registries[0]
+	}
+	if registry == nil && home != nil {
+		registry = NewProjectRegistry(home)
+	}
 	interval := defaultDaemonManagerTickInterval
 	return &daemonManagerComponent{
 		home:     home,
+		registry: registry,
 		logger:   logger,
 		interval: interval,
 		stopCh:   make(chan struct{}),
@@ -83,7 +92,7 @@ func (m *daemonManagerComponent) Name() string {
 }
 
 func (m *daemonManagerComponent) Start(ctx context.Context) error {
-	if m == nil || m.home == nil {
+	if m == nil || m.home == nil || m.registry == nil {
 		return fmt.Errorf("daemon manager 未初始化")
 	}
 	interval := m.interval
@@ -158,7 +167,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 		if name == "" {
 			continue
 		}
-		p, err := m.home.OpenProjectByName(name)
+		p, err := m.registry.Open(name)
 		if err != nil || p == nil || p.core == nil || p.core.DB == nil {
 			if err != nil {
 				m.logf("recovery open project failed: project=%s err=%v", name, err)
@@ -290,7 +299,7 @@ func (m *daemonManagerComponent) warmupRunProjectIndex(ctx context.Context) {
 		if projectName == "" {
 			continue
 		}
-		p, err := m.home.OpenProjectByName(projectName)
+		p, err := m.registry.Open(projectName)
 		if err != nil || p == nil || p.core == nil || p.core.DB == nil {
 			if err != nil {
 				m.logf("warmup run index open project failed: project=%s err=%v", projectName, err)
@@ -803,7 +812,7 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 	if projectName == "" {
 		return
 	}
-	p, err := m.home.OpenProjectByName(projectName)
+	p, err := m.registry.Open(projectName)
 	if err != nil {
 		m.logf("manager tick open project failed: source=%s project=%s err=%v", strings.TrimSpace(source), projectName, err)
 		return

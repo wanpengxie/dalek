@@ -4,67 +4,43 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	daemonsvc "dalek/internal/services/daemon"
 )
 
-type daemonProjectResolverCacheEntry struct {
-	project   *daemonProjectAdapter
-	expiresAt time.Time
-}
-
 type daemonProjectResolver struct {
-	home *Home
-	ttl  time.Duration
-
-	mu    sync.Mutex
-	cache map[string]*daemonProjectResolverCacheEntry
+	home     *Home
+	registry *ProjectRegistry
 }
 
-func newDaemonProjectResolver(home *Home) *daemonProjectResolver {
+func newDaemonProjectResolver(home *Home, registries ...*ProjectRegistry) *daemonProjectResolver {
+	var registry *ProjectRegistry
+	if len(registries) > 0 {
+		registry = registries[0]
+	}
+	if registry == nil && home != nil {
+		registry = NewProjectRegistry(home)
+	}
 	return &daemonProjectResolver{
-		home:  home,
-		ttl:   defaultResolverCacheTTL,
-		cache: map[string]*daemonProjectResolverCacheEntry{},
+		home:     home,
+		registry: registry,
 	}
 }
 
 func (r *daemonProjectResolver) OpenProject(name string) (daemonsvc.ExecutionHostProject, error) {
-	if r == nil || r.home == nil {
+	if r == nil || r.registry == nil {
 		return nil, fmt.Errorf("daemon project resolver 未初始化")
 	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("project 不能为空")
 	}
-	now := time.Now()
-
-	r.mu.Lock()
-	if cached := r.cache[name]; cached != nil && cached.project != nil && now.Before(cached.expiresAt) {
-		r.mu.Unlock()
-		return cached.project, nil
-	}
-	r.mu.Unlock()
-
-	p, err := r.home.OpenProjectByName(name)
+	p, err := r.registry.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	adapter := &daemonProjectAdapter{project: p}
-	ttl := r.ttl
-	if ttl <= 0 {
-		ttl = defaultResolverCacheTTL
-	}
-
-	r.mu.Lock()
-	r.cache[name] = &daemonProjectResolverCacheEntry{
-		project:   adapter,
-		expiresAt: time.Now().Add(ttl),
-	}
-	r.mu.Unlock()
-	return adapter, nil
+	return &daemonProjectAdapter{project: p}, nil
 }
 
 func (r *daemonProjectResolver) ListProjects() ([]string, error) {

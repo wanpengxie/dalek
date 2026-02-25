@@ -42,6 +42,56 @@ func TestToolApprovalEventPayload_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestToolApprovalBridge_NotifyIfWaiting(t *testing.T) {
+	bridge := NewToolApprovalBridge()
+	actionID := uint(42)
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer waitCancel()
+	decisionCh := make(chan PendingActionDecision, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		decision, err := bridge.Wait(waitCtx, actionID)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		decisionCh <- decision
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if bridge.hasWaiter(actionID) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !bridge.hasWaiter(actionID) {
+		t.Fatalf("waiter was not registered")
+	}
+
+	notified, hasWaiter := bridge.NotifyIfWaiting(actionID, PendingActionApprove)
+	if !hasWaiter || !notified {
+		t.Fatalf("notify should succeed: has_waiter=%v notified=%v", hasWaiter, notified)
+	}
+
+	select {
+	case err := <-errCh:
+		t.Fatalf("wait should succeed, got err=%v", err)
+	case decision := <-decisionCh:
+		if decision != PendingActionApprove {
+			t.Fatalf("decision mismatch: %s", decision)
+		}
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatalf("waiter did not receive decision")
+	}
+
+	notified, hasWaiter = bridge.NotifyIfWaiting(999, PendingActionReject)
+	if hasWaiter || notified {
+		t.Fatalf("notify on missing waiter should be false,false, got %v,%v", hasWaiter, notified)
+	}
+}
+
 func TestApprovePendingAction_SDKToolApprovalNotifiesWaiter(t *testing.T) {
 	svc := newToolApprovalTestService(t)
 	created, err := svc.CreatePendingActions(context.Background(), 11, 22, []contracts.TurnAction{
@@ -245,7 +295,7 @@ func waitBridgeReady(t *testing.T, svc *Service, actionID uint) {
 	t.Helper()
 	deadline := time.Now().Add(1500 * time.Millisecond)
 	for time.Now().Before(deadline) {
-		if svc.toolApprovalBridge != nil && svc.toolApprovalBridge.HasWaiter(actionID) {
+		if svc.toolApprovalBridge != nil && svc.toolApprovalBridge.hasWaiter(actionID) {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

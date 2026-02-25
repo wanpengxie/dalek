@@ -2,12 +2,13 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
-	"dalek/internal/contracts"
 	channelsvc "dalek/internal/services/channel"
 	"dalek/internal/services/core"
 	logssvc "dalek/internal/services/logs"
@@ -32,6 +33,9 @@ type Project struct {
 	pm      *pmsvc.Service
 	task    *tasksvc.Service
 	channel *channelsvc.Service
+
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (p *Project) Name() string {
@@ -103,6 +107,37 @@ func (p *Project) GatewayTurnTimeout() time.Duration {
 		return 0
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+func (p *Project) ChannelService() *channelsvc.Service {
+	if p == nil {
+		return nil
+	}
+	return p.channel
+}
+
+func (p *Project) Close() error {
+	if p == nil {
+		return nil
+	}
+	p.closeOnce.Do(func() {
+		errs := make([]error, 0, 2)
+		if p.channel != nil {
+			if err := p.channel.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("关闭 channel service 失败: %w", err))
+			}
+		}
+		if p.core != nil && p.core.DB != nil {
+			sqlDB, err := p.core.DB.DB()
+			if err != nil {
+				errs = append(errs, fmt.Errorf("获取 db 连接失败: %w", err))
+			} else if err := sqlDB.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("关闭 db 失败: %w", err))
+			}
+		}
+		p.closeErr = errors.Join(errs...)
+	})
+	return p.closeErr
 }
 
 func (p *Project) ApplyAgentProviderModel(provider, model string) error {
@@ -937,129 +972,4 @@ func (p *Project) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		MergeProposed:     res.MergeProposed,
 		Errors:            res.Errors,
 	}, nil
-}
-
-func (p *Project) ProcessChannelInbound(ctx context.Context, env contracts.InboundEnvelope) (GatewayProcessResult, error) {
-	if p == nil || p.channel == nil {
-		return GatewayProcessResult{}, fmt.Errorf("project channel service 为空")
-	}
-	r, err := p.channel.ProcessInbound(ctx, env)
-	if err != nil {
-		return GatewayProcessResult{}, err
-	}
-	out := GatewayProcessResult{
-		BindingID:         r.BindingID,
-		ConversationID:    r.ConversationID,
-		InboundMessageID:  r.InboundMessageID,
-		JobID:             r.JobID,
-		RunID:             r.RunID,
-		JobStatus:         r.JobStatus,
-		JobError:          r.JobError,
-		JobErrorType:      r.JobErrorType,
-		OutboundMessageID: r.OutboundMessageID,
-		OutboxID:          r.OutboxID,
-		ReplyText:         r.ReplyText,
-		AgentProvider:     r.AgentProvider,
-		AgentModel:        r.AgentModel,
-		AgentOutputMode:   r.AgentOutputMode,
-		AgentCommand:      r.AgentCommand,
-		AgentStdout:       r.AgentStdout,
-		AgentStderr:       r.AgentStderr,
-	}
-	if len(r.AgentEvents) > 0 {
-		out.AgentEvents = make([]GatewayAgentEvent, 0, len(r.AgentEvents))
-		for _, ev := range r.AgentEvents {
-			out.AgentEvents = append(out.AgentEvents, GatewayAgentEvent{
-				RunID:  ev.RunID,
-				Seq:    ev.Seq,
-				Stream: strings.TrimSpace(string(ev.Stream)),
-				Ts:     ev.Ts,
-				Data: GatewayAgentEventData{
-					Phase:     ev.Data.Phase,
-					StartedAt: ev.Data.StartedAt,
-					EndedAt:   ev.Data.EndedAt,
-					Text:      ev.Data.Text,
-					RawJSON:   ev.Data.RawJSON,
-					Error:     ev.Data.Error,
-					ErrorType: ev.Data.ErrorType,
-					ToolName:  ev.Data.ToolName,
-					ToolInput: ev.Data.ToolInput,
-				},
-			})
-		}
-	}
-	if len(r.PendingActions) > 0 {
-		out.PendingActions = make([]GatewayPendingAction, 0, len(r.PendingActions))
-		for _, item := range r.PendingActions {
-			mapped := GatewayPendingAction{
-				ID:             item.ID,
-				ConversationID: item.ConversationID,
-				JobID:          item.JobID,
-				ActionName:     strings.TrimSpace(item.Action.Name),
-				Status:         item.Status,
-				Decider:        strings.TrimSpace(item.Decider),
-				DecisionNote:   strings.TrimSpace(item.DecisionNote),
-			}
-			if len(item.Action.Args) > 0 {
-				mapped.ActionArgs = make(map[string]any, len(item.Action.Args))
-				for k, v := range item.Action.Args {
-					mapped.ActionArgs[strings.TrimSpace(k)] = v
-				}
-			} else {
-				mapped.ActionArgs = map[string]any{}
-			}
-			if item.DecidedAt != nil {
-				t := *item.DecidedAt
-				mapped.DecidedAt = &t
-			}
-			if item.ExecutedAt != nil {
-				t := *item.ExecutedAt
-				mapped.ExecutedAt = &t
-			}
-			out.PendingActions = append(out.PendingActions, mapped)
-		}
-	}
-	return out, nil
-}
-
-func (p *Project) InterruptChannelConversation(ctx context.Context, channelType, adapter, peerConversationID string) (channelsvc.InterruptResult, error) {
-	if p == nil || p.channel == nil {
-		return channelsvc.InterruptResult{}, fmt.Errorf("project channel service 为空")
-	}
-	return p.channel.InterruptPeerConversation(ctx, channelType, adapter, peerConversationID)
-}
-
-func (p *Project) ResetChannelConversationSession(ctx context.Context, channelType, adapter, peerConversationID string) (bool, error) {
-	if p == nil || p.channel == nil {
-		return false, fmt.Errorf("project channel service 为空")
-	}
-	return p.channel.ResetPeerConversationSession(ctx, channelType, adapter, peerConversationID)
-}
-
-func (p *Project) ListChannelPendingActions(ctx context.Context, jobID uint) ([]channelsvc.PendingActionView, error) {
-	if p == nil || p.channel == nil {
-		return nil, fmt.Errorf("project channel service 为空")
-	}
-	return p.channel.ListPendingActions(ctx, jobID)
-}
-
-func (p *Project) ApproveChannelPendingAction(ctx context.Context, actionID uint, decider string) (channelsvc.PendingActionDecisionResult, error) {
-	if p == nil || p.channel == nil {
-		return channelsvc.PendingActionDecisionResult{}, fmt.Errorf("project channel service 为空")
-	}
-	return p.channel.ApprovePendingAction(ctx, actionID, decider)
-}
-
-func (p *Project) RejectChannelPendingAction(ctx context.Context, actionID uint, decider, note string) (channelsvc.PendingActionDecisionResult, error) {
-	if p == nil || p.channel == nil {
-		return channelsvc.PendingActionDecisionResult{}, fmt.Errorf("project channel service 为空")
-	}
-	return p.channel.RejectPendingAction(ctx, actionID, decider, note)
-}
-
-func (p *Project) DecideChannelPendingAction(ctx context.Context, req channelsvc.PendingActionDecisionRequest) (channelsvc.PendingActionDecisionResult, error) {
-	if p == nil || p.channel == nil {
-		return channelsvc.PendingActionDecisionResult{}, fmt.Errorf("project channel service 为空")
-	}
-	return p.channel.DecidePendingAction(ctx, req)
 }

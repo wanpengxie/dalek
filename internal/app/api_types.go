@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 // 说明：
@@ -342,60 +341,4 @@ type TaskCancelResult struct {
 	Reason    string
 	FromState string
 	ToState   string
-}
-
-type GatewayProcessResult struct {
-	BindingID        uint
-	ConversationID   uint
-	InboundMessageID uint
-	JobID            uint
-	RunID            string
-	JobStatus        store.ChannelTurnJobStatus
-	JobError         string
-	JobErrorType     string
-
-	OutboundMessageID uint
-	OutboxID          uint
-	ReplyText         string
-	AgentProvider     string
-	AgentModel        string
-	AgentOutputMode   string
-	AgentCommand      string
-	AgentStdout       string
-	AgentStderr       string
-	AgentEvents       []GatewayAgentEvent
-	PendingActions    []GatewayPendingAction
-}
-
-type GatewayAgentEvent struct {
-	RunID  string
-	Seq    int
-	Stream string
-	Ts     int64
-	Data   GatewayAgentEventData
-}
-
-type GatewayAgentEventData struct {
-	Phase     string
-	StartedAt int64
-	EndedAt   int64
-	Text      string
-	RawJSON   string
-	Error     string
-	ErrorType string
-	ToolName  string
-	ToolInput string
-}
-
-type GatewayPendingAction struct {
-	ID             uint
-	ConversationID uint
-	JobID          uint
-	ActionName     string
-	ActionArgs     map[string]any
-	Status         store.ChannelPendingActionStatus
-	Decider        string
-	DecisionNote   string
-	DecidedAt      *time.Time
-	ExecutedAt     *time.Time
 }

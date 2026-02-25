@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -25,7 +26,7 @@ const (
 //
 // Flow:
 //  1. CanUseTool callback fires → creates PendingAction → calls Wait(actionID)
-//  2. Feishu card callback → calls Notify(actionID, decision)
+//  2. Feishu card callback → calls NotifyIfWaiting(actionID, decision)
 //  3. Wait unblocks → CanUseTool returns Allow/Deny to Claude SDK
 type ToolApprovalBridge struct {
 	mu      sync.Mutex
@@ -53,24 +54,27 @@ func (b *ToolApprovalBridge) Wait(ctx context.Context, actionID uint) (PendingAc
 	}
 }
 
-// Notify sends a decision to the waiter for the given action ID.
-// If no waiter exists, the notification is silently dropped.
-func (b *ToolApprovalBridge) Notify(actionID uint, decision PendingActionDecision) {
+// NotifyIfWaiting atomically checks waiter existence and sends the decision.
+// Returns (notified, hasWaiter).
+func (b *ToolApprovalBridge) NotifyIfWaiting(actionID uint, decision PendingActionDecision) (bool, bool) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	ch, ok := b.waiters[actionID]
-	b.mu.Unlock()
-	if ok {
-		select {
-		case ch <- decision:
-		default:
-		}
+	if !ok || ch == nil {
+		log.Printf("tool_approval notify miss: action=%d decision=%s", actionID, decision)
+		return false, false
+	}
+	select {
+	case ch <- decision:
+		log.Printf("tool_approval notify ok: action=%d decision=%s", actionID, decision)
+		return true, true
+	default:
+		log.Printf("tool_approval notify skipped(buffer_full): action=%d decision=%s", actionID, decision)
+		return false, true
 	}
 }
 
-// HasWaiter returns true if there is an active SDK-level waiter for the given action.
-// Used to distinguish SDK-level approvals (handled by Claude CLI) from
-// app-level approvals (handled by ActionExecutor).
-func (b *ToolApprovalBridge) HasWaiter(actionID uint) bool {
+func (b *ToolApprovalBridge) hasWaiter(actionID uint) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	_, ok := b.waiters[actionID]
@@ -82,6 +86,7 @@ func (b *ToolApprovalBridge) register(actionID uint) <-chan PendingActionDecisio
 	defer b.mu.Unlock()
 	ch := make(chan PendingActionDecision, 1)
 	b.waiters[actionID] = ch
+	log.Printf("tool_approval waiter registered: action=%d", actionID)
 	return ch
 }
 
@@ -89,6 +94,28 @@ func (b *ToolApprovalBridge) unregister(actionID uint) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	delete(b.waiters, actionID)
+	log.Printf("tool_approval waiter unregistered: action=%d", actionID)
+}
+
+func (b *ToolApprovalBridge) Close() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	waiters := b.waiters
+	b.waiters = make(map[uint]chan PendingActionDecision)
+	b.mu.Unlock()
+	for actionID, ch := range waiters {
+		if ch == nil {
+			continue
+		}
+		select {
+		case ch <- PendingActionReject:
+		default:
+		}
+		close(ch)
+		log.Printf("tool_approval waiter closed: action=%d", actionID)
+	}
 }
 
 // ToolApprovalNotifier sends tool approval cards to users.

@@ -133,7 +133,12 @@ func cmdGatewayWSServer(args []string) {
 func newGatewayWSServerHandler(p *app.Project, rawOpt gatewayWSServerOptions) (string, http.HandlerFunc) {
 	opt := normalizeGatewayWSServerOptions(rawOpt)
 	path := normalizeGatewayWSPath(opt.Path)
+	channelSvc := p.ChannelService()
 	return path, func(w http.ResponseWriter, r *http.Request) {
+		if channelSvc == nil {
+			http.Error(w, "project channel service unavailable", http.StatusInternalServerError)
+			return
+		}
 		conn, err := gatewayWSUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "gateway ws upgrade 失败:", err)
@@ -207,7 +212,7 @@ func newGatewayWSServerHandler(p *app.Project, rawOpt gatewayWSServerOptions) (s
 					return
 				case req := <-turnCh:
 					ctx, cancel := projectCtx(opt.TurnTimeout)
-					result, err := p.ProcessChannelInbound(ctx, contracts.InboundEnvelope{
+					result, err := channelSvc.ProcessInbound(ctx, contracts.InboundEnvelope{
 						Schema:             contracts.ChannelInboundSchemaV1,
 						ChannelType:        contracts.ChannelTypeWeb,
 						Adapter:            "web.ws",
@@ -244,7 +249,7 @@ func newGatewayWSServerHandler(p *app.Project, rawOpt gatewayWSServerOptions) (s
 						if finalRunID == "" && runID != "" {
 							finalRunID = runID
 						}
-						stream := strings.TrimSpace(ev.Stream)
+						stream := strings.TrimSpace(string(ev.Stream))
 						evType := deriveGatewayEventType(stream, ev.Data.Phase)
 						evText := strings.TrimSpace(ev.Data.Text)
 						if ev.Seq > lastSeq {
