@@ -141,6 +141,22 @@ Tickets: <T.. T.. T..>
 - `internal/services/pm/constants.go`：集中维护 PM 域 timeout/interval 与关键字符串常量，禁止新增分散 magic number。
 - `internal/repo/templates/pm/dispatch_prompt_v1.tmpl`：dispatch prompt 模板外置，Go 代码仅传递变量并渲染。
 
+## W02 回写（T10 Gateway WS 归位）
+
+- 状态：`T10` 已完成（2026-02-26），WS server/client 已完成 cmd 层瘦身与服务层复用。
+- cmd/service 边界变化：
+  - `cmd/dalek/cmd_gateway_ws.go` 仅保留参数解析与 HTTP 启动，WS 业务处理下沉到 `internal/services/channel/ws.NewSyncHandler`。
+  - `cmd/dalek/cmd_gateway.go` 的 `gateway chat` 已改为调用 `internal/gateway/client`，cmd 不再承载 WS 握手/收发/帧解析实现。
+- 协议与复用层归位：
+  - 新增 `internal/services/channel/ws/`：统一 `InboundFrame/OutboundFrame`、帧常量、辅助函数与同步 WS server handler。
+  - 新增 `internal/gateway/client/`：统一 daemon WS URL 解析与 chat client 连接/握手/收发逻辑。
+  - `internal/services/daemon/api_internal_ws.go` 改为复用 `channel/ws` 协议类型与 helper，移除 daemon 侧重复帧定义。
+  - `tools/gateway_ws_chat/main.go` 改为复用 `channel/ws` 协议类型，移除 tools 侧重复帧定义。
+- 测试与回归：
+  - 新增 `internal/services/channel/ws/{protocol_test.go,handler_test.go}`。
+  - 新增 `internal/gateway/client/{url_test.go,ws_client_test.go}`。
+  - 已通过 `go test ./...` 全量回归，CLI 与 daemon WS 通道行为保持一致。
+
 ## 每批执行建议
 
 1. 每批结束后，先清单回写：更新 `CRITICAL/HIGH/MEDIUM_SELECTED/LOW_SELECTED` 中对应 ID 状态。

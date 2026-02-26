@@ -1,23 +1,16 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
-
-	"dalek/internal/app"
 	"dalek/internal/contracts"
+	gatewayclient "dalek/internal/gateway/client"
 	"dalek/internal/store"
 )
-
-const defaultGatewayDaemonWSURL = "ws://127.0.0.1:18081/ws"
 
 type gatewayChatJSONResult struct {
 	Schema         string                   `json:"schema"`
@@ -196,11 +189,16 @@ func cmdGatewayChat(args []string) {
 	ctx, cancel := projectCtx(turnTimeout)
 	defer cancel()
 
-	finalFrame, eventFrames, err := runGatewayChatViaDaemon(ctx, targetURL, strings.TrimSpace(*text), strings.TrimSpace(*senderID))
+	chatResult, err := gatewayclient.RunChat(ctx, gatewayclient.ChatRequest{
+		TargetURL: targetURL,
+		Text:      strings.TrimSpace(*text),
+		SenderID:  strings.TrimSpace(*senderID),
+	})
 	if err != nil {
 		exitRuntimeError(out, "gateway chat 失败", err.Error(), "确认 daemon 已启动（dalek daemon start）后重试")
 	}
-	finalFrame = normalizeGatewayChatFinalFrame(finalFrame)
+	finalFrame := gatewayclient.NormalizeChatFinalFrame(chatResult.FinalFrame)
+	eventFrames := chatResult.EventFrames
 
 	if out == outputJSON {
 		jobStatus := store.ChannelTurnJobStatus(strings.TrimSpace(finalFrame.JobStatus))
@@ -239,190 +237,11 @@ func cmdGatewayChat(args []string) {
 }
 
 func resolveGatewayDaemonWSURL(cliValue, homeFlag string) string {
-	if strings.TrimSpace(cliValue) != "" {
-		return strings.TrimSpace(cliValue)
-	}
-	if fromEnv := strings.TrimSpace(os.Getenv("DALEK_GATEWAY_WS_URL")); fromEnv != "" {
-		return fromEnv
-	}
-	if fromConfig := resolveGatewayDaemonWSURLFromHome(homeFlag); fromConfig != "" {
-		return fromConfig
-	}
-	return defaultGatewayDaemonWSURL
-}
-
-func resolveGatewayDaemonWSURLFromHome(homeFlag string) string {
-	homeDir, err := app.ResolveHomeDir(homeFlag)
-	if err != nil {
-		return ""
-	}
-	h, err := app.OpenHome(homeDir)
-	if err != nil {
-		return ""
-	}
-	listenAddr := strings.TrimSpace(h.Config.Daemon.Internal.Listen)
-	if listenAddr == "" {
-		return ""
-	}
-	if strings.Contains(listenAddr, "://") {
-		u, err := url.Parse(listenAddr)
-		if err != nil || strings.TrimSpace(u.Host) == "" {
-			return ""
-		}
-		scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
-		switch scheme {
-		case "http":
-			u.Scheme = "ws"
-		case "https":
-			u.Scheme = "wss"
-		case "ws", "wss":
-			// keep as-is
-		default:
-			return ""
-		}
-		if strings.TrimSpace(u.Path) == "" || strings.TrimSpace(u.Path) == "/" {
-			u.Path = "/ws"
-		}
-		return u.String()
-	}
-	return "ws://" + listenAddr + "/ws"
+	return gatewayclient.ResolveDaemonWSURL(cliValue, homeFlag)
 }
 
 func buildGatewayChatWSURL(baseURL, projectName, conversationID, senderID string) (string, error) {
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
-		return "", fmt.Errorf("ws url 不能为空")
-	}
-	projectName = strings.TrimSpace(projectName)
-	if projectName == "" {
-		return "", fmt.Errorf("project 不能为空")
-	}
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return "", err
-	}
-	if strings.EqualFold(strings.TrimSpace(u.Scheme), "http") {
-		u.Scheme = "ws"
-	}
-	if strings.EqualFold(strings.TrimSpace(u.Scheme), "https") {
-		u.Scheme = "wss"
-	}
-	if strings.TrimSpace(u.Scheme) == "" || strings.TrimSpace(u.Host) == "" {
-		return "", fmt.Errorf("ws url 非法: %s", baseURL)
-	}
-	if strings.TrimSpace(u.Path) == "" || strings.TrimSpace(u.Path) == "/" {
-		u.Path = "/ws"
-	}
-
-	query := u.Query()
-	query.Set("project", projectName)
-	if strings.TrimSpace(conversationID) != "" {
-		query.Set("conv", strings.TrimSpace(conversationID))
-	}
-	if strings.TrimSpace(senderID) != "" {
-		query.Set("sender", strings.TrimSpace(senderID))
-	}
-	u.RawQuery = query.Encode()
-	return u.String(), nil
-}
-
-func runGatewayChatViaDaemon(ctx context.Context, targetURL, text, senderID string) (gatewayWSOutboundFrame, []gatewayWSOutboundFrame, error) {
-	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, targetURL, nil)
-	if err != nil {
-		if resp != nil {
-			return gatewayWSOutboundFrame{}, nil, fmt.Errorf("连接 gateway daemon 失败（http=%d）: %w；请先执行 `dalek daemon start`", resp.StatusCode, err)
-		}
-		lower := strings.ToLower(strings.TrimSpace(err.Error()))
-		if strings.Contains(lower, "connection refused") || strings.Contains(lower, "cannot assign requested address") || strings.Contains(lower, "no such host") {
-			return gatewayWSOutboundFrame{}, nil, fmt.Errorf("gateway daemon 未启动或不可达（%s），请先执行 `dalek daemon start`", targetURL)
-		}
-		return gatewayWSOutboundFrame{}, nil, fmt.Errorf("连接 gateway daemon 失败: %w", err)
-	}
-	defer conn.Close()
-
-	for {
-		frame, readErr := readGatewayWSFrame(ctx, conn)
-		if readErr != nil {
-			return gatewayWSOutboundFrame{}, nil, fmt.Errorf("读取 gateway 握手帧失败: %w", readErr)
-		}
-		switch strings.TrimSpace(frame.Type) {
-		case "ready":
-			goto SEND
-		case "error":
-			return normalizeGatewayChatFinalFrame(frame), nil, nil
-		default:
-			// 忽略非 ready 的握手前帧。
-		}
-	}
-
-SEND:
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetWriteDeadline(deadline)
-	}
-	if err := conn.WriteJSON(gatewayWSInboundFrame{
-		Text:     strings.TrimSpace(text),
-		SenderID: strings.TrimSpace(senderID),
-	}); err != nil {
-		return gatewayWSOutboundFrame{}, nil, fmt.Errorf("发送消息到 gateway daemon 失败: %w", err)
-	}
-	_ = conn.SetWriteDeadline(time.Time{})
-
-	events := make([]gatewayWSOutboundFrame, 0, 8)
-	for {
-		frame, readErr := readGatewayWSFrame(ctx, conn)
-		if readErr != nil {
-			return gatewayWSOutboundFrame{}, events, fmt.Errorf("读取 gateway 响应失败: %w", readErr)
-		}
-		switch strings.TrimSpace(frame.Type) {
-		case "assistant_event", "inbox_update":
-			events = append(events, frame)
-		case "assistant_message", "error":
-			return frame, events, nil
-		default:
-			// 兼容未来扩展帧，当前忽略。
-		}
-	}
-}
-
-func readGatewayWSFrame(ctx context.Context, conn *websocket.Conn) (gatewayWSOutboundFrame, error) {
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetReadDeadline(deadline)
-	}
-	_, payload, err := conn.ReadMessage()
-	if err != nil {
-		if ctx != nil && ctx.Err() != nil {
-			return gatewayWSOutboundFrame{}, ctx.Err()
-		}
-		return gatewayWSOutboundFrame{}, err
-	}
-	var frame gatewayWSOutboundFrame
-	if err := json.Unmarshal(payload, &frame); err != nil {
-		return gatewayWSOutboundFrame{}, fmt.Errorf("解析 gateway 帧失败: %w", err)
-	}
-	return frame, nil
-}
-
-func normalizeGatewayChatFinalFrame(frame gatewayWSOutboundFrame) gatewayWSOutboundFrame {
-	frame.Type = strings.TrimSpace(frame.Type)
-	frame.Text = strings.TrimSpace(frame.Text)
-	frame.JobStatus = strings.TrimSpace(frame.JobStatus)
-	frame.JobErrorType = strings.TrimSpace(frame.JobErrorType)
-	frame.JobError = strings.TrimSpace(frame.JobError)
-	if frame.Type == "error" {
-		if frame.JobStatus == "" {
-			frame.JobStatus = string(store.ChannelTurnFailed)
-		}
-		if frame.JobError == "" {
-			frame.JobError = frame.Text
-		}
-		if frame.JobErrorType == "" {
-			frame.JobErrorType = "runtime"
-		}
-	}
-	if frame.JobStatus == "" {
-		frame.JobStatus = string(store.ChannelTurnSucceeded)
-	}
-	return frame
+	return gatewayclient.BuildChatWSURL(baseURL, projectName, conversationID, senderID)
 }
 
 func printGatewayResultJSON(result any) {
