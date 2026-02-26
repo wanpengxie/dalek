@@ -13,7 +13,6 @@ import (
 
 	daemonsvc "dalek/internal/services/daemon"
 	pmsvc "dalek/internal/services/pm"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -196,7 +195,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			recoveredRunIDs = recoveredRuns
 		}
 
-		var active []store.TaskRun
+		var active []contracts.TaskRun
 		activeQuery := db.Where("orchestration_state IN ?", []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning})
 		if excluded := sortedRunIDsFromSet(recoveredRunIDs); len(excluded) > 0 {
 			activeQuery = activeQuery.Where("id NOT IN ?", excluded)
@@ -206,7 +205,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 		} else {
 			for _, run := range active {
 				errMsg := "daemon restart recovery: previous run marked failed"
-				if err := db.Model(&store.TaskRun{}).Where("id = ?", run.ID).Updates(map[string]any{
+				if err := db.Model(&contracts.TaskRun{}).Where("id = ?", run.ID).Updates(map[string]any{
 					"orchestration_state": contracts.TaskFailed,
 					"error_code":          "daemon_recovered",
 					"error_message":       errMsg,
@@ -217,7 +216,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 					continue
 				}
 				summary.TaskRuns++
-				_ = db.Create(&store.TaskEvent{
+				_ = db.Create(&contracts.TaskEvent{
 					TaskRunID:   run.ID,
 					EventType:   "daemon_recovery_failed",
 					ToStateJSON: `{"orchestration_state":"failed"}`,
@@ -251,7 +250,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			summary.Workers = fixed
 		}
 		if pmErr == nil && pmState.ID != 0 {
-			if err := db.Model(&store.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
+			if err := db.Model(&contracts.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
 				"last_recovery_at":            &now,
 				"last_recovery_dispatch_jobs": summary.DispatchJobs,
 				"last_recovery_task_runs":     summary.TaskRuns,
@@ -309,7 +308,7 @@ func (m *daemonManagerComponent) warmupRunProjectIndex(ctx context.Context) {
 		}
 		var runIDs []uint
 		if err := p.core.DB.WithContext(ctx).
-			Model(&store.TaskRun{}).
+			Model(&contracts.TaskRun{}).
 			Where("orchestration_state IN ?", []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 			Pluck("id", &runIDs).Error; err != nil {
 			m.logf("warmup run index query active runs failed: project=%s err=%v", projectName, err)
@@ -335,7 +334,7 @@ func (m *daemonManagerComponent) recoverStuckDispatchJobs(ctx context.Context, d
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var jobs []store.PMDispatchJob
+	var jobs []contracts.PMDispatchJob
 	if err := db.
 		Where("status IN ?", []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 		Order("id asc").
@@ -362,7 +361,7 @@ func (m *daemonManagerComponent) recoverStuckDispatchJobs(ctx context.Context, d
 		queued := false
 		blocked := false
 		err := db.Transaction(func(tx *gorm.DB) error {
-			res := tx.Model(&store.PMDispatchJob{}).
+			res := tx.Model(&contracts.PMDispatchJob{}).
 				Where("id = ? AND status IN ?", job.ID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 				Updates(map[string]any{
 					"status":            contracts.PMDispatchFailed,
@@ -396,7 +395,7 @@ func (m *daemonManagerComponent) recoverStuckDispatchJobs(ctx context.Context, d
 						"request_id":      strings.TrimSpace(job.RequestID),
 						"retry_action":    retryAction,
 					})
-					_ = tx.Create(&store.TaskEvent{
+					_ = tx.Create(&contracts.TaskEvent{
 						TaskRunID:   job.TaskRunID,
 						EventType:   "daemon_recovery_dispatch_failed",
 						ToStateJSON: `{"orchestration_state":"failed"}`,
@@ -460,7 +459,7 @@ func markTaskRunFailedTx(tx *gorm.DB, runID uint, errorCode, errMsg string, now 
 	if errorCode == "" {
 		errorCode = "daemon_recovered"
 	}
-	res := tx.Model(&store.TaskRun{}).
+	res := tx.Model(&contracts.TaskRun{}).
 		Where("id = ? AND orchestration_state IN ?", runID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 		Updates(map[string]any{
 			"orchestration_state": contracts.TaskFailed,
@@ -493,7 +492,7 @@ func sortedRunIDsFromSet(runIDs map[uint]struct{}) []uint {
 	return ids
 }
 
-func (m *daemonManagerComponent) applyTicketStatusTx(ctx context.Context, tx *gorm.DB, job store.PMDispatchJob, target contracts.TicketWorkflowStatus, reason, source string, now time.Time) (bool, error) {
+func (m *daemonManagerComponent) applyTicketStatusTx(ctx context.Context, tx *gorm.DB, job contracts.PMDispatchJob, target contracts.TicketWorkflowStatus, reason, source string, now time.Time) (bool, error) {
 	if tx == nil || job.TicketID == 0 {
 		return false, nil
 	}
@@ -671,7 +670,7 @@ func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context,
 		autopilotEnabled = pmState.AutopilotEnabled
 	}
 
-	var jobs []store.PMDispatchJob
+	var jobs []contracts.PMDispatchJob
 	if err := db.
 		Where("status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at < ?", contracts.PMDispatchRunning, now).
 		Order("id asc").
@@ -703,7 +702,7 @@ func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context,
 		queued := false
 		blocked := false
 		err := db.Transaction(func(tx *gorm.DB) error {
-			res := tx.Model(&store.PMDispatchJob{}).
+			res := tx.Model(&contracts.PMDispatchJob{}).
 				Where("id = ? AND status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at < ?", job.ID, contracts.PMDispatchRunning, now).
 				Updates(map[string]any{
 					"status":            contracts.PMDispatchFailed,
@@ -737,7 +736,7 @@ func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context,
 						"request_id":      strings.TrimSpace(job.RequestID),
 						"retry_action":    retryAction,
 					})
-					_ = tx.Create(&store.TaskEvent{
+					_ = tx.Create(&contracts.TaskEvent{
 						TaskRunID:   job.TaskRunID,
 						EventType:   "lease_expired_dispatch_failed",
 						ToStateJSON: `{"orchestration_state":"failed"}`,

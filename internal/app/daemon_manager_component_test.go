@@ -26,7 +26,7 @@ func waitForManagerInitialTick(t *testing.T, p *Project, timeout time.Duration) 
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		var st store.PMState
+		var st contracts.PMState
 		if err := p.core.DB.WithContext(context.Background()).First(&st).Error; err == nil && st.LastTickAt != nil {
 			return
 		}
@@ -63,7 +63,7 @@ func TestDaemonManagerComponent_NotifyProject_TriggersTick(t *testing.T) {
 	}
 
 	waitForManagerInitialTick(t, p, 3*time.Second)
-	var st store.PMState
+	var st contracts.PMState
 	if err := p.core.DB.WithContext(context.Background()).First(&st).Error; err != nil {
 		t.Fatalf("load pm state failed: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestDaemonManagerComponent_NotifyProject_TriggersTick(t *testing.T) {
 	manager.NotifyProject(p.Name())
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		var nowState store.PMState
+		var nowState contracts.PMState
 		if err := p.core.DB.WithContext(context.Background()).First(&nowState).Error; err != nil {
 			t.Fatalf("reload pm state failed: %v", err)
 		}

@@ -9,7 +9,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -70,17 +69,17 @@ func (s *Service) AppendWorkerTaskEvent(ctx context.Context, workerID uint, even
 	return s.appendWorkerTaskEvent(ctx, workerID, eventType, note, payload, createdAt)
 }
 
-func (s *Service) ensureActiveWorkerTaskRun(ctx context.Context, w contracts.Worker, reason string, now time.Time) (store.TaskRun, error) {
+func (s *Service) ensureActiveWorkerTaskRun(ctx context.Context, w contracts.Worker, reason string, now time.Time) (contracts.TaskRun, error) {
 	rt, err := s.taskRuntime()
 	if err != nil {
-		return store.TaskRun{}, err
+		return contracts.TaskRun{}, err
 	}
 	return s.ensureActiveWorkerTaskRunWithRuntime(ctx, rt, w, reason, now)
 }
 
-func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt core.TaskRuntime, w contracts.Worker, reason string, now time.Time) (store.TaskRun, error) {
+func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt core.TaskRuntime, w contracts.Worker, reason string, now time.Time) (contracts.TaskRun, error) {
 	if rt == nil {
-		return store.TaskRun{}, fmt.Errorf("task runtime service 为空")
+		return contracts.TaskRun{}, fmt.Errorf("task runtime service 为空")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -90,14 +89,14 @@ func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt c
 	}
 	run, err := rt.LatestActiveWorkerRun(ctx, w.ID)
 	if err != nil {
-		return store.TaskRun{}, err
+		return contracts.TaskRun{}, err
 	}
 	if run != nil {
 		return *run, nil
 	}
 	p, err := s.require()
 	if err != nil {
-		return store.TaskRun{}, err
+		return contracts.TaskRun{}, err
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -121,7 +120,7 @@ func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt c
 		}),
 	})
 	if err != nil {
-		return store.TaskRun{}, err
+		return contracts.TaskRun{}, err
 	}
 	_ = rt.AppendEvent(ctx, core.TaskRuntimeEventInput{
 		TaskRunID: created.ID,

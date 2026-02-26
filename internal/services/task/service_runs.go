@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -40,23 +38,23 @@ type CreateRunInput struct {
 	FinishedAt *time.Time
 }
 
-func (s *Service) CreateRun(ctx context.Context, in CreateRunInput) (store.TaskRun, error) {
+func (s *Service) CreateRun(ctx context.Context, in CreateRunInput) (contracts.TaskRun, error) {
 	db, err := s.requireDB()
 	if err != nil {
-		return store.TaskRun{}, err
+		return contracts.TaskRun{}, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	in.RequestID = strings.TrimSpace(in.RequestID)
 	if in.RequestID == "" {
-		return store.TaskRun{}, fmt.Errorf("request_id 不能为空")
+		return contracts.TaskRun{}, fmt.Errorf("request_id 不能为空")
 	}
 	if !validOwnerType(in.OwnerType) {
-		return store.TaskRun{}, fmt.Errorf("owner_type 非法: %s", in.OwnerType)
+		return contracts.TaskRun{}, fmt.Errorf("owner_type 非法: %s", in.OwnerType)
 	}
 	if strings.TrimSpace(in.TaskType) == "" {
-		return store.TaskRun{}, fmt.Errorf("task_type 不能为空")
+		return contracts.TaskRun{}, fmt.Errorf("task_type 不能为空")
 	}
 	if !validOrchestrationState(in.OrchestrationState) {
 		in.OrchestrationState = contracts.TaskPending
@@ -65,7 +63,7 @@ func (s *Service) CreateRun(ctx context.Context, in CreateRunInput) (store.TaskR
 		in.Attempt = 0
 	}
 
-	run := store.TaskRun{
+	run := contracts.TaskRun{
 		OwnerType:          in.OwnerType,
 		TaskType:           strings.TrimSpace(in.TaskType),
 		ProjectKey:         strings.TrimSpace(in.ProjectKey),
@@ -91,12 +89,12 @@ func (s *Service) CreateRun(ctx context.Context, in CreateRunInput) (store.TaskR
 				return *existing, nil
 			}
 		}
-		return store.TaskRun{}, err
+		return contracts.TaskRun{}, err
 	}
 	return run, nil
 }
 
-func (s *Service) FindRunByID(ctx context.Context, runID uint) (*store.TaskRun, error) {
+func (s *Service) FindRunByID(ctx context.Context, runID uint) (*contracts.TaskRun, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -107,7 +105,7 @@ func (s *Service) FindRunByID(ctx context.Context, runID uint) (*store.TaskRun, 
 	if runID == 0 {
 		return nil, fmt.Errorf("run_id 不能为空")
 	}
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := db.WithContext(ctx).First(&run, runID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
@@ -117,7 +115,7 @@ func (s *Service) FindRunByID(ctx context.Context, runID uint) (*store.TaskRun, 
 	return &run, nil
 }
 
-func (s *Service) FindRunByRequestID(ctx context.Context, requestID string) (*store.TaskRun, error) {
+func (s *Service) FindRunByRequestID(ctx context.Context, requestID string) (*contracts.TaskRun, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -129,7 +127,7 @@ func (s *Service) FindRunByRequestID(ctx context.Context, requestID string) (*st
 	if requestID == "" {
 		return nil, fmt.Errorf("request_id 不能为空")
 	}
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := db.WithContext(ctx).Where("request_id = ?", requestID).Order("id desc").First(&run).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
@@ -139,7 +137,7 @@ func (s *Service) FindRunByRequestID(ctx context.Context, requestID string) (*st
 	return &run, nil
 }
 
-func (s *Service) LatestActiveWorkerRun(ctx context.Context, workerID uint) (*store.TaskRun, error) {
+func (s *Service) LatestActiveWorkerRun(ctx context.Context, workerID uint) (*contracts.TaskRun, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -150,7 +148,7 @@ func (s *Service) LatestActiveWorkerRun(ctx context.Context, workerID uint) (*st
 	if workerID == 0 {
 		return nil, fmt.Errorf("worker_id 不能为空")
 	}
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := db.WithContext(ctx).
 		Where("owner_type = ? AND worker_id = ? AND orchestration_state IN ?", contracts.TaskOwnerWorker, workerID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 		Order("id desc").
@@ -181,7 +179,7 @@ func (s *Service) CancelActiveWorkerRuns(ctx context.Context, workerID uint, rea
 	if reason == "" {
 		reason = "canceled"
 	}
-	return db.WithContext(ctx).Model(&store.TaskRun{}).
+	return db.WithContext(ctx).Model(&contracts.TaskRun{}).
 		Where("owner_type = ? AND worker_id = ? AND orchestration_state IN ?", contracts.TaskOwnerWorker, workerID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 		Updates(map[string]any{
 			"orchestration_state": contracts.TaskCanceled,
@@ -219,7 +217,7 @@ func (s *Service) MarkRunRunning(ctx context.Context, runID uint, runnerID strin
 	if bumpAttempt {
 		updates["attempt"] = gorm.Expr("attempt + 1")
 	}
-	res := db.WithContext(ctx).Model(&store.TaskRun{}).
+	res := db.WithContext(ctx).Model(&contracts.TaskRun{}).
 		Where("id = ? AND orchestration_state IN ?", runID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 		Updates(updates)
 	if res.Error != nil {
@@ -246,7 +244,7 @@ func (s *Service) RenewLease(ctx context.Context, runID uint, runnerID string, l
 	if runnerID == "" {
 		return fmt.Errorf("runner_id 不能为空")
 	}
-	res := db.WithContext(ctx).Model(&store.TaskRun{}).
+	res := db.WithContext(ctx).Model(&contracts.TaskRun{}).
 		Where("id = ? AND runner_id = ? AND orchestration_state = ?", runID, runnerID, contracts.TaskRunning).
 		Updates(map[string]any{
 			"lease_expires_at": leaseExpiresAt,
@@ -274,7 +272,7 @@ func (s *Service) MarkRunSucceeded(ctx context.Context, runID uint, resultPayloa
 	if now.IsZero() {
 		now = time.Now()
 	}
-	res := db.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ? AND orchestration_state != ?", runID, contracts.TaskCanceled).Updates(map[string]any{
+	res := db.WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ? AND orchestration_state != ?", runID, contracts.TaskCanceled).Updates(map[string]any{
 		"orchestration_state": contracts.TaskSucceeded,
 		"result_payload_json": strings.TrimSpace(resultPayloadJSON),
 		"error_code":          "",
@@ -306,7 +304,7 @@ func (s *Service) MarkRunFailed(ctx context.Context, runID uint, errorCode strin
 	if now.IsZero() {
 		now = time.Now()
 	}
-	res := db.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ? AND orchestration_state != ?", runID, contracts.TaskCanceled).Updates(map[string]any{
+	res := db.WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ? AND orchestration_state != ?", runID, contracts.TaskCanceled).Updates(map[string]any{
 		"orchestration_state": contracts.TaskFailed,
 		"error_code":          strings.TrimSpace(errorCode),
 		"error_message":       strings.TrimSpace(errorMessage),
@@ -337,7 +335,7 @@ func (s *Service) MarkRunCanceled(ctx context.Context, runID uint, errorCode str
 	if now.IsZero() {
 		now = time.Now()
 	}
-	return db.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ?", runID).Updates(map[string]any{
+	return db.WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ?", runID).Updates(map[string]any{
 		"orchestration_state": contracts.TaskCanceled,
 		"error_code":          strings.TrimSpace(errorCode),
 		"error_message":       strings.TrimSpace(errorMessage),
@@ -363,7 +361,7 @@ func ensureRunExistsForTerminalUpdate(db *gorm.DB, runID uint) error {
 		return fmt.Errorf("task service db 为空")
 	}
 	var count int64
-	if err := db.Model(&store.TaskRun{}).Where("id = ?", runID).Count(&count).Error; err != nil {
+	if err := db.Model(&contracts.TaskRun{}).Where("id = ?", runID).Count(&count).Error; err != nil {
 		return err
 	}
 	if count == 0 {
@@ -376,7 +374,7 @@ func ensureRunCanMarkRunning(db *gorm.DB, runID uint) error {
 	if db == nil {
 		return fmt.Errorf("task service db 为空")
 	}
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := db.Select("id", "orchestration_state").First(&run, runID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return fmt.Errorf("task_run 不存在: run_id=%d", runID)

@@ -210,9 +210,9 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 		latestTaskByTicket[tv.TicketID] = tv
 	}
 
-	activeDispatchByTicket := map[uint]store.PMDispatchJob{}
+	activeDispatchByTicket := map[uint]contracts.PMDispatchJob{}
 	if len(ticketIDs) > 0 {
-		var jobs []store.PMDispatchJob
+		var jobs []contracts.PMDispatchJob
 		if err := db.WithContext(ctx).
 			Where("ticket_id IN ? AND status IN ?", ticketIDs, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 			Order("ticket_id asc").

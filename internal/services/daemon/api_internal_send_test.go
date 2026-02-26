@@ -83,7 +83,7 @@ func TestInternalAPISendRoute_AllowsLoopbackWithoutToken(t *testing.T) {
 		_ = sqlDB.Close()
 	})
 
-	if err := db.Create(&store.ChannelBinding{
+	if err := db.Create(&contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        gatewaysendsvc.AdapterFeishu,
@@ -129,7 +129,7 @@ func TestInternalAPISendRoute_Success(t *testing.T) {
 		_ = sqlDB.Close()
 	})
 
-	if err := db.Create(&store.ChannelBinding{
+	if err := db.Create(&contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        gatewaysendsvc.AdapterFeishu,

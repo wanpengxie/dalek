@@ -13,12 +13,13 @@
 
 - 更新时间：`2026-02-26`
 - 已完成批次：`W01` `W02` `W03`
-- 当前批次：`W04`（`in_execution`）
+- 当前批次：`W05A`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
-- W04 已完成票：`T22(29)` `T31(38)`
-- W04 进行中票：`T14(21)` `T29(36)`
+- W04 状态：`in_execution`（已完成 `T22(29)` `T31(38)`；进行中 `T14(21)` `T29(36)`）
+- W05 已完成票：`T23(30)`
+- W05 进行中票：`T15` `T30` `T37`
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -34,7 +35,7 @@
 - `T07 -> T08 -> T09`
 - `T14 -> T15 -> T16 -> T17`
 - `T21 -> T22 -> T26 -> T27`
-- `T21 -> T23 -> T28`
+- `T21 -> T23 -> T28`（`T23` 已完成，`T28` 前置已满足）
 - `T39 -> T20`
 - `T39 -> T27`
 - `T39 -> T34`
@@ -311,6 +312,21 @@ Tickets: <T.. T.. T..>
   - `go test ./...` 全量通过
 - 下游约束更新：
   - `T35` 必须复用 `gatewaysend.Service` 入口做 PM 通知解耦，禁止回退到包内直接裸 DB 访问。
+
+## W05 回写（T23 类型归位 3/3）
+
+- 状态：`T23` 已完成（2026-02-26），剩余高传播领域类型已迁移至 `internal/contracts`，`store` 不再承担该批类型定义权威。
+- 交付物：
+  - 新增 `contracts` 领域模型文件：`task.go`、`pm_state.go`、`subagent.go`、`channel_model.go`；并在 `pm_dispatch.go` 追加 `PMDispatchJob` 模型。
+  - `internal/store/models.go` 删除 `PMState/PMDispatchJob/TaskRun/SubagentRun/TaskRuntimeSample/TaskSemanticReport/TaskEvent/Channel*/EventBusLog` 结构体定义，统一改为 `type alias` 指向 `contracts`。
+  - services/app/cmd 消费者已从 `store.X` 切换为 `contracts.X`，未在 app/cmd 引入透明别名绕过 contracts。
+- 回归结果：
+  - `go test ./...` 通过
+  - `go build ./...` 通过
+  - `go vet ./...` 通过
+- 依赖变化：
+  - `T21 -> T23 -> T28` 前半段已闭合，`T28` 依赖满足可启动。
+  - `W04` 余票（`T14` `T29`）状态不变，`W05` 可在既有 contracts 边界上并行推进。
 
 ## 每批执行建议
 

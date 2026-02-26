@@ -266,7 +266,7 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession_ArchivedTicket(t 
 	}
 }
 
-func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, jobStatus contracts.PMDispatchJobStatus) store.PMDispatchJob {
+func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, jobStatus contracts.PMDispatchJobStatus) contracts.PMDispatchJob {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := p.StartTicket(ctx, ticketID); err != nil {
@@ -278,14 +278,14 @@ func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, 
 	if err != nil {
 		t.Fatalf("SubmitDispatchTicket failed: %v", err)
 	}
-	var job store.PMDispatchJob
+	var job contracts.PMDispatchJob
 	if err := p.core.DB.WithContext(ctx).First(&job, submission.JobID).Error; err != nil {
 		t.Fatalf("load dispatch job failed: %v", err)
 	}
 	if jobStatus == contracts.PMDispatchRunning {
 		now := time.Now()
 		lease := now.Add(2 * time.Minute)
-		if err := p.core.DB.WithContext(ctx).Model(&store.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
+		if err := p.core.DB.WithContext(ctx).Model(&contracts.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
 			"status":           contracts.PMDispatchRunning,
 			"runner_id":        "recovery-runner",
 			"lease_expires_at": &lease,
@@ -295,7 +295,7 @@ func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, 
 			t.Fatalf("set dispatch running failed: %v", err)
 		}
 		if job.TaskRunID != 0 {
-			if err := p.core.DB.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
+			if err := p.core.DB.WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
 				"orchestration_state": contracts.TaskRunning,
 				"runner_id":           "recovery-runner",
 				"lease_expires_at":    &lease,
@@ -312,9 +312,9 @@ func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, 
 	return job
 }
 
-func assertRecoveredDispatchJob(t *testing.T, p *Project, jobID uint) store.PMDispatchJob {
+func assertRecoveredDispatchJob(t *testing.T, p *Project, jobID uint) contracts.PMDispatchJob {
 	t.Helper()
-	var got store.PMDispatchJob
+	var got contracts.PMDispatchJob
 	if err := p.core.DB.WithContext(context.Background()).First(&got, jobID).Error; err != nil {
 		t.Fatalf("load recovered dispatch job failed: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestIntegration_DaemonRecovery_PMDispatchRunning_AutopilotOff(t *testing.T)
 		t.Fatalf("unexpected recovered error message: %q", got.Error)
 	}
 
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestIntegration_DaemonRecovery_PMDispatchPending_AutopilotOn(t *testing.T) 
 
 	assertRecoveredDispatchJob(t, p, job.ID)
 
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
@@ -468,7 +468,7 @@ func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) 
 	manager := newDaemonManagerComponent(h, nil)
 	manager.runRecovery(ctx)
 
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) 
 
 	var dispatchEventCount int64
 	if err := p.core.DB.WithContext(ctx).
-		Model(&store.TaskEvent{}).
+		Model(&contracts.TaskEvent{}).
 		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "daemon_recovery_dispatch_failed").
 		Count(&dispatchEventCount).Error; err != nil {
 		t.Fatalf("count dispatch recovery events failed: %v", err)
@@ -489,7 +489,7 @@ func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) 
 
 	var fallbackEventCount int64
 	if err := p.core.DB.WithContext(ctx).
-		Model(&store.TaskEvent{}).
+		Model(&contracts.TaskEvent{}).
 		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "daemon_recovery_failed").
 		Count(&fallbackEventCount).Error; err != nil {
 		t.Fatalf("count fallback recovery events failed: %v", err)
@@ -534,14 +534,14 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 	}
 	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
 	expiredAt := time.Now().Add(-3 * time.Minute)
-	if err := p.core.DB.WithContext(ctx).Model(&store.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
+	if err := p.core.DB.WithContext(ctx).Model(&contracts.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
 		"status":           contracts.PMDispatchRunning,
 		"lease_expires_at": &expiredAt,
 		"updated_at":       time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set dispatch lease expired failed: %v", err)
 	}
-	if err := p.core.DB.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
+	if err := p.core.DB.WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
 		"orchestration_state": contracts.TaskRunning,
 		"lease_expires_at":    &expiredAt,
 		"updated_at":          time.Now(),
@@ -563,7 +563,7 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 		t.Fatalf("expected lease expired error message, got=%q", got.Error)
 	}
 
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
@@ -576,7 +576,7 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 
 	var leaseEventCount int64
 	if err := p.core.DB.WithContext(ctx).
-		Model(&store.TaskEvent{}).
+		Model(&contracts.TaskEvent{}).
 		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "lease_expired_dispatch_failed").
 		Count(&leaseEventCount).Error; err != nil {
 		t.Fatalf("count lease expired events failed: %v", err)
@@ -587,7 +587,7 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 
 	var recoveryEventCount int64
 	if err := p.core.DB.WithContext(ctx).
-		Model(&store.TaskEvent{}).
+		Model(&contracts.TaskEvent{}).
 		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "daemon_recovery_dispatch_failed").
 		Count(&recoveryEventCount).Error; err != nil {
 		t.Fatalf("count daemon recovery events failed: %v", err)
@@ -642,7 +642,7 @@ func TestIntegration_DaemonRecovery_PMDispatchTerminalJobs_Unaffected(t *testing
 	now := time.Now()
 	doneFinished := now.Add(-2 * time.Minute)
 	failFinished := now.Add(-1 * time.Minute)
-	doneJob := store.PMDispatchJob{
+	doneJob := contracts.PMDispatchJob{
 		RequestID:       fmt.Sprintf("terminal-succeeded-%d", now.UnixNano()),
 		TicketID:        tk.ID,
 		WorkerID:        w.ID,
@@ -651,7 +651,7 @@ func TestIntegration_DaemonRecovery_PMDispatchTerminalJobs_Unaffected(t *testing
 		ResultJSON:      `{"ok":true}`,
 		FinishedAt:      &doneFinished,
 	}
-	failJob := store.PMDispatchJob{
+	failJob := contracts.PMDispatchJob{
 		RequestID:       fmt.Sprintf("terminal-failed-%d", now.UnixNano()),
 		TicketID:        tk.ID,
 		WorkerID:        w.ID,
@@ -670,14 +670,14 @@ func TestIntegration_DaemonRecovery_PMDispatchTerminalJobs_Unaffected(t *testing
 	manager := newDaemonManagerComponent(h, nil)
 	manager.runRecovery(ctx)
 
-	var doneAfter store.PMDispatchJob
+	var doneAfter contracts.PMDispatchJob
 	if err := p.core.DB.WithContext(ctx).First(&doneAfter, doneJob.ID).Error; err != nil {
 		t.Fatalf("load done job failed: %v", err)
 	}
 	if doneAfter.Status != contracts.PMDispatchSucceeded {
 		t.Fatalf("succeeded job should remain succeeded, got=%s", doneAfter.Status)
 	}
-	var failAfter store.PMDispatchJob
+	var failAfter contracts.PMDispatchJob
 	if err := p.core.DB.WithContext(ctx).First(&failAfter, failJob.ID).Error; err != nil {
 		t.Fatalf("load fail job failed: %v", err)
 	}
@@ -799,7 +799,7 @@ func TestIntegration_StopTicket_ForceFailActiveDispatchAndArchive(t *testing.T) 
 		t.Fatalf("StopTicket failed: %v", err)
 	}
 
-	var afterJob store.PMDispatchJob
+	var afterJob contracts.PMDispatchJob
 	if err := p.core.DB.WithContext(ctx).First(&afterJob, job.ID).Error; err != nil {
 		t.Fatalf("load dispatch job after stop failed: %v", err)
 	}
@@ -822,7 +822,7 @@ func TestIntegration_StopTicket_ForceFailActiveDispatchAndArchive(t *testing.T) 
 		t.Fatalf("unexpected dispatch error after stop: %q", afterJob.Error)
 	}
 
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load dispatch task run failed: %v", err)
 	}
@@ -833,7 +833,7 @@ func TestIntegration_StopTicket_ForceFailActiveDispatchAndArchive(t *testing.T) 
 		t.Fatalf("unexpected dispatch task run error_code: %q", run.ErrorCode)
 	}
 
-	var ev store.TaskEvent
+	var ev contracts.TaskEvent
 	if err := p.core.DB.WithContext(ctx).
 		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "dispatch_force_failed_on_stop").
 		Order("id desc").

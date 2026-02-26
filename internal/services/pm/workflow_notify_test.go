@@ -314,7 +314,7 @@ func TestGatewayStatusNotifier_OnStatusChange_SendsMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenGatewayDB failed: %v", err)
 	}
-	if err := gatewayDB.Create(&store.ChannelBinding{
+	if err := gatewayDB.Create(&contracts.ChannelBinding{
 		ProjectName:    strings.TrimSpace(p.Name),
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        gatewaysendsvc.AdapterFeishu,
@@ -366,7 +366,7 @@ func TestGatewayStatusNotifier_IgnoresNonImportantTransition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenGatewayDB failed: %v", err)
 	}
-	if err := gatewayDB.Create(&store.ChannelBinding{
+	if err := gatewayDB.Create(&contracts.ChannelBinding{
 		ProjectName:    strings.TrimSpace(p.Name),
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        gatewaysendsvc.AdapterFeishu,

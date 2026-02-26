@@ -338,7 +338,7 @@ func TestGateway_PersistInboundAccepted_DuplicatePendingJobReused(t *testing.T) 
 	}
 
 	var inboundCount int64
-	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
+	if err := db.Model(&contracts.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
 		t.Fatalf("count inbound failed: %v", err)
 	}
 	if inboundCount != 1 {
@@ -346,7 +346,7 @@ func TestGateway_PersistInboundAccepted_DuplicatePendingJobReused(t *testing.T) 
 	}
 
 	var jobCount int64
-	if err := db.Model(&store.ChannelTurnJob{}).Count(&jobCount).Error; err != nil {
+	if err := db.Model(&contracts.ChannelTurnJob{}).Count(&jobCount).Error; err != nil {
 		t.Fatalf("count jobs failed: %v", err)
 	}
 	if jobCount != 1 {
@@ -432,14 +432,14 @@ func TestGateway_SubmitPersistsAndPublishes(t *testing.T) {
 	}
 
 	var msgCount int64
-	if err := db.Model(&store.ChannelMessage{}).Count(&msgCount).Error; err != nil {
+	if err := db.Model(&contracts.ChannelMessage{}).Count(&msgCount).Error; err != nil {
 		t.Fatalf("count channel messages failed: %v", err)
 	}
 	if msgCount < 2 {
 		t.Fatalf("expected inbound+outbound in gateway db, got=%d", msgCount)
 	}
 
-	var job store.ChannelTurnJob
+	var job contracts.ChannelTurnJob
 	if err := db.First(&job, got.JobID).Error; err != nil {
 		t.Fatalf("query turn job failed: %v", err)
 	}
@@ -507,7 +507,7 @@ func TestGateway_MarkOutboxDelivery(t *testing.T) {
 		t.Fatalf("MarkOutboxDelivery failed status failed: %v", err)
 	}
 
-	var outbox store.ChannelOutbox
+	var outbox contracts.ChannelOutbox
 	if err := db.First(&outbox, got.OutboxID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestGateway_MarkOutboxDelivery(t *testing.T) {
 		t.Fatalf("outbox last_error unexpected: %q", outbox.LastError)
 	}
 
-	var outbound store.ChannelMessage
+	var outbound contracts.ChannelMessage
 	if err := db.First(&outbound, got.OutboundMessageID).Error; err != nil {
 		t.Fatalf("query outbound message failed: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestGateway_MarkOutboxDelivery(t *testing.T) {
 		t.Fatalf("outbound status should be sent, got=%s", outbound.Status)
 	}
 
-	var conv store.ChannelConversation
+	var conv contracts.ChannelConversation
 	if err := db.First(&conv, outbound.ConversationID).Error; err != nil {
 		t.Fatalf("query conversation failed: %v", err)
 	}

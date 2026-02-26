@@ -77,7 +77,7 @@ func TestInterruptPeerConversation_ReturnsMissWhenNoRunningTurn(t *testing.T) {
 		DB:       db,
 	})
 
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
@@ -88,7 +88,7 @@ func TestInterruptPeerConversation_ReturnsMissWhenNoRunningTurn(t *testing.T) {
 	if err := db.Create(&binding).Error; err != nil {
 		t.Fatalf("create binding failed: %v", err)
 	}
-	conv := store.ChannelConversation{
+	conv := contracts.ChannelConversation{
 		BindingID:          binding.ID,
 		PeerConversationID: "chat-contract-2",
 	}
@@ -131,7 +131,7 @@ func TestInterruptPeerConversation_ReturnsExecutionFailure(t *testing.T) {
 		DB:       db,
 	})
 
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
@@ -142,7 +142,7 @@ func TestInterruptPeerConversation_ReturnsExecutionFailure(t *testing.T) {
 	if err := db.Create(&binding).Error; err != nil {
 		t.Fatalf("create binding failed: %v", err)
 	}
-	conv := store.ChannelConversation{
+	conv := contracts.ChannelConversation{
 		BindingID:          binding.ID,
 		PeerConversationID: "chat-contract-3",
 	}

@@ -310,7 +310,7 @@ func TestManagerTick_IgnoresContinueRedispatch(t *testing.T) {
 	deadline := time.Now().Add(600 * time.Millisecond)
 	for {
 		var cnt int64
-		if err := p.DB.Model(&store.PMDispatchJob{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
+		if err := p.DB.Model(&contracts.PMDispatchJob{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
 			t.Fatalf("count pm dispatch jobs failed: %v", err)
 		}
 		if cnt > 0 {

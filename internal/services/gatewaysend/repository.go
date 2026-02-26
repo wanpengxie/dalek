@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -43,7 +42,7 @@ func (r *GormRepository) nowOrDefault() time.Time {
 	return time.Now()
 }
 
-func (r *GormRepository) FindEnabledBindings(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]store.ChannelBinding, error) {
+func (r *GormRepository) FindEnabledBindings(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]contracts.ChannelBinding, error) {
 	db, err := r.dbOrErr()
 	if err != nil {
 		return nil, err
@@ -51,7 +50,7 @@ func (r *GormRepository) FindEnabledBindings(ctx context.Context, projectName st
 	projectName = strings.TrimSpace(projectName)
 	adapter = strings.TrimSpace(adapter)
 
-	var bindings []store.ChannelBinding
+	var bindings []contracts.ChannelBinding
 	if err := db.WithContext(ctx).
 		Where("project_name = ? AND channel_type = ? AND adapter = ? AND enabled = 1", projectName, channelType, adapter).
 		Order("id ASC").
@@ -61,7 +60,7 @@ func (r *GormRepository) FindEnabledBindings(ctx context.Context, projectName st
 	return bindings, nil
 }
 
-func (r *GormRepository) FindRecentDuplicateDelivery(ctx context.Context, binding store.ChannelBinding, text string) (Delivery, bool, error) {
+func (r *GormRepository) FindRecentDuplicateDelivery(ctx context.Context, binding contracts.ChannelBinding, text string) (Delivery, bool, error) {
 	db, err := r.dbOrErr()
 	if err != nil {
 		return Delivery{}, false, err
@@ -75,7 +74,7 @@ func (r *GormRepository) FindRecentDuplicateDelivery(ctx context.Context, bindin
 		return Delivery{}, false, nil
 	}
 
-	var conv store.ChannelConversation
+	var conv contracts.ChannelConversation
 	err = db.WithContext(ctx).
 		Where("binding_id = ? AND peer_conversation_id = ?", binding.ID, chatID).
 		First(&conv).Error
@@ -87,7 +86,7 @@ func (r *GormRepository) FindRecentDuplicateDelivery(ctx context.Context, bindin
 	}
 
 	cutoff := r.nowOrDefault().Add(-sendDedupWindow)
-	var msg store.ChannelMessage
+	var msg contracts.ChannelMessage
 	err = db.WithContext(ctx).
 		Where("conversation_id = ? AND direction = ? AND adapter = ? AND content_text = ? AND status = ? AND created_at >= ?",
 			conv.ID,
@@ -105,7 +104,7 @@ func (r *GormRepository) FindRecentDuplicateDelivery(ctx context.Context, bindin
 		return Delivery{}, false, err
 	}
 
-	var outbox store.ChannelOutbox
+	var outbox contracts.ChannelOutbox
 	if err := db.WithContext(ctx).Where("message_id = ?", msg.ID).First(&outbox).Error; err != nil {
 		return Delivery{}, false, err
 	}
@@ -124,7 +123,7 @@ func (r *GormRepository) FindRecentDuplicateDelivery(ctx context.Context, bindin
 	}, true, nil
 }
 
-func (r *GormRepository) CreatePending(ctx context.Context, binding store.ChannelBinding, projectName, text string) (persistState, error) {
+func (r *GormRepository) CreatePending(ctx context.Context, binding contracts.ChannelBinding, projectName, text string) (persistState, error) {
 	db, err := r.dbOrErr()
 	if err != nil {
 		return persistState{}, err
@@ -149,7 +148,7 @@ func (r *GormRepository) CreatePending(ctx context.Context, binding store.Channe
 		}
 		payloadJSON := marshalPayload(payload)
 		peerMessageID := fmt.Sprintf("send-%d-%s", now.UnixNano(), randomHex(2))
-		message := store.ChannelMessage{
+		message := contracts.ChannelMessage{
 			ConversationID: conv.ID,
 			Direction:      contracts.ChannelMessageOut,
 			Adapter:        strings.TrimSpace(binding.Adapter),
@@ -164,7 +163,7 @@ func (r *GormRepository) CreatePending(ctx context.Context, binding store.Channe
 		}
 		out.message = message
 
-		outbox := store.ChannelOutbox{
+		outbox := contracts.ChannelOutbox{
 			MessageID:   message.ID,
 			Adapter:     strings.TrimSpace(binding.Adapter),
 			PayloadJSON: payloadJSON,
@@ -181,12 +180,12 @@ func (r *GormRepository) CreatePending(ctx context.Context, binding store.Channe
 		payload["outbox_id"] = outbox.ID
 		payloadJSON = marshalPayload(payload)
 
-		if err := tx.WithContext(ctx).Model(&store.ChannelMessage{}).
+		if err := tx.WithContext(ctx).Model(&contracts.ChannelMessage{}).
 			Where("id = ?", message.ID).
 			Update("payload_json", payloadJSON).Error; err != nil {
 			return err
 		}
-		return tx.WithContext(ctx).Model(&store.ChannelOutbox{}).
+		return tx.WithContext(ctx).Model(&contracts.ChannelOutbox{}).
 			Where("id = ?", outbox.ID).
 			Update("payload_json", payloadJSON).Error
 	})
@@ -196,8 +195,8 @@ func (r *GormRepository) CreatePending(ctx context.Context, binding store.Channe
 	return out, nil
 }
 
-func (r *GormRepository) ensureConversationTx(ctx context.Context, tx *gorm.DB, bindingID uint, peerConversationID string) (store.ChannelConversation, error) {
-	var conv store.ChannelConversation
+func (r *GormRepository) ensureConversationTx(ctx context.Context, tx *gorm.DB, bindingID uint, peerConversationID string) (contracts.ChannelConversation, error) {
+	var conv contracts.ChannelConversation
 	err := tx.WithContext(ctx).
 		Where("binding_id = ? AND peer_conversation_id = ?", bindingID, strings.TrimSpace(peerConversationID)).
 		First(&conv).Error
@@ -205,14 +204,14 @@ func (r *GormRepository) ensureConversationTx(ctx context.Context, tx *gorm.DB, 
 		return conv, nil
 	}
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return store.ChannelConversation{}, err
+		return contracts.ChannelConversation{}, err
 	}
-	conv = store.ChannelConversation{
+	conv = contracts.ChannelConversation{
 		BindingID:          bindingID,
 		PeerConversationID: strings.TrimSpace(peerConversationID),
 	}
 	if err := tx.WithContext(ctx).Create(&conv).Error; err != nil {
-		return store.ChannelConversation{}, err
+		return contracts.ChannelConversation{}, err
 	}
 	return conv, nil
 }
@@ -223,7 +222,7 @@ func (r *GormRepository) MarkSending(ctx context.Context, outboxID uint) error {
 		return err
 	}
 	now := r.nowOrDefault()
-	res := db.WithContext(ctx).Model(&store.ChannelOutbox{}).
+	res := db.WithContext(ctx).Model(&contracts.ChannelOutbox{}).
 		Where("id = ? AND status IN ?", outboxID, []contracts.ChannelOutboxStatus{
 			contracts.ChannelOutboxPending,
 			contracts.ChannelOutboxFailed,
@@ -251,7 +250,7 @@ func (r *GormRepository) MarkSent(ctx context.Context, state persistState) error
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := r.nowOrDefault()
-		if err := tx.WithContext(ctx).Model(&store.ChannelOutbox{}).
+		if err := tx.WithContext(ctx).Model(&contracts.ChannelOutbox{}).
 			Where("id = ?", state.outbox.ID).
 			Updates(map[string]any{
 				"status":        contracts.ChannelOutboxSent,
@@ -261,12 +260,12 @@ func (r *GormRepository) MarkSent(ctx context.Context, state persistState) error
 			}).Error; err != nil {
 			return err
 		}
-		if err := tx.WithContext(ctx).Model(&store.ChannelMessage{}).
+		if err := tx.WithContext(ctx).Model(&contracts.ChannelMessage{}).
 			Where("id = ?", state.message.ID).
 			Update("status", contracts.ChannelMessageSent).Error; err != nil {
 			return err
 		}
-		return tx.WithContext(ctx).Model(&store.ChannelConversation{}).
+		return tx.WithContext(ctx).Model(&contracts.ChannelConversation{}).
 			Where("id = ?", state.conversation.ID).
 			Updates(map[string]any{
 				"last_message_at": &now,
@@ -286,7 +285,7 @@ func (r *GormRepository) MarkFailed(ctx context.Context, state persistState, cau
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := r.nowOrDefault()
-		if err := tx.WithContext(ctx).Model(&store.ChannelOutbox{}).
+		if err := tx.WithContext(ctx).Model(&contracts.ChannelOutbox{}).
 			Where("id = ?", state.outbox.ID).
 			Updates(map[string]any{
 				"status":        contracts.ChannelOutboxFailed,
@@ -296,7 +295,7 @@ func (r *GormRepository) MarkFailed(ctx context.Context, state persistState, cau
 			}).Error; err != nil {
 			return err
 		}
-		return tx.WithContext(ctx).Model(&store.ChannelMessage{}).
+		return tx.WithContext(ctx).Model(&contracts.ChannelMessage{}).
 			Where("id = ?", state.message.ID).
 			Update("status", contracts.ChannelMessageFailed).Error
 	})

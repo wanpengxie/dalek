@@ -372,7 +372,7 @@ func TestListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
 	if err := p.DB.Create(&a).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
 	}
-	run := store.TaskRun{
+	run := contracts.TaskRun{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         p.Key,
@@ -386,7 +386,7 @@ func TestListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
 	if err := p.DB.Create(&run).Error; err != nil {
 		t.Fatalf("create task run failed: %v", err)
 	}
-	if err := p.DB.Create(&store.TaskRuntimeSample{
+	if err := p.DB.Create(&contracts.TaskRuntimeSample{
 		TaskRunID:  run.ID,
 		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
@@ -445,7 +445,7 @@ func TestListTicketViews_UsesWorkerSocketForSessionAlive(t *testing.T) {
 	if err := p.DB.Create(&a).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
 	}
-	run := store.TaskRun{
+	run := contracts.TaskRun{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         p.Key,
@@ -459,7 +459,7 @@ func TestListTicketViews_UsesWorkerSocketForSessionAlive(t *testing.T) {
 	if err := p.DB.Create(&run).Error; err != nil {
 		t.Fatalf("create task run failed: %v", err)
 	}
-	if err := p.DB.Create(&store.TaskRuntimeSample{
+	if err := p.DB.Create(&contracts.TaskRuntimeSample{
 		TaskRunID:  run.ID,
 		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,

@@ -16,10 +16,10 @@ type TaskRuntimeFactory interface {
 }
 
 type TaskRuntime interface {
-	FindRunByID(ctx context.Context, runID uint) (*store.TaskRun, error)
-	FindRunByRequestID(ctx context.Context, requestID string) (*store.TaskRun, error)
-	LatestActiveWorkerRun(ctx context.Context, workerID uint) (*store.TaskRun, error)
-	CreateRun(ctx context.Context, in TaskRuntimeCreateRunInput) (store.TaskRun, error)
+	FindRunByID(ctx context.Context, runID uint) (*contracts.TaskRun, error)
+	FindRunByRequestID(ctx context.Context, requestID string) (*contracts.TaskRun, error)
+	LatestActiveWorkerRun(ctx context.Context, workerID uint) (*contracts.TaskRun, error)
+	CreateRun(ctx context.Context, in TaskRuntimeCreateRunInput) (contracts.TaskRun, error)
 	CancelActiveWorkerRuns(ctx context.Context, workerID uint, reason string, now time.Time) error
 	MarkRunRunning(ctx context.Context, runID uint, runnerID string, leaseExpiresAt *time.Time, now time.Time, bumpAttempt bool) error
 	RenewLease(ctx context.Context, runID uint, runnerID string, leaseExpiresAt *time.Time) error
@@ -100,7 +100,7 @@ type TaskRuntimeListStatusOptions struct {
 }
 
 type TaskRuntimeEventScopeRow struct {
-	store.TaskEvent
+	contracts.TaskEvent
 	TicketID  uint
 	WorkerID  uint
 	OwnerType string

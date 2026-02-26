@@ -44,7 +44,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 		t.Fatalf("create old run failed: %v", err)
 	}
 
-	job := store.PMDispatchJob{
+	job := contracts.PMDispatchJob{
 		RequestID: "dispatch_req_21",
 		TaskRunID: 2101,
 	}
@@ -92,7 +92,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 		t.Fatalf("expected new run running, got=%s", newAfter.OrchestrationState)
 	}
 
-	var runtimeSample store.TaskRuntimeSample
+	var runtimeSample contracts.TaskRuntimeSample
 	if err := p.DB.Where("task_run_id = ?", created.ID).Order("id desc").First(&runtimeSample).Error; err != nil {
 		t.Fatalf("query runtime sample failed: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 		t.Fatalf("expected runtime sample state busy, got=%s", runtimeSample.State)
 	}
 
-	var semantic store.TaskSemanticReport
+	var semantic contracts.TaskSemanticReport
 	if err := p.DB.Where("task_run_id = ?", created.ID).Order("id desc").First(&semantic).Error; err != nil {
 		t.Fatalf("query semantic report failed: %v", err)
 	}

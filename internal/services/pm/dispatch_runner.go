@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 type runPMDispatchJobOptions struct {
@@ -105,7 +104,7 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 	return nil
 }
 
-func (s *Service) executePMDispatchJob(ctx context.Context, job store.PMDispatchJob, t contracts.Ticket, w contracts.Worker, opt runPMDispatchJobOptions) (contracts.PMDispatchJobResult, error) {
+func (s *Service) executePMDispatchJob(ctx context.Context, job contracts.PMDispatchJob, t contracts.Ticket, w contracts.Worker, opt runPMDispatchJobOptions) (contracts.PMDispatchJobResult, error) {
 	_, _, err := s.require()
 	if err != nil {
 		return contracts.PMDispatchJobResult{}, err
