@@ -20,9 +20,11 @@ type fakeAgentRunHandle struct {
 	err    error
 }
 
-func (h *fakeAgentRunHandle) RunID() uint                             { return h.runID }
-func (h *fakeAgentRunHandle) Wait() (agentexec.AgentRunResult, error) { return h.result, h.err }
-func (h *fakeAgentRunHandle) Cancel() error                           { return nil }
+func (h *fakeAgentRunHandle) RunID() uint { return h.runID }
+func (h *fakeAgentRunHandle) Wait(ctx context.Context) (agentexec.AgentRunResult, error) {
+	return h.result, h.err
+}
+func (h *fakeAgentRunHandle) Cancel() error { return nil }
 
 // makeSemanticReport inserts a TaskSemanticReport row so that
 // readWorkerNextActionFromRun can pick up the next_action.

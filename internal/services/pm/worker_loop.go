@@ -78,7 +78,7 @@ func (s *Service) executeWorkerLoop(ctx context.Context, t contracts.Ticket, w c
 			}, time.Now())
 
 		// 2) 等待 agent 完成（无超时）
-		runResult, waitErr := handle.Wait()
+		runResult, waitErr := handle.Wait(loopCtx)
 		if waitErr != nil {
 			s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop wait failed stage=%d: %v", result.Stages, waitErr))
 			return result, fmt.Errorf("worker_loop stage %d wait 失败: %w", result.Stages, waitErr)

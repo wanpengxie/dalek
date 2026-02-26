@@ -26,20 +26,22 @@ func (s *Service) runAgentCLI(ctx context.Context, conversationID string, backen
 			outputMode: prepared.OutputMode,
 			backend:    backend,
 		},
-		Runtime:     s.channelTaskRuntime(),
-		OwnerType:   contracts.TaskOwnerChannel,
-		TaskType:    contracts.TaskTypeChannelTurn,
-		ProjectKey:  s.channelTaskProjectKey(),
-		SubjectType: "channel_conversation",
-		SubjectID:   strings.TrimSpace(conversationID),
-		WorkDir:     strings.TrimSpace(req.WorkDir),
-		Stdin:       prepared.Stdin,
+		BaseConfig: agentexec.BaseConfig{
+			Runtime:     s.channelTaskRuntime(),
+			OwnerType:   contracts.TaskOwnerChannel,
+			TaskType:    contracts.TaskTypeChannelTurn,
+			ProjectKey:  s.channelTaskProjectKey(),
+			SubjectType: "channel_conversation",
+			SubjectID:   strings.TrimSpace(conversationID),
+			WorkDir:     strings.TrimSpace(req.WorkDir),
+		},
+		Stdin: prepared.Stdin,
 	})
 	handle, err := executor.Execute(ctx, strings.TrimSpace(req.Prompt))
 	if err != nil {
 		return agentcli.Result{}, err
 	}
-	runRes, waitErr := handle.Wait()
+	runRes, waitErr := handle.Wait(ctx)
 	out := agentcli.Result{
 		Command:    strings.TrimSpace(prepared.Command),
 		Stdout:     strings.TrimSpace(runRes.Stdout),
@@ -92,22 +94,24 @@ func (s *Service) runAgentSDK(ctx context.Context, req runAgentSDKRequest) (agen
 			manager: manager,
 			req:     req,
 		},
-		Runtime:     s.channelTaskRuntime(),
-		OwnerType:   contracts.TaskOwnerChannel,
-		TaskType:    contracts.TaskTypeChannelTurn,
-		ProjectKey:  s.channelTaskProjectKey(),
-		SubjectType: "channel_conversation",
-		SubjectID:   strings.TrimSpace(req.ConversationID),
-		WorkDir:     strings.TrimSpace(req.WorkDir),
-		Env:         req.Env,
-		SessionID:   strings.TrimSpace(req.SessionID),
+		BaseConfig: agentexec.BaseConfig{
+			Runtime:     s.channelTaskRuntime(),
+			OwnerType:   contracts.TaskOwnerChannel,
+			TaskType:    contracts.TaskTypeChannelTurn,
+			ProjectKey:  s.channelTaskProjectKey(),
+			SubjectType: "channel_conversation",
+			SubjectID:   strings.TrimSpace(req.ConversationID),
+			WorkDir:     strings.TrimSpace(req.WorkDir),
+			Env:         req.Env,
+		},
+		SessionID: strings.TrimSpace(req.SessionID),
 	})
 
 	handle, err := executor.Execute(ctx, strings.TrimSpace(req.Prompt))
 	if err != nil {
 		return agentcli.Result{}, err
 	}
-	runRes, waitErr := handle.Wait()
+	runRes, waitErr := handle.Wait(ctx)
 
 	events, sessionID := parseSDKParsedEvents(runRes.Parsed.Events)
 	out := agentcli.Result{

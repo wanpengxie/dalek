@@ -12,8 +12,8 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-27`
-- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W09A` `W10A` `W10B` `W10C`
-- 当前批次：`W10B + W10C`（`done`）
+- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W09A` `W10A` `W10B` `W10C` `W11A`
+- 当前批次：`W11A`（`done`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
@@ -30,6 +30,7 @@
 - W10A 已完成票：`T32(39)`（logs->preview 重命名 + WorkerLookup 收口）
 - W10B 已完成票：`T17(24)` `T36(43)`（Channel 边界清洗 + PM 可靠性补齐）
 - W10C 已完成票：`T08(15)`（Channel CLI/SDK 执行入口统一到 services/agentexec）
+- W11A 已完成票：`T09(16)`（生命周期去重 + config 拆分 + Wait 可取消）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -78,6 +79,26 @@
   - 以上命令全部通过。
 - 依赖推进：
   - `T07 -> T08` 已闭环，`T09` 可在统一执行入口之上继续推进会话/收口改造。
+
+## W11A 回写（T09 AgentExec（3/3）：生命周期去重 + Config 拆分 + Wait 可取消）
+
+- 状态：`T09` 已完成（2026-02-26）。
+- 关键产物：
+  - 新增 `internal/services/agentexec/base_config.go`，抽取三 executor 共享配置：`Runtime/OwnerType/TaskType/ProjectKey/TicketID/WorkerID/SubjectType/SubjectID/WorkDir/Env`。
+  - 新增 `internal/services/agentexec/run_lifecycle_tracker.go`，统一封装 `CreateRun -> MarkRunRunning -> AppendEvent -> MarkRunSucceeded/Failed/Canceled` 生命周期链路。
+  - `SDKExecutor`、`ProcessExecutor`、`TmuxExecutor` 已改为复用 `RunLifecycleTracker`；删除三处重复状态管理代码，保持对外行为等价。
+  - `AgentRunHandle` 接口升级为 `Wait(ctx context.Context)`；`sdk/process/tmux` 三个 handle 均支持等待可取消。
+  - `TmuxHandle.Wait` 不再使用 `context.Background()` 轮询，改为透传调用方 ctx 并在取消/超时时快速返回。
+  - `pm/service.go`、`pm/worker_loop.go`、`pm/worker_loop_test.go` 已清理遗留 `internal/agent/run` 引用，统一到 `internal/services/agentexec` 权威类型。
+  - `channel` 与 `pm` 的 executor 构造已统一改为 `BaseConfig` 组装，消除重复构造参数。
+  - 新增测试 `internal/services/agentexec/run_lifecycle_tracker_test.go`，覆盖生命周期成功/取消路径及 `TmuxHandle.Wait(ctx)` 可取消路径。
+- 回归验证：
+  - `go test ./internal/services/agentexec/... ./internal/services/pm/... ./internal/services/channel/...`
+  - `go build ./...`
+  - `go test ./...` 在当前执行上下文因 `DALEK_DISPATCH_DEPTH=1` 命中二次派发保护，`cmd/dalek` 的派发类 e2e 用例失败；其余服务包通过。
+  - 在复验环境覆写 `DALEK_DISPATCH_DEPTH=0` 后执行 `go test ./...`，全量通过。
+- 依赖推进：
+  - `T07 -> T08 -> T09` 已闭环，AgentExec 三票收口完成。
 
 ## W10B 回写（T36 PM 可靠性与测试补齐）
 

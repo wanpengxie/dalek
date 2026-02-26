@@ -19,19 +19,7 @@ type TmuxSemanticWatchFunc func(ctx context.Context, requestedAt time.Time)
 
 type TmuxConfig struct {
 	Provider provider.Provider
-	Runtime  core.TaskRuntime
-
-	OwnerType contracts.TaskOwnerType
-	TaskType  string
-
-	ProjectKey  string
-	TicketID    uint
-	WorkerID    uint
-	SubjectType string
-	SubjectID   string
-
-	WorkDir string
-	Env     map[string]string
+	BaseConfig
 
 	Tmux        infra.TmuxClient
 	TmuxSocket  string
@@ -112,45 +100,15 @@ func (e *TmuxExecutor) Execute(ctx context.Context, prompt string) (AgentRunHand
 	}
 	commandLine := shellJoin(bin, args)
 
-	runID := uint(0)
-	if e.cfg.Runtime != nil {
-		req := newRequestID("arun")
-		created, err := e.cfg.Runtime.CreateRun(ctx, core.TaskRuntimeCreateRunInput{
-			OwnerType:          e.cfg.OwnerType,
-			TaskType:           strings.TrimSpace(e.cfg.TaskType),
-			ProjectKey:         strings.TrimSpace(e.cfg.ProjectKey),
-			TicketID:           e.cfg.TicketID,
-			WorkerID:           e.cfg.WorkerID,
-			SubjectType:        strings.TrimSpace(e.cfg.SubjectType),
-			SubjectID:          strings.TrimSpace(e.cfg.SubjectID),
-			RequestID:          req,
-			OrchestrationState: contracts.TaskPending,
-			RequestPayloadJSON: marshalJSON(map[string]any{
-				"provider":       e.cfg.Provider.Name(),
-				"tmux_target":    strings.TrimSpace(target),
-				"prompt_preview": truncateRunes(prompt, 256),
-			}),
-		})
-		if err != nil {
-			return nil, err
-		}
-		runID = created.ID
-		now := time.Now()
-		lease := now.Add(defaultKeepaliveTTL(e.cfg.KeepaliveTTL))
-		if err := e.cfg.Runtime.MarkRunRunning(ctx, runID, strings.TrimSpace(target), &lease, now, true); err != nil {
-			_ = markProcessRunFailed(e.cfg.Runtime, runID, "agent_mark_running_failed", err.Error())
-			return nil, err
-		}
-		_ = e.cfg.Runtime.AppendEvent(ctx, core.TaskRuntimeEventInput{
-			TaskRunID: runID,
-			EventType: "task_started",
-			ToState: map[string]any{
-				"orchestration_state": contracts.TaskRunning,
-				"runner_id":           strings.TrimSpace(target),
-			},
-			Note:      "tmux executor injected",
-			CreatedAt: now,
-		})
+	lifecycle := NewRunLifecycleTracker(e.cfg.BaseConfig)
+	lease := time.Now().Add(defaultKeepaliveTTL(e.cfg.KeepaliveTTL))
+	runID, err := lifecycle.Start(ctx, marshalJSON(map[string]any{
+		"provider":       e.cfg.Provider.Name(),
+		"tmux_target":    strings.TrimSpace(target),
+		"prompt_preview": truncateRunes(prompt, 256),
+	}), strings.TrimSpace(target), &lease, "tmux executor injected")
+	if err != nil {
+		return nil, err
 	}
 
 	if strings.TrimSpace(e.cfg.LogPath) != "" {
@@ -262,18 +220,30 @@ func (h *TmuxHandle) TargetPane() string {
 	return strings.TrimSpace(h.target)
 }
 
-func (h *TmuxHandle) Wait() (AgentRunResult, error) {
+func (h *TmuxHandle) Wait(ctx context.Context) (AgentRunResult, error) {
 	if h == nil {
 		return AgentRunResult{}, fmt.Errorf("tmux handle 为空")
 	}
 	if h.runtime == nil || h.runID == 0 {
 		return AgentRunResult{}, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		run, err := h.runtime.FindRunByID(context.Background(), h.runID)
+		select {
+		case <-ctx.Done():
+			return AgentRunResult{}, ctx.Err()
+		default:
+		}
+
+		run, err := h.runtime.FindRunByID(ctx, h.runID)
 		if err != nil {
+			if ctx.Err() != nil {
+				return AgentRunResult{}, ctx.Err()
+			}
 			return AgentRunResult{}, err
 		}
 		if run != nil {
@@ -287,6 +257,8 @@ func (h *TmuxHandle) Wait() (AgentRunResult, error) {
 			}
 		}
 		select {
+		case <-ctx.Done():
+			return AgentRunResult{}, ctx.Err()
 		case <-ticker.C:
 		}
 	}
