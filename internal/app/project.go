@@ -15,6 +15,7 @@ import (
 	logssvc "dalek/internal/services/logs"
 	notebooksvc "dalek/internal/services/notebook"
 	pmsvc "dalek/internal/services/pm"
+	subagentsvc "dalek/internal/services/subagent"
 	tasksvc "dalek/internal/services/task"
 	ticketsvc "dalek/internal/services/ticket"
 	workersvc "dalek/internal/services/worker"
@@ -34,6 +35,7 @@ type Project struct {
 	logs     *logssvc.Service
 	notebook *notebooksvc.Service
 	pm       *pmsvc.Service
+	subagent *subagentsvc.Service
 	task     *tasksvc.Service
 	channel  *channelsvc.Service
 

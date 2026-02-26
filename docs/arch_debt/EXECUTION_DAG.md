@@ -16,8 +16,8 @@
 - 当前批次：`W03`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
-- W03 已完成票：`T01(8)` `T04(11)`
-- W03 进行中票：`T02(9)` `T11(18)`
+- W03 已完成票：`T01(8)` `T02(9)` `T04(11)`
+- W03 待合并票：`T11(18)`
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -246,6 +246,21 @@ Tickets: <T.. T.. T..>
 - 对 W04/W05 的影响：
   - W04（`T22` `T14` `T31` `T29`）推进类型迁移与拆分时，禁止将 notebook 编排逻辑回流到 app/cmd；统一复用 `services/notebook` 入口。
   - W05（`T23` `T15` `T30` `T37`）继续类型收口时，notebook 跨层契约优先落在 `services/notebook`/`contracts`，禁止新增上层对 `store` 常量的直接依赖。
+
+## W03 回写（T02 Subagent 归位）
+
+- 状态：`T02` 已完成（2026-02-26），subagent 编排与 I/O 已从 app 层下沉到 `internal/services/subagent/`。
+- 交付物：
+  - 新增 `internal/services/subagent`，落地 `Service.Submit/Run` 主链路与 `settings/runtime/helpers` 逻辑。
+  - `internal/app/project_subagent.go` 已瘦身为 facade（`41` 行），仅保留参数映射与服务转调。
+  - `internal/app/home.go` 的 `assembleProject()` 已按 `core.Project` 注入 `subagent` service，复用 T19 的 Project 收敛方式。
+  - `SubmitSubagentRun/RunSubagentJob` 公开签名保持不变；daemon/cmd 调用链路无需改动。
+  - 运行产物路径与文件保持不变：`prompt.txt`、`stream.log`、`sdk-stream.log`、`result.json`。
+- 测试与回归：
+  - 新增 `internal/services/subagent/service_test.go`，覆盖 submit 幂等与 run 成功/失败/取消关键路径。
+  - 已通过 `go test ./internal/services/subagent/...`、`go test ./internal/app/...`、`go test ./internal/services/daemon/...` 与 `go test ./...` 全量回归。
+- 下游约束更新：
+  - app 层禁止回流 subagent 底层 I/O 编排；后续统一执行入口（AgentExec）应直接复用/包裹 `services/subagent`。
 
 ## 每批执行建议
 
