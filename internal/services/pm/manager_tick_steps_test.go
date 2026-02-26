@@ -21,14 +21,14 @@ func TestConsumeTaskEvents_CreatesIncidentAndNeedsUserInbox(t *testing.T) {
 	}
 	rt, run := createWorkerRunForManagerTickTest(t, svc, p, tk.ID, w.ID, "consume-events")
 
-	if err := rt.AppendEvent(context.Background(), core.TaskRuntimeEventInput{
+	if err := rt.AppendEvent(context.Background(), contracts.TaskEventInput{
 		TaskRunID: run.ID,
 		EventType: "watch_error",
 		Note:      "watch failed",
 	}); err != nil {
 		t.Fatalf("append watch_error event failed: %v", err)
 	}
-	if err := rt.AppendEvent(context.Background(), core.TaskRuntimeEventInput{
+	if err := rt.AppendEvent(context.Background(), contracts.TaskEventInput{
 		TaskRunID: run.ID,
 		EventType: "runtime_observation",
 		ToState: map[string]any{
@@ -83,7 +83,7 @@ func TestScanRunningWorkers_TracksBlockedAndProgressable(t *testing.T) {
 	}
 
 	rt, run := createWorkerRunForManagerTickTest(t, svc, p, blockedTicket.ID, blockedWorker.ID, "scan-running")
-	if err := rt.AppendRuntimeSample(context.Background(), core.TaskRuntimeRuntimeSampleInput{
+	if err := rt.AppendRuntimeSample(context.Background(), contracts.TaskRuntimeSampleInput{
 		TaskRunID:  run.ID,
 		State:      contracts.TaskHealthWaitingUser,
 		NeedsUser:  true,
@@ -227,7 +227,7 @@ func createWorkerRunForManagerTickTest(t *testing.T, svc *Service, p *core.Proje
 		t.Fatalf("load task runtime failed: %v", err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	run, err := rt.CreateRun(context.Background(), core.TaskRuntimeCreateRunInput{
+	run, err := rt.CreateRun(context.Background(), contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         p.Key,

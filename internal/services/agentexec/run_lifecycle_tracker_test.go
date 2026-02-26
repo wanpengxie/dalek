@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/services/core"
 	"dalek/internal/store"
 )
 
@@ -27,12 +26,12 @@ type failedCall struct {
 type fakeLifecycleRuntime struct {
 	nextID uint
 
-	createdInputs []core.TaskRuntimeCreateRunInput
+	createdInputs []contracts.TaskRunCreateInput
 	runningCalls  []runningCall
 	succeeded     []uint
 	failed        []failedCall
 	canceled      []failedCall
-	events        []core.TaskRuntimeEventInput
+	events        []contracts.TaskEventInput
 
 	findRunFn func(ctx context.Context, runID uint) (*contracts.TaskRun, error)
 }
@@ -52,7 +51,7 @@ func (f *fakeLifecycleRuntime) LatestActiveWorkerRun(ctx context.Context, worker
 	return nil, nil
 }
 
-func (f *fakeLifecycleRuntime) CreateRun(ctx context.Context, in core.TaskRuntimeCreateRunInput) (contracts.TaskRun, error) {
+func (f *fakeLifecycleRuntime) CreateRun(ctx context.Context, in contracts.TaskRunCreateInput) (contracts.TaskRun, error) {
 	f.createdInputs = append(f.createdInputs, in)
 	if f.nextID == 0 {
 		f.nextID = 1
@@ -90,24 +89,24 @@ func (f *fakeLifecycleRuntime) MarkRunCanceled(ctx context.Context, runID uint, 
 	return nil
 }
 
-func (f *fakeLifecycleRuntime) AppendEvent(ctx context.Context, in core.TaskRuntimeEventInput) error {
+func (f *fakeLifecycleRuntime) AppendEvent(ctx context.Context, in contracts.TaskEventInput) error {
 	f.events = append(f.events, in)
 	return nil
 }
 
-func (f *fakeLifecycleRuntime) AppendRuntimeSample(ctx context.Context, in core.TaskRuntimeRuntimeSampleInput) error {
+func (f *fakeLifecycleRuntime) AppendRuntimeSample(ctx context.Context, in contracts.TaskRuntimeSampleInput) error {
 	return nil
 }
 
-func (f *fakeLifecycleRuntime) AppendSemanticReport(ctx context.Context, in core.TaskRuntimeSemanticReportInput) error {
+func (f *fakeLifecycleRuntime) AppendSemanticReport(ctx context.Context, in contracts.TaskSemanticReportInput) error {
 	return nil
 }
 
-func (f *fakeLifecycleRuntime) ListStatus(ctx context.Context, opt core.TaskRuntimeListStatusOptions) ([]store.TaskStatusView, error) {
+func (f *fakeLifecycleRuntime) ListStatus(ctx context.Context, opt contracts.TaskListStatusOptions) ([]store.TaskStatusView, error) {
 	return nil, nil
 }
 
-func (f *fakeLifecycleRuntime) ListEventsAfterID(ctx context.Context, afterID uint, limit int) ([]core.TaskRuntimeEventScopeRow, error) {
+func (f *fakeLifecycleRuntime) ListEventsAfterID(ctx context.Context, afterID uint, limit int) ([]contracts.TaskEventScopeRow, error) {
 	return nil, nil
 }
 

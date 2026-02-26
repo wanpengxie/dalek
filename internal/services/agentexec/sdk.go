@@ -10,6 +10,7 @@ import (
 
 	"dalek/internal/agent/provider"
 	"dalek/internal/agent/sdkrunner"
+	"dalek/internal/contracts"
 	"dalek/internal/infra"
 	"dalek/internal/services/core"
 )
@@ -286,7 +287,7 @@ func (h *sdkHandle) appendTaskStreamEvent(note string, payload map[string]any) {
 	if summary == "" {
 		summary = "-"
 	}
-	_ = h.runtime.AppendEvent(context.Background(), core.TaskRuntimeEventInput{
+	_ = h.runtime.AppendEvent(context.Background(), contracts.TaskEventInput{
 		TaskRunID: h.runID,
 		EventType: "task_stream",
 		Note:      summary,

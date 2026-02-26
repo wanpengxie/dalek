@@ -45,7 +45,7 @@ func (s *Service) recordPMTaskSemantic(ctx context.Context, taskRunID uint, phas
 	if err != nil {
 		return
 	}
-	_ = rt.AppendSemanticReport(ctx, core.TaskRuntimeSemanticReportInput{
+	_ = rt.AppendSemanticReport(ctx, contracts.TaskSemanticReportInput{
 		TaskRunID:  taskRunID,
 		Phase:      phase,
 		Milestone:  strings.TrimSpace(milestone),
@@ -64,7 +64,7 @@ func (s *Service) recordPMTaskRuntime(ctx context.Context, taskRunID uint, state
 	if err != nil {
 		return
 	}
-	_ = rt.AppendRuntimeSample(ctx, core.TaskRuntimeRuntimeSampleInput{
+	_ = rt.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
 		TaskRunID:  taskRunID,
 		State:      state,
 		NeedsUser:  needsUser,
@@ -111,7 +111,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contr
 		if err := rt.CancelActiveWorkerRuns(ctx, w.ID, reason, now); err != nil {
 			return err
 		}
-		created, err := rt.CreateRun(ctx, core.TaskRuntimeCreateRunInput{
+		created, err := rt.CreateRun(ctx, contracts.TaskRunCreateInput{
 			OwnerType:          contracts.TaskOwnerWorker,
 			TaskType:           "deliver_ticket",
 			ProjectKey:         strings.TrimSpace(p.Key),
@@ -131,7 +131,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contr
 		if err != nil {
 			return err
 		}
-		if err := rt.AppendEvent(ctx, core.TaskRuntimeEventInput{
+		if err := rt.AppendEvent(ctx, contracts.TaskEventInput{
 			TaskRunID: created.ID,
 			EventType: "task_started",
 			ToState: map[string]any{
@@ -141,7 +141,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contr
 		}); err != nil {
 			return err
 		}
-		if err := rt.AppendRuntimeSample(ctx, core.TaskRuntimeRuntimeSampleInput{
+		if err := rt.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
 			TaskRunID:  created.ID,
 			State:      health,
 			NeedsUser:  false,
@@ -152,7 +152,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contr
 		}); err != nil {
 			return err
 		}
-		if err := rt.AppendSemanticReport(ctx, core.TaskRuntimeSemanticReportInput{
+		if err := rt.AppendSemanticReport(ctx, contracts.TaskSemanticReportInput{
 			TaskRunID:  created.ID,
 			Phase:      phase,
 			Milestone:  "dispatch_ready",

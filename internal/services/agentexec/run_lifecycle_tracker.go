@@ -3,7 +3,6 @@ package agentexec
 import (
 	"context"
 	"dalek/internal/contracts"
-	"dalek/internal/services/core"
 	"errors"
 	"strings"
 	"time"
@@ -63,7 +62,7 @@ func (t *RunLifecycleTracker) MarkRunning(ctx context.Context, runnerID string, 
 		_ = markProcessRunFailed(t.base.Runtime, t.runID, "agent_mark_running_failed", err.Error())
 		return err
 	}
-	_ = t.base.Runtime.AppendEvent(ctx, core.TaskRuntimeEventInput{
+	_ = t.base.Runtime.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: t.runID,
 		EventType: "task_started",
 		ToState: map[string]any{
@@ -84,7 +83,7 @@ func (t *RunLifecycleTracker) Finish(ctx context.Context, result AgentRunResult,
 	now := time.Now()
 	if execErr == nil && result.ExitCode == 0 {
 		_ = t.base.Runtime.MarkRunSucceeded(writeCtx, t.runID, marshalJSON(result), now)
-		_ = t.base.Runtime.AppendEvent(writeCtx, core.TaskRuntimeEventInput{
+		_ = t.base.Runtime.AppendEvent(writeCtx, contracts.TaskEventInput{
 			TaskRunID: t.runID,
 			EventType: "task_succeeded",
 			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
@@ -101,7 +100,7 @@ func (t *RunLifecycleTracker) Finish(ctx context.Context, result AgentRunResult,
 	}
 	if isCanceledError(execErr) || isCanceledError(contextErr(ctx)) {
 		_ = t.base.Runtime.MarkRunCanceled(writeCtx, t.runID, "agent_canceled", msg, now)
-		_ = t.base.Runtime.AppendEvent(writeCtx, core.TaskRuntimeEventInput{
+		_ = t.base.Runtime.AppendEvent(writeCtx, contracts.TaskEventInput{
 			TaskRunID: t.runID,
 			EventType: "task_canceled",
 			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
@@ -113,7 +112,7 @@ func (t *RunLifecycleTracker) Finish(ctx context.Context, result AgentRunResult,
 	}
 
 	_ = t.base.Runtime.MarkRunFailed(writeCtx, t.runID, "agent_exit_failed", msg, now)
-	_ = t.base.Runtime.AppendEvent(writeCtx, core.TaskRuntimeEventInput{
+	_ = t.base.Runtime.AppendEvent(writeCtx, contracts.TaskEventInput{
 		TaskRunID: t.runID,
 		EventType: "task_failed",
 		FromState: map[string]any{"orchestration_state": contracts.TaskRunning},

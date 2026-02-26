@@ -23,8 +23,8 @@ type BaseConfig struct {
 	Env     map[string]string
 }
 
-func (c BaseConfig) createRunInput(payload string) core.TaskRuntimeCreateRunInput {
-	return core.TaskRuntimeCreateRunInput{
+func (c BaseConfig) createRunInput(payload string) contracts.TaskRunCreateInput {
+	return contracts.TaskRunCreateInput{
 		OwnerType:          c.OwnerType,
 		TaskType:           strings.TrimSpace(c.TaskType),
 		ProjectKey:         strings.TrimSpace(c.ProjectKey),

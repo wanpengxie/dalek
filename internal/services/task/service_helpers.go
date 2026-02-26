@@ -8,19 +8,6 @@ import (
 	"dalek/internal/fsm"
 )
 
-func NextActionToSemanticPhase(nextAction string) contracts.TaskSemanticPhase {
-	switch strings.TrimSpace(strings.ToLower(nextAction)) {
-	case "done":
-		return contracts.TaskPhaseDone
-	case "wait_user":
-		return contracts.TaskPhaseBlocked
-	case "continue":
-		return contracts.TaskPhaseImplementing
-	default:
-		return contracts.TaskPhaseImplementing
-	}
-}
-
 func toJSON(v any) string {
 	if v == nil {
 		return ""

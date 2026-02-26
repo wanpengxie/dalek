@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/services/core"
-
 	"gorm.io/gorm"
 )
 
@@ -117,7 +115,7 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 			"orchestrator":    "pm_dispatch",
 			"orchestration_v": "v1",
 		})
-		taskRun, err := taskRuntime.CreateRun(ctx, core.TaskRuntimeCreateRunInput{
+		taskRun, err := taskRuntime.CreateRun(ctx, contracts.TaskRunCreateInput{
 			OwnerType:          contracts.TaskOwnerPM,
 			TaskType:           "dispatch_ticket",
 			ProjectKey:         strings.TrimSpace(s.p.Key),
@@ -162,7 +160,7 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 			}
 			return err
 		}
-		if err := taskRuntime.AppendEvent(ctx, core.TaskRuntimeEventInput{
+		if err := taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
 			TaskRunID: taskRun.ID,
 			EventType: "task_enqueued",
 			ToState: map[string]any{
@@ -250,7 +248,7 @@ func (s *Service) claimPMDispatchJob(ctx context.Context, jobID uint, runnerID s
 			if prev != nil {
 				fromState = map[string]any{"orchestration_state": prev.OrchestrationState}
 			}
-			if err := taskRuntime.AppendEvent(ctx, core.TaskRuntimeEventInput{
+			if err := taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
 				TaskRunID: out.TaskRunID,
 				EventType: "task_claimed",
 				FromState: fromState,
@@ -383,7 +381,7 @@ func (s *Service) completePMDispatchJobSuccess(ctx context.Context, jobID uint, 
 		if err := taskRuntime.MarkRunSucceeded(ctx, job.TaskRunID, strings.TrimSpace(resultJSON), now); err != nil {
 			return err
 		}
-		if err := taskRuntime.AppendEvent(ctx, core.TaskRuntimeEventInput{
+		if err := taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
 			TaskRunID: job.TaskRunID,
 			EventType: "task_succeeded",
 			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
@@ -447,7 +445,7 @@ func (s *Service) completePMDispatchJobFailed(ctx context.Context, jobID uint, r
 		if err := taskRuntime.MarkRunFailed(ctx, job.TaskRunID, "dispatch_failed", strings.TrimSpace(errMsg), now); err != nil {
 			return err
 		}
-		if err := taskRuntime.AppendEvent(ctx, core.TaskRuntimeEventInput{
+		if err := taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
 			TaskRunID: job.TaskRunID,
 			EventType: "task_failed",
 			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},

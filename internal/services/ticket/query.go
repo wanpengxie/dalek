@@ -187,7 +187,7 @@ func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData,
 	if err != nil {
 		return ticketViewData{}, err
 	}
-	taskViews, err := taskRuntime.ListStatus(ctx, core.TaskRuntimeListStatusOptions{
+	taskViews, err := taskRuntime.ListStatus(ctx, contracts.TaskListStatusOptions{
 		OwnerType:       contracts.TaskOwnerWorker,
 		IncludeTerminal: true,
 		Limit:           5000,

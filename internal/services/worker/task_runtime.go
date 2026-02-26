@@ -56,7 +56,7 @@ func (s *Service) appendWorkerTaskEvent(ctx context.Context, workerID uint, even
 	if err != nil || run == nil {
 		return err
 	}
-	return rt.AppendEvent(ctx, core.TaskRuntimeEventInput{
+	return rt.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: run.ID,
 		EventType: strings.TrimSpace(eventType),
 		Note:      strings.TrimSpace(note),
@@ -103,7 +103,7 @@ func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt c
 		reason = "worker report bootstrap"
 	}
 	requestID := fmt.Sprintf("wrk_legacy_w%d_%d", w.ID, now.UnixNano())
-	created, err := rt.CreateRun(ctx, core.TaskRuntimeCreateRunInput{
+	created, err := rt.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         strings.TrimSpace(p.Key),
@@ -122,7 +122,7 @@ func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt c
 	if err != nil {
 		return contracts.TaskRun{}, err
 	}
-	_ = rt.AppendEvent(ctx, core.TaskRuntimeEventInput{
+	_ = rt.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: created.ID,
 		EventType: "task_started",
 		ToState: map[string]any{
@@ -155,7 +155,7 @@ func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt c
 	if err != nil {
 		return err
 	}
-	if err := rt.AppendRuntimeSample(ctx, core.TaskRuntimeRuntimeSampleInput{
+	if err := rt.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
 		TaskRunID:  run.ID,
 		State:      runtimeHealth,
 		NeedsUser:  needsUser,
@@ -170,8 +170,8 @@ func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt c
 	}); err != nil {
 		return err
 	}
-	phase := core.NextActionToSemanticPhase(r.NextAction)
-	if err := rt.AppendSemanticReport(ctx, core.TaskRuntimeSemanticReportInput{
+	phase := contracts.NextActionToSemanticPhase(r.NextAction)
+	if err := rt.AppendSemanticReport(ctx, contracts.TaskSemanticReportInput{
 		TaskRunID:  run.ID,
 		Phase:      phase,
 		Milestone:  "agent_report",
@@ -189,7 +189,7 @@ func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt c
 	}); err != nil {
 		return err
 	}
-	_ = rt.AppendEvent(ctx, core.TaskRuntimeEventInput{
+	_ = rt.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: run.ID,
 		EventType: "semantic_reported",
 		ToState: map[string]any{
@@ -204,7 +204,7 @@ func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt c
 		if err := rt.MarkRunSucceeded(ctx, run.ID, workerTaskJSON(r), now); err != nil {
 			return err
 		}
-		if err := rt.AppendEvent(ctx, core.TaskRuntimeEventInput{
+		if err := rt.AppendEvent(ctx, contracts.TaskEventInput{
 			TaskRunID: run.ID,
 			EventType: "task_succeeded",
 			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
@@ -249,7 +249,7 @@ func (s *Service) finalizeWorkerTaskRunOnStopWithRuntime(ctx context.Context, rt
 	if from == "" {
 		from = string(contracts.TaskRunning)
 	}
-	if err := rt.AppendRuntimeSample(ctx, core.TaskRuntimeRuntimeSampleInput{
+	if err := rt.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
 		TaskRunID:  run.ID,
 		State:      contracts.TaskHealthDead,
 		NeedsUser:  false,
@@ -268,7 +268,7 @@ func (s *Service) finalizeWorkerTaskRunOnStopWithRuntime(ctx context.Context, rt
 	if err := rt.MarkRunCanceled(ctx, run.ID, "worker_stopped", reason, now); err != nil {
 		return err
 	}
-	return rt.AppendEvent(ctx, core.TaskRuntimeEventInput{
+	return rt.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: run.ID,
 		EventType: "task_canceled",
 		FromState: map[string]any{

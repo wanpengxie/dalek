@@ -10,7 +10,7 @@ func TestService_SubagentRunRoundTrip(t *testing.T) {
 	svc := newTaskServiceForTest(t)
 	ctx := context.Background()
 
-	taskRun, err := svc.CreateRun(ctx, CreateRunInput{
+	taskRun, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerSubagent,
 		TaskType:           contracts.TaskTypeSubagentRun,
 		ProjectKey:         "demo",
@@ -77,7 +77,7 @@ func TestService_CreateSubagentRun_DuplicateReturnsExisting(t *testing.T) {
 	svc := newTaskServiceForTest(t)
 	ctx := context.Background()
 
-	taskRun, err := svc.CreateRun(ctx, CreateRunInput{
+	taskRun, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerSubagent,
 		TaskType:           contracts.TaskTypeSubagentRun,
 		ProjectKey:         "demo",

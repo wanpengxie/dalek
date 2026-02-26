@@ -268,7 +268,7 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	}
 	rt := tasksvc.New(p.DB)
 	now := time.Now().UTC().Truncate(time.Second)
-	run, err := rt.CreateRun(context.Background(), tasksvc.CreateRunInput{
+	run, err := rt.CreateRun(context.Background(), contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         p.Key,
@@ -283,7 +283,7 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create task run failed: %v", err)
 	}
-	if err := rt.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
+	if err := rt.AppendRuntimeSample(context.Background(), contracts.TaskRuntimeSampleInput{
 		TaskRunID:  run.ID,
 		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
@@ -316,7 +316,7 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	if fTmux.KillSessionCalls != 1 {
 		t.Fatalf("expected one kill-session call, got %d", fTmux.KillSessionCalls)
 	}
-	statusRows, err := rt.ListStatus(context.Background(), tasksvc.ListStatusOptions{
+	statusRows, err := rt.ListStatus(context.Background(), contracts.TaskListStatusOptions{
 		OwnerType:       contracts.TaskOwnerWorker,
 		WorkerID:        w.ID,
 		IncludeTerminal: true,
@@ -418,7 +418,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 	rt := tasksvc.New(p.DB)
 	for i, w := range workers {
 		now := time.Now().UTC().Add(time.Duration(i) * time.Second)
-		run, err := rt.CreateRun(context.Background(), tasksvc.CreateRunInput{
+		run, err := rt.CreateRun(context.Background(), contracts.TaskRunCreateInput{
 			OwnerType:          contracts.TaskOwnerWorker,
 			TaskType:           "deliver_ticket",
 			ProjectKey:         p.Key,
@@ -433,7 +433,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 		if err != nil {
 			t.Fatalf("create task run failed: %v", err)
 		}
-		if err := rt.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
+		if err := rt.AppendRuntimeSample(context.Background(), contracts.TaskRuntimeSampleInput{
 			TaskRunID:  run.ID,
 			State:      contracts.TaskHealthBusy,
 			NeedsUser:  false,
@@ -475,7 +475,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 		t.Fatalf("backlog ticket should stay backlog, got=%s", got[tkBacklog.ID])
 	}
 
-	statusRows, err := rt.ListStatus(context.Background(), tasksvc.ListStatusOptions{
+	statusRows, err := rt.ListStatus(context.Background(), contracts.TaskListStatusOptions{
 		OwnerType:       contracts.TaskOwnerWorker,
 		IncludeTerminal: true,
 		Limit:           20,

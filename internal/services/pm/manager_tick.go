@@ -309,7 +309,7 @@ func (s *Service) scanRunningWorkers(ctx context.Context, db *gorm.DB, taskRunti
 		return out, err
 	}
 
-	taskViews, err := taskRuntime.ListStatus(ctx, core.TaskRuntimeListStatusOptions{
+	taskViews, err := taskRuntime.ListStatus(ctx, contracts.TaskListStatusOptions{
 		OwnerType:       contracts.TaskOwnerWorker,
 		IncludeTerminal: true,
 		Limit:           5000,
@@ -602,7 +602,7 @@ func (s *Service) handleDispatchFailure(ctx context.Context, ticketID, workerID 
 	return errs
 }
 
-func taskEventBody(ev core.TaskRuntimeEventScopeRow) string {
+func taskEventBody(ev contracts.TaskEventScopeRow) string {
 	body := strings.TrimSpace(ev.Note)
 	if body != "" {
 		return body
@@ -614,7 +614,7 @@ func taskEventBody(ev core.TaskRuntimeEventScopeRow) string {
 	return strings.TrimSpace(ev.PayloadJSON)
 }
 
-func parseTaskEventSignals(ev core.TaskRuntimeEventScopeRow) (needsUser bool, runtimeHealth string, nextAction string, summary string) {
+func parseTaskEventSignals(ev contracts.TaskEventScopeRow) (needsUser bool, runtimeHealth string, nextAction string, summary string) {
 	toState := parseJSONMap(ev.ToStateJSON)
 	payload := parseJSONMap(ev.PayloadJSON)
 

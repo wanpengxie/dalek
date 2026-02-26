@@ -11,34 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-type CreateRunInput struct {
-	OwnerType contracts.TaskOwnerType
-	TaskType  string
-
-	ProjectKey  string
-	TicketID    uint
-	WorkerID    uint
-	SubjectType string
-	SubjectID   string
-
-	RequestID string
-
-	OrchestrationState contracts.TaskOrchestrationState
-	RunnerID           string
-	LeaseExpiresAt     *time.Time
-	Attempt            int
-
-	RequestPayloadJSON string
-	ResultPayloadJSON  string
-
-	ErrorCode    string
-	ErrorMessage string
-
-	StartedAt  *time.Time
-	FinishedAt *time.Time
-}
-
-func (s *Service) CreateRun(ctx context.Context, in CreateRunInput) (contracts.TaskRun, error) {
+func (s *Service) CreateRun(ctx context.Context, in contracts.TaskRunCreateInput) (contracts.TaskRun, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return contracts.TaskRun{}, err
