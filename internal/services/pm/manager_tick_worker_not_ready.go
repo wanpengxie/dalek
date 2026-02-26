@@ -3,6 +3,7 @@ package pm
 import (
 	"context"
 	"dalek/internal/contracts"
+	"dalek/internal/fsm"
 	"fmt"
 	"strings"
 	"time"
@@ -35,7 +36,7 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 			return err
 		}
 		from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
-		if from == contracts.TicketDone || from == contracts.TicketArchived || from == contracts.TicketBlocked {
+		if !fsm.ShouldDemoteOnDispatchFailed(from) {
 			return nil
 		}
 		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).

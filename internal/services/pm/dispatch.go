@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
+	"dalek/internal/fsm"
 	"dalek/internal/repo"
 
 	"gorm.io/gorm"
@@ -150,7 +151,7 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 			return err
 		}
 		from := normalizeTicketWorkflowStatus(cur.WorkflowStatus)
-		if from == contracts.TicketDone || from == contracts.TicketArchived || from == contracts.TicketActive {
+		if !fsm.ShouldPromoteOnDispatchClaim(from) {
 			return nil
 		}
 		now := time.Now()
@@ -195,11 +196,13 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return contracts.Ticket{}, nil, err
 	}
-	if t.WorkflowStatus == contracts.TicketArchived {
-		return contracts.Ticket{}, nil, fmt.Errorf("ticket 已归档，不能派发（dispatch）：t%d", ticketID)
-	}
-	if t.WorkflowStatus == contracts.TicketDone {
-		return contracts.Ticket{}, nil, fmt.Errorf("ticket 已完成，不能派发（dispatch）：t%d", ticketID)
+	if !fsm.CanDispatchTicket(t.WorkflowStatus) {
+		switch contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) {
+		case contracts.TicketArchived:
+			return contracts.Ticket{}, nil, fmt.Errorf("ticket 已归档，不能派发（dispatch）：t%d", ticketID)
+		default:
+			return contracts.Ticket{}, nil, fmt.Errorf("ticket 已完成，不能派发（dispatch）：t%d", ticketID)
+		}
 	}
 	w, err := s.worker.LatestWorker(ctx, ticketID)
 	if err != nil {

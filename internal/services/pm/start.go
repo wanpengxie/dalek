@@ -3,6 +3,7 @@ package pm
 import (
 	"context"
 	"dalek/internal/contracts"
+	"dalek/internal/fsm"
 	"fmt"
 	"strings"
 	"time"
@@ -40,11 +41,13 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return nil, err
 	}
-	if t.WorkflowStatus == contracts.TicketArchived {
-		return nil, fmt.Errorf("ticket 已归档，不能启动（start）：t%d", ticketID)
-	}
-	if t.WorkflowStatus == contracts.TicketDone {
-		return nil, fmt.Errorf("ticket 已完成，不能启动（start）：t%d", ticketID)
+	if !fsm.CanStartTicket(t.WorkflowStatus) {
+		switch contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) {
+		case contracts.TicketArchived:
+			return nil, fmt.Errorf("ticket 已归档，不能启动（start）：t%d", ticketID)
+		default:
+			return nil, fmt.Errorf("ticket 已完成，不能启动（start）：t%d", ticketID)
+		}
 	}
 
 	// 1) 启动 worker 资源（worktree + tmux session），不做 PM bootstrap。

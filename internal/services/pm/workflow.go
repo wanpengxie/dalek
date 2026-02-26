@@ -42,7 +42,7 @@ func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, st
 			return err
 		}
 		from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
-		if from == contracts.TicketArchived {
+		if !fsm.CanManualSetWorkflowStatus(from) {
 			return fmt.Errorf("ticket 已归档，不能修改 workflow_status: t%d", ticketID)
 		}
 		if from == status {
@@ -87,7 +87,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return err
 	}
-	if t.WorkflowStatus == contracts.TicketArchived {
+	if !fsm.CanArchiveTicket(t.WorkflowStatus) {
 		return nil
 	}
 
@@ -121,7 +121,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 			return err
 		}
 		from := normalizeTicketWorkflowStatus(cur.WorkflowStatus)
-		if from == contracts.TicketArchived {
+		if !fsm.CanArchiveTicket(from) {
 			return nil
 		}
 		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
@@ -233,11 +233,11 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 		if err := tx.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 			return err
 		}
-		if t.WorkflowStatus == contracts.TicketArchived {
+		if !fsm.ShouldApplyWorkerReport(t.WorkflowStatus) {
 			return nil
 		}
 		// 不允许自动把 done 回滚为 active（例如 report continue 误发）。
-		if t.WorkflowStatus == contracts.TicketDone && promoteTo == contracts.TicketActive {
+		if !fsm.CanReportPromoteTo(t.WorkflowStatus, promoteTo) {
 			return nil
 		}
 		from := normalizeTicketWorkflowStatus(t.WorkflowStatus)

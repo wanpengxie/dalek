@@ -3,6 +3,7 @@ package pm
 import (
 	"context"
 	"dalek/internal/contracts"
+	"dalek/internal/fsm"
 	"fmt"
 	"strings"
 	"time"
@@ -47,11 +48,13 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return DirectDispatchResult{}, err
 	}
-	if t.WorkflowStatus == contracts.TicketArchived {
-		return DirectDispatchResult{}, fmt.Errorf("ticket 已归档：t%d", ticketID)
-	}
-	if t.WorkflowStatus == contracts.TicketDone {
-		return DirectDispatchResult{}, fmt.Errorf("ticket 已完成：t%d", ticketID)
+	if !fsm.CanDispatchTicket(t.WorkflowStatus) {
+		switch contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) {
+		case contracts.TicketArchived:
+			return DirectDispatchResult{}, fmt.Errorf("ticket 已归档：t%d", ticketID)
+		default:
+			return DirectDispatchResult{}, fmt.Errorf("ticket 已完成：t%d", ticketID)
+		}
 	}
 
 	autoStart := dispatchAutoStartEnabled(opt.AutoStart)
