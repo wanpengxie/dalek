@@ -2,7 +2,7 @@
 
 > 来源：`docs/arch_debt/source/ARCH_AUDIT_REPORT_2026-02-26.md` + `docs/arch_debt/issues.tsv`
 > 目标：CRITICAL/HIGH 全量清零；MEDIUM/LOW 选重要项一并处理
-> 估算：约 37 个 ticket（以“每票 500-2000 行”口径归并）
+> 估算：约 39 个 ticket（以“每票 500-2000 行”口径归并）
 
 说明：
 
@@ -11,6 +11,24 @@
 3. Ticket 标题建议保留覆盖 ID，方便回溯审计与复核。
 
 ---
+
+## Tier 1：重构前/中必须先引入的基础组件
+
+这类 ticket 的目标是“搭地基”，让后续迁移/拆包/归位时直接使用新组件，避免重构一半又回头补基础设施。
+
+## T38 结构化日志（slog）+ 注入 Logger + daemon HTTP recover
+
+目标改动量：~1200-2000 行  
+覆盖 ID：`CH-M4` `GS-L2` `SR-L2` `CMD-L3`  
+范围：引入 Go 1.21+ `log/slog` 作为统一日志；通过依赖注入传递 `*slog.Logger`（服务层可在测试中替换 handler/级别）；逐步替换 services 层的 `log.Printf`；补齐 daemon HTTP 的 panic recover 中间件（panic 不再击垮 daemon 进程，且用 slog 记录）。  
+验收：services 层不再裸 `log.Printf`；可按 ticket/worker/request 维度带字段；测试可控制日志输出；daemon handler panic 不再 crash 进程。
+
+## T39 通用状态机（transition table）基础组件
+
+目标改动量：~600-1200 行  
+覆盖 ID：`TS-M1`  
+范围：新增通用 FSM/transition table（`ValidTransitions`/`CanTransition` 纯函数或泛型 `FSM[S comparable]`）；为 Ticket/Worker/PMDispatchJob/TaskRun 至少落 1 份“权威转换表 + 单测”，作为 T20/T27 的迁移目标（避免转换规则散落在 SQL WHERE + if）。  
+验收：合法转换路径一眼可读；状态机本身可单测；T20/T27 不再需要自建一套“隐式规则”。
 
 ## P0：优先清零 CRITICAL（并同步消灭相关 HIGH）
 

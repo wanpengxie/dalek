@@ -17,6 +17,7 @@
 - 建议优先解决的 MEDIUM 子集：`docs/arch_debt/MEDIUM_SELECTED.md`
 - 建议解决的 LOW 子集：`docs/arch_debt/LOW_SELECTED.md`
 - Ticket 拆分（每票 500-2000 行）：`docs/arch_debt/TICKETS.md`
+- 执行 DAG（每批 1~4 张）：`docs/arch_debt/EXECUTION_DAG.md`
 
 ## 建任务建议（最小模板）
 
