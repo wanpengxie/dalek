@@ -68,7 +68,7 @@ func (s *Service) actionExecutor() *ActionExecutor {
 	ticketSvc := ticketsvc.New(s.p.DB)
 	workerSvc := workersvc.New(s.p, ticketSvc)
 	pmSvc := pmsvc.New(s.p, workerSvc)
-	s.actionExec = newActionExecutor(s.p, ticketSvc, pmSvc, workerSvc)
+	s.actionExec = newActionExecutor(ticketSvc, pmSvc, workerSvc)
 	return s.actionExec
 }
 
@@ -283,7 +283,7 @@ func (s *Service) ResetPeerConversationSession(ctx context.Context, channelType 
 		return false, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return false, fmt.Errorf("context 不能为空")
 	}
 
 	conv, found, err := s.resolvePeerConversation(ctx, channelType, adapter, peerConversationID)
@@ -316,7 +316,7 @@ func (s *Service) resolvePeerConversation(ctx context.Context, channelType contr
 		return contracts.ChannelConversation{}, false, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return contracts.ChannelConversation{}, false, fmt.Errorf("context 不能为空")
 	}
 	channelType = toStoreChannelType(channelType)
 	if channelType == "" {
@@ -368,7 +368,7 @@ func (s *Service) gatewayTurnTimeout() time.Duration {
 
 func (s *Service) acquireTurnSlot(ctx context.Context) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return fmt.Errorf("context 不能为空")
 	}
 	select {
 	case s.turnSem <- struct{}{}:
@@ -443,7 +443,7 @@ func (s *Service) ProcessInbound(ctx context.Context, env contracts.InboundEnvel
 		return ProcessResult{}, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return ProcessResult{}, fmt.Errorf("context 不能为空")
 	}
 
 	env.Normalize()
@@ -547,7 +547,7 @@ func (s *Service) claimTurnJob(ctx context.Context, jobID uint, runnerID string,
 		return contracts.ChannelTurnJob{}, false, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return contracts.ChannelTurnJob{}, false, fmt.Errorf("context 不能为空")
 	}
 	if leaseTTL <= 0 {
 		leaseTTL = 90 * time.Second
@@ -589,7 +589,7 @@ func (s *Service) completeTurnJobSuccess(ctx context.Context, jobID uint, runner
 		return err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return fmt.Errorf("context 不能为空")
 	}
 	now := time.Now()
 	res := db.WithContext(ctx).Model(&contracts.ChannelTurnJob{}).
@@ -618,7 +618,7 @@ func (s *Service) completeTurnJobFailed(ctx context.Context, jobID uint, runnerI
 		return err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return fmt.Errorf("context 不能为空")
 	}
 	now := time.Now()
 	res := db.WithContext(ctx).Model(&contracts.ChannelTurnJob{}).
@@ -647,7 +647,7 @@ func (s *Service) waitTurnJob(ctx context.Context, jobID uint, pollInterval time
 		return contracts.ChannelTurnJob{}, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return contracts.ChannelTurnJob{}, fmt.Errorf("context 不能为空")
 	}
 	if pollInterval <= 0 {
 		pollInterval = 100 * time.Millisecond
@@ -673,7 +673,7 @@ func (s *Service) waitTurnJob(ctx context.Context, jobID uint, pollInterval time
 
 func (s *Service) collectTurnResultWithTimeout(ctx context.Context, bindingID, conversationID, inboundMessageID, jobID uint) (ProcessResult, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return ProcessResult{}, fmt.Errorf("context 不能为空")
 	}
 	job, err := s.waitTurnJob(ctx, jobID, 80*time.Millisecond)
 	if err == nil {
@@ -737,7 +737,7 @@ func (s *Service) dispatchOutbox(ctx context.Context, outboxID uint) error {
 		return err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return fmt.Errorf("context 不能为空")
 	}
 	var outbox contracts.ChannelOutbox
 	if err := db.WithContext(ctx).First(&outbox, outboxID).Error; err != nil {
@@ -805,7 +805,7 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound contracts.Chann
 		return pmAgentTurnResponse{}, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return pmAgentTurnResponse{}, fmt.Errorf("context 不能为空")
 	}
 
 	repoRoot := p.RepoRoot

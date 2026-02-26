@@ -31,7 +31,7 @@
 - W10B 已完成票：`T17(24)` `T36(43)`（Channel 边界清洗 + PM 可靠性补齐）
 - W10C 已完成票：`T08(15)`（Channel CLI/SDK 执行入口统一到 services/agentexec）
 - W11A 已完成票：`T09(16)`（生命周期去重 + config 拆分 + Wait 可取消）
-- W12A 已完成票：`T50`（Task/Core 运行态模型统一与状态机归一）`T51`（PM DispatchQueue 分层拆解：queue/completion/workflow）
+- W12A 已完成票：`T50`（Task/Core 运行态模型统一与状态机归一）`T51`（PM DispatchQueue 分层拆解：queue/completion/workflow）`T52`（Channel 并发语义+依赖边界+context 传播收口）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -615,6 +615,23 @@ Tickets: <T.. T.. T..>
 - 依赖与下游影响：
   - `T14 -> T15` 依赖闭环已完成，`T16`（channel service 生命周期治理）可直接基于新的 turn 执行边界继续推进。
   - 后续涉及 pending action 变更，必须分别落在 store/workflow 边界，禁止回退为单文件混合职责实现。
+
+## W12A 回写（T52 Channel 并发语义+依赖边界+context 收口）
+
+- 状态：`T52` 已完成（2026-02-27）。
+- 关键产物：
+  - CH-H5：移除 `ActionExecutor.project *core.Project` 字段，消除 channel→core 非法耦合。`newActionExecutor` 不再接收 Project 参数，所有业务操作统一通过 `ticketSvc/pmSvc/workerSvc` 注入。
+  - CH-M5：`gateway_runtime.go` 中 `streamedAny` 从普通 `bool` 改为 `atomic.Bool`，消除 stream callback 与主 goroutine 之间的数据竞态。
+  - CH-M3：治理 channel 包内 35 处 `context.Background()` 滥用——公开 API 与内部方法中的 `if ctx == nil` fallback 改为返回明确错误；保留 3 处合法使用（processInboundItem 独立 goroutine、failTurn 终态落盘、collectTurnResultWithTimeout best-effort 兜底）。
+- 改动量：9 文件，43 行新增 / 46 行删除。
+- 回归验证：
+  - `go test ./internal/services/channel/...` 通过
+  - `go vet ./internal/services/channel/... ./internal/app/...` 通过
+  - `git merge --no-edit main` — Already up to date
+- 约束：
+  - context 传播策略统一：调用者必须提供有效 context，nil 时返回明确错误而非静默降级。
+  - ActionExecutor 不再持有 Project 引用，后续不得回退到 DB 直连。
+- 已解锁：T53（若存在）可基于清洗后的 channel 执行边界继续推进。
 
 ## 每批执行建议
 

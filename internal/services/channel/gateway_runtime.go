@@ -158,7 +158,7 @@ func (g *Gateway) Stop(ctx context.Context) error {
 		return nil
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return fmt.Errorf("context 不能为空")
 	}
 
 	g.stopOnce.Do(func() {
@@ -199,7 +199,7 @@ func (g *Gateway) MarkOutboxDelivery(ctx context.Context, outboxID uint, deliver
 		return nil
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return fmt.Errorf("context 不能为空")
 	}
 
 	errMsg := fmt.Sprint(cause)
@@ -269,7 +269,7 @@ func (g *Gateway) Submit(ctx context.Context, req GatewayInboundRequest) error {
 		return ErrGatewayStopped
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return fmt.Errorf("context 不能为空")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -438,9 +438,9 @@ func (g *Gateway) processInboundItem(item InboundItem) {
 	} else {
 		turnCtx, cancel = context.WithCancel(ctx)
 	}
-	streamedAny := false
+	var streamedAny atomic.Bool
 	turnCtx = withStreamEventEmitter(turnCtx, func(ev AgentEvent) {
-		streamedAny = true
+		streamedAny.Store(true)
 		g.publishStreamAgentEvent(item.ProjectName, item.Envelope.PeerConversationID, item.Envelope.PeerMessageID, ev)
 	})
 	result, runErr := projectCtx.Runtime.ProcessInbound(turnCtx, item.Envelope)
@@ -453,7 +453,7 @@ func (g *Gateway) processInboundItem(item InboundItem) {
 			return
 		}
 		g.callback(item, persisted, nil)
-		if !streamedAny {
+		if !streamedAny.Load() {
 			g.publishFromResult(item.ProjectName, item.Envelope.PeerConversationID, item.Envelope.PeerMessageID, persisted)
 		} else {
 			g.publishFinalFromResult(item.ProjectName, item.Envelope.PeerConversationID, item.Envelope.PeerMessageID, persisted)
@@ -468,7 +468,7 @@ func (g *Gateway) processInboundItem(item InboundItem) {
 		return
 	}
 	g.callback(item, persisted, nil)
-	if !streamedAny {
+	if !streamedAny.Load() {
 		g.publishFromResult(item.ProjectName, item.Envelope.PeerConversationID, item.Envelope.PeerMessageID, persisted)
 	} else {
 		g.publishFinalFromResult(item.ProjectName, item.Envelope.PeerConversationID, item.Envelope.PeerMessageID, persisted)
@@ -827,7 +827,7 @@ func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType co
 		return "", InterruptResult{}, fmt.Errorf("gateway db 为空")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return "", InterruptResult{}, fmt.Errorf("context 不能为空")
 	}
 	channelType = toStoreChannelType(channelType)
 	if channelType == "" {
@@ -920,7 +920,7 @@ func (g *Gateway) ResetBoundConversationSession(ctx context.Context, channelType
 		return "", false, fmt.Errorf("gateway db 为空")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return "", false, fmt.Errorf("context 不能为空")
 	}
 	channelType = toStoreChannelType(channelType)
 	if channelType == "" {
@@ -969,7 +969,7 @@ func (g *Gateway) LookupBoundProject(ctx context.Context, channelType contracts.
 		return "", fmt.Errorf("gateway db 为空")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return "", fmt.Errorf("context 不能为空")
 	}
 	adapter = strings.TrimSpace(adapter)
 	peerProjectKey = strings.TrimSpace(peerProjectKey)
@@ -994,7 +994,7 @@ func (g *Gateway) BindProject(ctx context.Context, channelType contracts.Channel
 		return "", fmt.Errorf("gateway db 为空")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return "", fmt.Errorf("context 不能为空")
 	}
 	projectName = strings.TrimSpace(projectName)
 	if projectName == "" {
@@ -1047,7 +1047,7 @@ func (g *Gateway) UnbindProject(ctx context.Context, channelType contracts.Chann
 		return false, fmt.Errorf("gateway db 为空")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return false, fmt.Errorf("context 不能为空")
 	}
 	adapter = strings.TrimSpace(adapter)
 	peerProjectKey = strings.TrimSpace(peerProjectKey)

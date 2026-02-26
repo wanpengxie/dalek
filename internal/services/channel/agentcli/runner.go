@@ -41,7 +41,7 @@ func ParseOutput(raw string, mode OutputMode, backend Backend) (text string, ses
 
 func Run(ctx context.Context, backend Backend, req RunRequest) (Result, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return Result{}, fmt.Errorf("context 不能为空")
 	}
 	prepared, err := PrepareCommand(backend, req)
 	if err != nil {

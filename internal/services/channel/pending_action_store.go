@@ -80,7 +80,7 @@ func (s *Service) CreatePendingActions(ctx context.Context, conversationID, jobI
 		return nil, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, fmt.Errorf("context 不能为空")
 	}
 	rows := []store.ChannelPendingAction{}
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -107,7 +107,7 @@ func (s *Service) createPendingActionsTx(ctx context.Context, tx *gorm.DB, conve
 		return nil, nil
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, fmt.Errorf("context 不能为空")
 	}
 
 	rows := make([]store.ChannelPendingAction, 0, len(actions))
@@ -142,7 +142,7 @@ func (s *Service) ListPendingActions(ctx context.Context, jobID uint) ([]Pending
 		return nil, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, fmt.Errorf("context 不能为空")
 	}
 	if jobID == 0 {
 		return []PendingActionView{}, nil
@@ -163,7 +163,7 @@ func (s *Service) getPendingActionByID(ctx context.Context, actionID uint) (stor
 		return store.ChannelPendingAction{}, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return store.ChannelPendingAction{}, fmt.Errorf("context 不能为空")
 	}
 	var row store.ChannelPendingAction
 	if err := db.WithContext(ctx).First(&row, actionID).Error; err != nil {
@@ -181,7 +181,7 @@ func (s *Service) updatePendingAction(ctx context.Context, actionID uint, expect
 		return 0, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return 0, fmt.Errorf("context 不能为空")
 	}
 	if actionID == 0 {
 		return 0, fmt.Errorf("action_id 不能为空")

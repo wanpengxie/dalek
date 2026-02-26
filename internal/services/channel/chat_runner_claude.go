@@ -177,7 +177,7 @@ func (r *claudeChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 
 func (r *claudeChatRunner) Interrupt(ctx context.Context) (bool, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return false, fmt.Errorf("context 不能为空")
 	}
 	r.mu.Lock()
 	client := r.client
@@ -208,7 +208,7 @@ func (r *claudeChatRunner) ensureClientConnected(ctx context.Context) (claudeCli
 		return r.client, nil
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, fmt.Errorf("context 不能为空")
 	}
 	client := createClaudeClient(r.opts...)
 	if err := client.Connect(ctx); err != nil {
