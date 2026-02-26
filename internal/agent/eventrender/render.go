@@ -1,6 +1,10 @@
 package eventrender
 
-import "time"
+import (
+	"time"
+
+	"dalek/internal/agent/provider"
+)
 
 // StepType 表示统一步骤的类型。
 type StepType string
@@ -32,11 +36,11 @@ type Renderer interface {
 }
 
 // ForProvider 返回对应 provider 的 Renderer。
-func ForProvider(provider string) Renderer {
-	switch provider {
-	case "claude":
+func ForProvider(providerName string) Renderer {
+	switch provider.NormalizeProvider(providerName) {
+	case provider.ProviderClaude:
 		return claudeRenderer{}
-	case "codex":
+	case provider.ProviderCodex:
 		return codexRenderer{}
 	default:
 		return fallbackRenderer{}

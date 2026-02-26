@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	agentprovider "dalek/internal/agent/provider"
 	"dalek/internal/app"
 	"dalek/internal/repo"
 )
@@ -262,8 +263,8 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 		}
 		return strconv.Itoa(st.MaxRunningWorkers), nil
 	case ConfigKeyAgentProvider:
-		provider := strings.TrimSpace(strings.ToLower(rawValue))
-		if provider != "codex" && provider != "claude" {
+		provider := agentprovider.NormalizeProvider(rawValue)
+		if !agentprovider.IsSupportedProvider(provider) {
 			return "", fmt.Errorf("agent.provider 仅支持 codex 或 claude")
 		}
 		switch scope {

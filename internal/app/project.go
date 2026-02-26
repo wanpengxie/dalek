@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	agentprovider "dalek/internal/agent/provider"
 	"dalek/internal/contracts"
 	"errors"
 	"fmt"
@@ -146,9 +147,9 @@ func (p *Project) ApplyAgentProviderModel(provider, model string) error {
 	if p == nil || p.core == nil {
 		return fmt.Errorf("project 为空")
 	}
-	provider = strings.TrimSpace(strings.ToLower(provider))
+	provider = agentprovider.NormalizeProvider(provider)
 	model = strings.TrimSpace(model)
-	if provider != "" && provider != "codex" && provider != "claude" {
+	if provider != "" && !agentprovider.IsSupportedProvider(provider) {
 		return fmt.Errorf("agent provider 仅支持 codex|claude: %s", provider)
 	}
 	cfg := applyAgentProviderModel(p.core.Config, provider, model)

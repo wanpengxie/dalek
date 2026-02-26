@@ -1,6 +1,7 @@
 package repo
 
 import (
+	"dalek/internal/agent/provider"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -54,16 +55,13 @@ type NotebookConfig struct {
 }
 
 const (
-	defaultWorkerProvider       = "codex"
-	defaultPMProvider           = "claude"
-	defaultClaudeModel          = "opus"
-	defaultCodexModel           = "gpt-5.3-codex"
-	defaultCodexReasoningEffort = "xhigh"
-	execModeCLI                 = "cli"
-	execModeSDK                 = "sdk"
-	defaultNotebookEnabled      = true
-	defaultNotebookAutoShape    = true
-	defaultNotebookIntervalSec  = 60
+	defaultWorkerProvider      = provider.ProviderCodex
+	defaultPMProvider          = provider.ProviderClaude
+	execModeCLI                = "cli"
+	execModeSDK                = "sdk"
+	defaultNotebookEnabled     = true
+	defaultNotebookAutoShape   = true
+	defaultNotebookIntervalSec = 60
 )
 
 // CurrentProjectSchemaVersion 是项目结构迁移版本号（非 binary semver）。
@@ -125,22 +123,22 @@ func (c Config) WithDefaults() Config {
 		out.WorkerAgent = AgentExecConfig{
 			Provider:        defaultWorkerProvider,
 			Mode:            execModeSDK,
-			Model:           defaultCodexModel,
-			ReasoningEffort: defaultCodexReasoningEffort,
+			Model:           provider.DefaultModel(defaultWorkerProvider),
+			ReasoningEffort: provider.DefaultReasoningEffort(defaultWorkerProvider),
 		}
 	}
 	if out.PMAgent.Provider == "" {
 		out.PMAgent = AgentExecConfig{
 			Provider: defaultPMProvider,
 			Mode:     execModeSDK,
-			Model:    defaultClaudeModel,
+			Model:    provider.DefaultModel(defaultPMProvider),
 		}
 	}
 	if out.GatewayAgent.Provider == "" {
 		out.GatewayAgent.Provider = defaultPMProvider
 	}
 	if out.GatewayAgent.Model == "" {
-		out.GatewayAgent.Model = defaultClaudeModel
+		out.GatewayAgent.Model = provider.DefaultModel(defaultPMProvider)
 	}
 	if out.ManagerCommand == "" {
 		out.ManagerCommand = ""
@@ -165,20 +163,20 @@ func (c Config) WithDefaults() Config {
 
 func normalizeAgentExecConfig(in AgentExecConfig) AgentExecConfig {
 	out := in
-	out.Provider = strings.TrimSpace(strings.ToLower(out.Provider))
+	out.Provider = provider.NormalizeProvider(out.Provider)
 	out.Mode = normalizeExecMode(out.Mode)
 	out.Model = strings.TrimSpace(out.Model)
 	out.ReasoningEffort = strings.TrimSpace(out.ReasoningEffort)
 	out.Command = strings.TrimSpace(out.Command)
 	switch out.Provider {
-	case "codex":
+	case provider.ProviderCodex:
 		if out.Model == "" {
-			out.Model = defaultCodexModel
+			out.Model = provider.DefaultModel(provider.ProviderCodex)
 		}
 		if out.ReasoningEffort == "" {
-			out.ReasoningEffort = defaultCodexReasoningEffort
+			out.ReasoningEffort = provider.DefaultReasoningEffort(provider.ProviderCodex)
 		}
-	case "claude":
+	case provider.ProviderClaude:
 		// claude 不使用 reasoning_effort，避免跨 provider 残留。
 		out.ReasoningEffort = ""
 	}
@@ -198,7 +196,7 @@ func normalizeAgentExecConfig(in AgentExecConfig) AgentExecConfig {
 
 func normalizeGatewayAgentConfig(in GatewayAgentConfig) GatewayAgentConfig {
 	out := in
-	out.Provider = strings.TrimSpace(strings.ToLower(out.Provider))
+	out.Provider = provider.NormalizeProvider(out.Provider)
 	out.Mode = normalizeExecMode(out.Mode)
 	out.Model = strings.TrimSpace(out.Model)
 	out.Command = strings.TrimSpace(out.Command)

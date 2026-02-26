@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	agentprovider "dalek/internal/agent/provider"
 )
 
 func TestConfigWithDefaults_SetsAgentAndTimeoutDefaults(t *testing.T) {
@@ -311,5 +313,42 @@ func TestLoadConfig_V1SchemaMigratesNotebookAndLogsDeprecation(t *testing.T) {
 	}
 	if !strings.Contains(deprecationMsg, "已废弃") {
 		t.Fatalf("expected deprecation warning, got=%q", deprecationMsg)
+	}
+}
+
+func TestAgentConfigFromExecConfig_AppliesNormalizationAndDefaults(t *testing.T) {
+	got := AgentConfigFromExecConfig(AgentExecConfig{
+		Provider:   " CODEX ",
+		ExtraFlags: []string{" --foo ", "", " --bar "},
+		Command:    " /tmp/fake-codex ",
+	})
+	if got.Provider != agentprovider.ProviderCodex {
+		t.Fatalf("unexpected provider: %q", got.Provider)
+	}
+	if got.Model != agentprovider.DefaultModel(agentprovider.ProviderCodex) {
+		t.Fatalf("unexpected model default: %q", got.Model)
+	}
+	if got.ReasoningEffort != agentprovider.DefaultReasoningEffort(agentprovider.ProviderCodex) {
+		t.Fatalf("unexpected reasoning_effort default: %q", got.ReasoningEffort)
+	}
+	if got.Command != "/tmp/fake-codex" {
+		t.Fatalf("unexpected command: %q", got.Command)
+	}
+	if len(got.ExtraFlags) != 2 || got.ExtraFlags[0] != "--foo" || got.ExtraFlags[1] != "--bar" {
+		t.Fatalf("unexpected extra_flags: %#v", got.ExtraFlags)
+	}
+}
+
+func TestAgentConfigFromExecConfig_ClaudeClearsReasoningEffort(t *testing.T) {
+	got := AgentConfigFromExecConfig(AgentExecConfig{
+		Provider:        "claude",
+		Model:           "claude-3-7-sonnet",
+		ReasoningEffort: "xhigh",
+	})
+	if got.Provider != agentprovider.ProviderClaude {
+		t.Fatalf("unexpected provider: %q", got.Provider)
+	}
+	if got.ReasoningEffort != "" {
+		t.Fatalf("claude reasoning_effort should be empty, got=%q", got.ReasoningEffort)
 	}
 }

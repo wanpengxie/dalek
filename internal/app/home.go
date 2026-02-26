@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"dalek/internal/agent/provider"
 	"dalek/internal/infra"
 	"dalek/internal/repo"
 	channelsvc "dalek/internal/services/channel"
@@ -444,31 +445,32 @@ func composeProjectConfigLayers(base repo.Config, provider, model string, repoOv
 	return merged.WithDefaults()
 }
 
-func applyAgentProviderModel(cfg repo.Config, provider, model string) repo.Config {
-	provider = strings.TrimSpace(strings.ToLower(provider))
+func applyAgentProviderModel(cfg repo.Config, providerRaw, model string) repo.Config {
+	providerName := provider.NormalizeProvider(providerRaw)
 	model = strings.TrimSpace(model)
-	if provider != "" {
+	if providerName != "" {
 		prevWorkerProvider := strings.TrimSpace(strings.ToLower(cfg.WorkerAgent.Provider))
 		prevPMProvider := strings.TrimSpace(strings.ToLower(cfg.PMAgent.Provider))
-		cfg.WorkerAgent.Provider = provider
-		cfg.PMAgent.Provider = provider
+		cfg.WorkerAgent.Provider = providerName
+		cfg.PMAgent.Provider = providerName
 		if model == "" {
-			if prevWorkerProvider != provider {
+			if prevWorkerProvider != providerName {
 				cfg.WorkerAgent.Model = ""
 			}
-			if prevPMProvider != provider {
+			if prevPMProvider != providerName {
 				cfg.PMAgent.Model = ""
 			}
-			if provider == "codex" {
+			if providerName == provider.ProviderCodex {
+				defaultCodexModel := provider.DefaultModel(provider.ProviderCodex)
 				if strings.TrimSpace(cfg.WorkerAgent.Model) == "" {
-					cfg.WorkerAgent.Model = "gpt-5.3-codex"
+					cfg.WorkerAgent.Model = defaultCodexModel
 				}
 				if strings.TrimSpace(cfg.PMAgent.Model) == "" {
-					cfg.PMAgent.Model = "gpt-5.3-codex"
+					cfg.PMAgent.Model = defaultCodexModel
 				}
 			}
 		}
-		if provider == "claude" {
+		if providerName == provider.ProviderClaude {
 			cfg.WorkerAgent.ReasoningEffort = ""
 			cfg.PMAgent.ReasoningEffort = ""
 		}

@@ -56,13 +56,7 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 		return dispatchPromptBuildResult{}, err
 	}
 
-	agentCfg := provider.AgentConfig{
-		Provider:        strings.TrimSpace(cfg.PMAgent.Provider),
-		Model:           strings.TrimSpace(cfg.PMAgent.Model),
-		ReasoningEffort: strings.TrimSpace(cfg.PMAgent.ReasoningEffort),
-		ExtraFlags:      append([]string(nil), cfg.PMAgent.ExtraFlags...),
-		Command:         strings.TrimSpace(cfg.PMAgent.Command),
-	}
+	agentCfg := repo.AgentConfigFromExecConfig(cfg.PMAgent)
 	agentProvider, err := provider.NewFromConfig(agentCfg)
 	if err != nil {
 		return dispatchPromptBuildResult{}, fmt.Errorf("pm_agent 配置非法: %w", err)
@@ -91,10 +85,10 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 	var executor run.Executor
 	if execMode == "sdk" {
 		executor = run.NewSDKExecutor(run.SDKConfig{
-			Provider:        strings.TrimSpace(agentCfg.Provider),
-			Model:           strings.TrimSpace(agentCfg.Model),
-			ReasoningEffort: strings.TrimSpace(agentCfg.ReasoningEffort),
-			Command:         strings.TrimSpace(agentCfg.Command),
+			Provider:        agentCfg.Provider,
+			Model:           agentCfg.Model,
+			ReasoningEffort: agentCfg.ReasoningEffort,
+			Command:         agentCfg.Command,
 			Runtime:         rt,
 			OwnerType:       contracts.TaskOwnerPM,
 			TaskType:        "pm_dispatch_agent",
