@@ -134,6 +134,7 @@ func TestServicesDoNotImportOSExecExceptChannelRunner(t *testing.T) {
 	files := listGoFilesRecursive(t, servicesDir)
 	allow := map[string]bool{
 		"internal/services/channel/agentcli/runner.go": true,
+		"internal/services/agentexec/process.go":       true,
 		"internal/services/pm/session.go":              true,
 		"internal/services/worker/start.go":            true,
 	}

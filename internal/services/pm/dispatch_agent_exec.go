@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"dalek/internal/agent/provider"
-	"dalek/internal/agent/run"
 	"dalek/internal/repo"
+	"dalek/internal/services/agentexec"
 )
 
 type dispatchPromptBuildResult struct {
@@ -82,9 +82,9 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 	if execMode == "" {
 		execMode = "sdk"
 	}
-	var executor run.Executor
+	var executor agentexec.Executor
 	if execMode == "sdk" {
-		executor = run.NewSDKExecutor(run.SDKConfig{
+		executor = agentexec.NewSDKExecutor(agentexec.SDKConfig{
 			Provider:        agentCfg.Provider,
 			Model:           agentCfg.Model,
 			ReasoningEffort: agentCfg.ReasoningEffort,
@@ -112,7 +112,7 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 			},
 		})
 	} else {
-		executor = run.NewProcessExecutor(run.ProcessConfig{
+		executor = agentexec.NewProcessExecutor(agentexec.ProcessConfig{
 			Provider:    agentProvider,
 			Runtime:     rt,
 			OwnerType:   contracts.TaskOwnerPM,

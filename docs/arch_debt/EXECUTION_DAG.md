@@ -13,7 +13,7 @@
 
 - 更新时间：`2026-02-27`
 - 已完成批次：`W01` `W02` `W03` `W04` `W05`
-- 当前批次：`W06A + W09A`（`in_execution`）
+- 当前批次：`W06A + W06B + W09A`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
@@ -21,6 +21,8 @@
 - W05 已完成票：`T23(30)` `T15(22)` `T30(37)` `T37(44)`
 - W06A 已完成票：`T26(33)`
 - W06A 进行中票：`T12(19)`
+- W06B 已完成票：`T07(14)`
+- W06B 进行中票：`T16(23)`（待本轮并行票回写）
 - W07A 已完成票：`T28(35)`（query service 归位）
 - W08A 已完成票：`T18(25)`（Provider/默认值/客户端归位）
 - W09A 已完成票：`T33(40)`
@@ -33,6 +35,23 @@
   - Feishu 改造必须复用 `internal/services/channel/feishu/*`（`T04` 禁止维护第二套实现）。
   - gateway/ws 改造必须复用 `internal/services/channel/ws/*` 与 `internal/gateway/client/*`。
   - 跨层枚举/状态类型统一引用 `internal/contracts/*`（禁止回流到 `store` 常量）。
+
+## W06B 回写（T07 AgentExec 服务层入口 1/3）
+
+- 状态：`T07` 已完成（2026-02-27）。
+- 关键产物：
+  - 新增 `internal/services/agentexec/`，承接原 `internal/agent/run` 的 Process/SDK/Tmux 执行编排与测试代码。
+  - PM 执行入口已收敛到服务层：`dispatch_agent_exec.go`、`dispatch_worker_sdk.go` 改为依赖 `services/agentexec`。
+  - 删除旧 `internal/agent/run` 实现，消除 `agent/run -> services/core.TaskRuntime` 的反向依赖。
+  - 架构守卫白名单已同步：`internal/arch/constraints_test.go` 允许 `internal/services/agentexec/process.go` 受控使用 `os/exec`。
+- 回归验证：
+  - `go test ./internal/services/agentexec/...`
+  - `go test ./internal/services/pm/...`
+  - `go test ./...`
+  - `go build ./...`
+  - 以上命令全部通过。
+- 依赖推进：
+  - `T07 -> T08 -> T09` 前置已满足，T08 可基于 `services/agentexec` 继续统一多路径执行入口。
 
 ## W08A 回写（T18 Provider/默认值/客户端归位）
 
