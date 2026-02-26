@@ -12,17 +12,17 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-27`
-- 已完成批次：`W01` `W02` `W03` `W04` `W05`
-- 当前批次：`W06A + W09A`（`in_execution`）
+- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W07A` `W08A` `W08B`
+- 当前批次：`W09A`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
 - W04 已完成票：`T22(29)` `T14(21)` `T31(38)` `T29(36)`
 - W05 已完成票：`T23(30)` `T15(22)` `T30(37)` `T37(44)`
-- W06A 已完成票：`T26(33)`
-- W06A 进行中票：`T12(19)`
+- W06A 已完成票：`T26(33)` `T12(19)`
 - W07A 已完成票：`T28(35)`（query service 归位）
 - W08A 已完成票：`T18(25)`（Provider/默认值/客户端归位）
+- W08B 已完成票：`T13(20)`（DaemonManager recovery/对账逻辑下沉 service + ActionExecutor 构造注入）
 - W09A 已完成票：`T33(40)`
 - W09A 进行中票：`T35(42)`
 - 下游强制约束：
@@ -48,7 +48,23 @@
   - `go test ./...`
   - `go build ./...`
   - `go vet ./...`
-  - 以上命令全部通过。
+- 以上命令全部通过。
+
+## W08B 回写（T13 App DaemonManager 收敛）
+
+- 状态：`T13` 已完成（2026-02-27）。
+- 关键产物：
+  - 新增 `internal/services/pm/recovery.go`，收敛 `recover stuck dispatch jobs`、`expired lease`、`active task run recovery`、`PMState recovery summary` 持久化逻辑。
+  - `internal/app/daemon_manager_component.go` 已去除 app 层 `gorm` 直访与事务实现，恢复/对账与 warmup 全部改为调用 `pm service`/`worker service`。
+  - `internal/services/pm/inbox_upsert.go` 暴露 `UpsertOpenInbox`，worker session recovery 的 inbox 创建不再由 app 直连 DB。
+  - `internal/services/channel/action_executor.go` 改为持有注入的 `ticket/pm/worker` service；`internal/services/channel/service.go` 统一装配并复用 executor，消除执行路径内重复 `New(...)`。
+- 验收结果：
+  - `go build ./...` 通过
+  - `go vet ./...` 通过
+  - `go test ./internal/app/... ./internal/services/pm/... ./internal/services/channel/...` 通过
+- 约束对齐：
+  - 复用 `core.NewProject/buildCoreProject` 既有构造边界（未新增 `core.Project{}` 直写构造）。
+  - app 层不再直接访问 DB（DaemonManager 已改为 service facade）。
 
 ## 关键依赖边（DAG）
 
@@ -302,7 +318,7 @@ Tickets: <T.. T.. T..>
   - `internal/services/ticket/service_test.go` 补齐空 description 与 `GetByID` 测试；worker/pm/channel 测试装配同步更新。
 - 解锁状态（T26 对下游）：
   - `T27`：`T21 -> T22 -> T26` 链路已满足，且 `T39` 已完成，workflow 收口可直接进入实施。
-  - `T13`：`T26` 前置已满足；`T13` 仍需等待 `T12` 完成后进入全量解锁。
+  - `T13`：`T12/T19/T26` 前置已满足，且已于 `2026-02-27` 完成收口与回归。
 - 回归验证：
   - `go test ./internal/services/ticket/... ./internal/services/worker/...` 通过
   - `go test ./...` 通过

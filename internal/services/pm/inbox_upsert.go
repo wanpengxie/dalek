@@ -42,6 +42,10 @@ func (s *Service) upsertOpenInbox(ctx context.Context, item contracts.InboxItem)
 	return upsertOpenInboxWithDB(ctx, db, item)
 }
 
+func (s *Service) UpsertOpenInbox(ctx context.Context, item contracts.InboxItem) (bool, error) {
+	return s.upsertOpenInbox(ctx, item)
+}
+
 func (s *Service) upsertOpenInboxTx(ctx context.Context, tx *gorm.DB, item contracts.InboxItem) (bool, error) {
 	if tx == nil {
 		return false, fmt.Errorf("tx 不能为空")
