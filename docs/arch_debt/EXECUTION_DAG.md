@@ -11,9 +11,9 @@
 
 ## 当前执行状态（Kernel 回写）
 
-- 更新时间：`2026-02-26`
+- 更新时间：`2026-02-27`
 - 已完成批次：`W01` `W02` `W03` `W04` `W05`
-- 当前批次：`W06A + W07A + W08A`（`in_execution`）
+- 当前批次：`W06A + W09A`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
@@ -21,8 +21,10 @@
 - W05 已完成票：`T23(30)` `T15(22)` `T30(37)` `T37(44)`
 - W06A 已完成票：`T26(33)`
 - W06A 进行中票：`T12(19)`
-- W07A 进行中票：`T28(35)`
+- W07A 已完成票：`T28(35)`（query service 归位）
 - W08A 已完成票：`T18(25)`（Provider/默认值/客户端归位）
+- W09A 已完成票：`T33(40)`
+- W09A 进行中票：`T35(42)`
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -54,7 +56,7 @@
 - `T07 -> T08 -> T09`
 - `T14 -> T15 -> T16 -> T17`
 - `T21 -> T22 -> T26 -> T27`
-- `T21 -> T23 -> T28`（`T23` 已完成，`T28` 前置已满足）
+- `T21 -> T23 -> T28`（`T28` 已完成，依赖链闭环）
 - `T39 -> T20`
 - `T39 -> T27`
 - `T39 -> T34`
@@ -255,6 +257,21 @@ Tickets: <T.. T.. T..>
 - T23 解锁点（`T21 -> T23`）：
   - 可以沿同一边界完成第三批与收尾迁移（含 facade 进一步收口），无需再引入新的类型落点。
   - 新增跨层领域类型必须落在 `contracts`，禁止回流到 `store` 或新增重复定义。
+
+## W07A 回写（T28 Ticket 视图查询归位）
+
+- 状态：`T28` 已完成（2026-02-27），ticket 查询语义已收敛到 `internal/services/ticket` 单一入口。
+- 交付物：
+  - 新增 `internal/services/ticket/query.go`：`QueryService` 负责 `ListTicketViews` 编排，按 `fetchTicketViewData + buildTicketView` 分层。
+  - 新增 `internal/services/ticket/views.go`：`TicketView`、`ComputeTicketCapability` 与 `computeDerivedRuntimeHealth`，保留现网查询语义。
+  - `internal/app/project.go` + `internal/app/home.go` 已改为注入并调用 `ticketQuery.ListTicketViews`，不再通过 worker 包聚合查询。
+  - 删除 `internal/services/worker/views.go`，并将 `ListTicketViews` 相关测试迁移到 `internal/services/ticket/query_test.go` 与 `views_test.go`。
+- 验收结果：
+  - `go test ./internal/services/ticket/... ./internal/services/worker/...` 通过
+  - `go test ./... && go build ./... && go vet ./...` 通过
+- 后续解锁：
+  - `T21 -> T23 -> T28` 依赖链已闭环。
+  - W07 余下 `T27` `T17` `T08` 可按既有 DAG 继续推进（无新增硬依赖）。
 
 ## W04 回写（T22 类型归位 2/3）
 

@@ -31,14 +31,15 @@ import (
 type Project struct {
 	core *core.Project
 
-	ticket   *ticketsvc.Service
-	worker   *workersvc.Service
-	logs     *logssvc.Service
-	notebook *notebooksvc.Service
-	pm       *pmsvc.Service
-	subagent *subagentsvc.Service
-	task     *tasksvc.Service
-	channel  *channelsvc.Service
+	ticket      *ticketsvc.Service
+	ticketQuery *ticketsvc.QueryService
+	worker      *workersvc.Service
+	logs        *logssvc.Service
+	notebook    *notebooksvc.Service
+	pm          *pmsvc.Service
+	subagent    *subagentsvc.Service
+	task        *tasksvc.Service
+	channel     *channelsvc.Service
 
 	closeOnce sync.Once
 	closeErr  error
@@ -392,10 +393,10 @@ func (p *Project) AttachCmd(ctx context.Context, ticketID uint) (*exec.Cmd, erro
 }
 
 func (p *Project) ListTicketViews(ctx context.Context) ([]TicketView, error) {
-	if p == nil || p.worker == nil {
-		return nil, fmt.Errorf("project worker service 为空")
+	if p == nil || p.ticketQuery == nil {
+		return nil, fmt.Errorf("project ticket query service 为空")
 	}
-	views, err := p.worker.ListTicketViews(ctx)
+	views, err := p.ticketQuery.ListTicketViews(ctx)
 	if err != nil {
 		return nil, err
 	}

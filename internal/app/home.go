@@ -484,6 +484,7 @@ func applyAgentProviderModel(cfg repo.Config, providerRaw, model string) repo.Co
 
 func assembleProject(cp *core.Project) *Project {
 	ticketSvc := ticket.New(cp.DB)
+	ticketQuerySvc := ticket.NewQueryService(cp)
 	workerSvc := worker.New(cp, ticketSvc)
 	logsSvc := logssvc.New(cp, workerSvc)
 	notebookSvc := notebook.New(cp)
@@ -492,15 +493,16 @@ func assembleProject(cp *core.Project) *Project {
 	subagentSvc := subagentsvc.New(cp, taskSvc, cp.Logger)
 	channelSvc := channelsvc.New(cp)
 	return &Project{
-		core:     cp,
-		ticket:   ticketSvc,
-		worker:   workerSvc,
-		logs:     logsSvc,
-		notebook: notebookSvc,
-		pm:       pmSvc,
-		subagent: subagentSvc,
-		task:     taskSvc,
-		channel:  channelSvc,
+		core:        cp,
+		ticket:      ticketSvc,
+		ticketQuery: ticketQuerySvc,
+		worker:      workerSvc,
+		logs:        logsSvc,
+		notebook:    notebookSvc,
+		pm:          pmSvc,
+		subagent:    subagentSvc,
+		task:        taskSvc,
+		channel:     channelSvc,
 	}
 }
 
