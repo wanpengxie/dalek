@@ -446,7 +446,7 @@ func (p *Project) ListTaskStatus(ctx context.Context, opt ListTaskOptions) ([]Ta
 	if p == nil || p.task == nil {
 		return nil, fmt.Errorf("project task service 为空")
 	}
-	views, err := p.task.ListStatus(ctx, tasksvc.ListStatusOptions{
+	views, err := p.task.ListStatus(ctx, contracts.TaskListStatusOptions{
 		OwnerType:       opt.OwnerType,
 		TaskType:        strings.TrimSpace(opt.TaskType),
 		TicketID:        opt.TicketID,
@@ -568,7 +568,7 @@ func (p *Project) FinishAgentRun(ctx context.Context, runID uint, exitCode int) 
 		if err := p.task.MarkRunSucceeded(ctx, runID, "", now); err != nil {
 			return err
 		}
-		return p.task.AppendEvent(ctx, tasksvc.TaskEventInput{
+		return p.task.AppendEvent(ctx, contracts.TaskEventInput{
 			TaskRunID: runID,
 			EventType: "task_succeeded",
 			FromState: map[string]any{"orchestration_state": "running"},
@@ -581,7 +581,7 @@ func (p *Project) FinishAgentRun(ctx context.Context, runID uint, exitCode int) 
 	if err := p.task.MarkRunFailed(ctx, runID, "agent_exit", msg, now); err != nil {
 		return err
 	}
-	return p.task.AppendEvent(ctx, tasksvc.TaskEventInput{
+	return p.task.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: runID,
 		EventType: "task_failed",
 		FromState: map[string]any{"orchestration_state": "running"},
@@ -638,7 +638,7 @@ func (p *Project) CancelTaskRun(ctx context.Context, runID uint) (TaskCancelResu
 	if err := p.task.MarkRunCanceled(ctx, runID, "manual_cancel", reason, now); err != nil {
 		return TaskCancelResult{}, err
 	}
-	if err := p.task.AppendEvent(ctx, tasksvc.TaskEventInput{
+	if err := p.task.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: runID,
 		EventType: "task_canceled",
 		FromState: map[string]any{

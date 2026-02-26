@@ -11,24 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-type ListStatusOptions struct {
-	OwnerType       contracts.TaskOwnerType
-	TaskType        string
-	TicketID        uint
-	WorkerID        uint
-	IncludeTerminal bool
-	Limit           int
-}
-
-type EventScopeRow struct {
-	contracts.TaskEvent
-	TicketID  uint
-	WorkerID  uint
-	OwnerType string
-	TaskType  string
-}
-
-func (s *Service) ListStatus(ctx context.Context, opt ListStatusOptions) ([]store.TaskStatusView, error) {
+func (s *Service) ListStatus(ctx context.Context, opt contracts.TaskListStatusOptions) ([]store.TaskStatusView, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -63,7 +46,7 @@ func (s *Service) ListStatus(ctx context.Context, opt ListStatusOptions) ([]stor
 	return out, nil
 }
 
-func (s *Service) ListEventsByScope(ctx context.Context, ticketID, workerID uint, limit int) ([]EventScopeRow, error) {
+func (s *Service) ListEventsByScope(ctx context.Context, ticketID, workerID uint, limit int) ([]contracts.TaskEventScopeRow, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -92,14 +75,14 @@ func (s *Service) ListEventsByScope(ctx context.Context, ticketID, workerID uint
 	} else {
 		q = q.Where("tr.ticket_id = ?", ticketID)
 	}
-	var out []EventScopeRow
+	var out []contracts.TaskEventScopeRow
 	if err := q.Find(&out).Error; err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-func (s *Service) ListEventsAfterID(ctx context.Context, afterID uint, limit int) ([]EventScopeRow, error) {
+func (s *Service) ListEventsAfterID(ctx context.Context, afterID uint, limit int) ([]contracts.TaskEventScopeRow, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -113,7 +96,7 @@ func (s *Service) ListEventsAfterID(ctx context.Context, afterID uint, limit int
 	if limit > 5000 {
 		limit = 5000
 	}
-	var out []EventScopeRow
+	var out []contracts.TaskEventScopeRow
 	if err := db.WithContext(ctx).
 		Table("task_events AS ev").
 		Select("ev.id, ev.created_at, ev.task_run_id, ev.event_type, ev.from_state_json, ev.to_state_json, ev.note, ev.payload_json, tr.ticket_id, tr.worker_id, tr.owner_type, tr.task_type").

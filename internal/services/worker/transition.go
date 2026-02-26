@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/services/core"
-
 	"gorm.io/gorm"
 )
 
@@ -37,7 +35,7 @@ func (s *Service) RequestWorkerSemanticWatch(ctx context.Context, workerID uint,
 	if err != nil || run == nil {
 		return err
 	}
-	return rt.AppendEvent(ctx, core.TaskRuntimeEventInput{
+	return rt.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: run.ID,
 		EventType: "watch_requested",
 		Note:      "worker semantic watch requested",

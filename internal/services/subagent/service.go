@@ -85,7 +85,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (SubmitResult, err
 		"model":    settings.Model,
 		"prompt":   prompt,
 	})
-	createdRun, err := s.task.CreateRun(ctx, tasksvc.CreateRunInput{
+	createdRun, err := s.task.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerSubagent,
 		TaskType:           contracts.TaskTypeSubagentRun,
 		ProjectKey:         strings.TrimSpace(s.projectKey()),
@@ -118,7 +118,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (SubmitResult, err
 	}
 
 	now := s.nowTime()
-	_ = s.task.AppendEvent(ctx, tasksvc.TaskEventInput{
+	_ = s.task.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: createdRun.ID,
 		EventType: "task_enqueued",
 		ToState: map[string]any{
@@ -127,7 +127,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (SubmitResult, err
 		Note:      "subagent run enqueued",
 		CreatedAt: now,
 	})
-	_ = s.task.AppendRuntimeSample(ctx, tasksvc.RuntimeSampleInput{
+	_ = s.task.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
 		TaskRunID:  createdRun.ID,
 		State:      contracts.TaskHealthIdle,
 		NeedsUser:  false,
@@ -135,7 +135,7 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (SubmitResult, err
 		Source:     "agent.subagent.submit",
 		ObservedAt: now,
 	})
-	_ = s.task.AppendSemanticReport(ctx, tasksvc.SemanticReportInput{
+	_ = s.task.AppendSemanticReport(ctx, contracts.TaskSemanticReportInput{
 		TaskRunID:  createdRun.ID,
 		Phase:      contracts.TaskPhasePlanning,
 		Milestone:  "subagent_enqueued",
@@ -216,7 +216,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 	if err := s.task.MarkRunRunning(ctx, taskRunID, runnerID, lease, now, true); err != nil {
 		return err
 	}
-	_ = s.task.AppendEvent(ctx, tasksvc.TaskEventInput{
+	_ = s.task.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: taskRunID,
 		EventType: "task_started",
 		FromState: map[string]any{"orchestration_state": contracts.TaskPending},
@@ -227,7 +227,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 		Note:      "subagent started",
 		CreatedAt: now,
 	})
-	_ = s.task.AppendRuntimeSample(ctx, tasksvc.RuntimeSampleInput{
+	_ = s.task.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
 		TaskRunID:  taskRunID,
 		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
@@ -235,7 +235,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 		Source:     "agent.subagent.run",
 		ObservedAt: now,
 	})
-	_ = s.task.AppendSemanticReport(ctx, tasksvc.SemanticReportInput{
+	_ = s.task.AppendSemanticReport(ctx, contracts.TaskSemanticReportInput{
 		TaskRunID:  taskRunID,
 		Phase:      contracts.TaskPhaseImplementing,
 		Milestone:  "subagent_started",
@@ -267,7 +267,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 			raw = strings.TrimSpace(string(rawBytes))
 		}
 		_, _ = fmt.Fprintf(sdkStreamFile, "%s %s\n", ts, raw)
-		_ = s.task.AppendEvent(context.Background(), tasksvc.TaskEventInput{
+		_ = s.task.AppendEvent(context.Background(), contracts.TaskEventInput{
 			TaskRunID: taskRunID,
 			EventType: "task_stream",
 			Note:      note,
@@ -310,7 +310,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 				errorMsg = "subagent canceled"
 			}
 			_ = s.task.MarkRunCanceled(context.Background(), taskRunID, errorCode, errorMsg, finishedAt)
-			_ = s.task.AppendEvent(context.Background(), tasksvc.TaskEventInput{
+			_ = s.task.AppendEvent(context.Background(), contracts.TaskEventInput{
 				TaskRunID: taskRunID,
 				EventType: "task_canceled",
 				FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
@@ -318,7 +318,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 				Note:      errorMsg,
 				CreatedAt: finishedAt,
 			})
-			_ = s.task.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
+			_ = s.task.AppendRuntimeSample(context.Background(), contracts.TaskRuntimeSampleInput{
 				TaskRunID:  taskRunID,
 				State:      contracts.TaskHealthDead,
 				NeedsUser:  true,
@@ -326,7 +326,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 				Source:     "agent.subagent.run",
 				ObservedAt: finishedAt,
 			})
-			_ = s.task.AppendSemanticReport(context.Background(), tasksvc.SemanticReportInput{
+			_ = s.task.AppendSemanticReport(context.Background(), contracts.TaskSemanticReportInput{
 				TaskRunID:  taskRunID,
 				Phase:      contracts.TaskPhaseBlocked,
 				Milestone:  "subagent_canceled",
@@ -342,7 +342,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 				errorMsg = "subagent execution failed"
 			}
 			_ = s.task.MarkRunFailed(context.Background(), taskRunID, errorCode, errorMsg, finishedAt)
-			_ = s.task.AppendEvent(context.Background(), tasksvc.TaskEventInput{
+			_ = s.task.AppendEvent(context.Background(), contracts.TaskEventInput{
 				TaskRunID: taskRunID,
 				EventType: "task_failed",
 				FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
@@ -353,7 +353,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 				Note:      errorMsg,
 				CreatedAt: finishedAt,
 			})
-			_ = s.task.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
+			_ = s.task.AppendRuntimeSample(context.Background(), contracts.TaskRuntimeSampleInput{
 				TaskRunID:  taskRunID,
 				State:      contracts.TaskHealthStalled,
 				NeedsUser:  true,
@@ -361,7 +361,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 				Source:     "agent.subagent.run",
 				ObservedAt: finishedAt,
 			})
-			_ = s.task.AppendSemanticReport(context.Background(), tasksvc.SemanticReportInput{
+			_ = s.task.AppendSemanticReport(context.Background(), contracts.TaskSemanticReportInput{
 				TaskRunID:  taskRunID,
 				Phase:      contracts.TaskPhaseBlocked,
 				Milestone:  "subagent_failed",
@@ -386,7 +386,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 			"orchestration": contracts.TaskSucceeded,
 		})
 		_ = s.task.MarkRunSucceeded(context.Background(), taskRunID, strings.TrimSpace(string(resultJSON)), finishedAt)
-		_ = s.task.AppendEvent(context.Background(), tasksvc.TaskEventInput{
+		_ = s.task.AppendEvent(context.Background(), contracts.TaskEventInput{
 			TaskRunID: taskRunID,
 			EventType: "task_succeeded",
 			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
@@ -394,7 +394,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 			Note:      "subagent completed",
 			CreatedAt: finishedAt,
 		})
-		_ = s.task.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
+		_ = s.task.AppendRuntimeSample(context.Background(), contracts.TaskRuntimeSampleInput{
 			TaskRunID:  taskRunID,
 			State:      contracts.TaskHealthIdle,
 			NeedsUser:  false,
@@ -402,7 +402,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 			Source:     "agent.subagent.run",
 			ObservedAt: finishedAt,
 		})
-		_ = s.task.AppendSemanticReport(context.Background(), tasksvc.SemanticReportInput{
+		_ = s.task.AppendSemanticReport(context.Background(), contracts.TaskSemanticReportInput{
 			TaskRunID:  taskRunID,
 			Phase:      contracts.TaskPhaseDone,
 			Milestone:  "subagent_completed",

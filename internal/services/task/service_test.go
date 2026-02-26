@@ -25,7 +25,7 @@ func TestService_TaskRunRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	run, err := svc.CreateRun(ctx, CreateRunInput{
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerPM,
 		TaskType:           "dispatch_ticket",
 		ProjectKey:         "demo",
@@ -48,7 +48,7 @@ func TestService_TaskRunRoundTrip(t *testing.T) {
 	if err := svc.MarkRunRunning(ctx, run.ID, "runner-1", &lease, now, true); err != nil {
 		t.Fatalf("MarkRunRunning failed: %v", err)
 	}
-	if err := svc.AppendRuntimeSample(ctx, RuntimeSampleInput{
+	if err := svc.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
 		TaskRunID:  run.ID,
 		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
@@ -61,7 +61,7 @@ func TestService_TaskRunRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AppendRuntimeSample failed: %v", err)
 	}
-	if err := svc.AppendSemanticReport(ctx, SemanticReportInput{
+	if err := svc.AppendSemanticReport(ctx, contracts.TaskSemanticReportInput{
 		TaskRunID:  run.ID,
 		Phase:      contracts.TaskPhasePlanning,
 		Milestone:  "task_claimed",
@@ -74,7 +74,7 @@ func TestService_TaskRunRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AppendSemanticReport failed: %v", err)
 	}
-	if err := svc.AppendEvent(ctx, TaskEventInput{
+	if err := svc.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: run.ID,
 		EventType: "task_claimed",
 		FromState: map[string]any{"orchestration_state": "pending"},
@@ -126,7 +126,7 @@ func TestService_WorkerActiveRunLifecycle(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	_, err := svc.CreateRun(ctx, CreateRunInput{
+	_, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
@@ -160,7 +160,7 @@ func TestService_WorkerActiveRunLifecycle(t *testing.T) {
 		t.Fatalf("expected no active run after cancel, got=%+v", *latest)
 	}
 
-	list, err := svc.ListStatus(ctx, ListStatusOptions{OwnerType: contracts.TaskOwnerWorker, IncludeTerminal: true, Limit: 10})
+	list, err := svc.ListStatus(ctx, contracts.TaskListStatusOptions{OwnerType: contracts.TaskOwnerWorker, IncludeTerminal: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("ListStatus failed: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestService_MarkRunSucceeded_DoesNotOverrideCanceled(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	run, err := svc.CreateRun(ctx, CreateRunInput{
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
@@ -212,7 +212,7 @@ func TestService_MarkRunFailed_DoesNotOverrideCanceled(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	run, err := svc.CreateRun(ctx, CreateRunInput{
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
@@ -247,7 +247,7 @@ func TestService_MarkRunRunning_DoesNotOverrideCanceled(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	run, err := svc.CreateRun(ctx, CreateRunInput{
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
@@ -283,7 +283,7 @@ func TestService_AppendEvent_DropsTerminalEventsAfterCanceled(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	run, err := svc.CreateRun(ctx, CreateRunInput{
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
@@ -301,14 +301,14 @@ func TestService_AppendEvent_DropsTerminalEventsAfterCanceled(t *testing.T) {
 	if err := svc.MarkRunCanceled(ctx, run.ID, "manual_cancel", "cancel first", now.Add(1*time.Second)); err != nil {
 		t.Fatalf("MarkRunCanceled failed: %v", err)
 	}
-	if err := svc.AppendEvent(ctx, TaskEventInput{
+	if err := svc.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: run.ID,
 		EventType: "task_succeeded",
 		CreatedAt: now.Add(2 * time.Second),
 	}); err != nil {
 		t.Fatalf("AppendEvent(task_succeeded) failed: %v", err)
 	}
-	if err := svc.AppendEvent(ctx, TaskEventInput{
+	if err := svc.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: run.ID,
 		EventType: "task_failed",
 		CreatedAt: now.Add(3 * time.Second),
@@ -331,7 +331,7 @@ func TestService_StatusViewContainsLatestObservationFields(t *testing.T) {
 	ctx := context.Background()
 	base := time.Now().UTC().Truncate(time.Second)
 
-	run, err := svc.CreateRun(ctx, CreateRunInput{
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
@@ -348,7 +348,7 @@ func TestService_StatusViewContainsLatestObservationFields(t *testing.T) {
 	}
 
 	tRuntime := base.Add(1 * time.Minute)
-	if err := svc.AppendRuntimeSample(ctx, RuntimeSampleInput{
+	if err := svc.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
 		TaskRunID:  run.ID,
 		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
@@ -360,7 +360,7 @@ func TestService_StatusViewContainsLatestObservationFields(t *testing.T) {
 	}
 
 	tSemantic := base.Add(2 * time.Minute)
-	if err := svc.AppendSemanticReport(ctx, SemanticReportInput{
+	if err := svc.AppendSemanticReport(ctx, contracts.TaskSemanticReportInput{
 		TaskRunID:  run.ID,
 		Phase:      contracts.TaskPhaseImplementing,
 		Milestone:  "m1",
@@ -372,7 +372,7 @@ func TestService_StatusViewContainsLatestObservationFields(t *testing.T) {
 	}
 
 	tEvent := base.Add(3 * time.Minute)
-	if err := svc.AppendEvent(ctx, TaskEventInput{
+	if err := svc.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: run.ID,
 		EventType: "tick",
 		CreatedAt: tEvent,
@@ -401,7 +401,7 @@ func TestService_StatusViewContainsLatestObservationFields(t *testing.T) {
 func TestService_CreateRun_DuplicateRequestIDReturnsExisting(t *testing.T) {
 	svc := newTaskServiceForTest(t)
 	ctx := context.Background()
-	in := CreateRunInput{
+	in := contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerPM,
 		TaskType:           "dispatch_ticket",
 		ProjectKey:         "demo",
@@ -429,7 +429,7 @@ func TestService_ListEvents_LatestNAscending(t *testing.T) {
 	svc := newTaskServiceForTest(t)
 	ctx := context.Background()
 	base := time.Now().UTC().Truncate(time.Second)
-	run, err := svc.CreateRun(ctx, CreateRunInput{
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
@@ -453,7 +453,7 @@ func TestService_ListEvents_LatestNAscending(t *testing.T) {
 		{eventType: "e3", at: base.Add(3 * time.Minute)},
 	}
 	for _, c := range cases {
-		if err := svc.AppendEvent(ctx, TaskEventInput{
+		if err := svc.AppendEvent(ctx, contracts.TaskEventInput{
 			TaskRunID: run.ID,
 			EventType: c.eventType,
 			CreatedAt: c.at,

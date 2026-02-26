@@ -1,6 +1,6 @@
 # 架构债务执行 DAG（2026-02-26）
 
-> 范围：`docs/arch_debt/TICKETS.md` 的 `T01~T39`
+> 范围：`docs/arch_debt/TICKETS.md` 的 `T01~T39` + 收口增量票 `T50`
 > 调度约束：每次执行 1~4 个 ticket；严格按依赖优先级推进
 
 ## 执行规则
@@ -12,8 +12,8 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-27`
-- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W09A` `W10A` `W10B` `W10C` `W11A`
-- 当前批次：`W11A`（`done`）
+- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W09A` `W10A` `W10B` `W10C` `W11A` `W12A`
+- 当前批次：`W12A`（`done`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
@@ -31,6 +31,7 @@
 - W10B 已完成票：`T17(24)` `T36(43)`（Channel 边界清洗 + PM 可靠性补齐）
 - W10C 已完成票：`T08(15)`（Channel CLI/SDK 执行入口统一到 services/agentexec）
 - W11A 已完成票：`T09(16)`（生命周期去重 + config 拆分 + Wait 可取消）
+- W12A 已完成票：`T50`（Task/Core 运行态模型统一与状态机归一）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -39,6 +40,32 @@
   - Feishu 改造必须复用 `internal/services/channel/feishu/*`（`T04` 禁止维护第二套实现）。
   - gateway/ws 改造必须复用 `internal/services/channel/ws/*` 与 `internal/gateway/client/*`。
   - 跨层枚举/状态类型统一引用 `internal/contracts/*`（禁止回流到 `store` 常量）。
+  - TaskRuntime 输入/事件类型与 next_action→semantic_phase 映射统一引用 `internal/contracts/task_runtime_input.go`（禁止在 `core/task` 重复定义）。
+
+## W12A 回写（T50 ARCH-DEBT 收口A：Task/Core 运行态模型统一与状态机归一）
+
+- 状态：`T50` 已完成（2026-02-27）。
+- 关键产物：
+  - 新增 `internal/contracts/task_runtime_input.go`，沉淀 6 组跨层输入/选项/事件行权威类型：
+    - `TaskRunCreateInput`
+    - `TaskEventInput`
+    - `TaskRuntimeSampleInput`
+    - `TaskSemanticReportInput`
+    - `TaskListStatusOptions`
+    - `TaskEventScopeRow`
+  - `NextActionToSemanticPhase` 迁移到 contracts，采用声明式映射表 `nextActionSemanticPhaseTable`，删除 `core/task` 双副本实现。
+  - `internal/services/core/task_runtime.go` 仅保留接口，所有方法签名改为直接引用 contracts 类型；移除 core 内镜像类型与 helper。
+  - `internal/services/task/runtime_adapter.go` 由逐字段复制转换改为纯方法代理，消除机械映射代码。
+  - `internal/services/task/service_runs.go`、`service_events.go`、`service_status.go` 方法签名统一改为 contracts 输入类型，删除 task 包内重复结构体定义。
+  - 调用方（`worker/pm/agentexec/ticket/app/subagent`）已统一迁移到 contracts 类型路径。
+  - 新增单测 `internal/contracts/task_runtime_input_test.go`，覆盖 next_action 映射与默认分支。
+- 回归验证：
+  - `go test ./internal/services/core/... ./internal/services/task/... ./internal/fsm/... ./internal/contracts/...` 通过。
+  - `go vet ./...` 通过。
+- 依赖变化说明：
+  - 无新增硬依赖，继续复用 `T39(FSM 基础)`、`T24(schema_migrations)`、`T07/T08/T09(agentexec 统一执行入口)` 既有能力。
+  - 依赖方向进一步收敛为 `services/* -> contracts`；`core <-> task` 不再通过镜像输入类型耦合。
+  - 新增约束：`next_action -> semantic_phase` 权威实现固定在 contracts，后续改动需同步其单测，不得在服务层复制映射逻辑。
 
 ## W06B 回写（T07 AgentExec 服务层入口 1/3）
 

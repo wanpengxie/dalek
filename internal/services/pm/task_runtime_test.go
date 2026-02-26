@@ -28,7 +28,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 
 	rt := tasksvc.New(p.DB)
 	now := time.Now().UTC().Truncate(time.Second)
-	oldRun, err := rt.CreateRun(context.Background(), tasksvc.CreateRunInput{
+	oldRun, err := rt.CreateRun(context.Background(), contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         p.Key,

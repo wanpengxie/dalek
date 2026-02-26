@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"dalek/internal/repo"
-	tasksvc "dalek/internal/services/task"
 	"dalek/internal/store"
 	"dalek/internal/testutil"
 )
@@ -852,7 +851,7 @@ func createRunningTaskRunForFinishAgentTest(t *testing.T, p *Project, requestID 
 		t.Fatalf("project task service is nil")
 	}
 	ctx := context.Background()
-	run, err := p.task.CreateRun(ctx, tasksvc.CreateRunInput{
+	run, err := p.task.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerPM,
 		TaskType:           "pm_dispatch_agent",
 		ProjectKey:         p.Key(),

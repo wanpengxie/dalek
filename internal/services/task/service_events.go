@@ -11,17 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-type TaskEventInput struct {
-	TaskRunID uint
-	EventType string
-	FromState any
-	ToState   any
-	Note      string
-	Payload   any
-	CreatedAt time.Time
-}
-
-func (s *Service) AppendEvent(ctx context.Context, in TaskEventInput) error {
+func (s *Service) AppendEvent(ctx context.Context, in contracts.TaskEventInput) error {
 	db, err := s.requireDB()
 	if err != nil {
 		return err
@@ -65,17 +55,7 @@ func (s *Service) AppendEvent(ctx context.Context, in TaskEventInput) error {
 	return db.WithContext(ctx).Create(&ev).Error
 }
 
-type RuntimeSampleInput struct {
-	TaskRunID  uint
-	State      contracts.TaskRuntimeHealthState
-	NeedsUser  bool
-	Summary    string
-	Source     string
-	ObservedAt time.Time
-	Metrics    any
-}
-
-func (s *Service) AppendRuntimeSample(ctx context.Context, in RuntimeSampleInput) error {
+func (s *Service) AppendRuntimeSample(ctx context.Context, in contracts.TaskRuntimeSampleInput) error {
 	db, err := s.requireDB()
 	if err != nil {
 		return err
@@ -104,17 +84,7 @@ func (s *Service) AppendRuntimeSample(ctx context.Context, in RuntimeSampleInput
 	return db.WithContext(ctx).Create(&sample).Error
 }
 
-type SemanticReportInput struct {
-	TaskRunID  uint
-	Phase      contracts.TaskSemanticPhase
-	Milestone  string
-	NextAction string
-	Summary    string
-	ReportedAt time.Time
-	Payload    any
-}
-
-func (s *Service) AppendSemanticReport(ctx context.Context, in SemanticReportInput) error {
+func (s *Service) AppendSemanticReport(ctx context.Context, in contracts.TaskSemanticReportInput) error {
 	db, err := s.requireDB()
 	if err != nil {
 		return err
