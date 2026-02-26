@@ -96,7 +96,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-stopped-offline","type":
 	}).Error; err != nil {
 		t.Fatalf("mark worker stopped failed: %v", err)
 	}
-	delete(fTmux.sessions, strings.TrimSpace(w.TmuxSession))
+	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
 
 	out, err := svc.DirectDispatchWorker(context.Background(), tk.ID, DirectDispatchOptions{
 		EntryPrompt: "继续处理这个 ticket",

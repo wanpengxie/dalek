@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
+	"dalek/internal/repo"
 	"dalek/internal/services/core"
 	"dalek/internal/store"
 )
@@ -70,10 +71,10 @@ func TestInterruptPeerConversation_ReturnsMissWhenNoRunningTurn(t *testing.T) {
 	}
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
-		DB:         db,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		DB:       db,
 	})
 
 	binding := store.ChannelBinding{
@@ -124,10 +125,10 @@ func TestInterruptPeerConversation_ReturnsExecutionFailure(t *testing.T) {
 	}
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
-		DB:         db,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		DB:       db,
 	})
 
 	binding := store.ChannelBinding{

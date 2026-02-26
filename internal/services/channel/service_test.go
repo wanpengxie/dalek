@@ -308,9 +308,9 @@ func TestProcessInbound_StructuredTurnResponseCreatesPendingActions(t *testing.T
 
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
 		},
@@ -373,9 +373,9 @@ func TestDecidePendingAction_ApproveExecutesAndMarksExecuted(t *testing.T) {
 
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
 		},
@@ -440,9 +440,9 @@ func TestDecidePendingAction_RejectMarksRejected(t *testing.T) {
 
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
 		},
@@ -502,9 +502,9 @@ func TestProcessInbound_FailedWhenAgentNoResponse(t *testing.T) {
 	installFakeClaudeBinary(t, true)
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
 		},
@@ -585,9 +585,9 @@ PY
 
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
 		},
@@ -699,9 +699,9 @@ PY
 
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
 		},
@@ -750,9 +750,9 @@ func TestProcessInbound_TimeoutStillReturnsFailedJobResult(t *testing.T) {
 	installFakeClaudeBinaryWithDelay(t, 2*time.Second)
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
 		},
@@ -793,10 +793,10 @@ func TestInterruptPeerConversation_CancelsRunningTurnWhenRunnerNotInterrupted(t 
 	}
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
-		DB:         db,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		DB:       db,
 	})
 
 	binding := store.ChannelBinding{
@@ -856,10 +856,10 @@ func TestInterruptPeerConversation_UsesRunnerInterruptWithoutCancel(t *testing.T
 	}
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
-		DB:         db,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		DB:       db,
 	})
 
 	binding := store.ChannelBinding{
@@ -913,10 +913,10 @@ func TestResetPeerConversationSession_ClearsSessionAndClosesRunner(t *testing.T)
 	}
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
-		DB:         db,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		DB:       db,
 	})
 
 	binding := store.ChannelBinding{
@@ -973,9 +973,9 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 	}
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
 		},
@@ -1059,10 +1059,10 @@ func TestProcessInbound_CodexBackend_JSONLAndEvents(t *testing.T) {
 
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
-		DB:         db,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		DB:       db,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1106,9 +1106,9 @@ func TestProcessInbound_ResolveBackendFromProjectConfig(t *testing.T) {
 	installFakeCodexBinary(t)
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{
 				Provider: "codex",
@@ -1154,9 +1154,9 @@ func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
 	installFakeCodexBinaryForSDK(t)
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{
 				Provider: "codex",
@@ -1282,9 +1282,9 @@ func newChannelServiceWithFakeAgent(t *testing.T, db *gorm.DB) *Service {
 	installFakeClaudeBinary(t, false)
 	repoRoot := t.TempDir()
 	return New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayAgentConfig{
 				Mode: "cli",

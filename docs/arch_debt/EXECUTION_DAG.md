@@ -83,6 +83,20 @@
 - 测试补齐：新增 logger 与 recover 行为测试（`core/logger_test.go`、`daemon/middleware_test.go`、`channel/tool_approval_test.go`），支持可控日志输出断言。
 - 下游约束更新：后续票（含 `T32`）必须复用 `*slog.Logger` 注入链路，且 daemon HTTP handler 必须经过 recover middleware。
 
+## W02 回写（T19 Core.Project 拆分）
+
+- 状态：`T19` 已完成（2026-02-26）。
+- 交付物：
+  - `core.Project` 去除 `ProjectDir/ConfigPath/DBPath` 三个冗余字段；按 W01 logger 基线计数为 `15 -> 12`（历史口径对应 `14 -> 11`），统一通过 `ProjectDir()/ConfigPath()/DBPath()` 便捷方法读取。
+  - 新增 `core.NewProject()` + `Validate()`，集中校验核心依赖（`Name/Key/RepoRoot/Layout/DB/Logger/Tmux/Git/TaskRuntime`）。
+  - app 层新增 `buildCoreProject()`，`openProject/initProjectFiles` 构造路径统一，避免重复 literal 构造。
+  - 新增 `internal/testutil/project.go`，沉淀共享 `FakeTmuxClient/FakeGitClient/NewTestProject`，worker/pm 测试 helper 完成复用。
+  - 补齐构造与注入回归测试：新增 `internal/services/core/project_test.go`，并更新 app/worker/pm/channel 相关测试。
+- 对后续票影响：
+  - `T13`（Facade/Service 边界收口）应复用 `core.NewProject/buildCoreProject`，不再新增 `core.Project{...}` 直写构造。
+  - `T21/T03/T10` 在接入 core 依赖时统一走按需注入，不再依赖历史冗余路径字段。
+  - 后续新增测试 fixture 统一落在 `internal/testutil/`，禁止在域内重复维护 fake tmux/git 实现。
+
 ## 每轮启动 Dispatch 必带指令（强制）
 
 每次启动 `Wxx` 前，dispatch prompt 必须包含以下 7 项，缺一不可：

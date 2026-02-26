@@ -368,7 +368,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		"export DALEK_TICKET_ID=" + infra.ShellQuote(fmt.Sprintf("%d", t.ID)),
 		"export DALEK_PROJECT_KEY=" + infra.ShellQuote(strings.TrimSpace(p.Key)),
 		"export DALEK_WORKTREE_PATH=" + infra.ShellQuote(strings.TrimSpace(worktreePath)),
-		"export DALEK_DB_PATH=" + infra.ShellQuote(strings.TrimSpace(p.DBPath)),
+		"export DALEK_DB_PATH=" + infra.ShellQuote(strings.TrimSpace(p.DBPath())),
 		"export DALEK_CONTRACT_DIR=" + infra.ShellQuote(strings.TrimSpace(contractDir)),
 	}
 	if strings.TrimSpace(tsBinPath) != "" {

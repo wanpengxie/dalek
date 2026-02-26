@@ -19,6 +19,8 @@ import (
 	"dalek/internal/services/ticket"
 	"dalek/internal/services/worker"
 	"dalek/internal/store"
+
+	"gorm.io/gorm"
 )
 
 // Home 是 dalek 的全局运行目录（默认 ~/.dalek）。
@@ -233,12 +235,12 @@ func (h *Home) AddOrUpdateProject(name, repoRoot string, cfg ProjectConfig) (*Pr
 	// 打开/初始化 project
 	p, err := h.openProject(RegisteredProject{Name: name, RepoRoot: repoRoot})
 	if err == nil {
-		base, _, lerr := repo.LoadConfig(p.core.ConfigPath)
+		base, _, lerr := repo.LoadConfig(p.core.ConfigPath())
 		if lerr != nil {
 			base = p.core.Config
 		}
 		merged := repo.MergeConfig(base, cfg)
-		if err := repo.WriteConfigAtomic(p.core.ConfigPath, merged); err != nil {
+		if err := repo.WriteConfigAtomic(p.core.ConfigPath(), merged); err != nil {
 			return nil, err
 		}
 		p.core.Config = merged
@@ -334,22 +336,9 @@ func (h *Home) openProject(rp RegisteredProject) (*Project, error) {
 		return nil, err
 	}
 
-	cp := &core.Project{
-		Name:         name,
-		Key:          repo.ProjectKey(repoRoot),
-		RepoRoot:     repoRoot,
-		Layout:       layout,
-		ProjectDir:   layout.ProjectDir,
-		ConfigPath:   layout.ConfigPath,
-		DBPath:       layout.DBPath,
-		WorktreesDir: worktreesDir,
-		WorkersDir:   layout.RuntimeWorkersDir,
-		Config:       cfg,
-		DB:           db,
-		Logger:       core.DefaultLogger(),
-		Tmux:         infra.NewTmuxExecClient(),
-		Git:          infra.NewGitExecClient(),
-		TaskRuntime:  task.NewRuntimeFactory(),
+	cp, err := buildCoreProject(name, repo.ProjectKey(repoRoot), repoRoot, layout, cfg, db, worktreesDir)
+	if err != nil {
+		return nil, err
 	}
 	return assembleProject(cp), nil
 }
@@ -410,24 +399,28 @@ func (h *Home) initProjectFiles(name, repoRoot string, cfg ProjectConfig) (*Proj
 		return nil, err
 	}
 
-	cp := &core.Project{
-		Name:         name,
-		Key:          key,
-		RepoRoot:     repoRoot,
+	cp, err := buildCoreProject(name, key, repoRoot, layout, cfg, db, worktreesDir)
+	if err != nil {
+		return nil, err
+	}
+	return assembleProject(cp), nil
+}
+
+func buildCoreProject(name, key, repoRoot string, layout repo.Layout, cfg repo.Config, db *gorm.DB, worktreesDir string) (*core.Project, error) {
+	return core.NewProject(core.NewProjectInput{
+		Name:         strings.TrimSpace(name),
+		Key:          strings.TrimSpace(key),
+		RepoRoot:     strings.TrimSpace(repoRoot),
 		Layout:       layout,
-		ProjectDir:   layout.ProjectDir,
-		ConfigPath:   layout.ConfigPath,
-		DBPath:       layout.DBPath,
-		WorktreesDir: worktreesDir,
-		WorkersDir:   layout.RuntimeWorkersDir,
+		WorktreesDir: strings.TrimSpace(worktreesDir),
+		WorkersDir:   strings.TrimSpace(layout.RuntimeWorkersDir),
 		Config:       cfg,
 		DB:           db,
 		Logger:       core.DefaultLogger(),
 		Tmux:         infra.NewTmuxExecClient(),
 		Git:          infra.NewGitExecClient(),
 		TaskRuntime:  task.NewRuntimeFactory(),
-	}
-	return assembleProject(cp), nil
+	})
 }
 
 func loadProjectConfigRaw(path string) (repo.Config, error) {

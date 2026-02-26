@@ -48,11 +48,11 @@ func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
 	if ticket.WorkflowStatus != store.TicketBacklog {
 		t.Fatalf("expected ticket backlog, got %s", ticket.WorkflowStatus)
 	}
-	if fTmux.newSessionCalls != 1 {
-		t.Fatalf("expected one tmux new-session call, got %d", fTmux.newSessionCalls)
+	if fTmux.NewSessionCalls != 1 {
+		t.Fatalf("expected one tmux new-session call, got %d", fTmux.NewSessionCalls)
 	}
-	if fGit.addCalls != 1 {
-		t.Fatalf("expected one git worktree add call, got %d", fGit.addCalls)
+	if fGit.AddCalls != 1 {
+		t.Fatalf("expected one git worktree add call, got %d", fGit.AddCalls)
 	}
 
 	var ev store.WorkerStatusEvent
@@ -93,20 +93,20 @@ func TestStartTicket_NewWorkerUsesRunScopedBranchAndWorktree(t *testing.T) {
 
 func TestStartTicket_DefaultBaseUsesCurrentBranch(t *testing.T) {
 	svc, p, _, fGit := newServiceForTest(t)
-	fGit.currentBranch = "feature/current"
+	fGit.CurrentBranchValue = "feature/current"
 
 	tk := createTicket(t, p.DB, "base-current-branch")
 	if _, err := svc.StartTicketResources(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StartTicketResources failed: %v", err)
 	}
-	if got := strings.TrimSpace(fGit.lastBaseBranch); got != "feature/current" {
+	if got := strings.TrimSpace(fGit.LastBaseBranch); got != "feature/current" {
 		t.Fatalf("expected base branch from current branch, got=%q", got)
 	}
 }
 
 func TestStartTicket_BaseOverrideTakesPrecedence(t *testing.T) {
 	svc, p, _, fGit := newServiceForTest(t)
-	fGit.currentBranch = "feature/current"
+	fGit.CurrentBranchValue = "feature/current"
 
 	tk := createTicket(t, p.DB, "base-override")
 	if _, err := svc.StartTicketResourcesWithOptions(context.Background(), tk.ID, StartOptions{
@@ -114,14 +114,14 @@ func TestStartTicket_BaseOverrideTakesPrecedence(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("StartTicketResourcesWithOptions failed: %v", err)
 	}
-	if got := strings.TrimSpace(fGit.lastBaseBranch); got != "release/v1" {
+	if got := strings.TrimSpace(fGit.LastBaseBranch); got != "release/v1" {
 		t.Fatalf("expected base override release/v1, got=%q", got)
 	}
 }
 
 func TestStartTicket_RollbackWorktreeWhenEnsureContractFails(t *testing.T) {
 	svc, p, _, fGit := newServiceForTest(t)
-	fGit.afterAdd = func(path string) error {
+	fGit.AfterAdd = func(path string) error {
 		return os.WriteFile(filepath.Join(path, ".dalek"), []byte("conflict"), 0o644)
 	}
 
@@ -130,43 +130,43 @@ func TestStartTicket_RollbackWorktreeWhenEnsureContractFails(t *testing.T) {
 	if err == nil {
 		t.Fatalf("StartTicketResources should fail when EnsureWorktreeContract fails")
 	}
-	if fGit.addCalls != 1 {
-		t.Fatalf("expected one worktree add call, got=%d", fGit.addCalls)
+	if fGit.AddCalls != 1 {
+		t.Fatalf("expected one worktree add call, got=%d", fGit.AddCalls)
 	}
-	if fGit.removeCalls != 1 {
-		t.Fatalf("expected rollback remove worktree once, got=%d", fGit.removeCalls)
+	if fGit.RemoveCalls != 1 {
+		t.Fatalf("expected rollback remove worktree once, got=%d", fGit.RemoveCalls)
 	}
 }
 
 func TestStartTicket_RollbackSessionAndWorktreeWhenNewSessionFails(t *testing.T) {
 	svc, p, fTmux, fGit := newServiceForTest(t)
-	fTmux.newSessionErr = errors.New("tmux new-session failed")
+	fTmux.NewSessionErr = errors.New("tmux new-session failed")
 
 	tk := createTicket(t, p.DB, "ticket-rollback-session")
 	_, err := svc.StartTicketResources(context.Background(), tk.ID)
 	if err == nil || !strings.Contains(err.Error(), "tmux new-session failed") {
 		t.Fatalf("StartTicketResources should return tmux error, got=%v", err)
 	}
-	if fTmux.killSessionCalls < 1 {
-		t.Fatalf("expected rollback kill session, got=%d", fTmux.killSessionCalls)
+	if fTmux.KillSessionCalls < 1 {
+		t.Fatalf("expected rollback kill session, got=%d", fTmux.KillSessionCalls)
 	}
-	if fGit.removeCalls != 1 {
-		t.Fatalf("expected rollback remove worktree once, got=%d", fGit.removeCalls)
+	if fGit.RemoveCalls != 1 {
+		t.Fatalf("expected rollback remove worktree once, got=%d", fGit.RemoveCalls)
 	}
 }
 
 func TestStartTicket_RollbackCleanupFailureDoesNotOverrideMainError(t *testing.T) {
 	svc, p, fTmux, fGit := newServiceForTest(t)
-	fTmux.newSessionErr = errors.New("tmux new-session failed")
-	fGit.removeErr = errors.New("remove worktree failed")
+	fTmux.NewSessionErr = errors.New("tmux new-session failed")
+	fGit.RemoveErr = errors.New("remove worktree failed")
 
 	tk := createTicket(t, p.DB, "ticket-rollback-best-effort")
 	_, err := svc.StartTicketResources(context.Background(), tk.ID)
 	if err == nil || !strings.Contains(err.Error(), "tmux new-session failed") {
 		t.Fatalf("main error should remain tmux failure, got=%v", err)
 	}
-	if fGit.removeCalls != 1 {
-		t.Fatalf("expected rollback remove attempt once, got=%d", fGit.removeCalls)
+	if fGit.RemoveCalls != 1 {
+		t.Fatalf("expected rollback remove attempt once, got=%d", fGit.RemoveCalls)
 	}
 }
 
@@ -175,7 +175,7 @@ func TestStartTicket_FreshWorkerCleansStaleSameNameSession(t *testing.T) {
 
 	tk := createTicket(t, p.DB, "ticket-fresh-clean-stale-session")
 	staleSession := fmt.Sprintf("ts-%s-t%d-w1", p.Key, tk.ID)
-	fTmux.sessions[staleSession] = true
+	fTmux.Sessions[staleSession] = true
 
 	w, err := svc.StartTicketResources(context.Background(), tk.ID)
 	if err != nil {
@@ -184,10 +184,10 @@ func TestStartTicket_FreshWorkerCleansStaleSameNameSession(t *testing.T) {
 	if strings.TrimSpace(w.TmuxSession) != staleSession {
 		t.Fatalf("unexpected session name: got=%q want=%q", strings.TrimSpace(w.TmuxSession), staleSession)
 	}
-	if fTmux.killSessionCalls < 1 {
-		t.Fatalf("expected stale session cleanup before start, killSessionCalls=%d", fTmux.killSessionCalls)
+	if fTmux.KillSessionCalls < 1 {
+		t.Fatalf("expected stale session cleanup before start, killSessionCalls=%d", fTmux.KillSessionCalls)
 	}
-	if !fTmux.sessions[staleSession] {
+	if !fTmux.Sessions[staleSession] {
 		t.Fatalf("expected session recreated after cleanup")
 	}
 }
@@ -224,8 +224,8 @@ func TestStartTicket_RestartReusesWorkerRecord(t *testing.T) {
 	if cnt != 1 {
 		t.Fatalf("expected single worker record after restart, got %d", cnt)
 	}
-	if fTmux.newSessionCalls != 2 {
-		t.Fatalf("expected tmux new-session called twice after restart, got %d", fTmux.newSessionCalls)
+	if fTmux.NewSessionCalls != 2 {
+		t.Fatalf("expected tmux new-session called twice after restart, got %d", fTmux.NewSessionCalls)
 	}
 }
 
@@ -312,8 +312,8 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	if ticket.WorkflowStatus != store.TicketBacklog {
 		t.Fatalf("expected ticket workflow backlog, got %s", ticket.WorkflowStatus)
 	}
-	if fTmux.killSessionCalls != 1 {
-		t.Fatalf("expected one kill-session call, got %d", fTmux.killSessionCalls)
+	if fTmux.KillSessionCalls != 1 {
+		t.Fatalf("expected one kill-session call, got %d", fTmux.KillSessionCalls)
 	}
 	statusRows, err := rt.ListStatus(context.Background(), tasksvc.ListStatusOptions{
 		OwnerType:       store.TaskOwnerWorker,
@@ -343,16 +343,16 @@ func TestStopTicket_KillsOrphanTmuxSessionsWhenNoWorkerRecord(t *testing.T) {
 	// 模拟“DB 被清空/缺记录，但 tmux socket 里还残留旧 session”的情况。
 	// stop -ticket 应该能按命名约定清理掉这类 session。
 	orphan := "ts-demo-t" + strconv.Itoa(int(tk.ID)) + "-w999"
-	fTmux.sessions[orphan] = true
+	fTmux.Sessions[orphan] = true
 
 	if err := svc.StopTicket(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StopTicket failed: %v", err)
 	}
-	if fTmux.sessions[orphan] {
+	if fTmux.Sessions[orphan] {
 		t.Fatalf("expected orphan session killed")
 	}
-	if fTmux.killSessionCalls != 1 {
-		t.Fatalf("expected one kill-session call, got %d", fTmux.killSessionCalls)
+	if fTmux.KillSessionCalls != 1 {
+		t.Fatalf("expected one kill-session call, got %d", fTmux.KillSessionCalls)
 	}
 }
 
@@ -395,7 +395,7 @@ func TestListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("create runtime sample failed: %v", err)
 	}
-	fTmux.sessions[a.TmuxSession] = true
+	fTmux.Sessions[a.TmuxSession] = true
 
 	views, err := svc.ListTicketViews(context.Background())
 	if err != nil {
@@ -412,7 +412,7 @@ func TestListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
 	}
 
 	// session 不在 + worker stopped => 运行态派生为 dead
-	delete(fTmux.sessions, a.TmuxSession)
+	delete(fTmux.Sessions, a.TmuxSession)
 	if err := p.DB.Model(&store.Worker{}).Where("id = ?", a.ID).Update("status", store.WorkerStopped).Error; err != nil {
 		t.Fatalf("update worker failed: %v", err)
 	}
@@ -468,9 +468,9 @@ func TestListTicketViews_UsesWorkerSocketForSessionAlive(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("create runtime sample failed: %v", err)
 	}
-	fTmux.ensure()
-	fTmux.sessionsBySocket["dalek-default"] = map[string]bool{}
-	fTmux.sessionsBySocket["dalek-alt"] = map[string]bool{
+	fTmux.Ensure()
+	fTmux.SessionsBySocket["dalek-default"] = map[string]bool{}
+	fTmux.SessionsBySocket["dalek-alt"] = map[string]bool{
 		"s-ticket-2": true,
 	}
 
@@ -504,8 +504,8 @@ func TestListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflowBacklog(t *te
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
 	}
-	fTmux.ensure()
-	fTmux.sessionsBySocket["dalek"] = map[string]bool{
+	fTmux.Ensure()
+	fTmux.SessionsBySocket["dalek"] = map[string]bool{
 		"s-ticket-3": true,
 	}
 
@@ -539,8 +539,8 @@ func TestListTicketViews_SessionProbeFailureKeepsWorkflow(t *testing.T) {
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
 	}
-	fTmux.ensure()
-	fTmux.listErrBySocket["dalek"] = context.DeadlineExceeded
+	fTmux.Ensure()
+	fTmux.ListErrBySocket["dalek"] = context.DeadlineExceeded
 
 	views, err := svc.ListTicketViews(context.Background())
 	if err != nil {

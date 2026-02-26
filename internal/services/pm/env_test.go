@@ -3,6 +3,7 @@ package pm
 import (
 	"testing"
 
+	"dalek/internal/repo"
 	"dalek/internal/services/core"
 	"dalek/internal/store"
 )
@@ -13,7 +14,9 @@ func TestBuildBaseEnvConsistency(t *testing.T) {
 	p := &core.Project{
 		Key:      " project-a ",
 		RepoRoot: " /tmp/repo ",
-		DBPath:   " /tmp/repo/dalek.db ",
+		Layout: repo.Layout{
+			DBPath: " /tmp/repo/dalek.db ",
+		},
 	}
 	ticket := store.Ticket{
 		ID:          12,

@@ -78,21 +78,22 @@ func newPMServiceForTest(t *testing.T) (*Service, *core.Project) {
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 
-	p := &core.Project{
+	p, err := core.NewProject(core.NewProjectInput{
 		Name:         "demo",
 		Key:          "demo",
 		RepoRoot:     repoRoot,
 		Layout:       layout,
-		ProjectDir:   layout.ProjectDir,
-		ConfigPath:   filepath.Join(layout.ProjectDir, "config.json"),
-		DBPath:       layout.DBPath,
 		WorktreesDir: filepath.Join(t.TempDir(), "worktrees"),
 		WorkersDir:   layout.RuntimeWorkersDir,
 		Config:       repo.Config{TmuxSocket: "dalek"},
 		DB:           db,
+		Logger:       core.DiscardLogger(),
 		Tmux:         noopTmux{},
 		Git:          noopGit{},
 		TaskRuntime:  tasksvc.NewRuntimeFactory(),
+	})
+	if err != nil {
+		t.Fatalf("NewProject failed: %v", err)
 	}
 
 	workerSvc := workersvc.New(p)
