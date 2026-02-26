@@ -89,7 +89,7 @@ func (s *Service) recordPMTaskFailure(ctx context.Context, taskRunID uint, err e
 	})
 }
 
-func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job store.PMDispatchJob, t store.Ticket, w store.Worker, taskPath string, health contracts.TaskRuntimeHealthState, phase contracts.TaskSemanticPhase, nextAction, summary string, payload any) (store.TaskRun, error) {
+func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job store.PMDispatchJob, t contracts.Ticket, w contracts.Worker, taskPath string, health contracts.TaskRuntimeHealthState, phase contracts.TaskSemanticPhase, nextAction, summary string, payload any) (store.TaskRun, error) {
 	if strings.TrimSpace(job.RequestID) == "" {
 		return store.TaskRun{}, fmt.Errorf("dispatch request_id 为空")
 	}

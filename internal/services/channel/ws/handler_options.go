@@ -8,14 +8,13 @@ import (
 
 	"dalek/internal/contracts"
 	channelsvc "dalek/internal/services/channel"
-	"dalek/internal/store"
 )
 
 type TurnProcessor interface {
 	ProcessInbound(ctx context.Context, env contracts.InboundEnvelope) (channelsvc.ProcessResult, error)
 }
 
-type ListInboxFunc func(ctx context.Context, limit int) ([]store.InboxItem, error)
+type ListInboxFunc func(ctx context.Context, limit int) ([]contracts.InboxItem, error)
 
 type ServerOptions struct {
 	Path               string

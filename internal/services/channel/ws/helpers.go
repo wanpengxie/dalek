@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
+	"dalek/internal/contracts"
 )
 
 func ParseInboundText(payload []byte) (string, string, error) {
@@ -83,7 +83,7 @@ func DeriveEventType(stream, phase string) string {
 	return phase
 }
 
-func BuildInboxUpdateFrame(conversationID string, items []store.InboxItem) OutboundFrame {
+func BuildInboxUpdateFrame(conversationID string, items []contracts.InboxItem) OutboundFrame {
 	return OutboundFrame{
 		Type:           FrameTypeInboxUpdate,
 		ConversationID: strings.TrimSpace(conversationID),
@@ -94,7 +94,7 @@ func BuildInboxUpdateFrame(conversationID string, items []store.InboxItem) Outbo
 	}
 }
 
-func FormatInboxSummary(items []store.InboxItem) string {
+func FormatInboxSummary(items []contracts.InboxItem) string {
 	if len(items) == 0 {
 		return "inbox(open)=0"
 	}
@@ -122,7 +122,7 @@ func FormatTimestamp(at time.Time) string {
 	return at.UTC().Format(time.RFC3339)
 }
 
-func digestInboxItems(items []store.InboxItem) string {
+func digestInboxItems(items []contracts.InboxItem) string {
 	if len(items) == 0 {
 		return ""
 	}
@@ -142,7 +142,7 @@ func digestInboxItems(items []store.InboxItem) string {
 	return strings.Join(parts, ";")
 }
 
-func toInboxItems(items []store.InboxItem) []InboxItem {
+func toInboxItems(items []contracts.InboxItem) []InboxItem {
 	out := make([]InboxItem, 0, len(items))
 	for _, it := range items {
 		out = append(out, InboxItem{

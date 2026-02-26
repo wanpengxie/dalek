@@ -6,49 +6,12 @@ import (
 	"dalek/internal/contracts"
 )
 
-type Ticket struct {
-	ID             uint                           `gorm:"primaryKey"`
-	CreatedAt      time.Time                      `gorm:"not null"`
-	UpdatedAt      time.Time                      `gorm:"not null"`
-	Title          string                         `gorm:"type:text;not null"`
-	Description    string                         `gorm:"type:text;not null;default:''"`
-	WorkflowStatus contracts.TicketWorkflowStatus `gorm:"column:workflow_status;type:text;not null;default:'backlog';index"`
-	Priority       int                            `gorm:"not null;default:0"`
-}
-
-type Worker struct {
-	ID        uint                   `gorm:"primaryKey"`
-	CreatedAt time.Time              `gorm:"not null"`
-	UpdatedAt time.Time              `gorm:"not null"`
-	TicketID  uint                   `gorm:"uniqueIndex;not null"`
-	Status    contracts.WorkerStatus `gorm:"type:text;not null;index"`
-
-	WorktreePath string `gorm:"type:text;not null"`
-	Branch       string `gorm:"type:text;not null"`
-	TmuxSocket   string `gorm:"type:text;not null"`
-	TmuxSession  string `gorm:"type:text;not null;default:''"`
-
-	StartedAt *time.Time `gorm:""`
-	StoppedAt *time.Time `gorm:""`
-	LastError string     `gorm:"type:text;not null;default:''"`
-
-	WorktreeGCRequestedAt *time.Time `gorm:""`
-	WorktreeGCCleanedAt   *time.Time `gorm:""`
-	WorktreeCleanupError  string     `gorm:"type:text;not null;default:''"`
-
-	RuntimeUpdatedAt         *time.Time `gorm:""`
-	RuntimeSemanticUpdatedAt *time.Time `gorm:""`
-	RuntimeWatchRequestedAt  *time.Time `gorm:""`
-
-	RuntimeStreamBytes     int64      `gorm:"not null;default:0"`
-	RuntimeVisiblePlainSHA string     `gorm:"type:text;not null;default:''"`
-	RuntimeAltPlainSHA     string     `gorm:"type:text;not null;default:''"`
-	RuntimeLastChangeAt    *time.Time `gorm:""`
-
-	RuntimePaneCommand string `gorm:"type:text;not null;default:''"`
-	RuntimePaneInMode  bool   `gorm:"not null;default:false"`
-	RuntimePaneMode    string `gorm:"type:text;not null;default:''"`
-}
+type Ticket = contracts.Ticket
+type Worker = contracts.Worker
+type InboxItem = contracts.InboxItem
+type MergeItem = contracts.MergeItem
+type TicketWorkflowEvent = contracts.TicketWorkflowEvent
+type WorkerStatusEvent = contracts.WorkerStatusEvent
 
 type PMState struct {
 	ID        uint      `gorm:"primaryKey"`
@@ -70,46 +33,6 @@ type PMState struct {
 
 func (PMState) TableName() string {
 	return "pm_states"
-}
-
-type InboxItem struct {
-	ID        uint      `gorm:"primaryKey"`
-	CreatedAt time.Time `gorm:"not null"`
-	UpdatedAt time.Time `gorm:"not null"`
-
-	Key string `gorm:"type:text;not null;default:'';index"`
-
-	Status   contracts.InboxStatus   `gorm:"type:text;not null"`
-	Severity contracts.InboxSeverity `gorm:"type:text;not null"`
-	Reason   contracts.InboxReason   `gorm:"type:text;not null"`
-
-	Title string `gorm:"type:text;not null"`
-	Body  string `gorm:"type:text;not null;default:''"`
-
-	TicketID    uint `gorm:"not null;default:0;index"`
-	WorkerID    uint `gorm:"not null;default:0;index"`
-	MergeItemID uint `gorm:"not null;default:0;index"`
-
-	SnoozedUntil *time.Time `gorm:""`
-	ClosedAt     *time.Time `gorm:""`
-}
-
-type MergeItem struct {
-	ID        uint      `gorm:"primaryKey"`
-	CreatedAt time.Time `gorm:"not null"`
-	UpdatedAt time.Time `gorm:"not null"`
-
-	Status   contracts.MergeStatus `gorm:"type:text;not null"`
-	TicketID uint                  `gorm:"not null;index"`
-	WorkerID uint                  `gorm:"not null;default:0;index"`
-
-	Branch     string `gorm:"type:text;not null;default:''"`
-	ChecksJSON string `gorm:"type:text;not null;default:''"`
-
-	ApprovedBy string     `gorm:"type:text;not null;default:''"`
-	ApprovedAt *time.Time `gorm:""`
-
-	MergedAt *time.Time `gorm:""`
 }
 
 type PMDispatchJob struct {
@@ -250,45 +173,6 @@ type TaskEvent struct {
 
 func (TaskEvent) TableName() string {
 	return "task_events"
-}
-
-// TicketWorkflowEvent 记录 ticket.workflow_status 的状态迁移（append-only）。
-type TicketWorkflowEvent struct {
-	ID        uint      `gorm:"primaryKey"`
-	CreatedAt time.Time `gorm:"not null;index"`
-
-	TicketID uint `gorm:"not null;index"`
-
-	FromStatus contracts.TicketWorkflowStatus `gorm:"column:from_workflow_status;type:text;not null;default:'';index"`
-	ToStatus   contracts.TicketWorkflowStatus `gorm:"column:to_workflow_status;type:text;not null;default:'';index"`
-
-	Source      string `gorm:"type:text;not null;default:'';index"`
-	Reason      string `gorm:"type:text;not null;default:''"`
-	PayloadJSON string `gorm:"type:text;not null;default:''"`
-}
-
-func (TicketWorkflowEvent) TableName() string {
-	return "ticket_workflow_events"
-}
-
-// WorkerStatusEvent 记录 workers.status 的状态迁移（append-only）。
-type WorkerStatusEvent struct {
-	ID        uint      `gorm:"primaryKey"`
-	CreatedAt time.Time `gorm:"not null;index"`
-
-	WorkerID uint `gorm:"not null;index"`
-	TicketID uint `gorm:"not null;default:0;index"`
-
-	FromStatus contracts.WorkerStatus `gorm:"column:from_worker_status;type:text;not null;default:'';index"`
-	ToStatus   contracts.WorkerStatus `gorm:"column:to_worker_status;type:text;not null;default:'';index"`
-
-	Source      string `gorm:"type:text;not null;default:'';index"`
-	Reason      string `gorm:"type:text;not null;default:''"`
-	PayloadJSON string `gorm:"type:text;not null;default:''"`
-}
-
-func (WorkerStatusEvent) TableName() string {
-	return "worker_status_events"
 }
 
 // TaskStatusView 是只读聚合视图（task_status_view）的查询模型。

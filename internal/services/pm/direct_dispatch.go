@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -45,7 +43,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		ctx = context.Background()
 	}
 
-	var t store.Ticket
+	var t contracts.Ticket
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return DirectDispatchResult{}, err
 	}
@@ -140,7 +138,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	if prevWorkflow != contracts.TicketActive {
 		now := time.Now()
 		if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			res := tx.WithContext(ctx).Model(&store.Ticket{}).
+			res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
 				Where("id = ? AND workflow_status != ? AND workflow_status != ?", ticketID, contracts.TicketDone, contracts.TicketArchived).
 				Updates(map[string]any{
 					"workflow_status": contracts.TicketActive,
@@ -160,7 +158,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		}); err != nil {
 			return DirectDispatchResult{}, fmt.Errorf("更新 ticket workflow 失败（t%d）：%w", ticketID, err)
 		}
-		var refreshed store.Ticket
+		var refreshed contracts.Ticket
 		if rerr := db.WithContext(ctx).Select("workflow_status").First(&refreshed, ticketID).Error; rerr == nil {
 			workflowPromoted = normalizeTicketWorkflowStatus(refreshed.WorkflowStatus) == contracts.TicketActive && prevWorkflow != contracts.TicketActive
 		}
@@ -181,7 +179,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		failErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			// best-effort：仅在 workflow 仍为 active 时回滚，避免覆盖并发 report 推进后的状态。
 			if workflowPromoted {
-				res := tx.WithContext(ctx).Model(&store.Ticket{}).
+				res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
 					Where("id = ? AND workflow_status = ?", ticketID, contracts.TicketActive).
 					Updates(map[string]any{
 						"workflow_status": prevWorkflow,
@@ -200,7 +198,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 					}
 				}
 			}
-			_, uerr := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
+			_, uerr := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
 				Key:      inboxKeyWorkerIncident(w.ID, "direct_dispatch_failed"),
 				Status:   contracts.InboxOpen,
 				Severity: contracts.InboxWarn,

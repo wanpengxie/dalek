@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -61,11 +60,11 @@ func (s *Service) MarkWorkerRunning(ctx context.Context, workerID uint, now time
 		now = time.Now()
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var w store.Worker
+		var w contracts.Worker
 		if err := tx.WithContext(ctx).First(&w, workerID).Error; err != nil {
 			return err
 		}
-		if err := tx.WithContext(ctx).Model(&store.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
+		if err := tx.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
 			"status":     contracts.WorkerRunning,
 			"started_at": &now,
 			"stopped_at": nil,
@@ -95,14 +94,14 @@ func (s *Service) MarkWorkerFailed(ctx context.Context, workerID uint, now time.
 		now = time.Now()
 	}
 
-	var w store.Worker
+	var w contracts.Worker
 	if err := db.WithContext(ctx).First(&w, workerID).Error; err != nil {
 		return err
 	}
 
 	lastError = strings.TrimSpace(lastError)
 	_ = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).Model(&store.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
+		if err := tx.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
 			"status":     contracts.WorkerFailed,
 			"last_error": lastError,
 			"stopped_at": &now,
@@ -125,7 +124,7 @@ func (s *Service) MarkWorkerFailed(ctx context.Context, workerID uint, now time.
 // 约束：
 // - watcher 不直接写 worker.status/ticket.status，必须走 worker 的权威入口。
 // - 这里不 kill tmux（session 已不存活），只做 DB 状态收口。
-func (s *Service) MarkWorkerSessionNotAlive(ctx context.Context, w store.Worker, now time.Time) error {
+func (s *Service) MarkWorkerSessionNotAlive(ctx context.Context, w contracts.Worker, now time.Time) error {
 	db, err := s.db()
 	if err != nil {
 		return err
@@ -145,7 +144,7 @@ func (s *Service) MarkWorkerSessionNotAlive(ctx context.Context, w store.Worker,
 
 	// 同步 worker 生命周期状态（避免 manager/autopilot 继续把它计入 running 容量）。
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		res := tx.WithContext(ctx).Model(&store.Worker{}).
+		res := tx.WithContext(ctx).Model(&contracts.Worker{}).
 			Where("id = ? AND status = ?", w.ID, contracts.WorkerRunning).
 			Updates(map[string]any{
 				"status":     contracts.WorkerStopped,

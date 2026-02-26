@@ -15,7 +15,6 @@ import (
 
 	"dalek/internal/infra"
 	"dalek/internal/repo"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -70,7 +69,7 @@ func ticketRunNonce() string {
 	return strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
-func (s *Service) newTicketRunName(t store.Ticket) string {
+func (s *Service) newTicketRunName(t contracts.Ticket) string {
 	base := fmt.Sprintf("t%d", t.ID)
 	slug := ticketSlug(t.Title)
 	if slug != "" {
@@ -79,7 +78,7 @@ func (s *Service) newTicketRunName(t store.Ticket) string {
 	return base + "-" + ticketRunNonce()
 }
 
-func (s *Service) ticketBranchName(t store.Ticket, runName string) (string, error) {
+func (s *Service) ticketBranchName(t contracts.Ticket, runName string) (string, error) {
 	prefix, err := s.defaultBranchPrefix()
 	if err != nil {
 		return "", err
@@ -112,11 +111,11 @@ type StartOptions struct {
 // 注意：
 // - worker 只负责“资源启动”，不做额外初始化脚本。
 // - 这里返回的 worker 通常处于 creating，后续由 PM 的 start 流程标记为 running。
-func (s *Service) StartTicketResources(ctx context.Context, ticketID uint) (*store.Worker, error) {
+func (s *Service) StartTicketResources(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
 	return s.StartTicketResourcesWithOptions(ctx, ticketID, StartOptions{})
 }
 
-func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID uint, opt StartOptions) (w *store.Worker, err error) {
+func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID uint, opt StartOptions) (w *contracts.Worker, err error) {
 	p, err := s.require()
 	if err != nil {
 		return nil, err
@@ -152,7 +151,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		}
 	}()
 
-	var t store.Ticket
+	var t contracts.Ticket
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return nil, err
 	}
@@ -263,7 +262,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	}
 
 	if w == nil {
-		fresh := store.Worker{
+		fresh := contracts.Worker{
 			TicketID:     t.ID,
 			Status:       contracts.WorkerStopped,
 			WorktreePath: worktreePath,
@@ -305,7 +304,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	prevStatus := w.Status
 	statusNow := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		if err := tx.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 			"status":        contracts.WorkerCreating,
 			"worktree_path": worktreePath,
 			"branch":        branch,
@@ -386,7 +385,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	if err := p.Tmux.NewSessionWithCommand(ctx, socket, session, worktreePath, []string{"bash", "-lc", injected}); err != nil {
 		failedAt := time.Now()
 		_ = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if uerr := tx.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+			if uerr := tx.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 				"status":     contracts.WorkerFailed,
 				"last_error": err.Error(),
 				"stopped_at": &failedAt,
@@ -412,7 +411,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
 	_ = p.Tmux.PipePaneToFile(ctx, socket, session+":0.0", logPath)
 
-	var out store.Worker
+	var out contracts.Worker
 	if err := db.First(&out, w.ID).Error; err != nil {
 		return w, nil
 	}

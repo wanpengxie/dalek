@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"dalek/internal/contracts"
 	"dalek/internal/infra"
-	"dalek/internal/store"
 )
 
 type InterruptResult struct {
@@ -42,7 +42,7 @@ func (s *Service) InterruptWorker(ctx context.Context, workerID uint) (Interrupt
 	}
 	now := time.Now()
 
-	var w store.Worker
+	var w contracts.Worker
 	if err := db.First(&w, workerID).Error; err != nil {
 		return InterruptResult{}, err
 	}

@@ -64,13 +64,13 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 		}
 	}()
 
-	var t store.Ticket
+	var t contracts.Ticket
 	if err := db.WithContext(ctx).First(&t, job.TicketID).Error; err != nil {
 		s.recordPMTaskFailure(ctx, job.TaskRunID, err)
 		_ = s.completePMDispatchJobFailed(context.Background(), job.ID, runnerID, err.Error())
 		return err
 	}
-	var w store.Worker
+	var w contracts.Worker
 	if err := db.WithContext(ctx).First(&w, job.WorkerID).Error; err != nil {
 		s.recordPMTaskFailure(ctx, job.TaskRunID, err)
 		_ = s.completePMDispatchJobFailed(context.Background(), job.ID, runnerID, err.Error())
@@ -105,7 +105,7 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 	return nil
 }
 
-func (s *Service) executePMDispatchJob(ctx context.Context, job store.PMDispatchJob, t store.Ticket, w store.Worker, opt runPMDispatchJobOptions) (contracts.PMDispatchJobResult, error) {
+func (s *Service) executePMDispatchJob(ctx context.Context, job store.PMDispatchJob, t contracts.Ticket, w contracts.Worker, opt runPMDispatchJobOptions) (contracts.PMDispatchJobResult, error) {
 	_, _, err := s.require()
 	if err != nil {
 		return contracts.PMDispatchJobResult{}, err
@@ -143,13 +143,13 @@ func (s *Service) executePMDispatchJob(ctx context.Context, job store.PMDispatch
 	return out, nil
 }
 
-func (s *Service) recordDispatchEvent(ctx context.Context, ts time.Time, w store.Worker, typ, note string) {
+func (s *Service) recordDispatchEvent(ctx context.Context, ts time.Time, w contracts.Worker, typ, note string) {
 	_ = s.worker.AppendWorkerTaskEvent(ctx, w.ID, typ, note, map[string]any{
 		"ticket_id": w.TicketID,
 	}, ts)
 }
 
-func (s *Service) recordDispatchErrorEvent(ctx context.Context, ts time.Time, w store.Worker, note string) {
+func (s *Service) recordDispatchErrorEvent(ctx context.Context, ts time.Time, w contracts.Worker, note string) {
 	_ = s.worker.AppendWorkerTaskEvent(ctx, w.ID, "dispatch_error", strings.TrimSpace(note), map[string]any{
 		"ticket_id": w.TicketID,
 	}, ts)

@@ -7,12 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
-func (s *Service) LatestWorker(ctx context.Context, ticketID uint) (*store.Worker, error) {
+func (s *Service) LatestWorker(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
 	db, err := s.db()
 	if err != nil {
 		return nil, err
@@ -23,7 +21,7 @@ func (s *Service) LatestWorker(ctx context.Context, ticketID uint) (*store.Worke
 	if ticketID == 0 {
 		return nil, fmt.Errorf("ticket_id 不能为空")
 	}
-	var w store.Worker
+	var w contracts.Worker
 	err = db.WithContext(ctx).Where("ticket_id = ?", ticketID).Order("id desc").First(&w).Error
 	if err == nil {
 		return &w, nil
@@ -34,7 +32,7 @@ func (s *Service) LatestWorker(ctx context.Context, ticketID uint) (*store.Worke
 	return nil, err
 }
 
-func (s *Service) WorkerByID(ctx context.Context, workerID uint) (*store.Worker, error) {
+func (s *Service) WorkerByID(ctx context.Context, workerID uint) (*contracts.Worker, error) {
 	db, err := s.db()
 	if err != nil {
 		return nil, err
@@ -45,14 +43,14 @@ func (s *Service) WorkerByID(ctx context.Context, workerID uint) (*store.Worker,
 	if workerID == 0 {
 		return nil, fmt.Errorf("worker_id 不能为空")
 	}
-	var w store.Worker
+	var w contracts.Worker
 	if err := db.WithContext(ctx).First(&w, workerID).Error; err != nil {
 		return nil, err
 	}
 	return &w, nil
 }
 
-func (s *Service) ListRunningWorkers(ctx context.Context) ([]store.Worker, error) {
+func (s *Service) ListRunningWorkers(ctx context.Context) ([]contracts.Worker, error) {
 	db, err := s.db()
 	if err != nil {
 		return nil, err
@@ -60,7 +58,7 @@ func (s *Service) ListRunningWorkers(ctx context.Context) ([]store.Worker, error
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var workers []store.Worker
+	var workers []contracts.Worker
 	if err := db.WithContext(ctx).Where("status = ?", contracts.WorkerRunning).Order("id asc").Find(&workers).Error; err != nil {
 		return nil, err
 	}
@@ -90,7 +88,7 @@ func (s *Service) ReconcileRunningWorkersAfterKillAll(ctx context.Context, socke
 	now := nowLocal()
 	var rows int64
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var txWorkers []store.Worker
+		var txWorkers []contracts.Worker
 		if err := tx.WithContext(ctx).
 			Where("tmux_socket = ? AND status = ?", socket, contracts.WorkerRunning).
 			Order("id asc").
@@ -107,7 +105,7 @@ func (s *Service) ReconcileRunningWorkersAfterKillAll(ctx context.Context, socke
 			workerIDs = append(workerIDs, w.ID)
 		}
 
-		if err := tx.WithContext(ctx).Model(&store.Worker{}).
+		if err := tx.WithContext(ctx).Model(&contracts.Worker{}).
 			Where("id IN ?", workerIDs).
 			Updates(map[string]any{
 				"status":     contracts.WorkerStopped,

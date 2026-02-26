@@ -9,7 +9,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/repo"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -146,7 +145,7 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 
 	// dispatch 成功意味着进入 active（仅 PM reducer 写 workflow）。
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var cur store.Ticket
+		var cur contracts.Ticket
 		if err := tx.WithContext(ctx).First(&cur, ticketID).Error; err != nil {
 			return err
 		}
@@ -155,7 +154,7 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 			return nil
 		}
 		now := time.Now()
-		if err := tx.WithContext(ctx).Model(&store.Ticket{}).
+		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
 			Where("id = ?", ticketID).
 			Updates(map[string]any{
 				"workflow_status": contracts.TicketActive,
@@ -184,59 +183,59 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 	}, nil
 }
 
-func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, autoStart bool) (store.Ticket, *store.Worker, error) {
+func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, autoStart bool) (contracts.Ticket, *contracts.Worker, error) {
 	_, db, err := s.require()
 	if err != nil {
-		return store.Ticket{}, nil, err
+		return contracts.Ticket{}, nil, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var t store.Ticket
+	var t contracts.Ticket
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
-		return store.Ticket{}, nil, err
+		return contracts.Ticket{}, nil, err
 	}
 	if t.WorkflowStatus == contracts.TicketArchived {
-		return store.Ticket{}, nil, fmt.Errorf("ticket 已归档，不能派发（dispatch）：t%d", ticketID)
+		return contracts.Ticket{}, nil, fmt.Errorf("ticket 已归档，不能派发（dispatch）：t%d", ticketID)
 	}
 	if t.WorkflowStatus == contracts.TicketDone {
-		return store.Ticket{}, nil, fmt.Errorf("ticket 已完成，不能派发（dispatch）：t%d", ticketID)
+		return contracts.Ticket{}, nil, fmt.Errorf("ticket 已完成，不能派发（dispatch）：t%d", ticketID)
 	}
 	w, err := s.worker.LatestWorker(ctx, ticketID)
 	if err != nil {
-		return store.Ticket{}, nil, err
+		return contracts.Ticket{}, nil, err
 	}
 	if autoStart && (w == nil || strings.TrimSpace(w.TmuxSession) == "") {
 		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
 		if err != nil {
-			return store.Ticket{}, nil, err
+			return contracts.Ticket{}, nil, err
 		}
 	}
 	if w == nil || strings.TrimSpace(w.TmuxSession) == "" {
-		return store.Ticket{}, nil, s.workerMissingSessionError()
+		return contracts.Ticket{}, nil, s.workerMissingSessionError()
 	}
 	if w.Status == contracts.WorkerCreating {
 		ready, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
 		if waitErr != nil {
-			return store.Ticket{}, nil, waitErr
+			return contracts.Ticket{}, nil, waitErr
 		}
 		w = ready
 	}
 	if autoStart && w.Status != contracts.WorkerRunning {
 		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
 		if err != nil {
-			return store.Ticket{}, nil, err
+			return contracts.Ticket{}, nil, err
 		}
 		if w != nil && w.Status == contracts.WorkerCreating {
 			ready, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
 			if waitErr != nil {
-				return store.Ticket{}, nil, waitErr
+				return contracts.Ticket{}, nil, waitErr
 			}
 			w = ready
 		}
 	}
 	if w.Status != contracts.WorkerRunning {
-		return store.Ticket{}, nil, s.workerNotRunningError(w)
+		return contracts.Ticket{}, nil, s.workerNotRunningError(w)
 	}
 	return t, w, nil
 }
@@ -248,7 +247,7 @@ func dispatchAutoStartEnabled(v *bool) bool {
 	return *v
 }
 
-func (s *Service) ensureDispatchWorkerStarted(ctx context.Context, ticketID uint) (*store.Worker, error) {
+func (s *Service) ensureDispatchWorkerStarted(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
 	w, err := s.StartTicketWithOptions(ctx, ticketID, StartOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("auto-start 失败: %w", err)

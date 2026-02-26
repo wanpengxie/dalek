@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -32,7 +30,7 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 	}
 
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var t store.Ticket
+		var t contracts.Ticket
 		if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&t, ticketID).Error; err != nil {
 			return err
 		}
@@ -40,7 +38,7 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 		if from == contracts.TicketDone || from == contracts.TicketArchived || from == contracts.TicketBlocked {
 			return nil
 		}
-		if err := tx.WithContext(ctx).Model(&store.Ticket{}).
+		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
 			Where("id = ?", ticketID).
 			Updates(map[string]any{
 				"workflow_status": contracts.TicketBlocked,
@@ -62,7 +60,7 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 			key = inboxKeyWorkerIncident(workerID, "worker_not_ready")
 			title = fmt.Sprintf("worker 未就绪：t%d w%d", ticketID, workerID)
 		}
-		_, err := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
+		_, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
 			Key:      key,
 			Status:   contracts.InboxOpen,
 			Severity: contracts.InboxBlocker,

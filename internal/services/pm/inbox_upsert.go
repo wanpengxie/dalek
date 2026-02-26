@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -36,7 +34,7 @@ func inboxKeyMergeApproval(mergeItemID uint) string {
 	return fmt.Sprintf("approval:merge:%d", mergeItemID)
 }
 
-func (s *Service) upsertOpenInbox(ctx context.Context, item store.InboxItem) (bool, error) {
+func (s *Service) upsertOpenInbox(ctx context.Context, item contracts.InboxItem) (bool, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return false, err
@@ -44,14 +42,14 @@ func (s *Service) upsertOpenInbox(ctx context.Context, item store.InboxItem) (bo
 	return upsertOpenInboxWithDB(ctx, db, item)
 }
 
-func (s *Service) upsertOpenInboxTx(ctx context.Context, tx *gorm.DB, item store.InboxItem) (bool, error) {
+func (s *Service) upsertOpenInboxTx(ctx context.Context, tx *gorm.DB, item contracts.InboxItem) (bool, error) {
 	if tx == nil {
 		return false, fmt.Errorf("tx 不能为空")
 	}
 	return upsertOpenInboxWithDB(ctx, tx, item)
 }
 
-func upsertOpenInboxWithDB(ctx context.Context, db *gorm.DB, item store.InboxItem) (bool, error) {
+func upsertOpenInboxWithDB(ctx context.Context, db *gorm.DB, item contracts.InboxItem) (bool, error) {
 	if db == nil {
 		return false, fmt.Errorf("db 不能为空")
 	}
@@ -78,7 +76,7 @@ func upsertOpenInboxWithDB(ctx context.Context, db *gorm.DB, item store.InboxIte
 		item.Title = item.Key
 	}
 
-	var existing store.InboxItem
+	var existing contracts.InboxItem
 	err := db.WithContext(ctx).
 		Where("key = ? AND status = ?", item.Key, contracts.InboxOpen).
 		Order("id desc").
@@ -98,7 +96,7 @@ func upsertOpenInboxWithDB(ctx context.Context, db *gorm.DB, item store.InboxIte
 		if item.SnoozedUntil != nil {
 			upd["snoozed_until"] = item.SnoozedUntil
 		}
-		return false, db.WithContext(ctx).Model(&store.InboxItem{}).Where("id = ?", existing.ID).Updates(upd).Error
+		return false, db.WithContext(ctx).Model(&contracts.InboxItem{}).Where("id = ?", existing.ID).Updates(upd).Error
 	}
 	if err != gorm.ErrRecordNotFound {
 		return false, err

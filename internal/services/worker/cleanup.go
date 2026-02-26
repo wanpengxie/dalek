@@ -68,7 +68,7 @@ func (s *Service) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt 
 		return CleanupWorktreeResult{}, fmt.Errorf("ticket_id 不能为空")
 	}
 
-	var t store.Ticket
+	var t contracts.Ticket
 	if err := p.DB.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return CleanupWorktreeResult{}, err
 	}
@@ -76,7 +76,7 @@ func (s *Service) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt 
 		return CleanupWorktreeResult{}, fmt.Errorf("ticket 不是 archived，拒绝清理（可用 --force）")
 	}
 
-	var w store.Worker
+	var w contracts.Worker
 	if err := p.DB.WithContext(ctx).Where("ticket_id = ?", ticketID).Order("id DESC").First(&w).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return CleanupWorktreeResult{
@@ -223,7 +223,7 @@ func (s *Service) persistCleanupState(ctx context.Context, workerID uint, reques
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return db.WithContext(ctx).Model(&store.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
+	return db.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
 		"worktree_gc_requested_at": requestedAt,
 		"worktree_gc_cleaned_at":   cleanedAt,
 		"worktree_cleanup_error":   strings.TrimSpace(cleanupErr),

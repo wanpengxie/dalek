@@ -413,14 +413,14 @@ func (s *Service) upsertNoteInbox(ctx context.Context, key, title, body string, 
 	body = strings.TrimSpace(body)
 	now := time.Now()
 
-	var existing store.InboxItem
+	var existing contracts.InboxItem
 	err := s.core.DB.WithContext(ctx).
 		Where("key = ? AND status = ?", key, contracts.InboxOpen).
 		Order("id desc").
 		First(&existing).Error
 	if err == nil {
 		return s.core.DB.WithContext(ctx).
-			Model(&store.InboxItem{}).
+			Model(&contracts.InboxItem{}).
 			Where("id = ?", existing.ID).
 			Updates(map[string]any{
 				"title":      strings.TrimSpace(title),
@@ -431,7 +431,7 @@ func (s *Service) upsertNoteInbox(ctx context.Context, key, title, body string, 
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	item := store.InboxItem{
+	item := contracts.InboxItem{
 		Key:      key,
 		Status:   contracts.InboxOpen,
 		Severity: contracts.InboxWarn,
@@ -504,7 +504,7 @@ func (s *Service) GetNote(ctx context.Context, id uint) (*NoteView, error) {
 	return &v, nil
 }
 
-func (s *Service) ApproveNote(ctx context.Context, id uint, reviewedBy string) (*store.Ticket, error) {
+func (s *Service) ApproveNote(ctx context.Context, id uint, reviewedBy string) (*contracts.Ticket, error) {
 	if s == nil || s.core == nil || s.core.DB == nil {
 		return nil, fmt.Errorf("project db 为空")
 	}
@@ -519,7 +519,7 @@ func (s *Service) ApproveNote(ctx context.Context, id uint, reviewedBy string) (
 		reviewedBy = "cli"
 	}
 
-	var outTicket store.Ticket
+	var outTicket contracts.Ticket
 	err := s.core.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var note store.NoteItem
 		if err := tx.WithContext(ctx).First(&note, id).Error; err != nil {
@@ -568,7 +568,7 @@ func (s *Service) ApproveNote(ctx context.Context, id uint, reviewedBy string) (
 		}
 
 		now := time.Now()
-		ticket := store.Ticket{
+		ticket := contracts.Ticket{
 			Title:          trimOneLineNote(title),
 			Description:    strings.TrimSpace(desc),
 			WorkflowStatus: contracts.TicketBacklog,

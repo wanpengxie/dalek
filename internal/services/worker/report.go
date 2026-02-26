@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -51,9 +50,9 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 		summary = "-"
 	}
 
-	var workerSnapshot store.Worker
+	var workerSnapshot contracts.Worker
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var w store.Worker
+		var w contracts.Worker
 		if err := tx.WithContext(ctx).First(&w, r.WorkerID).Error; err != nil {
 			return err
 		}

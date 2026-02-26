@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -27,7 +25,7 @@ func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 		return fmt.Errorf("worker_id 不能为空")
 	}
 
-	var w store.Worker
+	var w contracts.Worker
 	if err := db.First(&w, workerID).Error; err != nil {
 		return err
 	}
@@ -44,7 +42,7 @@ func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 
 	now := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).Model(&store.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
+		if err := tx.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
 			"status":     contracts.WorkerStopped,
 			"stopped_at": &now,
 		}).Error; err != nil {

@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"dalek/internal/app"
+	"dalek/internal/contracts"
 	gatewayws "dalek/internal/services/channel/ws"
-	"dalek/internal/store"
 )
 
 type gatewayWSInboundFrame = gatewayws.InboundFrame
@@ -82,7 +82,7 @@ func newGatewayWSServerHandler(p *app.Project, rawOpt gatewayWSServerOptions) (s
 	var listInbox gatewayws.ListInboxFunc
 	if p != nil {
 		turnProcessor = p.ChannelService()
-		listInbox = func(ctx context.Context, limit int) ([]store.InboxItem, error) {
+		listInbox = func(ctx context.Context, limit int) ([]contracts.InboxItem, error) {
 			return p.ListInbox(ctx, app.ListInboxOptions{
 				Status: app.InboxOpen,
 				Limit:  limit,
@@ -110,11 +110,11 @@ func parseGatewayWSInboundText(payload []byte) (string, string, error) {
 	return gatewayws.ParseInboundText(payload)
 }
 
-func buildInboxUpdateFrame(conversationID string, items []store.InboxItem) gatewayWSOutboundFrame {
+func buildInboxUpdateFrame(conversationID string, items []contracts.InboxItem) gatewayWSOutboundFrame {
 	return gatewayws.BuildInboxUpdateFrame(conversationID, items)
 }
 
-func formatInboxSummary(items []store.InboxItem) string {
+func formatInboxSummary(items []contracts.InboxItem) string {
 	return gatewayws.FormatInboxSummary(items)
 }
 

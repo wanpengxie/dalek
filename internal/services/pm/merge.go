@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -21,7 +19,7 @@ func mergeTerminalStatuses() []contracts.MergeStatus {
 	return []contracts.MergeStatus{contracts.MergeMerged, contracts.MergeDiscarded}
 }
 
-func (s *Service) ListMergeItems(ctx context.Context, opt ListMergeOptions) ([]store.MergeItem, error) {
+func (s *Service) ListMergeItems(ctx context.Context, opt ListMergeOptions) ([]contracts.MergeItem, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return nil, err
@@ -37,18 +35,18 @@ func (s *Service) ListMergeItems(ctx context.Context, opt ListMergeOptions) ([]s
 		limit = 2000
 	}
 
-	q := db.WithContext(ctx).Model(&store.MergeItem{})
+	q := db.WithContext(ctx).Model(&contracts.MergeItem{})
 	if strings.TrimSpace(string(opt.Status)) != "" {
 		q = q.Where("status = ?", opt.Status)
 	}
-	var items []store.MergeItem
+	var items []contracts.MergeItem
 	if err := q.Order("updated_at desc").Order("id desc").Limit(limit).Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
 }
 
-func (s *Service) ProposeMerge(ctx context.Context, ticketID uint) (*store.MergeItem, error) {
+func (s *Service) ProposeMerge(ctx context.Context, ticketID uint) (*contracts.MergeItem, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return nil, err
@@ -56,7 +54,7 @@ func (s *Service) ProposeMerge(ctx context.Context, ticketID uint) (*store.Merge
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var t store.Ticket
+	var t contracts.Ticket
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return nil, err
 	}
@@ -69,7 +67,7 @@ func (s *Service) ProposeMerge(ctx context.Context, ticketID uint) (*store.Merge
 	}
 
 	// 防重复：已有非终态 item 就返回最新的那条
-	var existing store.MergeItem
+	var existing contracts.MergeItem
 	if err := db.WithContext(ctx).
 		Where("ticket_id = ? AND status NOT IN ?", ticketID, mergeTerminalStatuses()).
 		Order("id desc").
@@ -77,7 +75,7 @@ func (s *Service) ProposeMerge(ctx context.Context, ticketID uint) (*store.Merge
 		return &existing, nil
 	}
 
-	mi := store.MergeItem{
+	mi := contracts.MergeItem{
 		Status:   contracts.MergeProposed,
 		TicketID: ticketID,
 		WorkerID: w.ID,
@@ -88,7 +86,7 @@ func (s *Service) ProposeMerge(ctx context.Context, ticketID uint) (*store.Merge
 	}
 
 	// 写 inbox：请求审批（低风险：只写记录，不做 merge）
-	_, _ = s.upsertOpenInbox(ctx, store.InboxItem{
+	_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
 		Key:         inboxKeyMergeApproval(mi.ID),
 		Status:      contracts.InboxOpen,
 		Severity:    contracts.InboxWarn,
@@ -114,7 +112,7 @@ func (s *Service) ApproveMerge(ctx context.Context, mergeItemID uint, approvedBy
 	if approvedBy == "" {
 		approvedBy = "cto"
 	}
-	var mi store.MergeItem
+	var mi contracts.MergeItem
 	if err := db.WithContext(ctx).First(&mi, mergeItemID).Error; err != nil {
 		return err
 	}
@@ -122,7 +120,7 @@ func (s *Service) ApproveMerge(ctx context.Context, mergeItemID uint, approvedBy
 		return nil
 	}
 	now := time.Now()
-	return db.WithContext(ctx).Model(&store.MergeItem{}).Where("id = ?", mergeItemID).Updates(map[string]any{
+	return db.WithContext(ctx).Model(&contracts.MergeItem{}).Where("id = ?", mergeItemID).Updates(map[string]any{
 		"status":      contracts.MergeApproved,
 		"approved_by": approvedBy,
 		"approved_at": &now,
@@ -138,7 +136,7 @@ func (s *Service) DiscardMerge(ctx context.Context, mergeItemID uint, _ string) 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var mi store.MergeItem
+	var mi contracts.MergeItem
 	if err := db.WithContext(ctx).First(&mi, mergeItemID).Error; err != nil {
 		return err
 	}
@@ -151,13 +149,13 @@ func (s *Service) DiscardMerge(ctx context.Context, mergeItemID uint, _ string) 
 
 	now := time.Now()
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).Model(&store.MergeItem{}).Where("id = ?", mergeItemID).Updates(map[string]any{
+		if err := tx.WithContext(ctx).Model(&contracts.MergeItem{}).Where("id = ?", mergeItemID).Updates(map[string]any{
 			"status":     contracts.MergeDiscarded,
 			"updated_at": now,
 		}).Error; err != nil {
 			return err
 		}
-		if err := tx.WithContext(ctx).Model(&store.InboxItem{}).
+		if err := tx.WithContext(ctx).Model(&contracts.InboxItem{}).
 			Where("merge_item_id = ? AND status = ?", mergeItemID, contracts.InboxOpen).
 			Updates(map[string]any{
 				"status":     contracts.InboxDone,
@@ -178,7 +176,7 @@ func (s *Service) MarkMergeMerged(ctx context.Context, mergeItemID uint) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var mi store.MergeItem
+	var mi contracts.MergeItem
 	if err := db.WithContext(ctx).First(&mi, mergeItemID).Error; err != nil {
 		return err
 	}
@@ -189,7 +187,7 @@ func (s *Service) MarkMergeMerged(ctx context.Context, mergeItemID uint) error {
 	var archiveErr error
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if mi.Status != contracts.MergeMerged {
-			if err := tx.WithContext(ctx).Model(&store.MergeItem{}).Where("id = ?", mergeItemID).Updates(map[string]any{
+			if err := tx.WithContext(ctx).Model(&contracts.MergeItem{}).Where("id = ?", mergeItemID).Updates(map[string]any{
 				"status":     contracts.MergeMerged,
 				"merged_at":  &now,
 				"updated_at": now,
@@ -197,7 +195,7 @@ func (s *Service) MarkMergeMerged(ctx context.Context, mergeItemID uint) error {
 				return err
 			}
 		}
-		if err := tx.WithContext(ctx).Model(&store.InboxItem{}).
+		if err := tx.WithContext(ctx).Model(&contracts.InboxItem{}).
 			Where("merge_item_id = ? AND status = ?", mergeItemID, contracts.InboxOpen).
 			Updates(map[string]any{
 				"status":     contracts.InboxDone,
@@ -210,13 +208,13 @@ func (s *Service) MarkMergeMerged(ctx context.Context, mergeItemID uint) error {
 		// merge=merged 时尽量推进 workflow=archived（需满足：无 running worker，避免隐藏活跃资源）。
 		if mi.TicketID != 0 {
 			var cnt int64
-			if err := tx.WithContext(ctx).Model(&store.Worker{}).
+			if err := tx.WithContext(ctx).Model(&contracts.Worker{}).
 				Where("ticket_id = ? AND status = ?", mi.TicketID, contracts.WorkerRunning).
 				Count(&cnt).Error; err != nil {
 				return err
 			}
 			if cnt == 0 {
-				res := tx.WithContext(ctx).Model(&store.Ticket{}).
+				res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
 					Where("id = ? AND workflow_status = ?", mi.TicketID, contracts.TicketDone).
 					Updates(map[string]any{
 						"workflow_status": contracts.TicketArchived,
@@ -244,7 +242,7 @@ func (s *Service) MarkMergeMerged(ctx context.Context, mergeItemID uint) error {
 		key := inboxKeyTicketIncident(mi.TicketID, "archive_failed_after_merge")
 		title := fmt.Sprintf("归档失败（merge 已完成）：t%d", mi.TicketID)
 		body := archiveErr.Error()
-		_, _ = s.upsertOpenInbox(ctx, store.InboxItem{
+		_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
 			Key:         key,
 			Status:      contracts.InboxOpen,
 			Severity:    contracts.InboxWarn,

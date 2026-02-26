@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"dalek/internal/contracts"
 	notebooksvc "dalek/internal/services/notebook"
-	"dalek/internal/store"
 )
 
 func (p *Project) notebookService() (*notebooksvc.Service, error) {
@@ -64,7 +64,7 @@ func (p *Project) GetNote(ctx context.Context, id uint) (*NoteView, error) {
 	return svc.GetNote(ctx, id)
 }
 
-func (p *Project) ApproveNote(ctx context.Context, id uint, reviewedBy string) (*store.Ticket, error) {
+func (p *Project) ApproveNote(ctx context.Context, id uint, reviewedBy string) (*contracts.Ticket, error) {
 	svc, err := p.notebookService()
 	if err != nil {
 		return nil, err

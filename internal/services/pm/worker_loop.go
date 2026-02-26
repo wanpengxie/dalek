@@ -30,7 +30,7 @@ type WorkerLoopResult struct {
 //
 // 无超时限制：agent 可能运行数小时。内部使用 cancel-only context：
 // 只透传主动 cancel，不继承调用方 deadline。
-func (s *Service) executeWorkerLoop(ctx context.Context, t store.Ticket, w store.Worker, entryPrompt string) (WorkerLoopResult, error) {
+func (s *Service) executeWorkerLoop(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (WorkerLoopResult, error) {
 	if strings.TrimSpace(entryPrompt) == "" {
 		entryPrompt = defaultContinuePrompt
 	}
@@ -125,7 +125,7 @@ func (s *Service) readWorkerNextActionFromRun(ctx context.Context, runID uint) s
 
 // markWorkerLoopExit 在 worker loop 退出时标记 worker 状态。
 // lastError 非空表示异常退出（标记 failed），空表示正常退出（标记 stopped）。
-func (s *Service) markWorkerLoopExit(ctx context.Context, w store.Worker, lastError string) {
+func (s *Service) markWorkerLoopExit(ctx context.Context, w contracts.Worker, lastError string) {
 	now := time.Now()
 	if strings.TrimSpace(lastError) != "" {
 		_ = s.worker.MarkWorkerFailed(ctx, w.ID, now, lastError)

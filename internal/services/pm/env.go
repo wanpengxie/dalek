@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	"dalek/internal/contracts"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 )
 
-func buildBaseEnv(p *core.Project, t store.Ticket, w store.Worker) map[string]string {
+func buildBaseEnv(p *core.Project, t contracts.Ticket, w contracts.Worker) map[string]string {
 	if p == nil {
 		return map[string]string{
 			envTicketID:          fmt.Sprintf("%d", t.ID),

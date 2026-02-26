@@ -11,7 +11,6 @@ import (
 	"dalek/internal/agent/provider"
 	"dalek/internal/agent/run"
 	"dalek/internal/repo"
-	"dalek/internal/store"
 )
 
 type dispatchPromptBuildResult struct {
@@ -19,7 +18,7 @@ type dispatchPromptBuildResult struct {
 	EntryPrompt  string
 }
 
-func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, t store.Ticket, w store.Worker, entryPromptOverride string) (dispatchPromptBuildResult, error) {
+func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, t contracts.Ticket, w contracts.Worker, entryPromptOverride string) (dispatchPromptBuildResult, error) {
 	p, _, err := s.require()
 	if err != nil {
 		return dispatchPromptBuildResult{}, err

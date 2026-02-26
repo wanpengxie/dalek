@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"dalek/internal/store"
 )
 
 type workerReadyTimeoutError struct {
@@ -52,7 +50,7 @@ func (s *Service) dispatchWorkerReadyPollInterval() time.Duration {
 	return s.workerReadyPollInterval
 }
 
-func (s *Service) workerNotRunningError(w *store.Worker) error {
+func (s *Service) workerNotRunningError(w *contracts.Worker) error {
 	if w == nil {
 		return fmt.Errorf("该 ticket 的最新 worker 不在 running（status=unknown），请重新启动")
 	}
@@ -63,7 +61,7 @@ func (s *Service) workerMissingSessionError() error {
 	return fmt.Errorf("该 ticket 尚未启动（没有 worker/session），请先按 s 或运行 start")
 }
 
-func (s *Service) waitWorkerReadyForDispatch(ctx context.Context, ticketID uint, initial *store.Worker) (*store.Worker, error) {
+func (s *Service) waitWorkerReadyForDispatch(ctx context.Context, ticketID uint, initial *contracts.Worker) (*contracts.Worker, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

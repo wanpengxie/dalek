@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -42,7 +40,7 @@ func (s *Service) appendTicketWorkflowEventTx(ctx context.Context, tx *gorm.DB, 
 	if createdAt.IsZero() {
 		createdAt = time.Now()
 	}
-	ev := store.TicketWorkflowEvent{
+	ev := contracts.TicketWorkflowEvent{
 		CreatedAt:   createdAt,
 		TicketID:    ticketID,
 		FromStatus:  fromStatus,

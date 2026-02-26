@@ -225,7 +225,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 					PayloadJSON: `{"source":"daemon_recovery"}`,
 					CreatedAt:   now,
 				}).Error
-				_ = db.Create(&store.InboxItem{
+				_ = db.Create(&contracts.InboxItem{
 					Key:      fmt.Sprintf("daemon_recovery_run_%d", run.ID),
 					Status:   contracts.InboxOpen,
 					Severity: contracts.InboxWarn,
@@ -419,7 +419,7 @@ func (m *daemonManagerComponent) recoverStuckDispatchJobs(ctx context.Context, d
 				}
 			}
 
-			_ = tx.Create(&store.InboxItem{
+			_ = tx.Create(&contracts.InboxItem{
 				Key:      fmt.Sprintf("daemon_recovery_dispatch_%d", job.ID),
 				Status:   contracts.InboxOpen,
 				Severity: contracts.InboxWarn,
@@ -504,7 +504,7 @@ func (m *daemonManagerComponent) applyTicketStatusTx(ctx context.Context, tx *go
 	if source == "" {
 		source = "daemon.recovery"
 	}
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&ticket, job.TicketID).Error; err != nil {
 		return false, err
 	}
@@ -513,7 +513,7 @@ func (m *daemonManagerComponent) applyTicketStatusTx(ctx context.Context, tx *go
 		return false, nil
 	}
 	if err := tx.WithContext(ctx).
-		Model(&store.Ticket{}).
+		Model(&contracts.Ticket{}).
 		Where("id = ?", ticket.ID).
 		Updates(map[string]any{
 			"workflow_status": target,
@@ -521,7 +521,7 @@ func (m *daemonManagerComponent) applyTicketStatusTx(ctx context.Context, tx *go
 		}).Error; err != nil {
 		return false, err
 	}
-	ev := store.TicketWorkflowEvent{
+	ev := contracts.TicketWorkflowEvent{
 		CreatedAt:  now,
 		TicketID:   ticket.ID,
 		FromStatus: from,
@@ -617,7 +617,7 @@ func (m *daemonManagerComponent) reconcileWorkerSessions(ctx context.Context, p 
 		if sessionLabel == "" {
 			sessionLabel = "(empty)"
 		}
-		item := store.InboxItem{
+		item := contracts.InboxItem{
 			Key:      fmt.Sprintf("worker_session_recover_%d", w.ID),
 			Status:   contracts.InboxOpen,
 			Severity: contracts.InboxWarn,
@@ -760,7 +760,7 @@ func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context,
 				}
 			}
 
-			_ = tx.Create(&store.InboxItem{
+			_ = tx.Create(&contracts.InboxItem{
 				Key:      fmt.Sprintf("lease_expired_dispatch_%d", job.ID),
 				Status:   contracts.InboxOpen,
 				Severity: contracts.InboxWarn,
