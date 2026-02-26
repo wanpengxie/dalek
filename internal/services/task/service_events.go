@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -42,9 +40,9 @@ func (s *Service) AppendEvent(ctx context.Context, in TaskEventInput) error {
 		eventType = "task_event"
 	}
 	if eventType == "task_succeeded" || eventType == "task_failed" {
-		var run store.TaskRun
+		var run contracts.TaskRun
 		err := db.WithContext(ctx).
-			Model(&store.TaskRun{}).
+			Model(&contracts.TaskRun{}).
 			Select("id", "orchestration_state").
 			Where("id = ?", in.TaskRunID).
 			Take(&run).Error
@@ -55,7 +53,7 @@ func (s *Service) AppendEvent(ctx context.Context, in TaskEventInput) error {
 			return nil
 		}
 	}
-	ev := store.TaskEvent{
+	ev := contracts.TaskEvent{
 		TaskRunID:     in.TaskRunID,
 		EventType:     eventType,
 		FromStateJSON: toJSON(in.FromState),
@@ -94,7 +92,7 @@ func (s *Service) AppendRuntimeSample(ctx context.Context, in RuntimeSampleInput
 	if in.ObservedAt.IsZero() {
 		in.ObservedAt = time.Now()
 	}
-	sample := store.TaskRuntimeSample{
+	sample := contracts.TaskRuntimeSample{
 		TaskRunID:   in.TaskRunID,
 		State:       in.State,
 		NeedsUser:   in.NeedsUser,
@@ -133,7 +131,7 @@ func (s *Service) AppendSemanticReport(ctx context.Context, in SemanticReportInp
 	if in.ReportedAt.IsZero() {
 		in.ReportedAt = time.Now()
 	}
-	report := store.TaskSemanticReport{
+	report := contracts.TaskSemanticReport{
 		TaskRunID:         in.TaskRunID,
 		Phase:             in.Phase,
 		Milestone:         strings.TrimSpace(in.Milestone),

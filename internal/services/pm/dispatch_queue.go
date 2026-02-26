@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -39,34 +38,34 @@ func newPMDispatchRunnerID() string {
 	return fmt.Sprintf("runner-%d-%s", os.Getpid(), strings.TrimPrefix(newPMDispatchRequestID(), "dsp_"))
 }
 
-func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID uint, requestID string) (store.PMDispatchJob, error) {
+func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID uint, requestID string) (contracts.PMDispatchJob, error) {
 	_, db, err := s.require()
 	if err != nil {
-		return store.PMDispatchJob{}, err
+		return contracts.PMDispatchJob{}, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if ticketID == 0 {
-		return store.PMDispatchJob{}, fmt.Errorf("ticket_id 不能为空")
+		return contracts.PMDispatchJob{}, fmt.Errorf("ticket_id 不能为空")
 	}
 	if workerID == 0 {
-		return store.PMDispatchJob{}, fmt.Errorf("worker_id 不能为空")
+		return contracts.PMDispatchJob{}, fmt.Errorf("worker_id 不能为空")
 	}
 	requestID = strings.TrimSpace(requestID)
-	var out store.PMDispatchJob
+	var out contracts.PMDispatchJob
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		taskRuntime, terr := s.taskRuntimeForDB(tx)
 		if terr != nil {
 			return terr
 		}
 		if requestID != "" {
-			var sameRequest store.PMDispatchJob
+			var sameRequest contracts.PMDispatchJob
 			err := tx.Where("request_id = ?", requestID).Order("id desc").First(&sameRequest).Error
 			if err == nil {
 				if sameRequest.TaskRunID == 0 {
 					if run, ferr := taskRuntime.FindRunByRequestID(ctx, requestID); ferr == nil && run != nil {
-						_ = tx.Model(&store.PMDispatchJob{}).Where("id = ?", sameRequest.ID).Update("task_run_id", run.ID).Error
+						_ = tx.Model(&contracts.PMDispatchJob{}).Where("id = ?", sameRequest.ID).Update("task_run_id", run.ID).Error
 						sameRequest.TaskRunID = run.ID
 					}
 				}
@@ -85,7 +84,7 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 			}
 		}
 
-		var active store.PMDispatchJob
+		var active contracts.PMDispatchJob
 		err := tx.
 			Where("ticket_id = ? AND status IN ?", ticketID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 			Order("id desc").
@@ -96,7 +95,7 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 			}
 			if active.TaskRunID == 0 {
 				if run, ferr := taskRuntime.FindRunByRequestID(ctx, strings.TrimSpace(active.RequestID)); ferr == nil && run != nil {
-					_ = tx.Model(&store.PMDispatchJob{}).Where("id = ?", active.ID).Update("task_run_id", run.ID).Error
+					_ = tx.Model(&contracts.PMDispatchJob{}).Where("id = ?", active.ID).Update("task_run_id", run.ID).Error
 					active.TaskRunID = run.ID
 				}
 			}
@@ -133,7 +132,7 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 			return err
 		}
 
-		job := store.PMDispatchJob{
+		job := contracts.PMDispatchJob{
 			RequestID:       jobRequestID,
 			TicketID:        ticketID,
 			WorkerID:        workerID,
@@ -150,7 +149,7 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 		}
 		if err := tx.Create(&job).Error; err != nil {
 			if isPMDispatchRequestIDUniqueConflict(err) {
-				var sameRequest store.PMDispatchJob
+				var sameRequest contracts.PMDispatchJob
 				ferr := tx.Where("request_id = ?", strings.TrimSpace(jobRequestID)).Order("id desc").First(&sameRequest).Error
 				if ferr == nil {
 					out = sameRequest
@@ -176,7 +175,7 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 		return nil
 	})
 	if err != nil {
-		return store.PMDispatchJob{}, err
+		return contracts.PMDispatchJob{}, err
 	}
 	return out, nil
 }
@@ -192,20 +191,20 @@ func isPMDispatchRequestIDUniqueConflict(err error) bool {
 	return strings.Contains(msg, "unique constraint failed") && strings.Contains(msg, "pm_dispatch_jobs.request_id")
 }
 
-func (s *Service) claimPMDispatchJob(ctx context.Context, jobID uint, runnerID string, leaseTTL time.Duration) (store.PMDispatchJob, bool, error) {
+func (s *Service) claimPMDispatchJob(ctx context.Context, jobID uint, runnerID string, leaseTTL time.Duration) (contracts.PMDispatchJob, bool, error) {
 	_, db, err := s.require()
 	if err != nil {
-		return store.PMDispatchJob{}, false, err
+		return contracts.PMDispatchJob{}, false, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if jobID == 0 {
-		return store.PMDispatchJob{}, false, fmt.Errorf("job_id 不能为空")
+		return contracts.PMDispatchJob{}, false, fmt.Errorf("job_id 不能为空")
 	}
 	runnerID = strings.TrimSpace(runnerID)
 	if runnerID == "" {
-		return store.PMDispatchJob{}, false, fmt.Errorf("runner_id 不能为空")
+		return contracts.PMDispatchJob{}, false, fmt.Errorf("runner_id 不能为空")
 	}
 	if leaseTTL <= 0 {
 		leaseTTL = dispatchLeaseTTLMin
@@ -214,14 +213,14 @@ func (s *Service) claimPMDispatchJob(ctx context.Context, jobID uint, runnerID s
 	now := time.Now()
 	lease := now.Add(leaseTTL)
 	claimed := false
-	var out store.PMDispatchJob
+	var out contracts.PMDispatchJob
 	var statusEvent *StatusChangeEvent
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		taskRuntime, terr := s.taskRuntimeForDB(tx)
 		if terr != nil {
 			return terr
 		}
-		res := tx.Model(&store.PMDispatchJob{}).
+		res := tx.Model(&contracts.PMDispatchJob{}).
 			Where("id = ? AND (status = ? OR (status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?))", jobID, contracts.PMDispatchPending, contracts.PMDispatchRunning, now).
 			Updates(map[string]any{
 				"status":           contracts.PMDispatchRunning,
@@ -273,7 +272,7 @@ func (s *Service) claimPMDispatchJob(ctx context.Context, jobID uint, runnerID s
 		}
 		return nil
 	}); err != nil {
-		return store.PMDispatchJob{}, false, err
+		return contracts.PMDispatchJob{}, false, err
 	}
 	s.emitStatusChangeHookAsync(statusEvent)
 	return out, claimed, nil
@@ -300,7 +299,7 @@ func (s *Service) renewPMDispatchJobLease(ctx context.Context, jobID uint, runne
 	now := time.Now()
 	lease := now.Add(leaseTTL)
 	res := db.WithContext(ctx).
-		Model(&store.PMDispatchJob{}).
+		Model(&contracts.PMDispatchJob{}).
 		Where("id = ? AND status = ? AND runner_id = ?", jobID, contracts.PMDispatchRunning, runnerID).
 		Updates(map[string]any{
 			"lease_expires_at": &lease,
@@ -312,7 +311,7 @@ func (s *Service) renewPMDispatchJobLease(ctx context.Context, jobID uint, runne
 	if res.RowsAffected == 0 {
 		return fmt.Errorf("dispatch job 不可续租: id=%d runner=%s", jobID, runnerID)
 	}
-	var job store.PMDispatchJob
+	var job contracts.PMDispatchJob
 	if err := db.WithContext(ctx).Select("task_run_id").First(&job, jobID).Error; err == nil && job.TaskRunID != 0 {
 		taskRuntime, terr := s.taskRuntimeForDB(db)
 		if terr != nil {
@@ -355,7 +354,7 @@ func (s *Service) completePMDispatchJobSuccess(ctx context.Context, jobID uint, 
 		if terr != nil {
 			return terr
 		}
-		res := tx.Model(&store.PMDispatchJob{}).
+		res := tx.Model(&contracts.PMDispatchJob{}).
 			Where("id = ? AND status = ? AND runner_id = ?", jobID, contracts.PMDispatchRunning, runnerID).
 			Updates(map[string]any{
 				"status":            contracts.PMDispatchSucceeded,
@@ -373,7 +372,7 @@ func (s *Service) completePMDispatchJobSuccess(ctx context.Context, jobID uint, 
 		if res.RowsAffected == 0 {
 			return fmt.Errorf("dispatch job 终态提交失败（runner ownership 丢失）: id=%d runner=%s", jobID, runnerID)
 		}
-		var job store.PMDispatchJob
+		var job contracts.PMDispatchJob
 		if err := tx.Select("task_run_id").First(&job, jobID).Error; err != nil {
 			return err
 		}
@@ -420,7 +419,7 @@ func (s *Service) completePMDispatchJobFailed(ctx context.Context, jobID uint, r
 		if terr != nil {
 			return terr
 		}
-		res := tx.Model(&store.PMDispatchJob{}).
+		res := tx.Model(&contracts.PMDispatchJob{}).
 			Where("id = ? AND status = ? AND runner_id = ?", jobID, contracts.PMDispatchRunning, runnerID).
 			Updates(map[string]any{
 				"status":            contracts.PMDispatchFailed,
@@ -437,7 +436,7 @@ func (s *Service) completePMDispatchJobFailed(ctx context.Context, jobID uint, r
 		if res.RowsAffected == 0 {
 			return fmt.Errorf("dispatch job 失败态提交失败（runner ownership 丢失）: id=%d runner=%s", jobID, runnerID)
 		}
-		var job store.PMDispatchJob
+		var job contracts.PMDispatchJob
 		if err := tx.Select("task_run_id", "ticket_id", "worker_id", "request_id").First(&job, jobID).Error; err != nil {
 			return err
 		}
@@ -513,7 +512,7 @@ func (s *Service) ForceFailActiveDispatchesForTicket(ctx context.Context, ticket
 	now := time.Now()
 	failedCount := 0
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var jobs []store.PMDispatchJob
+		var jobs []contracts.PMDispatchJob
 		if err := tx.WithContext(ctx).
 			Where("ticket_id = ? AND status IN ?", ticketID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 			Order("id asc").
@@ -526,7 +525,7 @@ func (s *Service) ForceFailActiveDispatchesForTicket(ctx context.Context, ticket
 
 		for _, job := range jobs {
 			fromDispatchStatus := job.Status
-			res := tx.Model(&store.PMDispatchJob{}).
+			res := tx.Model(&contracts.PMDispatchJob{}).
 				Where("id = ? AND status IN ?", job.ID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 				Updates(map[string]any{
 					"status":            contracts.PMDispatchFailed,
@@ -559,7 +558,7 @@ func (s *Service) ForceFailActiveDispatchesForTicket(ctx context.Context, ticket
 			if fromDispatchStatus == contracts.PMDispatchRunning {
 				fromTaskState = contracts.TaskRunning
 			}
-			if err := tx.WithContext(ctx).Create(&store.TaskEvent{
+			if err := tx.WithContext(ctx).Create(&contracts.TaskEvent{
 				TaskRunID:     job.TaskRunID,
 				EventType:     "dispatch_force_failed_on_stop",
 				FromStateJSON: marshalJSON(map[string]any{"orchestration_state": fromTaskState}),
@@ -593,7 +592,7 @@ func markDispatchTaskRunFailedOnStopTx(tx *gorm.DB, runID uint, errMsg string, n
 	if tx == nil || runID == 0 {
 		return false, nil
 	}
-	res := tx.Model(&store.TaskRun{}).
+	res := tx.Model(&contracts.TaskRun{}).
 		Where("id = ? AND orchestration_state IN ?", runID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 		Updates(map[string]any{
 			"orchestration_state": contracts.TaskFailed,
@@ -610,7 +609,7 @@ func markDispatchTaskRunFailedOnStopTx(tx *gorm.DB, runID uint, errMsg string, n
 	return res.RowsAffected > 0, nil
 }
 
-func (s *Service) promoteTicketActiveOnDispatchClaimTx(ctx context.Context, tx *gorm.DB, job store.PMDispatchJob, now time.Time) (*StatusChangeEvent, error) {
+func (s *Service) promoteTicketActiveOnDispatchClaimTx(ctx context.Context, tx *gorm.DB, job contracts.PMDispatchJob, now time.Time) (*StatusChangeEvent, error) {
 	if tx == nil || job.TicketID == 0 {
 		return nil, nil
 	}
@@ -641,7 +640,7 @@ func (s *Service) promoteTicketActiveOnDispatchClaimTx(ctx context.Context, tx *
 	return s.buildStatusChangeEvent(ticket.ID, from, contracts.TicketActive, "pm.dispatch.claim", now), nil
 }
 
-func (s *Service) demoteTicketBlockedOnDispatchFailedTx(ctx context.Context, tx *gorm.DB, job store.PMDispatchJob, errMsg string, now time.Time) (*StatusChangeEvent, error) {
+func (s *Service) demoteTicketBlockedOnDispatchFailedTx(ctx context.Context, tx *gorm.DB, job contracts.PMDispatchJob, errMsg string, now time.Time) (*StatusChangeEvent, error) {
 	if tx == nil || job.TicketID == 0 {
 		return nil, nil
 	}
@@ -678,25 +677,25 @@ func (s *Service) demoteTicketBlockedOnDispatchFailedTx(ctx context.Context, tx 
 	return ev, nil
 }
 
-func (s *Service) getPMDispatchJob(ctx context.Context, jobID uint) (store.PMDispatchJob, error) {
+func (s *Service) getPMDispatchJob(ctx context.Context, jobID uint) (contracts.PMDispatchJob, error) {
 	_, db, err := s.require()
 	if err != nil {
-		return store.PMDispatchJob{}, err
+		return contracts.PMDispatchJob{}, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if jobID == 0 {
-		return store.PMDispatchJob{}, fmt.Errorf("job_id 不能为空")
+		return contracts.PMDispatchJob{}, fmt.Errorf("job_id 不能为空")
 	}
-	var job store.PMDispatchJob
+	var job contracts.PMDispatchJob
 	if err := db.WithContext(ctx).First(&job, jobID).Error; err != nil {
-		return store.PMDispatchJob{}, err
+		return contracts.PMDispatchJob{}, err
 	}
 	return job, nil
 }
 
-func (s *Service) waitPMDispatchJob(ctx context.Context, jobID uint, pollInterval time.Duration) (store.PMDispatchJob, error) {
+func (s *Service) waitPMDispatchJob(ctx context.Context, jobID uint, pollInterval time.Duration) (contracts.PMDispatchJob, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -708,14 +707,14 @@ func (s *Service) waitPMDispatchJob(ctx context.Context, jobID uint, pollInterva
 	for {
 		job, err := s.getPMDispatchJob(ctx, jobID)
 		if err != nil {
-			return store.PMDispatchJob{}, err
+			return contracts.PMDispatchJob{}, err
 		}
 		if isPMDispatchTerminalStatus(job.Status) {
 			return job, nil
 		}
 		select {
 		case <-ctx.Done():
-			return store.PMDispatchJob{}, ctx.Err()
+			return contracts.PMDispatchJob{}, ctx.Err()
 		case <-ticker.C:
 		}
 	}

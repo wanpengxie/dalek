@@ -18,7 +18,7 @@ func TestCompletePMDispatchJobSuccess_RollbackOnTaskRunSyncFailure(t *testing.T)
 	runnerID := "runner-test-success"
 	lease := time.Now().Add(2 * time.Minute)
 
-	job := store.PMDispatchJob{
+	job := contracts.PMDispatchJob{
 		RequestID:       "dsp_tx_success",
 		TicketID:        tk.ID,
 		WorkerID:        1,
@@ -41,7 +41,7 @@ func TestCompletePMDispatchJobSuccess_RollbackOnTaskRunSyncFailure(t *testing.T)
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var after store.PMDispatchJob
+	var after contracts.PMDispatchJob
 	if err := p.DB.First(&after, job.ID).Error; err != nil {
 		t.Fatalf("query job failed: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestCompletePMDispatchJobFailed_RollbackOnTaskRunSyncFailure(t *testing.T) 
 	runnerID := "runner-test-failed"
 	lease := time.Now().Add(2 * time.Minute)
 
-	job := store.PMDispatchJob{
+	job := contracts.PMDispatchJob{
 		RequestID:       "dsp_tx_failed",
 		TicketID:        tk.ID,
 		WorkerID:        1,
@@ -82,7 +82,7 @@ func TestCompletePMDispatchJobFailed_RollbackOnTaskRunSyncFailure(t *testing.T) 
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var after store.PMDispatchJob
+	var after contracts.PMDispatchJob
 	if err := p.DB.First(&after, job.ID).Error; err != nil {
 		t.Fatalf("query job failed: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestCompletePMDispatchJobFailed_RollbackOnTaskRunSyncFailure(t *testing.T) 
 func TestEnqueuePMDispatchJob_RejectsActiveJobOnDifferentWorker(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-enqueue-worker-mismatch")
-	active := store.PMDispatchJob{
+	active := contracts.PMDispatchJob{
 		RequestID:       "dsp_active_other_worker",
 		TicketID:        tk.ID,
 		WorkerID:        101,
@@ -143,7 +143,7 @@ func TestEnqueuePMDispatchJob_IdempotentByRequestID(t *testing.T) {
 	}
 
 	var cnt int64
-	if err := p.DB.Model(&store.PMDispatchJob{}).Where("request_id = ?", reqID).Count(&cnt).Error; err != nil {
+	if err := p.DB.Model(&contracts.PMDispatchJob{}).Where("request_id = ?", reqID).Count(&cnt).Error; err != nil {
 		t.Fatalf("count request_id failed: %v", err)
 	}
 	if cnt != 1 {
@@ -284,7 +284,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 		t.Fatalf("expected exactly 1 force-failed dispatch, got=%d", got)
 	}
 
-	var after store.PMDispatchJob
+	var after contracts.PMDispatchJob
 	if err := p.DB.First(&after, job.ID).Error; err != nil {
 		t.Fatalf("query dispatch job failed: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 		t.Fatalf("unexpected dispatch error message: %q", after.Error)
 	}
 
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := p.DB.First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("query task run failed: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 		t.Fatalf("unexpected task run error message: %q", run.ErrorMessage)
 	}
 
-	var ev store.TaskEvent
+	var ev contracts.TaskEvent
 	if err := p.DB.Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "dispatch_force_failed_on_stop").Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("expected force-fail task event: %v", err)
 	}
@@ -373,7 +373,7 @@ func TestForceFailActiveDispatchesForTicket_FailsRunningJobAndTaskRun(t *testing
 		t.Fatalf("expected exactly 1 force-failed dispatch, got=%d", got)
 	}
 
-	var after store.PMDispatchJob
+	var after contracts.PMDispatchJob
 	if err := p.DB.First(&after, job.ID).Error; err != nil {
 		t.Fatalf("query dispatch job failed: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestForceFailActiveDispatchesForTicket_FailsRunningJobAndTaskRun(t *testing
 		t.Fatalf("expected active_ticket_key cleared")
 	}
 
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := p.DB.First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("query task run failed: %v", err)
 	}

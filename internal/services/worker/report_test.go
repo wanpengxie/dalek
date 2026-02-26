@@ -134,7 +134,7 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 	}
 
 	var taskRuns int64
-	if err := p.DB.Model(&store.TaskRun{}).Where("worker_id = ?", w.ID).Count(&taskRuns).Error; err != nil {
+	if err := p.DB.Model(&contracts.TaskRun{}).Where("worker_id = ?", w.ID).Count(&taskRuns).Error; err != nil {
 		t.Fatalf("count task runs failed: %v", err)
 	}
 	if taskRuns != 0 {

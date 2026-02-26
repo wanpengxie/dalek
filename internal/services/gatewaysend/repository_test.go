@@ -23,9 +23,9 @@ func openGatewayDBForRepositoryTest(t *testing.T) *gorm.DB {
 	return db
 }
 
-func createRepositoryTestBinding(t *testing.T, db *gorm.DB, projectName, chatID string) store.ChannelBinding {
+func createRepositoryTestBinding(t *testing.T, db *gorm.DB, projectName, chatID string) contracts.ChannelBinding {
 	t.Helper()
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    strings.TrimSpace(projectName),
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
@@ -52,14 +52,14 @@ func TestRepository_CreatePendingAndMarkSent(t *testing.T) {
 		t.Fatalf("create pending should return persisted ids: %+v", state)
 	}
 
-	var pendingMsg store.ChannelMessage
+	var pendingMsg contracts.ChannelMessage
 	if err := db.First(&pendingMsg, state.message.ID).Error; err != nil {
 		t.Fatalf("query message failed: %v", err)
 	}
 	if pendingMsg.Status != contracts.ChannelMessageProcessed {
 		t.Fatalf("pending message status mismatch: %s", pendingMsg.Status)
 	}
-	var pendingOutbox store.ChannelOutbox
+	var pendingOutbox contracts.ChannelOutbox
 	if err := db.First(&pendingOutbox, state.outbox.ID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestRepository_CreatePendingAndMarkSent(t *testing.T) {
 	if err := repo.MarkSending(context.Background(), state.outbox.ID); err != nil {
 		t.Fatalf("MarkSending failed: %v", err)
 	}
-	var sendingOutbox store.ChannelOutbox
+	var sendingOutbox contracts.ChannelOutbox
 	if err := db.First(&sendingOutbox, state.outbox.ID).Error; err != nil {
 		t.Fatalf("query sending outbox failed: %v", err)
 	}
@@ -84,21 +84,21 @@ func TestRepository_CreatePendingAndMarkSent(t *testing.T) {
 	if err := repo.MarkSent(context.Background(), state); err != nil {
 		t.Fatalf("MarkSent failed: %v", err)
 	}
-	var sentMsg store.ChannelMessage
+	var sentMsg contracts.ChannelMessage
 	if err := db.First(&sentMsg, state.message.ID).Error; err != nil {
 		t.Fatalf("query sent message failed: %v", err)
 	}
 	if sentMsg.Status != contracts.ChannelMessageSent {
 		t.Fatalf("sent message status mismatch: %s", sentMsg.Status)
 	}
-	var sentOutbox store.ChannelOutbox
+	var sentOutbox contracts.ChannelOutbox
 	if err := db.First(&sentOutbox, state.outbox.ID).Error; err != nil {
 		t.Fatalf("query sent outbox failed: %v", err)
 	}
 	if sentOutbox.Status != contracts.ChannelOutboxSent {
 		t.Fatalf("sent outbox status mismatch: %s", sentOutbox.Status)
 	}
-	var conv store.ChannelConversation
+	var conv contracts.ChannelConversation
 	if err := db.First(&conv, state.conversation.ID).Error; err != nil {
 		t.Fatalf("query conversation failed: %v", err)
 	}
@@ -159,14 +159,14 @@ func TestRepository_MarkFailed(t *testing.T) {
 		t.Fatalf("MarkFailed failed: %v", err)
 	}
 
-	var msg store.ChannelMessage
+	var msg contracts.ChannelMessage
 	if err := db.First(&msg, state.message.ID).Error; err != nil {
 		t.Fatalf("query message failed: %v", err)
 	}
 	if msg.Status != contracts.ChannelMessageFailed {
 		t.Fatalf("failed message status mismatch: %s", msg.Status)
 	}
-	var outbox store.ChannelOutbox
+	var outbox contracts.ChannelOutbox
 	if err := db.First(&outbox, state.outbox.ID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}

@@ -22,7 +22,7 @@ func seedRunningTaskRunForCancelE2E(t *testing.T, repoRoot string, runID uint, r
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	now := time.Now()
-	run := store.TaskRun{
+	run := contracts.TaskRun{
 		ID:                 runID,
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
@@ -42,13 +42,13 @@ func seedRunningTaskRunForCancelE2E(t *testing.T, repoRoot string, runID uint, r
 	}
 }
 
-func loadTaskRunForCancelE2E(t *testing.T, repoRoot string, runID uint) store.TaskRun {
+func loadTaskRunForCancelE2E(t *testing.T, repoRoot string, runID uint) contracts.TaskRun {
 	t.Helper()
 	db, err := store.OpenAndMigrate(repo.NewLayout(repoRoot).DBPath)
 	if err != nil {
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
-	var run store.TaskRun
+	var run contracts.TaskRun
 	if err := db.Where("id = ?", runID).First(&run).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"dalek/internal/store"
+	"dalek/internal/contracts"
 
 	"gorm.io/gorm"
 )
@@ -23,27 +23,27 @@ type CreateSubagentRunInput struct {
 	RuntimeDir string
 }
 
-func (s *Service) CreateSubagentRun(ctx context.Context, in CreateSubagentRunInput) (store.SubagentRun, error) {
+func (s *Service) CreateSubagentRun(ctx context.Context, in CreateSubagentRunInput) (contracts.SubagentRun, error) {
 	db, err := s.requireDB()
 	if err != nil {
-		return store.SubagentRun{}, err
+		return contracts.SubagentRun{}, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	projectKey := strings.TrimSpace(in.ProjectKey)
 	if projectKey == "" {
-		return store.SubagentRun{}, fmt.Errorf("project_key 不能为空")
+		return contracts.SubagentRun{}, fmt.Errorf("project_key 不能为空")
 	}
 	if in.TaskRunID == 0 {
-		return store.SubagentRun{}, fmt.Errorf("task_run_id 不能为空")
+		return contracts.SubagentRun{}, fmt.Errorf("task_run_id 不能为空")
 	}
 	requestID := strings.TrimSpace(in.RequestID)
 	if requestID == "" {
-		return store.SubagentRun{}, fmt.Errorf("request_id 不能为空")
+		return contracts.SubagentRun{}, fmt.Errorf("request_id 不能为空")
 	}
 
-	rec := store.SubagentRun{
+	rec := contracts.SubagentRun{
 		ProjectKey: projectKey,
 		TaskRunID:  in.TaskRunID,
 		RequestID:  requestID,
@@ -62,12 +62,12 @@ func (s *Service) CreateSubagentRun(ctx context.Context, in CreateSubagentRunInp
 				return *existing, nil
 			}
 		}
-		return store.SubagentRun{}, err
+		return contracts.SubagentRun{}, err
 	}
 	return rec, nil
 }
 
-func (s *Service) FindSubagentRunByTaskRunID(ctx context.Context, taskRunID uint) (*store.SubagentRun, error) {
+func (s *Service) FindSubagentRunByTaskRunID(ctx context.Context, taskRunID uint) (*contracts.SubagentRun, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func (s *Service) FindSubagentRunByTaskRunID(ctx context.Context, taskRunID uint
 	if taskRunID == 0 {
 		return nil, fmt.Errorf("task_run_id 不能为空")
 	}
-	var rec store.SubagentRun
+	var rec contracts.SubagentRun
 	if err := db.WithContext(ctx).Where("task_run_id = ?", taskRunID).First(&rec).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -88,7 +88,7 @@ func (s *Service) FindSubagentRunByTaskRunID(ctx context.Context, taskRunID uint
 	return &rec, nil
 }
 
-func (s *Service) FindSubagentRunByRequestID(ctx context.Context, projectKey, requestID string) (*store.SubagentRun, error) {
+func (s *Service) FindSubagentRunByRequestID(ctx context.Context, projectKey, requestID string) (*contracts.SubagentRun, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -104,7 +104,7 @@ func (s *Service) FindSubagentRunByRequestID(ctx context.Context, projectKey, re
 	if requestID == "" {
 		return nil, fmt.Errorf("request_id 不能为空")
 	}
-	var rec store.SubagentRun
+	var rec contracts.SubagentRun
 	if err := db.WithContext(ctx).
 		Where("project_key = ? AND request_id = ?", projectKey, requestID).
 		Order("id desc").
@@ -117,7 +117,7 @@ func (s *Service) FindSubagentRunByRequestID(ctx context.Context, projectKey, re
 	return &rec, nil
 }
 
-func (s *Service) ListSubagentRuns(ctx context.Context, projectKey string, limit int) ([]store.SubagentRun, error) {
+func (s *Service) ListSubagentRuns(ctx context.Context, projectKey string, limit int) ([]contracts.SubagentRun, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -136,9 +136,9 @@ func (s *Service) ListSubagentRuns(ctx context.Context, projectKey string, limit
 		limit = 500
 	}
 
-	var out []store.SubagentRun
+	var out []contracts.SubagentRun
 	if err := db.WithContext(ctx).
-		Model(&store.SubagentRun{}).
+		Model(&contracts.SubagentRun{}).
 		Where("project_key = ?", projectKey).
 		Order("task_run_id desc").
 		Limit(limit).
@@ -146,7 +146,7 @@ func (s *Service) ListSubagentRuns(ctx context.Context, projectKey string, limit
 		return nil, err
 	}
 	if out == nil {
-		return []store.SubagentRun{}, nil
+		return []contracts.SubagentRun{}, nil
 	}
 	return out, nil
 }

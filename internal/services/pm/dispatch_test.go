@@ -31,7 +31,7 @@ func TestDispatchTicket_SingleModeRunsPMAgent(t *testing.T) {
 		t.Fatalf("expected sdk worker loop injected_cmd prefix, got=%q", out.InjectedCmd)
 	}
 
-	var job store.PMDispatchJob
+	var job contracts.PMDispatchJob
 	if err := p.DB.Order("id desc").First(&job).Error; err != nil {
 		t.Fatalf("load job failed: %v", err)
 	}
@@ -189,7 +189,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
 	}
 
 	var streamEvents int64
-	if err := p.DB.Model(&store.TaskEvent{}).Where("event_type = ?", "task_stream").Count(&streamEvents).Error; err != nil {
+	if err := p.DB.Model(&contracts.TaskEvent{}).Where("event_type = ?", "task_stream").Count(&streamEvents).Error; err != nil {
 		t.Fatalf("count task_stream events failed: %v", err)
 	}
 	if streamEvents == 0 {

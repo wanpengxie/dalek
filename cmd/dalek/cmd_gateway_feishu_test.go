@@ -789,7 +789,7 @@ func TestGatewayFeishuWebhook_DedupByEventID(t *testing.T) {
 	}
 
 	var inboundCount int64
-	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
+	if err := db.Model(&contracts.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
 		t.Fatalf("count inbound message failed: %v", err)
 	}
 	if inboundCount != 1 {
@@ -797,7 +797,7 @@ func TestGatewayFeishuWebhook_DedupByEventID(t *testing.T) {
 	}
 
 	var jobCount int64
-	if err := db.Model(&store.ChannelTurnJob{}).Count(&jobCount).Error; err != nil {
+	if err := db.Model(&contracts.ChannelTurnJob{}).Count(&jobCount).Error; err != nil {
 		t.Fatalf("count turn jobs failed: %v", err)
 	}
 	if jobCount != 1 {
@@ -865,7 +865,7 @@ func TestGatewayFeishuWebhook_FinalReplyRetryAndOutboxSent(t *testing.T) {
 
 	outDeadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(outDeadline) {
-		var outbox store.ChannelOutbox
+		var outbox contracts.ChannelOutbox
 		if qErr := db.Order("id DESC").First(&outbox).Error; qErr == nil {
 			if outbox.Status == contracts.ChannelOutboxSent {
 				if strings.TrimSpace(outbox.LastError) != "" {
@@ -876,7 +876,7 @@ func TestGatewayFeishuWebhook_FinalReplyRetryAndOutboxSent(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	var outbox store.ChannelOutbox
+	var outbox contracts.ChannelOutbox
 	if qErr := db.Order("id DESC").First(&outbox).Error; qErr != nil {
 		t.Fatalf("query outbox failed: %v", qErr)
 	}
@@ -931,7 +931,7 @@ func TestGatewayFeishuWebhook_FinalReplyFailedMarksOutboxFailed(t *testing.T) {
 
 	outDeadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(outDeadline) {
-		var outbox store.ChannelOutbox
+		var outbox contracts.ChannelOutbox
 		if qErr := db.Order("id DESC").First(&outbox).Error; qErr == nil {
 			if outbox.Status == contracts.ChannelOutboxFailed {
 				if !strings.Contains(outbox.LastError, "mock send failed") {
@@ -942,7 +942,7 @@ func TestGatewayFeishuWebhook_FinalReplyFailedMarksOutboxFailed(t *testing.T) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	var outbox store.ChannelOutbox
+	var outbox contracts.ChannelOutbox
 	if qErr := db.Order("id DESC").First(&outbox).Error; qErr != nil {
 		t.Fatalf("query outbox failed: %v", qErr)
 	}
@@ -1011,7 +1011,7 @@ func TestGatewayFeishuWebhook_FinalReplyCardFailed_FallbackToText(t *testing.T) 
 
 	outDeadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(outDeadline) {
-		var outbox store.ChannelOutbox
+		var outbox contracts.ChannelOutbox
 		if qErr := db.Order("id DESC").First(&outbox).Error; qErr == nil {
 			if outbox.Status == contracts.ChannelOutboxSent {
 				if strings.TrimSpace(outbox.LastError) != "" {
@@ -1022,7 +1022,7 @@ func TestGatewayFeishuWebhook_FinalReplyCardFailed_FallbackToText(t *testing.T) 
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	var outbox store.ChannelOutbox
+	var outbox contracts.ChannelOutbox
 	if qErr := db.Order("id DESC").First(&outbox).Error; qErr != nil {
 		t.Fatalf("query outbox failed: %v", qErr)
 	}

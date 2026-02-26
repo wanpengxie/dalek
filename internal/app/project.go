@@ -703,7 +703,7 @@ func mapTaskStatus(v store.TaskStatusView) TaskStatus {
 	}
 }
 
-func mapSubagentRun(v store.SubagentRun) SubagentRun {
+func mapSubagentRun(v contracts.SubagentRun) SubagentRun {
 	return SubagentRun{
 		ID:         v.ID,
 		TaskRunID:  v.TaskRunID,
@@ -815,23 +815,23 @@ func (p *Project) ManagerSessionName() string {
 	return strings.TrimSpace(p.pm.ManagerSessionName())
 }
 
-func (p *Project) GetPMState(ctx context.Context) (store.PMState, error) {
+func (p *Project) GetPMState(ctx context.Context) (contracts.PMState, error) {
 	if p == nil || p.pm == nil {
-		return store.PMState{}, fmt.Errorf("project pm service 为空")
+		return contracts.PMState{}, fmt.Errorf("project pm service 为空")
 	}
 	return p.pm.GetState(ctx)
 }
 
-func (p *Project) SetAutopilotEnabled(ctx context.Context, enabled bool) (store.PMState, error) {
+func (p *Project) SetAutopilotEnabled(ctx context.Context, enabled bool) (contracts.PMState, error) {
 	if p == nil || p.pm == nil {
-		return store.PMState{}, fmt.Errorf("project pm service 为空")
+		return contracts.PMState{}, fmt.Errorf("project pm service 为空")
 	}
 	return p.pm.SetAutopilotEnabled(ctx, enabled)
 }
 
-func (p *Project) SetMaxRunningWorkers(ctx context.Context, n int) (store.PMState, error) {
+func (p *Project) SetMaxRunningWorkers(ctx context.Context, n int) (contracts.PMState, error) {
 	if p == nil || p.pm == nil {
-		return store.PMState{}, fmt.Errorf("project pm service 为空")
+		return contracts.PMState{}, fmt.Errorf("project pm service 为空")
 	}
 	return p.pm.SetMaxRunningWorkers(ctx, n)
 }

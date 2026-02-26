@@ -10,8 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -185,7 +183,7 @@ func (eb *EventBus) writeAudit(ev GatewayEvent) {
 	if eb == nil || eb.db == nil {
 		return
 	}
-	log := store.EventBusLog{
+	log := contracts.EventBusLog{
 		CreatedAt:      ev.At,
 		Project:        ev.ProjectName,
 		ConversationID: ev.ConversationID,

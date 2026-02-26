@@ -12,7 +12,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -90,10 +89,10 @@ type Gateway struct {
 }
 
 type gatewayPersistState struct {
-	binding store.ChannelBinding
-	conv    store.ChannelConversation
-	inbound store.ChannelMessage
-	job     store.ChannelTurnJob
+	binding contracts.ChannelBinding
+	conv    contracts.ChannelConversation
+	inbound contracts.ChannelMessage
+	job     contracts.ChannelTurnJob
 }
 
 func NewGateway(db *gorm.DB, resolver ProjectResolver, opt GatewayOptions) (*Gateway, error) {
@@ -211,12 +210,12 @@ func (g *Gateway) MarkOutboxDelivery(ctx context.Context, outboxID uint, deliver
 	}
 
 	return g.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var outbox store.ChannelOutbox
+		var outbox contracts.ChannelOutbox
 		if err := tx.WithContext(ctx).First(&outbox, outboxID).Error; err != nil {
 			return err
 		}
 
-		var msg store.ChannelMessage
+		var msg contracts.ChannelMessage
 		if err := tx.WithContext(ctx).First(&msg, outbox.MessageID).Error; err != nil {
 			return err
 		}
@@ -236,12 +235,12 @@ func (g *Gateway) MarkOutboxDelivery(ctx context.Context, outboxID uint, deliver
 			outboxUpdates["last_error"] = errMsg
 		}
 
-		if err := tx.WithContext(ctx).Model(&store.ChannelOutbox{}).
+		if err := tx.WithContext(ctx).Model(&contracts.ChannelOutbox{}).
 			Where("id = ?", outbox.ID).
 			Updates(outboxUpdates).Error; err != nil {
 			return err
 		}
-		if err := tx.WithContext(ctx).Model(&store.ChannelMessage{}).
+		if err := tx.WithContext(ctx).Model(&contracts.ChannelMessage{}).
 			Where("id = ?", msg.ID).
 			Updates(map[string]any{
 				"status": msgStatus,
@@ -249,7 +248,7 @@ func (g *Gateway) MarkOutboxDelivery(ctx context.Context, outboxID uint, deliver
 			return err
 		}
 		if delivered {
-			if err := tx.WithContext(ctx).Model(&store.ChannelConversation{}).
+			if err := tx.WithContext(ctx).Model(&contracts.ChannelConversation{}).
 				Where("id = ?", msg.ConversationID).
 				Updates(map[string]any{
 					"last_message_at": &now,
@@ -979,7 +978,7 @@ func (g *Gateway) LookupBoundProject(ctx context.Context, channelType contracts.
 	if g == nil || g.db == nil {
 		return "", fmt.Errorf("gateway db 为空")
 	}
-	var binding store.ChannelBinding
+	var binding contracts.ChannelBinding
 	err := g.db.WithContext(ctx).
 		Where("channel_type = ? AND adapter = ? AND peer_project_key = ? AND enabled = 1",
 			toStoreChannelType(channelType),
@@ -1010,7 +1009,7 @@ func (g *Gateway) BindProject(ctx context.Context, channelType contracts.Channel
 	}
 	var prevProject string
 	err := g.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var binding store.ChannelBinding
+		var binding contracts.ChannelBinding
 		err := tx.WithContext(ctx).
 			Where("channel_type = ? AND adapter = ? AND peer_project_key = ?",
 				toStoreChannelType(channelType),
@@ -1019,7 +1018,7 @@ func (g *Gateway) BindProject(ctx context.Context, channelType contracts.Channel
 			First(&binding).Error
 		if err == nil {
 			prevProject = strings.TrimSpace(binding.ProjectName)
-			return tx.WithContext(ctx).Model(&store.ChannelBinding{}).
+			return tx.WithContext(ctx).Model(&contracts.ChannelBinding{}).
 				Where("id = ?", binding.ID).
 				Updates(map[string]any{
 					"project_name": projectName,
@@ -1029,7 +1028,7 @@ func (g *Gateway) BindProject(ctx context.Context, channelType contracts.Channel
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		binding = store.ChannelBinding{
+		binding = contracts.ChannelBinding{
 			ProjectName:    projectName,
 			ChannelType:    toStoreChannelType(channelType),
 			Adapter:        adapter,
@@ -1054,7 +1053,7 @@ func (g *Gateway) UnbindProject(ctx context.Context, channelType contracts.Chann
 			toStoreChannelType(channelType),
 			strings.TrimSpace(adapter),
 			strings.TrimSpace(peerProjectKey)).
-		Delete(&store.ChannelBinding{})
+		Delete(&contracts.ChannelBinding{})
 	if res.Error != nil {
 		return false, res.Error
 	}

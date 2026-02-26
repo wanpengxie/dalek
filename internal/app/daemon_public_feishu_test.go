@@ -898,7 +898,7 @@ func TestDaemonFeishuWebhookHandler_DedupByEventID(t *testing.T) {
 	}
 
 	var inboundCount int64
-	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
+	if err := db.Model(&contracts.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
 		t.Fatalf("count inbound message failed: %v", err)
 	}
 	if inboundCount != 1 {
@@ -906,7 +906,7 @@ func TestDaemonFeishuWebhookHandler_DedupByEventID(t *testing.T) {
 	}
 
 	var jobCount int64
-	if err := db.Model(&store.ChannelTurnJob{}).Count(&jobCount).Error; err != nil {
+	if err := db.Model(&contracts.ChannelTurnJob{}).Count(&jobCount).Error; err != nil {
 		t.Fatalf("count turn jobs failed: %v", err)
 	}
 	if jobCount != 1 {
@@ -1060,11 +1060,11 @@ func TestDaemonFeishuWebhookHandler_FinalReplyFailedMarksOutboxFailed(t *testing
 	}
 }
 
-func waitDaemonFeishuOutboxStatus(t *testing.T, db *gorm.DB, want contracts.ChannelOutboxStatus, timeout time.Duration) store.ChannelOutbox {
+func waitDaemonFeishuOutboxStatus(t *testing.T, db *gorm.DB, want contracts.ChannelOutboxStatus, timeout time.Duration) contracts.ChannelOutbox {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		var outbox store.ChannelOutbox
+		var outbox contracts.ChannelOutbox
 		if err := db.Order("id DESC").First(&outbox).Error; err == nil {
 			if outbox.Status == want {
 				return outbox
@@ -1072,12 +1072,12 @@ func waitDaemonFeishuOutboxStatus(t *testing.T, db *gorm.DB, want contracts.Chan
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	var outbox store.ChannelOutbox
+	var outbox contracts.ChannelOutbox
 	if err := db.Order("id DESC").First(&outbox).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
 	t.Fatalf("outbox status should become %s, got=%s last_error=%q", want, outbox.Status, outbox.LastError)
-	return store.ChannelOutbox{}
+	return contracts.ChannelOutbox{}
 }
 
 func setDaemonFeishuRelayTimeoutsForTest(t *testing.T, relayTimeout, idleTimeout time.Duration) {

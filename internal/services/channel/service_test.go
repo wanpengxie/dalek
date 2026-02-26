@@ -82,7 +82,7 @@ func TestProcessInbound_ListTicketsAndOutboxSent(t *testing.T) {
 		t.Fatalf("reply should not be empty")
 	}
 
-	var inbound store.ChannelMessage
+	var inbound contracts.ChannelMessage
 	if err := db.First(&inbound, result.InboundMessageID).Error; err != nil {
 		t.Fatalf("query inbound failed: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestProcessInbound_ListTicketsAndOutboxSent(t *testing.T) {
 		t.Fatalf("inbound sender_name should be Alice, got %q", inbound.SenderName)
 	}
 
-	var outbound store.ChannelMessage
+	var outbound contracts.ChannelMessage
 	if err := db.First(&outbound, result.OutboundMessageID).Error; err != nil {
 		t.Fatalf("query outbound failed: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestProcessInbound_ListTicketsAndOutboxSent(t *testing.T) {
 		t.Fatalf("outbound status should be sent, got %s", outbound.Status)
 	}
 
-	var outbox store.ChannelOutbox
+	var outbox contracts.ChannelOutbox
 	if err := db.First(&outbox, result.OutboxID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestProcessInbound_IdempotentByAdapterAndPeerMessageID(t *testing.T) {
 	}
 
 	var msgCount int64
-	if err := db.Model(&store.ChannelMessage{}).
+	if err := db.Model(&contracts.ChannelMessage{}).
 		Where("direction = ? AND adapter = ? AND peer_message_id = ?", contracts.ChannelMessageIn, "web.ws", "web-msg-1").
 		Count(&msgCount).Error; err != nil {
 		t.Fatalf("count inbound messages failed: %v", err)
@@ -158,7 +158,7 @@ func TestProcessInbound_IdempotentByAdapterAndPeerMessageID(t *testing.T) {
 	}
 
 	var jobCount int64
-	if err := db.Model(&store.ChannelTurnJob{}).
+	if err := db.Model(&contracts.ChannelTurnJob{}).
 		Where("inbound_message_id = ?", r1.InboundMessageID).
 		Count(&jobCount).Error; err != nil {
 		t.Fatalf("count turn jobs failed: %v", err)
@@ -213,7 +213,7 @@ func TestProcessInbound_IdempotentScopeIncludesConversation(t *testing.T) {
 	}
 
 	var msgCount int64
-	if err := db.Model(&store.ChannelMessage{}).
+	if err := db.Model(&contracts.ChannelMessage{}).
 		Where("direction = ? AND adapter = ? AND peer_message_id = ?", contracts.ChannelMessageIn, "web.ws", "web-msg-dup").
 		Count(&msgCount).Error; err != nil {
 		t.Fatalf("count inbound messages failed: %v", err)
@@ -349,7 +349,7 @@ func TestProcessInbound_StructuredTurnResponseCreatesPendingActions(t *testing.T
 		t.Fatalf("pending action name mismatch: %q", got.Action.Name)
 	}
 
-	var rows []store.ChannelPendingAction
+	var rows []contracts.ChannelPendingAction
 	if err := db.Where("job_id = ?", result.JobID).Order("id asc").Find(&rows).Error; err != nil {
 		t.Fatalf("query pending actions failed: %v", err)
 	}
@@ -626,7 +626,7 @@ PY
 		t.Fatalf("second ProcessInbound failed: %v", err)
 	}
 
-	var conv store.ChannelConversation
+	var conv contracts.ChannelConversation
 	if err := db.Where("peer_conversation_id = ?", "conv-resume").First(&conv).Error; err != nil {
 		t.Fatalf("query conversation failed: %v", err)
 	}
@@ -799,7 +799,7 @@ func TestInterruptPeerConversation_CancelsRunningTurnWhenRunnerNotInterrupted(t 
 		DB:       db,
 	})
 
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
@@ -810,7 +810,7 @@ func TestInterruptPeerConversation_CancelsRunningTurnWhenRunnerNotInterrupted(t 
 	if err := db.Create(&binding).Error; err != nil {
 		t.Fatalf("create binding failed: %v", err)
 	}
-	conv := store.ChannelConversation{
+	conv := contracts.ChannelConversation{
 		BindingID:          binding.ID,
 		PeerConversationID: "chat-interrupt-1",
 	}
@@ -862,7 +862,7 @@ func TestInterruptPeerConversation_UsesRunnerInterruptWithoutCancel(t *testing.T
 		DB:       db,
 	})
 
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
@@ -873,7 +873,7 @@ func TestInterruptPeerConversation_UsesRunnerInterruptWithoutCancel(t *testing.T
 	if err := db.Create(&binding).Error; err != nil {
 		t.Fatalf("create binding failed: %v", err)
 	}
-	conv := store.ChannelConversation{
+	conv := contracts.ChannelConversation{
 		BindingID:          binding.ID,
 		PeerConversationID: "chat-interrupt-2",
 	}
@@ -919,7 +919,7 @@ func TestResetPeerConversationSession_ClearsSessionAndClosesRunner(t *testing.T)
 		DB:       db,
 	})
 
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
@@ -930,7 +930,7 @@ func TestResetPeerConversationSession_ClearsSessionAndClosesRunner(t *testing.T)
 	if err := db.Create(&binding).Error; err != nil {
 		t.Fatalf("create binding failed: %v", err)
 	}
-	conv := store.ChannelConversation{
+	conv := contracts.ChannelConversation{
 		BindingID:          binding.ID,
 		PeerConversationID: "chat-reset-1",
 		AgentSessionID:     "sess-old",
@@ -956,7 +956,7 @@ func TestResetPeerConversationSession_ClearsSessionAndClosesRunner(t *testing.T)
 		t.Fatalf("unexpected closed conversation id: %q", manager.lastClosedConversationID)
 	}
 
-	var got store.ChannelConversation
+	var got contracts.ChannelConversation
 	if err := db.First(&got, conv.ID).Error; err != nil {
 		t.Fatalf("query conversation failed: %v", err)
 	}
@@ -982,7 +982,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 		DB: db,
 	})
 
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeWeb,
 		Adapter:        "web.ws",
@@ -993,14 +993,14 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 	if err := db.Create(&binding).Error; err != nil {
 		t.Fatalf("create binding failed: %v", err)
 	}
-	conv := store.ChannelConversation{
+	conv := contracts.ChannelConversation{
 		BindingID:          binding.ID,
 		PeerConversationID: "conv-outbox-empty-adapter",
 	}
 	if err := db.Create(&conv).Error; err != nil {
 		t.Fatalf("create conversation failed: %v", err)
 	}
-	outMsg := store.ChannelMessage{
+	outMsg := contracts.ChannelMessage{
 		ConversationID: conv.ID,
 		Direction:      contracts.ChannelMessageOut,
 		Adapter:        "",
@@ -1012,7 +1012,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 	if err := db.Create(&outMsg).Error; err != nil {
 		t.Fatalf("create outbound message failed: %v", err)
 	}
-	outbox := store.ChannelOutbox{
+	outbox := contracts.ChannelOutbox{
 		MessageID:   outMsg.ID,
 		Adapter:     "",
 		PayloadJSON: "{}",
@@ -1027,7 +1027,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 		t.Fatalf("dispatchOutbox should fail when adapter is empty")
 	}
 
-	var gotOutbox store.ChannelOutbox
+	var gotOutbox contracts.ChannelOutbox
 	if err := db.First(&gotOutbox, outbox.ID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
@@ -1038,7 +1038,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 		t.Fatalf("unexpected outbox last_error: %q", gotOutbox.LastError)
 	}
 
-	var gotMsg store.ChannelMessage
+	var gotMsg contracts.ChannelMessage
 	if err := db.First(&gotMsg, outMsg.ID).Error; err != nil {
 		t.Fatalf("query outbound message failed: %v", err)
 	}
@@ -1201,7 +1201,7 @@ func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
 		t.Fatalf("expected non-empty agent events")
 	}
 
-	var conv store.ChannelConversation
+	var conv contracts.ChannelConversation
 	if err := db.First(&conv, result.ConversationID).Error; err != nil {
 		t.Fatalf("query conversation failed: %v", err)
 	}
@@ -1211,7 +1211,7 @@ func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
 }
 
 func TestBuildPMAgentPrompt_WithSenderName(t *testing.T) {
-	got := buildPMAgentPrompt(store.ChannelMessage{
+	got := buildPMAgentPrompt(contracts.ChannelMessage{
 		SenderID:    "ou_test_1",
 		SenderName:  "张三",
 		ContentText: "请列出我的 ticket",
@@ -1223,7 +1223,7 @@ func TestBuildPMAgentPrompt_WithSenderName(t *testing.T) {
 }
 
 func TestBuildPMAgentPrompt_WithSenderIDOnly(t *testing.T) {
-	got := buildPMAgentPrompt(store.ChannelMessage{
+	got := buildPMAgentPrompt(contracts.ChannelMessage{
 		SenderID:    "ou_test_2",
 		ContentText: "status",
 	})
@@ -1234,7 +1234,7 @@ func TestBuildPMAgentPrompt_WithSenderIDOnly(t *testing.T) {
 }
 
 func TestBuildPMAgentPrompt_AnonymousNoPrefix(t *testing.T) {
-	got := buildPMAgentPrompt(store.ChannelMessage{
+	got := buildPMAgentPrompt(contracts.ChannelMessage{
 		SenderID:    "anonymous",
 		ContentText: "hello",
 	})

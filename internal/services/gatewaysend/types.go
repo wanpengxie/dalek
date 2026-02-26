@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 const (
@@ -60,15 +59,15 @@ type HandlerConfig struct {
 }
 
 type persistState struct {
-	conversation store.ChannelConversation
-	message      store.ChannelMessage
-	outbox       store.ChannelOutbox
+	conversation contracts.ChannelConversation
+	message      contracts.ChannelMessage
+	outbox       contracts.ChannelOutbox
 }
 
 type Repository interface {
-	FindEnabledBindings(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]store.ChannelBinding, error)
-	FindRecentDuplicateDelivery(ctx context.Context, binding store.ChannelBinding, text string) (Delivery, bool, error)
-	CreatePending(ctx context.Context, binding store.ChannelBinding, projectName, text string) (persistState, error)
+	FindEnabledBindings(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]contracts.ChannelBinding, error)
+	FindRecentDuplicateDelivery(ctx context.Context, binding contracts.ChannelBinding, text string) (Delivery, bool, error)
+	CreatePending(ctx context.Context, binding contracts.ChannelBinding, projectName, text string) (persistState, error)
 	MarkSending(ctx context.Context, outboxID uint) error
 	MarkSent(ctx context.Context, state persistState) error
 	MarkFailed(ctx context.Context, state persistState, cause error) error

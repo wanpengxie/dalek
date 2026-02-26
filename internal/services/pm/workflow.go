@@ -8,7 +8,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -95,7 +94,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 	// 禁止在 dispatch 进行中归档（否则会出现 archived 票仍在跑任务的脏状态）。
 	var activeDispatch int64
 	if err := db.WithContext(ctx).
-		Model(&store.PMDispatchJob{}).
+		Model(&contracts.PMDispatchJob{}).
 		Where("ticket_id = ? AND status IN ?", ticketID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 		Count(&activeDispatch).Error; err != nil {
 		return err

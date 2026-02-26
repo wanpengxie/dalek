@@ -101,7 +101,7 @@ func TestHandler_Success(t *testing.T) {
 		t.Fatalf("OpenGatewayDB failed: %v", err)
 	}
 
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
@@ -158,14 +158,14 @@ func TestHandler_Success(t *testing.T) {
 		t.Fatalf("card title should include project: %+v", calls[0])
 	}
 
-	var msg store.ChannelMessage
+	var msg contracts.ChannelMessage
 	if err := db.First(&msg, resp.Results[0].MessageID).Error; err != nil {
 		t.Fatalf("query outbound message failed: %v", err)
 	}
 	if msg.Status != contracts.ChannelMessageSent {
 		t.Fatalf("message status should be sent, got=%s", msg.Status)
 	}
-	var outbox store.ChannelOutbox
+	var outbox contracts.ChannelOutbox
 	if err := db.First(&outbox, resp.Results[0].OutboxID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestSendProjectText_DedupRecentContent(t *testing.T) {
 		t.Fatalf("OpenGatewayDB failed: %v", err)
 	}
 
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
@@ -225,7 +225,7 @@ func TestSendProjectText_DedupRecentContent(t *testing.T) {
 	}
 
 	var outboundCount int64
-	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageOut).Count(&outboundCount).Error; err != nil {
+	if err := db.Model(&contracts.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageOut).Count(&outboundCount).Error; err != nil {
 		t.Fatalf("count outbound failed: %v", err)
 	}
 	if outboundCount != 1 {
@@ -233,7 +233,7 @@ func TestSendProjectText_DedupRecentContent(t *testing.T) {
 	}
 
 	var outboxCount int64
-	if err := db.Model(&store.ChannelOutbox{}).Count(&outboxCount).Error; err != nil {
+	if err := db.Model(&contracts.ChannelOutbox{}).Count(&outboxCount).Error; err != nil {
 		t.Fatalf("count outbox failed: %v", err)
 	}
 	if outboxCount != 1 {
@@ -249,7 +249,7 @@ func TestHandler_UsesRepoBaseNameInCardTitle(t *testing.T) {
 	}
 
 	projectName := "Users-xiewanpeng-agi-dalek"
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    projectName,
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
@@ -324,7 +324,7 @@ func TestHandler_SenderFailed_MarksOutboxFailed(t *testing.T) {
 		t.Fatalf("OpenGatewayDB failed: %v", err)
 	}
 
-	binding := store.ChannelBinding{
+	binding := contracts.ChannelBinding{
 		ProjectName:    "demo",
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
@@ -366,14 +366,14 @@ func TestHandler_SenderFailed_MarksOutboxFailed(t *testing.T) {
 		t.Fatalf("failed result should carry error message")
 	}
 
-	var msg store.ChannelMessage
+	var msg contracts.ChannelMessage
 	if err := db.First(&msg, resp.Results[0].MessageID).Error; err != nil {
 		t.Fatalf("query outbound message failed: %v", err)
 	}
 	if msg.Status != contracts.ChannelMessageFailed {
 		t.Fatalf("message status should be failed, got=%s", msg.Status)
 	}
-	var outbox store.ChannelOutbox
+	var outbox contracts.ChannelOutbox
 	if err := db.First(&outbox, resp.Results[0].OutboxID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -89,13 +88,13 @@ func (s *Service) recordPMTaskFailure(ctx context.Context, taskRunID uint, err e
 	})
 }
 
-func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job store.PMDispatchJob, t contracts.Ticket, w contracts.Worker, taskPath string, health contracts.TaskRuntimeHealthState, phase contracts.TaskSemanticPhase, nextAction, summary string, payload any) (store.TaskRun, error) {
+func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contracts.PMDispatchJob, t contracts.Ticket, w contracts.Worker, taskPath string, health contracts.TaskRuntimeHealthState, phase contracts.TaskSemanticPhase, nextAction, summary string, payload any) (contracts.TaskRun, error) {
 	if strings.TrimSpace(job.RequestID) == "" {
-		return store.TaskRun{}, fmt.Errorf("dispatch request_id 为空")
+		return contracts.TaskRun{}, fmt.Errorf("dispatch request_id 为空")
 	}
 	p, db, err := s.require()
 	if err != nil {
-		return store.TaskRun{}, err
+		return contracts.TaskRun{}, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -103,7 +102,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job store
 	now := time.Now()
 	reason := fmt.Sprintf("redispatch superseded by request=%s", strings.TrimSpace(job.RequestID))
 	requestID := "wrk_" + strings.TrimSpace(job.RequestID)
-	var run store.TaskRun
+	var run contracts.TaskRun
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		rt, err := s.taskRuntimeForDB(tx)
 		if err != nil {
@@ -168,7 +167,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job store
 		return nil
 	})
 	if err != nil {
-		return store.TaskRun{}, err
+		return contracts.TaskRun{}, err
 	}
 	return run, nil
 }

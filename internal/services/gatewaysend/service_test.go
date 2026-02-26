@@ -7,33 +7,32 @@ import (
 	"testing"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 type serviceMockRepo struct {
-	findBindingsFn func(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]store.ChannelBinding, error)
-	findDupFn      func(ctx context.Context, binding store.ChannelBinding, text string) (Delivery, bool, error)
-	createPending  func(ctx context.Context, binding store.ChannelBinding, projectName, text string) (persistState, error)
+	findBindingsFn func(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]contracts.ChannelBinding, error)
+	findDupFn      func(ctx context.Context, binding contracts.ChannelBinding, text string) (Delivery, bool, error)
+	createPending  func(ctx context.Context, binding contracts.ChannelBinding, projectName, text string) (persistState, error)
 	markSending    func(ctx context.Context, outboxID uint) error
 	markSent       func(ctx context.Context, state persistState) error
 	markFailed     func(ctx context.Context, state persistState, cause error) error
 }
 
-func (m *serviceMockRepo) FindEnabledBindings(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]store.ChannelBinding, error) {
+func (m *serviceMockRepo) FindEnabledBindings(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]contracts.ChannelBinding, error) {
 	if m != nil && m.findBindingsFn != nil {
 		return m.findBindingsFn(ctx, projectName, channelType, adapter)
 	}
 	return nil, nil
 }
 
-func (m *serviceMockRepo) FindRecentDuplicateDelivery(ctx context.Context, binding store.ChannelBinding, text string) (Delivery, bool, error) {
+func (m *serviceMockRepo) FindRecentDuplicateDelivery(ctx context.Context, binding contracts.ChannelBinding, text string) (Delivery, bool, error) {
 	if m != nil && m.findDupFn != nil {
 		return m.findDupFn(ctx, binding, text)
 	}
 	return Delivery{}, false, nil
 }
 
-func (m *serviceMockRepo) CreatePending(ctx context.Context, binding store.ChannelBinding, projectName, text string) (persistState, error) {
+func (m *serviceMockRepo) CreatePending(ctx context.Context, binding contracts.ChannelBinding, projectName, text string) (persistState, error) {
 	if m != nil && m.createPending != nil {
 		return m.createPending(ctx, binding, projectName, text)
 	}
@@ -62,32 +61,32 @@ func (m *serviceMockRepo) MarkFailed(ctx context.Context, state persistState, ca
 }
 
 func TestService_Send_UsesRepositoryAndSender(t *testing.T) {
-	binding := store.ChannelBinding{ID: 11, Adapter: AdapterFeishu, PeerProjectKey: "chat-service-1"}
+	binding := contracts.ChannelBinding{ID: 11, Adapter: AdapterFeishu, PeerProjectKey: "chat-service-1"}
 	state := persistState{
-		conversation: store.ChannelConversation{ID: 21},
-		message:      store.ChannelMessage{ID: 31},
-		outbox:       store.ChannelOutbox{ID: 41},
+		conversation: contracts.ChannelConversation{ID: 21},
+		message:      contracts.ChannelMessage{ID: 31},
+		outbox:       contracts.ChannelOutbox{ID: 41},
 	}
 
 	markSendingCalled := false
 	markSentCalled := false
 	repo := &serviceMockRepo{
-		findBindingsFn: func(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]store.ChannelBinding, error) {
+		findBindingsFn: func(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]contracts.ChannelBinding, error) {
 			if projectName != "demo" {
 				t.Fatalf("unexpected projectName: %q", projectName)
 			}
 			if channelType != contracts.ChannelTypeIM || adapter != AdapterFeishu {
 				t.Fatalf("unexpected query args: channelType=%s adapter=%s", channelType, adapter)
 			}
-			return []store.ChannelBinding{binding}, nil
+			return []contracts.ChannelBinding{binding}, nil
 		},
-		findDupFn: func(ctx context.Context, gotBinding store.ChannelBinding, text string) (Delivery, bool, error) {
+		findDupFn: func(ctx context.Context, gotBinding contracts.ChannelBinding, text string) (Delivery, bool, error) {
 			if gotBinding.ID != binding.ID || text != "hello" {
 				t.Fatalf("unexpected dedup input: binding=%d text=%q", gotBinding.ID, text)
 			}
 			return Delivery{}, false, nil
 		},
-		createPending: func(ctx context.Context, gotBinding store.ChannelBinding, projectName, text string) (persistState, error) {
+		createPending: func(ctx context.Context, gotBinding contracts.ChannelBinding, projectName, text string) (persistState, error) {
 			if gotBinding.ID != binding.ID || projectName != "demo" || text != "hello" {
 				t.Fatalf("unexpected create pending input: binding=%d project=%q text=%q", gotBinding.ID, projectName, text)
 			}
@@ -146,7 +145,7 @@ func TestService_Send_UsesRepositoryAndSender(t *testing.T) {
 }
 
 func TestService_Send_DedupSkipsSender(t *testing.T) {
-	binding := store.ChannelBinding{ID: 12, Adapter: AdapterFeishu, PeerProjectKey: "chat-service-dedup"}
+	binding := contracts.ChannelBinding{ID: 12, Adapter: AdapterFeishu, PeerProjectKey: "chat-service-dedup"}
 	reused := Delivery{
 		BindingID:      binding.ID,
 		ConversationID: 22,
@@ -156,13 +155,13 @@ func TestService_Send_DedupSkipsSender(t *testing.T) {
 		Status:         string(contracts.ChannelOutboxSent),
 	}
 	repo := &serviceMockRepo{
-		findBindingsFn: func(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]store.ChannelBinding, error) {
-			return []store.ChannelBinding{binding}, nil
+		findBindingsFn: func(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]contracts.ChannelBinding, error) {
+			return []contracts.ChannelBinding{binding}, nil
 		},
-		findDupFn: func(ctx context.Context, gotBinding store.ChannelBinding, text string) (Delivery, bool, error) {
+		findDupFn: func(ctx context.Context, gotBinding contracts.ChannelBinding, text string) (Delivery, bool, error) {
 			return reused, true, nil
 		},
-		createPending: func(ctx context.Context, binding store.ChannelBinding, projectName, text string) (persistState, error) {
+		createPending: func(ctx context.Context, binding contracts.ChannelBinding, projectName, text string) (persistState, error) {
 			t.Fatalf("dedup hit should skip createPending")
 			return persistState{}, nil
 		},
@@ -195,21 +194,21 @@ func TestService_Send_DedupSkipsSender(t *testing.T) {
 }
 
 func TestService_Send_SenderFailureMarksFailed(t *testing.T) {
-	binding := store.ChannelBinding{ID: 13, Adapter: AdapterFeishu, PeerProjectKey: "chat-service-fail"}
+	binding := contracts.ChannelBinding{ID: 13, Adapter: AdapterFeishu, PeerProjectKey: "chat-service-fail"}
 	state := persistState{
-		conversation: store.ChannelConversation{ID: 23},
-		message:      store.ChannelMessage{ID: 33},
-		outbox:       store.ChannelOutbox{ID: 43},
+		conversation: contracts.ChannelConversation{ID: 23},
+		message:      contracts.ChannelMessage{ID: 33},
+		outbox:       contracts.ChannelOutbox{ID: 43},
 	}
 	markFailedCalled := false
 	repo := &serviceMockRepo{
-		findBindingsFn: func(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]store.ChannelBinding, error) {
-			return []store.ChannelBinding{binding}, nil
+		findBindingsFn: func(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]contracts.ChannelBinding, error) {
+			return []contracts.ChannelBinding{binding}, nil
 		},
-		findDupFn: func(ctx context.Context, binding store.ChannelBinding, text string) (Delivery, bool, error) {
+		findDupFn: func(ctx context.Context, binding contracts.ChannelBinding, text string) (Delivery, bool, error) {
 			return Delivery{}, false, nil
 		},
-		createPending: func(ctx context.Context, binding store.ChannelBinding, projectName, text string) (persistState, error) {
+		createPending: func(ctx context.Context, binding contracts.ChannelBinding, projectName, text string) (persistState, error) {
 			return state, nil
 		},
 		markSending: func(ctx context.Context, outboxID uint) error {

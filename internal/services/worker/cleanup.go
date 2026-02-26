@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -108,7 +106,7 @@ func (s *Service) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt 
 
 	var activeDispatch int64
 	if err := p.DB.WithContext(ctx).
-		Model(&store.PMDispatchJob{}).
+		Model(&contracts.PMDispatchJob{}).
 		Where("ticket_id = ? AND status IN ?", ticketID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 		Count(&activeDispatch).Error; err != nil {
 		return result, err

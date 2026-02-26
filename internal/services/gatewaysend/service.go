@@ -8,7 +8,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -105,7 +104,7 @@ func (s *Service) Send(ctx context.Context, projectName, text string) (Response,
 	}, nil
 }
 
-func (s *Service) sendOneBinding(ctx context.Context, binding store.ChannelBinding, projectName, cardProjectName, text string) (Delivery, error) {
+func (s *Service) sendOneBinding(ctx context.Context, binding contracts.ChannelBinding, projectName, cardProjectName, text string) (Delivery, error) {
 	repo := s.repo
 	logger := core.EnsureLogger(s.logger)
 	sender := s.sender

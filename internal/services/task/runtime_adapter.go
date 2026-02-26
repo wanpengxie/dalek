@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"dalek/internal/contracts"
 	"dalek/internal/services/core"
 	"dalek/internal/store"
 
@@ -24,19 +25,19 @@ func (runtimeFactory) ForDB(db *gorm.DB) core.TaskRuntime {
 	return runtimeAdapter{svc: New(db)}
 }
 
-func (r runtimeAdapter) FindRunByID(ctx context.Context, runID uint) (*store.TaskRun, error) {
+func (r runtimeAdapter) FindRunByID(ctx context.Context, runID uint) (*contracts.TaskRun, error) {
 	return r.svc.FindRunByID(ctx, runID)
 }
 
-func (r runtimeAdapter) FindRunByRequestID(ctx context.Context, requestID string) (*store.TaskRun, error) {
+func (r runtimeAdapter) FindRunByRequestID(ctx context.Context, requestID string) (*contracts.TaskRun, error) {
 	return r.svc.FindRunByRequestID(ctx, requestID)
 }
 
-func (r runtimeAdapter) LatestActiveWorkerRun(ctx context.Context, workerID uint) (*store.TaskRun, error) {
+func (r runtimeAdapter) LatestActiveWorkerRun(ctx context.Context, workerID uint) (*contracts.TaskRun, error) {
 	return r.svc.LatestActiveWorkerRun(ctx, workerID)
 }
 
-func (r runtimeAdapter) CreateRun(ctx context.Context, in core.TaskRuntimeCreateRunInput) (store.TaskRun, error) {
+func (r runtimeAdapter) CreateRun(ctx context.Context, in core.TaskRuntimeCreateRunInput) (contracts.TaskRun, error) {
 	return r.svc.CreateRun(ctx, CreateRunInput{
 		OwnerType:          in.OwnerType,
 		TaskType:           in.TaskType,

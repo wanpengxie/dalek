@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"time"
 
-	"dalek/internal/store"
+	"dalek/internal/contracts"
 
 	"gorm.io/gorm"
 )
 
-func (s *Service) getOrInitPMState(ctx context.Context) (*store.PMState, error) {
+func (s *Service) getOrInitPMState(ctx context.Context) (*contracts.PMState, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return nil, err
@@ -18,7 +18,7 @@ func (s *Service) getOrInitPMState(ctx context.Context) (*store.PMState, error) 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var st store.PMState
+	var st contracts.PMState
 	err = db.WithContext(ctx).Order("id asc").First(&st).Error
 	if err == nil {
 		if st.MaxRunningWorkers <= 0 {
@@ -30,7 +30,7 @@ func (s *Service) getOrInitPMState(ctx context.Context) (*store.PMState, error) 
 	if err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
-	st = store.PMState{
+	st = contracts.PMState{
 		AutopilotEnabled:  true,
 		MaxRunningWorkers: 3,
 		LastTickAt:        nil,
@@ -42,18 +42,18 @@ func (s *Service) getOrInitPMState(ctx context.Context) (*store.PMState, error) 
 	return &st, nil
 }
 
-func (s *Service) GetState(ctx context.Context) (store.PMState, error) {
+func (s *Service) GetState(ctx context.Context) (contracts.PMState, error) {
 	st, err := s.getOrInitPMState(ctx)
 	if err != nil {
-		return store.PMState{}, err
+		return contracts.PMState{}, err
 	}
 	return *st, nil
 }
 
-func (s *Service) SetAutopilotEnabled(ctx context.Context, enabled bool) (store.PMState, error) {
+func (s *Service) SetAutopilotEnabled(ctx context.Context, enabled bool) (contracts.PMState, error) {
 	st, err := s.getOrInitPMState(ctx)
 	if err != nil {
-		return store.PMState{}, err
+		return contracts.PMState{}, err
 	}
 	if st.AutopilotEnabled == enabled {
 		return *st, nil
@@ -62,15 +62,15 @@ func (s *Service) SetAutopilotEnabled(ctx context.Context, enabled bool) (store.
 	st.UpdatedAt = time.Now()
 	_, db, _ := s.require()
 	if err := db.WithContext(ctx).Save(st).Error; err != nil {
-		return store.PMState{}, err
+		return contracts.PMState{}, err
 	}
 	return *st, nil
 }
 
-func (s *Service) SetMaxRunningWorkers(ctx context.Context, n int) (store.PMState, error) {
+func (s *Service) SetMaxRunningWorkers(ctx context.Context, n int) (contracts.PMState, error) {
 	st, err := s.getOrInitPMState(ctx)
 	if err != nil {
-		return store.PMState{}, err
+		return contracts.PMState{}, err
 	}
 	n = clampMaxRunning(n)
 	if st.MaxRunningWorkers == n {
@@ -80,7 +80,7 @@ func (s *Service) SetMaxRunningWorkers(ctx context.Context, n int) (store.PMStat
 	st.UpdatedAt = time.Now()
 	_, db, _ := s.require()
 	if err := db.WithContext(ctx).Save(st).Error; err != nil {
-		return store.PMState{}, err
+		return contracts.PMState{}, err
 	}
 	return *st, nil
 }

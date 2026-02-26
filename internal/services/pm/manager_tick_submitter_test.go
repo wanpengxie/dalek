@@ -64,7 +64,7 @@ func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
 	deadline := time.Now().Add(400 * time.Millisecond)
 	for {
 		var cnt int64
-		if err := p.DB.Model(&store.PMDispatchJob{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
+		if err := p.DB.Model(&contracts.PMDispatchJob{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
 			t.Fatalf("count pm dispatch jobs failed: %v", err)
 		}
 		if cnt > 0 {
@@ -103,7 +103,7 @@ func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 	}
 
 	var cnt int64
-	if err := p.DB.Model(&store.PMDispatchJob{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
+	if err := p.DB.Model(&contracts.PMDispatchJob{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
 		t.Fatalf("count pm dispatch jobs failed: %v", err)
 	}
 	if cnt != 0 {
@@ -174,7 +174,7 @@ func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 		t.Fatalf("sync dispatch should bypass dispatch submitter, got=%v", submitter.CallIDs())
 	}
 
-	var job store.PMDispatchJob
+	var job contracts.PMDispatchJob
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&job).Error; err != nil {
 		t.Fatalf("query pm dispatch job failed: %v", err)
 	}

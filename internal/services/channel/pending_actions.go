@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -82,7 +81,7 @@ func (s *Service) CreatePendingActions(ctx context.Context, conversationID, jobI
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	rows := []store.ChannelPendingAction{}
+	rows := []contracts.ChannelPendingAction{}
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		created, cerr := s.createPendingActionsTx(ctx, tx, conversationID, jobID, actions)
 		if cerr != nil {
@@ -96,7 +95,7 @@ func (s *Service) CreatePendingActions(ctx context.Context, conversationID, jobI
 	return pendingActionViewsFromModels(rows), nil
 }
 
-func (s *Service) createPendingActionsTx(ctx context.Context, tx *gorm.DB, conversationID, jobID uint, actions []contracts.TurnAction) ([]store.ChannelPendingAction, error) {
+func (s *Service) createPendingActionsTx(ctx context.Context, tx *gorm.DB, conversationID, jobID uint, actions []contracts.TurnAction) ([]contracts.ChannelPendingAction, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("tx 不能为空")
 	}
@@ -110,7 +109,7 @@ func (s *Service) createPendingActionsTx(ctx context.Context, tx *gorm.DB, conve
 		ctx = context.Background()
 	}
 
-	rows := make([]store.ChannelPendingAction, 0, len(actions))
+	rows := make([]contracts.ChannelPendingAction, 0, len(actions))
 	for _, action := range actions {
 		action.Normalize()
 		if err := action.Validate(); err != nil {
@@ -120,7 +119,7 @@ func (s *Service) createPendingActionsTx(ctx context.Context, tx *gorm.DB, conve
 		if err != nil {
 			return nil, fmt.Errorf("序列化 pending action 失败: %w", err)
 		}
-		row := store.ChannelPendingAction{
+		row := contracts.ChannelPendingAction{
 			ConversationID: conversationID,
 			JobID:          jobID,
 			ActionJSON:     strings.TrimSpace(string(actionJSON)),
@@ -147,7 +146,7 @@ func (s *Service) ListPendingActions(ctx context.Context, jobID uint) ([]Pending
 	if jobID == 0 {
 		return []PendingActionView{}, nil
 	}
-	var rows []store.ChannelPendingAction
+	var rows []contracts.ChannelPendingAction
 	if err := db.WithContext(ctx).
 		Where("job_id = ?", jobID).
 		Order("id ASC").
@@ -243,7 +242,7 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 
 	now := time.Now()
 	if row.CreatedAt.Add(channelPendingActionExpireAfter).Before(now) {
-		if err := db.WithContext(ctx).Model(&store.ChannelPendingAction{}).
+		if err := db.WithContext(ctx).Model(&contracts.ChannelPendingAction{}).
 			Where("id = ? AND status = ?", row.ID, contracts.ChannelPendingActionPending).
 			Updates(map[string]any{
 				"status":        contracts.ChannelPendingActionFailed,
@@ -265,7 +264,7 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 		return out, nil
 	}
 
-	updateRes := db.WithContext(ctx).Model(&store.ChannelPendingAction{}).
+	updateRes := db.WithContext(ctx).Model(&contracts.ChannelPendingAction{}).
 		Where("id = ? AND status = ?", row.ID, contracts.ChannelPendingActionPending).
 		Updates(map[string]any{
 			"status":        contracts.ChannelPendingActionApproved,
@@ -405,7 +404,7 @@ func (s *Service) RejectPendingAction(ctx context.Context, actionID uint, decide
 	}
 
 	now := time.Now()
-	updateRes := db.WithContext(ctx).Model(&store.ChannelPendingAction{}).
+	updateRes := db.WithContext(ctx).Model(&contracts.ChannelPendingAction{}).
 		Where("id = ? AND status = ?", row.ID, contracts.ChannelPendingActionPending).
 		Updates(map[string]any{
 			"status":        contracts.ChannelPendingActionRejected,
@@ -455,7 +454,7 @@ func (s *Service) finishPendingActionExecution(ctx context.Context, actionID uin
 		ctx = context.Background()
 	}
 	now := time.Now()
-	return db.WithContext(ctx).Model(&store.ChannelPendingAction{}).
+	return db.WithContext(ctx).Model(&contracts.ChannelPendingAction{}).
 		Where("id = ?", actionID).
 		Updates(map[string]any{
 			"status":        status,
@@ -465,20 +464,20 @@ func (s *Service) finishPendingActionExecution(ctx context.Context, actionID uin
 		}).Error
 }
 
-func (s *Service) getPendingActionByID(ctx context.Context, actionID uint) (store.ChannelPendingAction, error) {
+func (s *Service) getPendingActionByID(ctx context.Context, actionID uint) (contracts.ChannelPendingAction, error) {
 	_, db, err := s.require()
 	if err != nil {
-		return store.ChannelPendingAction{}, err
+		return contracts.ChannelPendingAction{}, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var row store.ChannelPendingAction
+	var row contracts.ChannelPendingAction
 	if err := db.WithContext(ctx).First(&row, actionID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return store.ChannelPendingAction{}, fmt.Errorf("%w: %d", ErrPendingActionNotFound, actionID)
+			return contracts.ChannelPendingAction{}, fmt.Errorf("%w: %d", ErrPendingActionNotFound, actionID)
 		}
-		return store.ChannelPendingAction{}, err
+		return contracts.ChannelPendingAction{}, err
 	}
 	return row, nil
 }
@@ -490,7 +489,7 @@ func rejectDecisionNote(note string) string {
 	return strings.TrimSpace(note)
 }
 
-func finalizeAlreadyDecidedResult(row store.ChannelPendingAction) PendingActionDecisionResult {
+func finalizeAlreadyDecidedResult(row contracts.ChannelPendingAction) PendingActionDecisionResult {
 	view := pendingActionRowToView(row)
 	note := strings.TrimSpace(view.DecisionNote)
 	out := PendingActionDecisionResult{
@@ -527,7 +526,7 @@ func finalizeAlreadyDecidedResult(row store.ChannelPendingAction) PendingActionD
 	return out
 }
 
-func pendingActionRowToView(row store.ChannelPendingAction) PendingActionView {
+func pendingActionRowToView(row contracts.ChannelPendingAction) PendingActionView {
 	action, err := decodePendingTurnAction(row.ActionJSON)
 	if err != nil {
 		action = contracts.TurnAction{
@@ -552,7 +551,7 @@ func pendingActionRowToView(row store.ChannelPendingAction) PendingActionView {
 	}
 }
 
-func pendingActionViewsFromModels(rows []store.ChannelPendingAction) []PendingActionView {
+func pendingActionViewsFromModels(rows []contracts.ChannelPendingAction) []PendingActionView {
 	if len(rows) == 0 {
 		return nil
 	}

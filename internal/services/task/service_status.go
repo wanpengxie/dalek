@@ -21,7 +21,7 @@ type ListStatusOptions struct {
 }
 
 type EventScopeRow struct {
-	store.TaskEvent
+	contracts.TaskEvent
 	TicketID  uint
 	WorkerID  uint
 	OwnerType string
@@ -148,7 +148,7 @@ func (s *Service) GetStatusByRunID(ctx context.Context, runID uint) (*store.Task
 	return &out, nil
 }
 
-func (s *Service) ListEvents(ctx context.Context, runID uint, limit int) ([]store.TaskEvent, error) {
+func (s *Service) ListEvents(ctx context.Context, runID uint, limit int) ([]contracts.TaskEvent, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -163,12 +163,12 @@ func (s *Service) ListEvents(ctx context.Context, runID uint, limit int) ([]stor
 		limit = 100
 	}
 	// 语义为“最新 N 条”，但返回顺序按时间升序，便于 CLI 直接按时间线展示。
-	latestN := db.WithContext(ctx).Model(&store.TaskEvent{}).
+	latestN := db.WithContext(ctx).Model(&contracts.TaskEvent{}).
 		Select("id").
 		Where("task_run_id = ?", runID).
 		Order("created_at desc, id desc").
 		Limit(limit)
-	var out []store.TaskEvent
+	var out []contracts.TaskEvent
 	if err := db.WithContext(ctx).
 		Where("id IN (?)", latestN).
 		Order("created_at asc, id asc").
