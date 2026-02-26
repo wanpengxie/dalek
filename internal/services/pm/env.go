@@ -21,7 +21,7 @@ func buildBaseEnv(p *core.Project, t store.Ticket, w store.Worker) map[string]st
 	return map[string]string{
 		envProjectKey:        strings.TrimSpace(p.Key),
 		envRepoRoot:          strings.TrimSpace(p.RepoRoot),
-		envDBPath:            strings.TrimSpace(p.DBPath),
+		envDBPath:            strings.TrimSpace(p.DBPath()),
 		envWorktreePath:      strings.TrimSpace(w.WorktreePath),
 		envBranch:            strings.TrimSpace(w.Branch),
 		envTmuxSocket:        strings.TrimSpace(w.TmuxSocket),

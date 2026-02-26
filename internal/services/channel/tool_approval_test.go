@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
+	"dalek/internal/repo"
 	"dalek/internal/services/core"
 	"dalek/internal/store"
 	"dalek/internal/testutil"
@@ -335,9 +336,9 @@ func newToolApprovalTestService(t *testing.T) *Service {
 	}
 	repoRoot := t.TempDir()
 	return New(&core.Project{
-		Name:       "demo",
-		RepoRoot:   repoRoot,
-		ProjectDir: repoRoot,
-		DB:         db,
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		DB:       db,
 	})
 }

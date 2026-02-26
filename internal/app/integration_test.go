@@ -1381,8 +1381,8 @@ func TestIntegration_InitCreatesControlPlaneSeed(t *testing.T) {
 	p := newIntegrationProject(t)
 
 	wantDB := filepath.Join(p.ProjectDir(), "runtime", "dalek.sqlite3")
-	if strings.TrimSpace(p.core.DBPath) != wantDB {
-		t.Fatalf("unexpected DBPath: got=%s want=%s", p.core.DBPath, wantDB)
+	if strings.TrimSpace(p.core.DBPath()) != wantDB {
+		t.Fatalf("unexpected DBPath: got=%s want=%s", p.core.DBPath(), wantDB)
 	}
 
 	mustExist := []string{

@@ -34,7 +34,7 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 		Project: dispatchProjectContext{
 			Key:      strings.TrimSpace(p.Key),
 			RepoRoot: strings.TrimSpace(p.RepoRoot),
-			DBPath:   strings.TrimSpace(p.DBPath),
+			DBPath:   strings.TrimSpace(p.DBPath()),
 		},
 		Ticket: dispatchTicketContext{
 			ID:          t.ID,

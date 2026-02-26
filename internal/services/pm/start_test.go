@@ -54,7 +54,7 @@ func TestStartTicketWithOptions_PassesBaseBranch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("StartTicketWithOptions failed: %v", err)
 	}
-	if got := strings.TrimSpace(fGit.lastBaseBranch); got != "release/v2" {
+	if got := strings.TrimSpace(fGit.LastBaseBranch); got != "release/v2" {
 		t.Fatalf("expected base branch override release/v2, got=%q", got)
 	}
 }

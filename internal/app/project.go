@@ -63,10 +63,7 @@ func (p *Project) ProjectDir() string {
 	if p == nil || p.core == nil {
 		return ""
 	}
-	if strings.TrimSpace(p.core.ProjectDir) != "" {
-		return strings.TrimSpace(p.core.ProjectDir)
-	}
-	return strings.TrimSpace(p.core.Layout.ProjectDir)
+	return p.core.ProjectDir()
 }
 
 func (p *Project) TmuxSocket() string {

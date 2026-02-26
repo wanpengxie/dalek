@@ -177,14 +177,14 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
 	if !strings.Contains(content, "sdk dispatch ok") {
 		t.Fatalf("expected sdk stream log contains agent message, got=%q", content)
 	}
-	if fTmux.sendLineCalls == 0 {
+	if fTmux.SendLineCalls == 0 {
 		t.Fatalf("expected tmux send-line called for sdk playback")
 	}
-	joinedHistory := strings.Join(fTmux.sendLineHistory, "\n")
+	joinedHistory := strings.Join(fTmux.SendLineHistory, "\n")
 	if !strings.Contains(joinedHistory, "tail -n 0 -F") {
 		t.Fatalf("expected tmux send-line includes tail command, got=%q", joinedHistory)
 	}
-	if fTmux.sendKeysCalls == 0 {
+	if fTmux.SendKeysCalls == 0 {
 		t.Fatalf("expected tmux send-keys called to stop sdk playback tail")
 	}
 

@@ -1182,7 +1182,7 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound store.ChannelMe
 
 	repoRoot := strings.TrimSpace(p.RepoRoot)
 	if repoRoot == "" {
-		repoRoot = strings.TrimSpace(p.ProjectDir)
+		repoRoot = strings.TrimSpace(p.Layout.RepoRoot)
 	}
 	if repoRoot == "" {
 		return pmAgentTurnResponse{}, fmt.Errorf("repo_root 为空，无法调用 project manager agent")
