@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"dalek/internal/contracts"
+	"dalek/internal/fsm"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -618,7 +619,7 @@ func (s *Service) promoteTicketActiveOnDispatchClaimTx(ctx context.Context, tx *
 		return nil, err
 	}
 	from := normalizeTicketWorkflowStatus(ticket.WorkflowStatus)
-	if from == contracts.TicketDone || from == contracts.TicketArchived || from == contracts.TicketActive {
+	if !fsm.ShouldPromoteOnDispatchClaim(from) {
 		return nil, nil
 	}
 	if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
@@ -649,7 +650,7 @@ func (s *Service) demoteTicketBlockedOnDispatchFailedTx(ctx context.Context, tx 
 		return nil, err
 	}
 	from := normalizeTicketWorkflowStatus(ticket.WorkflowStatus)
-	if from == contracts.TicketDone || from == contracts.TicketArchived || from == contracts.TicketBlocked {
+	if !fsm.ShouldDemoteOnDispatchFailed(from) {
 		return nil, nil
 	}
 	if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).

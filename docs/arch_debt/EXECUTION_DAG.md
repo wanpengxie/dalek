@@ -21,6 +21,7 @@
 - W05 已完成票：`T23(30)` `T15(22)` `T30(37)` `T37(44)`
 - W06A 已完成票：`T26(33)` `T12(19)`
 - W07A 已完成票：`T28(35)`（query service 归位）
+- W07B 已完成票：`T27(34)`（ticket workflow 守卫收敛到 FSM）
 - W08A 已完成票：`T18(25)`（Provider/默认值/客户端归位）
 - W08B 已完成票：`T13(20)`（DaemonManager recovery/对账逻辑下沉 service + ActionExecutor 构造注入）
 - W09A 已完成票：`T33(40)`
@@ -66,6 +67,21 @@
 - 约束对齐：
   - 复用 `core.NewProject/buildCoreProject` 既有构造边界（未新增 `core.Project{}` 直写构造）。
   - app 层不再直接访问 DB（DaemonManager 已改为 service facade）。
+
+## W07B 回写（T27 Ticket workflow 权威归位）
+
+- 状态：`T27` 已完成（2026-02-27）。
+- 关键产物：
+  - 新增 `internal/fsm/ticket_workflow_guards.go`，集中落地 ticket workflow 高阶守卫：`CanStartTicket`、`CanDispatchTicket`、`CanArchiveTicket`、`CanManualSetWorkflowStatus`、`ShouldPromoteOnDispatchClaim`、`ShouldDemoteOnDispatchFailed`、`ShouldApplyWorkerReport`、`CanReportPromoteTo`。
+  - 新增 `internal/fsm/ticket_workflow_guards_test.go`，覆盖守卫函数全部分支与关键状态矩阵（含历史别名归一化分支）。
+  - `internal/services/pm/workflow.go`、`start.go`、`direct_dispatch.go`、`dispatch_queue.go` 的目标 hardcoded workflow 守卫已改为统一调用 `fsm` 守卫函数，PM 层不再散落重复规则。
+  - 全流程继续复用 `fsm.TicketWorkflowTable` 与 `fsm.CanTicketWorkflowTransition`，未在 `internal/fsm/` 外新增 workflow 转换定义。
+- 回归验证：
+  - `go test ./internal/fsm/... ./internal/services/pm/...`
+  - `go test ./...`
+  - `go build ./...`
+  - `go vet ./...`
+  - 以上命令全部通过。
 
 ## 关键依赖边（DAG）
 
