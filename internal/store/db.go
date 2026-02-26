@@ -47,58 +47,7 @@ func Open(path string) (*gorm.DB, error) {
 }
 
 func AutoMigrate(db *gorm.DB) error {
-	if err := db.AutoMigrate(
-		&Ticket{},
-		&Worker{},
-		&PMState{},
-		&PMDispatchJob{},
-		&InboxItem{},
-		&MergeItem{},
-		&TaskRun{},
-		&SubagentRun{},
-		&TaskRuntimeSample{},
-		&TaskSemanticReport{},
-		&TaskEvent{},
-		&TicketWorkflowEvent{},
-		&WorkerStatusEvent{},
-		&NoteItem{},
-		&ShapedItem{},
-		&ChannelBinding{},
-		&ChannelConversation{},
-		&ChannelMessage{},
-		&ChannelTurnJob{},
-		&ChannelPendingAction{},
-		&ChannelOutbox{},
-		&EventBusLog{},
-	); err != nil {
-		return err
-	}
-
-	// 开发态硬切：直接删除旧观测体系（worker_events + worker.runtime_* 旧状态列）。
-	if err := db.Exec(`DROP TABLE IF EXISTS worker_events;`).Error; err != nil {
-		return err
-	}
-	for _, col := range []string{"runtime_state", "runtime_needs_user", "runtime_summary"} {
-		if err := db.Exec(fmt.Sprintf(`ALTER TABLE workers DROP COLUMN %s;`, col)).Error; err != nil {
-			msg := strings.ToLower(strings.TrimSpace(err.Error()))
-			if !strings.Contains(msg, "no such column") {
-				return err
-			}
-		}
-	}
-
-	// 开发态硬切：ticket.workflow_status 替换 tickets.status + tickets.archived。
-	if err := migrateTicketWorkflowStatus(db); err != nil {
-		return err
-	}
-	if err := migrateNotebookSchema(db); err != nil {
-		return err
-	}
-
-	if err := ensureTaskStatusView(db); err != nil {
-		return err
-	}
-	return ensureChannelMessageDedupIndex(db)
+	return RunMigrations(db, storeMigrations())
 }
 
 func OpenAndMigrate(path string) (*gorm.DB, error) {
