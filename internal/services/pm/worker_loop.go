@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/agent/run"
 	"dalek/internal/contracts"
+	"dalek/internal/services/agentexec"
 	"dalek/internal/store"
 )
 
 // launchWorkerSDK 委托到测试 mock 或真实的 launchWorkerSDKHandle。
-func (s *Service) launchWorkerSDK(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (run.AgentRunHandle, error) {
+func (s *Service) launchWorkerSDK(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (agentexec.AgentRunHandle, error) {
 	if s.sdkHandleLauncher != nil {
 		return s.sdkHandleLauncher(ctx, t, w, entryPrompt)
 	}
@@ -78,7 +78,7 @@ func (s *Service) executeWorkerLoop(ctx context.Context, t contracts.Ticket, w c
 			}, time.Now())
 
 		// 2) 等待 agent 完成（无超时）
-		runResult, waitErr := handle.Wait()
+		runResult, waitErr := handle.Wait(loopCtx)
 		if waitErr != nil {
 			s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop wait failed stage=%d: %v", result.Stages, waitErr))
 			return result, fmt.Errorf("worker_loop stage %d wait 失败: %w", result.Stages, waitErr)

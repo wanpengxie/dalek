@@ -3,7 +3,6 @@ package agentexec
 import (
 	"bytes"
 	"context"
-	"dalek/internal/contracts"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -17,19 +16,7 @@ import (
 
 type ProcessConfig struct {
 	Provider provider.Provider
-	Runtime  core.TaskRuntime
-
-	OwnerType contracts.TaskOwnerType
-	TaskType  string
-
-	ProjectKey  string
-	TicketID    uint
-	WorkerID    uint
-	SubjectType string
-	SubjectID   string
-
-	WorkDir string
-	Env     map[string]string
+	BaseConfig
 	Stdin   string
 	Timeout time.Duration
 }
@@ -57,6 +44,7 @@ func (e *ProcessExecutor) Execute(ctx context.Context, prompt string) (AgentRunH
 	if e.cfg.Timeout > 0 {
 		execCtx, cancel = context.WithTimeout(ctx, e.cfg.Timeout)
 	}
+	lifecycle := NewRunLifecycleTracker(e.cfg.BaseConfig)
 
 	bin, args := e.cfg.Provider.BuildCommand(prompt)
 	bin = strings.TrimSpace(bin)
@@ -65,32 +53,15 @@ func (e *ProcessExecutor) Execute(ctx context.Context, prompt string) (AgentRunH
 		return nil, fmt.Errorf("provider 返回空命令")
 	}
 
-	runID := uint(0)
-	if e.cfg.Runtime != nil {
-		req := newRequestID("arun")
-		payload := marshalJSON(map[string]any{
-			"provider":       e.cfg.Provider.Name(),
-			"bin":            bin,
-			"args":           args,
-			"prompt_preview": truncateRunes(prompt, 256),
-		})
-		created, err := e.cfg.Runtime.CreateRun(execCtx, core.TaskRuntimeCreateRunInput{
-			OwnerType:          e.cfg.OwnerType,
-			TaskType:           strings.TrimSpace(e.cfg.TaskType),
-			ProjectKey:         strings.TrimSpace(e.cfg.ProjectKey),
-			TicketID:           e.cfg.TicketID,
-			WorkerID:           e.cfg.WorkerID,
-			SubjectType:        strings.TrimSpace(e.cfg.SubjectType),
-			SubjectID:          strings.TrimSpace(e.cfg.SubjectID),
-			RequestID:          req,
-			OrchestrationState: contracts.TaskPending,
-			RequestPayloadJSON: payload,
-		})
-		if err != nil {
-			cancel()
-			return nil, err
-		}
-		runID = created.ID
+	runID, err := lifecycle.CreatePending(execCtx, marshalJSON(map[string]any{
+		"provider":       e.cfg.Provider.Name(),
+		"bin":            bin,
+		"args":           args,
+		"prompt_preview": truncateRunes(prompt, 256),
+	}))
+	if err != nil {
+		cancel()
+		return nil, err
 	}
 
 	cmd := exec.CommandContext(execCtx, bin, args...)
@@ -112,47 +83,33 @@ func (e *ProcessExecutor) Execute(ctx context.Context, prompt string) (AgentRunH
 		return nil, fmt.Errorf("启动 agent 失败: %w", err)
 	}
 
-	if e.cfg.Runtime != nil && runID != 0 {
-		now := time.Now()
-		var lease *time.Time
-		if e.cfg.Timeout > 0 {
-			l := now.Add(e.cfg.Timeout)
-			lease = &l
-		}
-		runnerID := fmt.Sprintf("pid:%d", cmd.Process.Pid)
-		if err := e.cfg.Runtime.MarkRunRunning(execCtx, runID, runnerID, lease, now, true); err != nil {
-			_ = markProcessRunFailed(e.cfg.Runtime, runID, "agent_mark_running_failed", err.Error())
-			cancel()
-			return nil, err
-		}
-		_ = e.cfg.Runtime.AppendEvent(execCtx, core.TaskRuntimeEventInput{
-			TaskRunID: runID,
-			EventType: "task_started",
-			ToState: map[string]any{
-				"orchestration_state": contracts.TaskRunning,
-				"runner_id":           runnerID,
-			},
-			Note:      "process executor started",
-			CreatedAt: now,
-		})
+	var lease *time.Time
+	if e.cfg.Timeout > 0 {
+		l := time.Now().Add(e.cfg.Timeout)
+		lease = &l
+	}
+	if err := lifecycle.MarkRunning(execCtx, fmt.Sprintf("pid:%d", cmd.Process.Pid), lease, "process executor started"); err != nil {
+		cancel()
+		return nil, err
 	}
 
 	return &processHandle{
 		runID:     runID,
-		runtime:   e.cfg.Runtime,
 		provider:  e.cfg.Provider,
+		lifecycle: lifecycle,
 		cmd:       cmd,
 		cancel:    cancel,
 		execCtx:   execCtx,
 		stdoutBuf: &stdout,
 		stderrBuf: &stderr,
+		doneCh:    make(chan struct{}),
 	}, nil
 }
 
 type processHandle struct {
-	runID    uint
-	runtime  core.TaskRuntime
-	provider provider.Provider
+	runID     uint
+	provider  provider.Provider
+	lifecycle *RunLifecycleTracker
 
 	cmd       *exec.Cmd
 	cancel    context.CancelFunc
@@ -174,19 +131,29 @@ func (h *processHandle) RunID() uint {
 	return h.runID
 }
 
-func (h *processHandle) Wait() (AgentRunResult, error) {
+func (h *processHandle) Wait(ctx context.Context) (AgentRunResult, error) {
 	if h == nil {
 		return AgentRunResult{}, fmt.Errorf("process handle 为空")
 	}
-	h.once.Do(func() {
-		h.doneCh = make(chan struct{})
-		h.waitRes, h.waitErr = h.waitOnce()
-		close(h.doneCh)
-	})
-	if h.doneCh != nil {
-		<-h.doneCh
+	h.start()
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return h.waitRes, h.waitErr
+	select {
+	case <-h.doneCh:
+		return h.waitRes, h.waitErr
+	case <-ctx.Done():
+		return AgentRunResult{}, ctx.Err()
+	}
+}
+
+func (h *processHandle) start() {
+	h.once.Do(func() {
+		go func() {
+			h.waitRes, h.waitErr = h.waitOnce()
+			close(h.doneCh)
+		}()
+	})
 }
 
 func (h *processHandle) waitOnce() (AgentRunResult, error) {
@@ -218,43 +185,7 @@ func (h *processHandle) waitOnce() (AgentRunResult, error) {
 		res.Parsed = h.provider.ParseOutput(stdout)
 	}
 
-	if h.runtime != nil && h.runID != 0 {
-		now := time.Now()
-		if err == nil && exitCode == 0 {
-			_ = h.runtime.MarkRunSucceeded(h.execCtx, h.runID, marshalJSON(res), now)
-			_ = h.runtime.AppendEvent(h.execCtx, core.TaskRuntimeEventInput{
-				TaskRunID: h.runID,
-				EventType: "task_succeeded",
-				FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
-				ToState:   map[string]any{"orchestration_state": contracts.TaskSucceeded},
-				Note:      "process executor finished",
-				CreatedAt: now,
-			})
-		} else {
-			msg := strings.TrimSpace(errStringWithOutput(err, stdout, stderr))
-			if errors.Is(h.execCtx.Err(), context.Canceled) || errors.Is(h.execCtx.Err(), context.DeadlineExceeded) {
-				_ = h.runtime.MarkRunCanceled(h.execCtx, h.runID, "agent_canceled", msg, now)
-				_ = h.runtime.AppendEvent(h.execCtx, core.TaskRuntimeEventInput{
-					TaskRunID: h.runID,
-					EventType: "task_canceled",
-					FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
-					ToState:   map[string]any{"orchestration_state": contracts.TaskCanceled},
-					Note:      msg,
-					CreatedAt: now,
-				})
-			} else {
-				_ = h.runtime.MarkRunFailed(h.execCtx, h.runID, "agent_exit_failed", msg, now)
-				_ = h.runtime.AppendEvent(h.execCtx, core.TaskRuntimeEventInput{
-					TaskRunID: h.runID,
-					EventType: "task_failed",
-					FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
-					ToState:   map[string]any{"orchestration_state": contracts.TaskFailed},
-					Note:      msg,
-					CreatedAt: now,
-				})
-			}
-		}
-	}
+	h.lifecycle.Finish(h.execCtx, res, err, "process executor finished")
 
 	if err != nil {
 		return res, fmt.Errorf("agent 执行失败: %s", errStringWithOutput(err, stdout, stderr))

@@ -89,21 +89,23 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 			Model:           agentCfg.Model,
 			ReasoningEffort: agentCfg.ReasoningEffort,
 			Command:         agentCfg.Command,
-			Runtime:         rt,
-			OwnerType:       contracts.TaskOwnerPM,
-			TaskType:        "pm_dispatch_agent",
-			ProjectKey:      strings.TrimSpace(p.Key),
-			TicketID:        t.ID,
-			WorkerID:        w.ID,
-			SubjectType:     "ticket",
-			SubjectID:       fmt.Sprintf("%d", t.ID),
-			WorkDir:         strings.TrimSpace(p.RepoRoot),
-			Env:             env,
-			Timeout:         timeout,
-			Tmux:            p.Tmux,
-			TmuxSocket:      strings.TrimSpace(w.TmuxSocket),
-			TmuxSession:     strings.TrimSpace(w.TmuxSession),
-			TmuxLogPath:     repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID),
+			BaseConfig: agentexec.BaseConfig{
+				Runtime:     rt,
+				OwnerType:   contracts.TaskOwnerPM,
+				TaskType:    "pm_dispatch_agent",
+				ProjectKey:  strings.TrimSpace(p.Key),
+				TicketID:    t.ID,
+				WorkerID:    w.ID,
+				SubjectType: "ticket",
+				SubjectID:   fmt.Sprintf("%d", t.ID),
+				WorkDir:     strings.TrimSpace(p.RepoRoot),
+				Env:         env,
+			},
+			Timeout:     timeout,
+			Tmux:        p.Tmux,
+			TmuxSocket:  strings.TrimSpace(w.TmuxSocket),
+			TmuxSession: strings.TrimSpace(w.TmuxSession),
+			TmuxLogPath: repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID),
 			AppendEvent: func(evtCtx context.Context, eventType, note string, payload any, createdAt time.Time) {
 				_ = s.worker.AppendWorkerTaskEvent(evtCtx, w.ID, eventType, note, payload, createdAt)
 			},
@@ -113,25 +115,27 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 		})
 	} else {
 		executor = agentexec.NewProcessExecutor(agentexec.ProcessConfig{
-			Provider:    agentProvider,
-			Runtime:     rt,
-			OwnerType:   contracts.TaskOwnerPM,
-			TaskType:    "pm_dispatch_agent",
-			ProjectKey:  strings.TrimSpace(p.Key),
-			TicketID:    t.ID,
-			WorkerID:    w.ID,
-			SubjectType: "ticket",
-			SubjectID:   fmt.Sprintf("%d", t.ID),
-			WorkDir:     strings.TrimSpace(p.RepoRoot),
-			Env:         env,
-			Timeout:     timeout,
+			Provider: agentProvider,
+			BaseConfig: agentexec.BaseConfig{
+				Runtime:     rt,
+				OwnerType:   contracts.TaskOwnerPM,
+				TaskType:    "pm_dispatch_agent",
+				ProjectKey:  strings.TrimSpace(p.Key),
+				TicketID:    t.ID,
+				WorkerID:    w.ID,
+				SubjectType: "ticket",
+				SubjectID:   fmt.Sprintf("%d", t.ID),
+				WorkDir:     strings.TrimSpace(p.RepoRoot),
+				Env:         env,
+			},
+			Timeout: timeout,
 		})
 	}
 	handle, err := executor.Execute(runCtx, prompt)
 	if err != nil {
 		return dispatchPromptBuildResult{}, err
 	}
-	result, err := handle.Wait()
+	result, err := handle.Wait(runCtx)
 	if err != nil {
 		return dispatchPromptBuildResult{}, err
 	}

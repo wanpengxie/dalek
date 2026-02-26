@@ -1,6 +1,10 @@
 package agentexec
 
-import "dalek/internal/agent/provider"
+import (
+	"context"
+
+	"dalek/internal/agent/provider"
+)
 
 type AgentRunResult struct {
 	ExitCode int                   `json:"exit_code"`
@@ -11,6 +15,6 @@ type AgentRunResult struct {
 
 type AgentRunHandle interface {
 	RunID() uint
-	Wait() (AgentRunResult, error)
+	Wait(ctx context.Context) (AgentRunResult, error)
 	Cancel() error
 }

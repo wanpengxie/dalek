@@ -2,7 +2,6 @@ package agentexec
 
 import (
 	"context"
-	"dalek/internal/contracts"
 	"errors"
 	"fmt"
 	"strings"
@@ -21,19 +20,7 @@ type SDKConfig struct {
 	ReasoningEffort string
 	Command         string
 	Runner          sdkrunner.TaskRunner
-	Runtime         core.TaskRuntime
-
-	OwnerType contracts.TaskOwnerType
-	TaskType  string
-
-	ProjectKey  string
-	TicketID    uint
-	WorkerID    uint
-	SubjectType string
-	SubjectID   string
-
-	WorkDir   string
-	Env       map[string]string
+	BaseConfig
 	SessionID string
 	Timeout   time.Duration
 
@@ -71,80 +58,52 @@ func (e *SDKExecutor) Execute(ctx context.Context, prompt string) (AgentRunHandl
 		execCtx, cancel = context.WithTimeout(ctx, e.cfg.Timeout)
 	}
 
+	lifecycle := NewRunLifecycleTracker(e.cfg.BaseConfig)
 	runID := uint(0)
-	if e.cfg.Runtime != nil {
-		req := newRequestID("arun")
-		payload := marshalJSON(map[string]any{
-			"provider":         strings.TrimSpace(strings.ToLower(e.cfg.Provider)),
-			"mode":             "sdk",
-			"model":            strings.TrimSpace(e.cfg.Model),
-			"session_id":       strings.TrimSpace(e.cfg.SessionID),
-			"tmux_socket":      strings.TrimSpace(e.cfg.TmuxSocket),
-			"tmux_session":     strings.TrimSpace(e.cfg.TmuxSession),
-			"tmux_target":      strings.TrimSpace(e.cfg.TmuxTarget),
-			"tmux_log_path":    strings.TrimSpace(e.cfg.TmuxLogPath),
-			"prompt_preview":   truncateRunes(prompt, 256),
-			"reasoning_effort": strings.TrimSpace(strings.ToLower(e.cfg.ReasoningEffort)),
-		})
-		created, err := e.cfg.Runtime.CreateRun(execCtx, core.TaskRuntimeCreateRunInput{
-			OwnerType:          e.cfg.OwnerType,
-			TaskType:           strings.TrimSpace(e.cfg.TaskType),
-			ProjectKey:         strings.TrimSpace(e.cfg.ProjectKey),
-			TicketID:           e.cfg.TicketID,
-			WorkerID:           e.cfg.WorkerID,
-			SubjectType:        strings.TrimSpace(e.cfg.SubjectType),
-			SubjectID:          strings.TrimSpace(e.cfg.SubjectID),
-			RequestID:          req,
-			OrchestrationState: contracts.TaskPending,
-			RequestPayloadJSON: payload,
-		})
-		if err != nil {
-			cancel()
-			return nil, err
-		}
-		runID = created.ID
-		now := time.Now()
-		var lease *time.Time
-		if e.cfg.Timeout > 0 {
-			l := now.Add(e.cfg.Timeout)
-			lease = &l
-		}
-		runnerID := "sdk:" + strings.TrimSpace(strings.ToLower(e.cfg.Provider))
-		if err := e.cfg.Runtime.MarkRunRunning(execCtx, runID, runnerID, lease, now, true); err != nil {
-			_ = markProcessRunFailed(e.cfg.Runtime, runID, "agent_mark_running_failed", err.Error())
-			cancel()
-			return nil, err
-		}
-		_ = e.cfg.Runtime.AppendEvent(execCtx, core.TaskRuntimeEventInput{
-			TaskRunID: runID,
-			EventType: "task_started",
-			ToState: map[string]any{
-				"orchestration_state": contracts.TaskRunning,
-				"runner_id":           runnerID,
-			},
-			Note:      "sdk executor started",
-			CreatedAt: now,
-		})
+	var lease *time.Time
+	if e.cfg.Timeout > 0 {
+		l := time.Now().Add(e.cfg.Timeout)
+		lease = &l
+	}
+	payload := marshalJSON(map[string]any{
+		"provider":         strings.TrimSpace(strings.ToLower(e.cfg.Provider)),
+		"mode":             "sdk",
+		"model":            strings.TrimSpace(e.cfg.Model),
+		"session_id":       strings.TrimSpace(e.cfg.SessionID),
+		"tmux_socket":      strings.TrimSpace(e.cfg.TmuxSocket),
+		"tmux_session":     strings.TrimSpace(e.cfg.TmuxSession),
+		"tmux_target":      strings.TrimSpace(e.cfg.TmuxTarget),
+		"tmux_log_path":    strings.TrimSpace(e.cfg.TmuxLogPath),
+		"prompt_preview":   truncateRunes(prompt, 256),
+		"reasoning_effort": strings.TrimSpace(strings.ToLower(e.cfg.ReasoningEffort)),
+	})
+	var err error
+	runID, err = lifecycle.Start(execCtx, payload, "sdk:"+strings.TrimSpace(strings.ToLower(e.cfg.Provider)), lease, "sdk executor started")
+	if err != nil {
+		cancel()
+		return nil, err
 	}
 
 	h := &sdkHandle{
-		runID:   runID,
-		runtime: e.cfg.Runtime,
-		cfg:     e.cfg,
-		prompt:  strings.TrimSpace(prompt),
-		execCtx: execCtx,
-		cancel:  cancel,
-		done:    make(chan struct{}),
+		runID:     runID,
+		runtime:   e.cfg.Runtime,
+		lifecycle: lifecycle,
+		cfg:       e.cfg,
+		prompt:    strings.TrimSpace(prompt),
+		execCtx:   execCtx,
+		cancel:    cancel,
+		done:      make(chan struct{}),
 	}
 	h.start()
 	return h, nil
 }
 
 type sdkHandle struct {
-	runID   uint
-	runtime core.TaskRuntime
-	cfg     SDKConfig
-	prompt  string
+	runID     uint
+	runtime   core.TaskRuntime
+	lifecycle *RunLifecycleTracker
+	cfg       SDKConfig
+	prompt    string
 
 	execCtx context.Context
 	cancel  context.CancelFunc
@@ -163,13 +122,20 @@ func (h *sdkHandle) RunID() uint {
 	return h.runID
 }
 
-func (h *sdkHandle) Wait() (AgentRunResult, error) {
+func (h *sdkHandle) Wait(ctx context.Context) (AgentRunResult, error) {
 	if h == nil {
 		return AgentRunResult{}, fmt.Errorf("sdk handle 为空")
 	}
 	h.start()
-	<-h.done
-	return h.waitRes, h.waitErr
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-h.done:
+		return h.waitRes, h.waitErr
+	case <-ctx.Done():
+		return AgentRunResult{}, ctx.Err()
+	}
 }
 
 func (h *sdkHandle) Cancel() error {
@@ -305,44 +271,7 @@ func (h *sdkHandle) run() {
 		}, time.Now())
 	}
 
-	now := time.Now()
-	if h.runtime != nil && h.runID != 0 {
-		if finalErr == nil {
-			_ = h.runtime.MarkRunSucceeded(context.Background(), h.runID, marshalJSON(res), now)
-			_ = h.runtime.AppendEvent(context.Background(), core.TaskRuntimeEventInput{
-				TaskRunID: h.runID,
-				EventType: "task_succeeded",
-				FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
-				ToState:   map[string]any{"orchestration_state": contracts.TaskSucceeded},
-				Note:      "sdk executor finished",
-				CreatedAt: now,
-			})
-		} else {
-			msg := strings.TrimSpace(errStringWithOutput(finalErr, res.Stdout, res.Stderr))
-			if errors.Is(finalErr, context.Canceled) || errors.Is(finalErr, context.DeadlineExceeded) ||
-				errors.Is(h.execCtx.Err(), context.Canceled) || errors.Is(h.execCtx.Err(), context.DeadlineExceeded) {
-				_ = h.runtime.MarkRunCanceled(context.Background(), h.runID, "agent_canceled", msg, now)
-				_ = h.runtime.AppendEvent(context.Background(), core.TaskRuntimeEventInput{
-					TaskRunID: h.runID,
-					EventType: "task_canceled",
-					FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
-					ToState:   map[string]any{"orchestration_state": contracts.TaskCanceled},
-					Note:      msg,
-					CreatedAt: now,
-				})
-			} else {
-				_ = h.runtime.MarkRunFailed(context.Background(), h.runID, "agent_exit_failed", msg, now)
-				_ = h.runtime.AppendEvent(context.Background(), core.TaskRuntimeEventInput{
-					TaskRunID: h.runID,
-					EventType: "task_failed",
-					FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
-					ToState:   map[string]any{"orchestration_state": contracts.TaskFailed},
-					Note:      msg,
-					CreatedAt: now,
-				})
-			}
-		}
-	}
+	h.lifecycle.Finish(h.execCtx, res, finalErr, "sdk executor finished")
 
 	if finalErr != nil {
 		h.waitErr = fmt.Errorf("agent 执行失败: %s", errStringWithOutput(finalErr, res.Stdout, res.Stderr))

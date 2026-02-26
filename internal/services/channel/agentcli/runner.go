@@ -54,14 +54,16 @@ func Run(ctx context.Context, backend Backend, req RunRequest) (Result, error) {
 			outputMode: prepared.OutputMode,
 			backend:    backend,
 		},
-		WorkDir: strings.TrimSpace(req.WorkDir),
-		Stdin:   prepared.Stdin,
+		BaseConfig: agentexec.BaseConfig{
+			WorkDir: strings.TrimSpace(req.WorkDir),
+		},
+		Stdin: prepared.Stdin,
 	})
 	handle, err := executor.Execute(ctx, strings.TrimSpace(req.Prompt))
 	if err != nil {
 		return Result{}, fmt.Errorf("project manager agent 调用失败: %s", buildProcessErrorDetail("", "", err.Error()))
 	}
-	runRes, waitErr := handle.Wait()
+	runRes, waitErr := handle.Wait(ctx)
 
 	result := Result{
 		Command:    strings.TrimSpace(prepared.Command),
