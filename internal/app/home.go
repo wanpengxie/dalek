@@ -15,6 +15,7 @@ import (
 	"dalek/internal/services/core"
 	logssvc "dalek/internal/services/logs"
 	"dalek/internal/services/pm"
+	subagentsvc "dalek/internal/services/subagent"
 	"dalek/internal/services/task"
 	"dalek/internal/services/ticket"
 	"dalek/internal/services/worker"
@@ -484,15 +485,17 @@ func assembleProject(cp *core.Project) *Project {
 	logsSvc := logssvc.New(cp, workerSvc)
 	pmSvc := pm.New(cp, workerSvc)
 	taskSvc := task.New(cp.DB)
+	subagentSvc := subagentsvc.New(cp, taskSvc, cp.Logger)
 	channelSvc := channelsvc.New(cp)
 	return &Project{
-		core:    cp,
-		ticket:  ticketSvc,
-		worker:  workerSvc,
-		logs:    logsSvc,
-		pm:      pmSvc,
-		task:    taskSvc,
-		channel: channelSvc,
+		core:     cp,
+		ticket:   ticketSvc,
+		worker:   workerSvc,
+		logs:     logsSvc,
+		pm:       pmSvc,
+		subagent: subagentSvc,
+		task:     taskSvc,
+		channel:  channelSvc,
 	}
 }
 

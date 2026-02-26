@@ -14,6 +14,7 @@ import (
 	"dalek/internal/services/core"
 	logssvc "dalek/internal/services/logs"
 	pmsvc "dalek/internal/services/pm"
+	subagentsvc "dalek/internal/services/subagent"
 	tasksvc "dalek/internal/services/task"
 	ticketsvc "dalek/internal/services/ticket"
 	workersvc "dalek/internal/services/worker"
@@ -28,12 +29,13 @@ import (
 type Project struct {
 	core *core.Project
 
-	ticket  *ticketsvc.Service
-	worker  *workersvc.Service
-	logs    *logssvc.Service
-	pm      *pmsvc.Service
-	task    *tasksvc.Service
-	channel *channelsvc.Service
+	ticket   *ticketsvc.Service
+	worker   *workersvc.Service
+	logs     *logssvc.Service
+	pm       *pmsvc.Service
+	subagent *subagentsvc.Service
+	task     *tasksvc.Service
+	channel  *channelsvc.Service
 
 	closeOnce sync.Once
 	closeErr  error
