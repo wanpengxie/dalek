@@ -704,6 +704,7 @@ func cmdTicketDispatch(args []string) {
 			"例如: dalek ticket dispatch --ticket 1 --timeout 120m",
 		)
 	}
+	enforceDispatchDepthGuardOrExit(out, "dalek ticket dispatch")
 
 	if *syncMode {
 		p := mustOpenProjectWithOutput(out, *home, *proj)

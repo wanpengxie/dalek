@@ -115,6 +115,7 @@ func cmdWorkerRun(args []string) {
 			"例如: dalek worker run --ticket 1 --timeout 120m",
 		)
 	}
+	enforceDispatchDepthGuardOrExit(out, "dalek worker run")
 	p := mustOpenProjectWithOutput(out, *home, *proj)
 
 	if *syncMode {

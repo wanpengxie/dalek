@@ -171,7 +171,7 @@
 
 ## 每轮启动 Dispatch 必带指令（强制）
 
-每次启动 `Wxx` 前，dispatch prompt 必须包含以下 7 项，缺一不可：
+每次启动 `Wxx` 前，dispatch prompt 必须包含以下 8 项，缺一不可：
 
 1. `Wave` 与本轮 tickets（1-4 个）。
 2. 前置依赖校验（列出本轮依赖的上游 tickets，并确认已完成）。
@@ -180,6 +180,7 @@
 5. 本轮验收口径（功能等价、架构约束、测试要求）。
 6. 本轮结束回写动作（更新 `EXECUTION_DAG.md` 与 `.dalek/AGENTS.md` 的 `<current_phase>`）。
 7. 阻塞分叉规则（若上游未完成，如何调整 DAG 与改派）。
+8. 执行方式约束：禁止调用 `dalek ticket dispatch`、`dalek worker run`（含脚本间接调用）；必须在当前 ticket/worktree 直接执行所需命令自行推进。
 
 推荐模板（直接粘贴后替换占位符）：
 
@@ -195,6 +196,8 @@ Tickets: <T.. T.. T..>
 本轮禁止事项:
 - 禁止绕过 <新服务/新状态机/新迁移入口>
 - 禁止在 <层> 直接访问 <下层实现>
+- 禁止调用 dalek ticket dispatch / dalek worker run / 二次派发脚本
+- 当 DALEK_DISPATCH_DEPTH != 0 时，严禁二次派发；仅允许本地执行或必要时 `dalek worker report --next wait_user`
 验收口径:
 - 功能回归: <命令/路径>
 - 架构约束: <import/边界/状态机规则>
