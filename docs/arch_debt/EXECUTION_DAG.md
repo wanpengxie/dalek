@@ -12,7 +12,6 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-26`
-- 已完成批次：`W01` `W02` `W03`
 - 已完成批次：`W01` `W02` `W03` `W04` `W05`
 - 当前批次：`W06A + W07A + W08A`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
@@ -23,7 +22,7 @@
 - W06A 已完成票：`T26(33)`
 - W06A 进行中票：`T12(19)`
 - W07A 进行中票：`T28(35)`
-- W08A 进行中票：`T18(25)`
+- W08A 已完成票：`T18(25)`（Provider/默认值/客户端归位）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -32,6 +31,22 @@
   - Feishu 改造必须复用 `internal/services/channel/feishu/*`（`T04` 禁止维护第二套实现）。
   - gateway/ws 改造必须复用 `internal/services/channel/ws/*` 与 `internal/gateway/client/*`。
   - 跨层枚举/状态类型统一引用 `internal/contracts/*`（禁止回流到 `store` 常量）。
+
+## W08A 回写（T18 Provider/默认值/客户端归位）
+
+- 状态：`T18` 已完成（2026-02-26）。
+- 关键产物：
+  - Provider 默认值与白名单统一入口落地到 `internal/agent/provider/defaults.go`，并提供 `NormalizeProvider/IsSupportedProvider/DefaultModel/DefaultReasoningEffort`。
+  - `AgentConfig` 与 provider 执行工厂职责拆分：`config.go` 仅保留结构化配置；`factory.go` 负责 `NewFromConfig` 构建。
+  - openai 兼容客户端已从 `internal/infra/openai_compat.go` 迁移到 `internal/agent/provider/openai_compat.go`，infra 层不再承载该 LLM 客户端实现。
+  - `Config -> AgentConfig` 转换入口收敛为 `repo.AgentConfigFromExecConfig`，`pm dispatch` 与 `subagent settings` 统一复用，移除重复手写映射。
+  - `eventrender.ForProvider` 与配置校验（`app/project`、`internal/config`）已改为复用 provider 白名单入口，减少 provider 枚举散布。
+- 回归验证：
+  - `go test ./internal/agent/... ./internal/services/task/...`
+  - `go test ./...`
+  - `go build ./...`
+  - `go vet ./...`
+  - 以上命令全部通过。
 
 ## 关键依赖边（DAG）
 

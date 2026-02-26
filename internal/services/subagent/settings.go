@@ -2,6 +2,7 @@ package subagent
 
 import (
 	agentprovider "dalek/internal/agent/provider"
+	"dalek/internal/repo"
 	"fmt"
 	"strings"
 )
@@ -10,37 +11,35 @@ func (s *Service) resolveAgentSettings(providerRaw, modelRaw string) (agentprovi
 	if s == nil || s.p == nil {
 		return agentprovider.AgentConfig{}, fmt.Errorf("project 为空")
 	}
-	cfg := s.p.Config.WithDefaults().WorkerAgent
-	providerName := strings.TrimSpace(strings.ToLower(providerRaw))
-	baseProvider := strings.TrimSpace(strings.ToLower(cfg.Provider))
+	baseExecCfg := s.p.Config.WithDefaults().WorkerAgent
+	providerName := agentprovider.NormalizeProvider(providerRaw)
+	baseProvider := agentprovider.NormalizeProvider(baseExecCfg.Provider)
 	if providerName == "" {
 		providerName = baseProvider
 	}
 	if providerName == "" {
-		providerName = "codex"
+		providerName = agentprovider.ProviderCodex
 	}
 	model := strings.TrimSpace(modelRaw)
 	if model == "" {
 		if strings.TrimSpace(providerRaw) == "" || providerName == baseProvider {
-			model = strings.TrimSpace(cfg.Model)
+			model = strings.TrimSpace(baseExecCfg.Model)
 		}
 	}
-	if providerName == "codex" && model == "" {
-		model = "gpt-5.3-codex"
+	if providerName == agentprovider.ProviderCodex && model == "" {
+		model = agentprovider.DefaultModel(agentprovider.ProviderCodex)
 	}
-	reasoning := strings.TrimSpace(strings.ToLower(cfg.ReasoningEffort))
-	if providerName == "claude" {
+	reasoning := strings.TrimSpace(strings.ToLower(baseExecCfg.ReasoningEffort))
+	if providerName == agentprovider.ProviderClaude {
 		reasoning = ""
 	}
-	resolved := agentprovider.AgentConfig{
-		Provider:        providerName,
-		Model:           model,
-		ReasoningEffort: reasoning,
-		ExtraFlags:      append([]string(nil), cfg.ExtraFlags...),
-		Command:         strings.TrimSpace(cfg.Command),
-	}
+	resolvedExecCfg := baseExecCfg
+	resolvedExecCfg.Provider = providerName
+	resolvedExecCfg.Model = model
+	resolvedExecCfg.ReasoningEffort = reasoning
+	resolved := repo.AgentConfigFromExecConfig(resolvedExecCfg)
 	if _, err := agentprovider.NewFromConfig(resolved); err != nil {
 		return agentprovider.AgentConfig{}, err
 	}
-	return resolved.Normalize(), nil
+	return resolved, nil
 }

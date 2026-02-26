@@ -41,3 +41,31 @@ func TestNewFromConfig_RejectsShellProvider(t *testing.T) {
 		t.Fatalf("expected shell provider rejected")
 	}
 }
+
+func TestProviderDefaults(t *testing.T) {
+	if got := DefaultModel(ProviderCodex); got != "gpt-5.3-codex" {
+		t.Fatalf("unexpected codex default model: %q", got)
+	}
+	if got := DefaultReasoningEffort(ProviderCodex); got != "xhigh" {
+		t.Fatalf("unexpected codex default reasoning_effort: %q", got)
+	}
+	if got := DefaultModel(ProviderClaude); got != "opus" {
+		t.Fatalf("unexpected claude default model: %q", got)
+	}
+	if got := DefaultReasoningEffort(ProviderClaude); got != "" {
+		t.Fatalf("unexpected claude default reasoning_effort: %q", got)
+	}
+}
+
+func TestSupportedProviders(t *testing.T) {
+	got := SupportedProviders()
+	if len(got) != 2 || got[0] != ProviderCodex || got[1] != ProviderClaude {
+		t.Fatalf("unexpected supported providers: %#v", got)
+	}
+	if !IsSupportedProvider(" codex ") || !IsSupportedProvider("CLAUDE") {
+		t.Fatalf("expected codex/claude supported")
+	}
+	if IsSupportedProvider("shell") {
+		t.Fatalf("shell should not be supported")
+	}
+}

@@ -32,13 +32,7 @@ func (s *Service) launchWorkerSDKHandle(
 		return nil, fmt.Errorf("worker/ticket 不能为空")
 	}
 	cfg := p.Config.WithDefaults()
-	agentCfg := provider.AgentConfig{
-		Provider:        strings.TrimSpace(cfg.WorkerAgent.Provider),
-		Model:           strings.TrimSpace(cfg.WorkerAgent.Model),
-		ReasoningEffort: strings.TrimSpace(cfg.WorkerAgent.ReasoningEffort),
-		ExtraFlags:      append([]string(nil), cfg.WorkerAgent.ExtraFlags...),
-		Command:         strings.TrimSpace(cfg.WorkerAgent.Command),
-	}
+	agentCfg := repo.AgentConfigFromExecConfig(cfg.WorkerAgent)
 	if _, err := provider.NewFromConfig(agentCfg); err != nil {
 		return nil, fmt.Errorf("worker_agent 配置非法: %w", err)
 	}
@@ -78,10 +72,10 @@ func (s *Service) launchWorkerSDKHandle(
 	env[dispatchDepthEnvKey] = nextDispatchDepthEnvValue()
 
 	executor := run.NewSDKExecutor(run.SDKConfig{
-		Provider:        strings.TrimSpace(agentCfg.Provider),
-		Model:           strings.TrimSpace(agentCfg.Model),
-		ReasoningEffort: strings.TrimSpace(agentCfg.ReasoningEffort),
-		Command:         strings.TrimSpace(agentCfg.Command),
+		Provider:        agentCfg.Provider,
+		Model:           agentCfg.Model,
+		ReasoningEffort: agentCfg.ReasoningEffort,
+		Command:         agentCfg.Command,
 		Runtime:         rt,
 		OwnerType:       contracts.TaskOwnerWorker,
 		TaskType:        "deliver_ticket",

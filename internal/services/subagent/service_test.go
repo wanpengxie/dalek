@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"context"
+	agentprovider "dalek/internal/agent/provider"
 	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
 	"dalek/internal/repo"
@@ -236,5 +237,39 @@ func TestService_Run_ErrorBranches(t *testing.T) {
 				t.Fatalf("unexpected error_code: got=%s want=%s", got, tc.expectErrCode)
 			}
 		})
+	}
+}
+
+func TestResolveAgentSettings_DefaultsToCodex(t *testing.T) {
+	svc, _, _ := newSubagentServiceForTest(t)
+	got, err := svc.resolveAgentSettings("", "")
+	if err != nil {
+		t.Fatalf("resolveAgentSettings failed: %v", err)
+	}
+	if got.Provider != agentprovider.ProviderCodex {
+		t.Fatalf("unexpected provider: %q", got.Provider)
+	}
+	if got.Model != agentprovider.DefaultModel(agentprovider.ProviderCodex) {
+		t.Fatalf("unexpected model: %q", got.Model)
+	}
+	if got.ReasoningEffort != agentprovider.DefaultReasoningEffort(agentprovider.ProviderCodex) {
+		t.Fatalf("unexpected reasoning_effort: %q", got.ReasoningEffort)
+	}
+}
+
+func TestResolveAgentSettings_SwitchToClaudeDoesNotInheritModel(t *testing.T) {
+	svc, _, _ := newSubagentServiceForTest(t)
+	got, err := svc.resolveAgentSettings("claude", "")
+	if err != nil {
+		t.Fatalf("resolveAgentSettings failed: %v", err)
+	}
+	if got.Provider != agentprovider.ProviderClaude {
+		t.Fatalf("unexpected provider: %q", got.Provider)
+	}
+	if got.Model != "" {
+		t.Fatalf("claude model should remain empty when only provider overrides, got=%q", got.Model)
+	}
+	if got.ReasoningEffort != "" {
+		t.Fatalf("claude reasoning_effort should be empty, got=%q", got.ReasoningEffort)
 	}
 }
