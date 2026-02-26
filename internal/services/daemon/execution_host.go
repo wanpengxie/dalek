@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -230,7 +230,7 @@ type CancelResult struct {
 }
 
 type ExecutionHostOptions struct {
-	Logger        *log.Logger
+	Logger        *slog.Logger
 	MaxConcurrent int
 	OnRunSettled  func(project string)
 	OnNoteAdded   func(project string)
@@ -271,7 +271,7 @@ type executionRunHandle struct {
 
 type ExecutionHost struct {
 	resolver     ExecutionHostResolver
-	logger       *log.Logger
+	logger       *slog.Logger
 	sem          chan struct{}
 	onRunSettled func(project string)
 	onNoteAdded  func(project string)
@@ -295,7 +295,7 @@ func NewExecutionHost(resolver ExecutionHostResolver, opt ExecutionHostOptions) 
 	}
 	logger := opt.Logger
 	if logger == nil {
-		logger = log.New(io.Discard, "", 0)
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return &ExecutionHost{
 		resolver:        resolver,
@@ -364,7 +364,11 @@ func (h *ExecutionHost) Stop(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		pendingCount, pendingSummary := h.summarizePendingHandles(handles)
-		h.logger.Printf("execution host stop timeout: pending_count=%d pending_summary=%s err=%v", pendingCount, strings.Join(pendingSummary, ", "), ctx.Err())
+		h.logger.Warn("execution host stop timeout",
+			"pending_count", pendingCount,
+			"pending_summary", strings.Join(pendingSummary, ", "),
+			"error", ctx.Err(),
+		)
 		return &StopTimeoutError{
 			Cause:          ctx.Err(),
 			PendingCount:   pendingCount,
@@ -713,7 +717,9 @@ func (h *ExecutionHost) executeDispatch(handle *executionRunHandle) {
 
 	if !h.acquireSlot(handle.ctx) {
 		if handle.ctx.Err() != nil {
-			h.logger.Printf("execution host dispatch canceled before start: request=%s", strings.TrimSpace(handle.requestID))
+			h.logger.Info("execution host dispatch canceled before start",
+				"request_id", strings.TrimSpace(handle.requestID),
+			)
 		}
 		return
 	}
@@ -721,7 +727,11 @@ func (h *ExecutionHost) executeDispatch(handle *executionRunHandle) {
 
 	project, err := h.resolver.OpenProject(handle.project)
 	if err != nil {
-		h.logger.Printf("execution host open project failed: project=%s run=%d err=%v", handle.project, handle.runID, err)
+		h.logger.Warn("execution host open project failed",
+			"project", handle.project,
+			"run_id", handle.runID,
+			"error", err,
+		)
 		return
 	}
 	err = project.RunDispatchJob(handle.ctx, handle.jobID, DispatchRunOptions{
@@ -730,13 +740,23 @@ func (h *ExecutionHost) executeDispatch(handle *executionRunHandle) {
 	})
 	if err != nil {
 		if handle.ctx.Err() != nil {
-			h.logger.Printf("execution host dispatch canceled: run=%d project=%s", handle.runID, handle.project)
+			h.logger.Info("execution host dispatch canceled",
+				"run_id", handle.runID,
+				"project", handle.project,
+			)
 		} else {
-			h.logger.Printf("execution host dispatch failed: run=%d project=%s err=%v", handle.runID, handle.project, err)
+			h.logger.Warn("execution host dispatch failed",
+				"run_id", handle.runID,
+				"project", handle.project,
+				"error", err,
+			)
 		}
 		return
 	}
-	h.logger.Printf("execution host dispatch completed: run=%d project=%s", handle.runID, handle.project)
+	h.logger.Info("execution host dispatch completed",
+		"run_id", handle.runID,
+		"project", handle.project,
+	)
 }
 
 func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
@@ -749,7 +769,9 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 
 	if !h.acquireSlot(handle.ctx) {
 		if handle.ctx.Err() != nil {
-			h.logger.Printf("execution host worker-run canceled before start: request=%s", strings.TrimSpace(handle.requestID))
+			h.logger.Info("execution host worker run canceled before start",
+				"request_id", strings.TrimSpace(handle.requestID),
+			)
 		}
 		return
 	}
@@ -757,7 +779,11 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 
 	project, err := h.resolver.OpenProject(handle.project)
 	if err != nil {
-		h.logger.Printf("execution host worker-run open project failed: project=%s request=%s err=%v", handle.project, handle.requestID, err)
+		h.logger.Warn("execution host worker run open project failed",
+			"project", handle.project,
+			"request_id", handle.requestID,
+			"error", err,
+		)
 		return
 	}
 
@@ -795,7 +821,11 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 				h.attachHandleRun(handle, status.RunID, status.WorkerID)
 			}
 		}
-		h.logger.Printf("execution host worker-run completed: run=%d project=%s request=%s", handle.runID, handle.project, handle.requestID)
+		h.logger.Info("execution host worker run completed",
+			"run_id", handle.runID,
+			"project", handle.project,
+			"request_id", handle.requestID,
+		)
 	case runErr := <-errCh:
 		if !foundRun {
 			if status, serr := project.FindLatestWorkerRun(context.Background(), handle.ticketID, baselineRunID); serr == nil && status != nil {
@@ -803,10 +833,17 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 			}
 		}
 		if handle.ctx.Err() != nil {
-			h.logger.Printf("execution host worker-run canceled: request=%s project=%s", handle.requestID, handle.project)
+			h.logger.Info("execution host worker run canceled",
+				"request_id", handle.requestID,
+				"project", handle.project,
+			)
 			return
 		}
-		h.logger.Printf("execution host worker-run failed: request=%s project=%s err=%v", handle.requestID, handle.project, runErr)
+		h.logger.Warn("execution host worker run failed",
+			"request_id", handle.requestID,
+			"project", handle.project,
+			"error", runErr,
+		)
 	}
 }
 
@@ -820,7 +857,9 @@ func (h *ExecutionHost) executeSubagentRun(handle *executionRunHandle) {
 
 	if !h.acquireSlot(handle.ctx) {
 		if handle.ctx.Err() != nil {
-			h.logger.Printf("execution host subagent canceled before start: request=%s", strings.TrimSpace(handle.requestID))
+			h.logger.Info("execution host subagent canceled before start",
+				"request_id", strings.TrimSpace(handle.requestID),
+			)
 		}
 		return
 	}
@@ -828,7 +867,11 @@ func (h *ExecutionHost) executeSubagentRun(handle *executionRunHandle) {
 
 	project, err := h.resolver.OpenProject(handle.project)
 	if err != nil {
-		h.logger.Printf("execution host subagent open project failed: project=%s run=%d err=%v", handle.project, handle.runID, err)
+		h.logger.Warn("execution host subagent open project failed",
+			"project", handle.project,
+			"run_id", handle.runID,
+			"error", err,
+		)
 		return
 	}
 	err = project.RunSubagentJob(handle.ctx, handle.runID, SubagentRunOptions{
@@ -836,13 +879,25 @@ func (h *ExecutionHost) executeSubagentRun(handle *executionRunHandle) {
 	})
 	if err != nil {
 		if handle.ctx.Err() != nil {
-			h.logger.Printf("execution host subagent canceled: run=%d project=%s", handle.runID, handle.project)
+			h.logger.Info("execution host subagent canceled",
+				"run_id", handle.runID,
+				"project", handle.project,
+			)
 		} else {
-			h.logger.Printf("execution host subagent failed: run=%d project=%s request=%s err=%v", handle.runID, handle.project, handle.requestID, err)
+			h.logger.Warn("execution host subagent failed",
+				"run_id", handle.runID,
+				"project", handle.project,
+				"request_id", handle.requestID,
+				"error", err,
+			)
 		}
 		return
 	}
-	h.logger.Printf("execution host subagent completed: run=%d project=%s request=%s", handle.runID, handle.project, handle.requestID)
+	h.logger.Info("execution host subagent completed",
+		"run_id", handle.runID,
+		"project", handle.project,
+		"request_id", handle.requestID,
+	)
 }
 
 func (h *ExecutionHost) probeWorkerRunID(handle *executionRunHandle, project ExecutionHostProject, baselineRunID uint) (*RunStatus, error) {
@@ -1006,7 +1061,10 @@ func (h *ExecutionHost) WarmupRunProjectIndex(project string, runIDs []uint) int
 		}
 	}
 	if indexed > 0 {
-		h.logger.Printf("execution host run index warmup: project=%s indexed_runs=%d", project, indexed)
+		h.logger.Info("execution host run index warmup",
+			"project", project,
+			"indexed_runs", indexed,
+		)
 	}
 	return indexed
 }
@@ -1290,7 +1348,7 @@ func (h *ExecutionHost) findRunStatusByScan(ctx context.Context, runID uint) (*R
 		ctx = context.Background()
 	}
 	count := h.scanFallbackCount.Add(1)
-	h.logger.Printf("execution host run status fallback scan: run=%d count=%d", runID, count)
+	h.logger.Info("execution host run status fallback scan", "run_id", runID, "count", count)
 	projects, err := h.resolver.ListProjects()
 	if err != nil {
 		return nil, "", err
@@ -1316,12 +1374,22 @@ func (h *ExecutionHost) findRunStatusInProjects(ctx context.Context, runID uint,
 		}
 		project, err := h.resolver.OpenProject(projectName)
 		if err != nil {
-			h.logger.Printf("execution host open project for %s lookup failed: project=%s run=%d err=%v", source, projectName, runID, err)
+			h.logger.Warn("execution host open project for lookup failed",
+				"source", source,
+				"project", projectName,
+				"run_id", runID,
+				"error", err,
+			)
 			continue
 		}
 		status, err := project.GetTaskStatus(ctx, runID)
 		if err != nil {
-			h.logger.Printf("execution host %s status lookup failed: project=%s run=%d err=%v", source, projectName, runID, err)
+			h.logger.Warn("execution host status lookup failed",
+				"source", source,
+				"project", projectName,
+				"run_id", runID,
+				"error", err,
+			)
 			continue
 		}
 		if status == nil {

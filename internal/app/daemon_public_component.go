@@ -4,13 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	channelsvc "dalek/internal/services/channel"
+	"dalek/internal/services/core"
+	daemonsvc "dalek/internal/services/daemon"
 	"dalek/internal/store"
 
 	"gorm.io/gorm"
@@ -20,7 +22,7 @@ type daemonPublicGatewayComponent struct {
 	home     *Home
 	resolver channelsvc.ProjectResolver
 	listen   string
-	logger   *log.Logger
+	logger   *slog.Logger
 
 	queueDepth     int
 	webhookPath    string
@@ -45,7 +47,8 @@ type daemonPublicGatewayComponent struct {
 	tunnelDone       chan struct{}
 }
 
-func newDaemonPublicGatewayComponent(home *Home, logger *log.Logger, resolvers ...channelsvc.ProjectResolver) *daemonPublicGatewayComponent {
+func newDaemonPublicGatewayComponent(home *Home, logger *slog.Logger, resolvers ...channelsvc.ProjectResolver) *daemonPublicGatewayComponent {
+	logger = core.EnsureLogger(logger).With("component", "public_gateway")
 	var resolver channelsvc.ProjectResolver
 	if len(resolvers) > 0 {
 		resolver = resolvers[0]
@@ -112,6 +115,7 @@ func (c *daemonPublicGatewayComponent) Start(ctx context.Context) error {
 	}
 	gateway, err := channelsvc.NewGateway(gatewayDB, c.resolver, channelsvc.GatewayOptions{
 		QueueDepth: c.queueDepth,
+		Logger:     c.logger,
 	})
 	if err != nil {
 		_ = closeDaemonGatewayDB(gatewayDB)
@@ -162,7 +166,7 @@ func (c *daemonPublicGatewayComponent) Start(ctx context.Context) error {
 		return err
 	}
 	server := &http.Server{
-		Handler:           mux,
+		Handler:           daemonsvc.RecoverMiddleware(c.logger.With("component", "public_gateway"))(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	c.gatewayDB = gatewayDB
@@ -291,7 +295,7 @@ func (c *daemonPublicGatewayComponent) logf(format string, args ...any) {
 	if c == nil || c.logger == nil {
 		return
 	}
-	c.logger.Printf(format, args...)
+	c.logger.Info(fmt.Sprintf(format, args...))
 }
 
 func closeDaemonGatewayDB(db *gorm.DB) error {

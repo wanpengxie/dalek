@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -741,7 +741,7 @@ func TestExecutionHost_Stop_TimeoutReportsPendingWorkerRun(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{
-		Logger: log.New(&buf, "", 0),
+		Logger: slog.New(slog.NewTextHandler(&buf, nil)),
 	})
 	if err != nil {
 		t.Fatalf("NewExecutionHost failed: %v", err)

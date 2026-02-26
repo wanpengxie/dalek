@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -103,7 +103,7 @@ func TestDaemonPublicTunnelSupervisor_CircuitBreakerOnStartFailures(t *testing.T
 			Enabled:  true,
 			Hostname: "gw.example.com",
 		},
-		logger:                 log.New(&logs, "", 0),
+		logger:                 slog.New(slog.NewTextHandler(&logs, nil)),
 		maxConsecutiveFailures: 3,
 		startFn: func(daemonPublicTunnelRuntimeConfig) (*daemonPublicTunnelProcess, error) {
 			startCalls++
@@ -145,7 +145,7 @@ func TestDaemonPublicTunnelSupervisor_ResetFailuresAfterStableRun(t *testing.T) 
 			Enabled:  true,
 			Hostname: "gw.example.com",
 		},
-		logger:                 log.New(&logs, "", 0),
+		logger:                 slog.New(slog.NewTextHandler(&logs, nil)),
 		maxConsecutiveFailures: 2,
 		startFn: func(daemonPublicTunnelRuntimeConfig) (*daemonPublicTunnelProcess, error) {
 			attempt++

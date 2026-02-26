@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -27,7 +27,7 @@ type InternalAPIConfig struct {
 }
 
 type InternalAPIOptions struct {
-	Logger              *log.Logger
+	Logger              *slog.Logger
 	GatewaySendDB       *gorm.DB
 	GatewayResolver     channelsvc.ProjectResolver
 	GatewaySendResolver contracts.ProjectMetaResolver
@@ -40,7 +40,7 @@ type InternalAPI struct {
 	cfg InternalAPIConfig
 
 	host   *ExecutionHost
-	logger *log.Logger
+	logger *slog.Logger
 
 	listener    net.Listener
 	server      *http.Server
@@ -64,10 +64,11 @@ func NewInternalAPI(host *ExecutionHost, cfg InternalAPIConfig, opt InternalAPIO
 	}
 	logger := opt.Logger
 	if logger == nil {
-		logger = log.New(io.Discard, "", 0)
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	gateway, gatewayErr := channelsvc.NewGateway(opt.GatewaySendDB, opt.GatewayResolver, channelsvc.GatewayOptions{
 		QueueDepth: opt.GatewayQueueDepth,
+		Logger:     logger,
 	})
 	if gatewayErr != nil {
 		gateway = nil
@@ -85,6 +86,7 @@ func NewInternalAPI(host *ExecutionHost, cfg InternalAPIConfig, opt InternalAPIO
 			DB:       opt.GatewaySendDB,
 			Resolver: opt.GatewaySendResolver,
 			Sender:   opt.GatewaySendSender,
+			Logger:   logger,
 		}),
 		gateway:     gateway,
 		wsPath:      "/ws",
@@ -120,7 +122,7 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	mux.HandleFunc(wsPath, s.withInternalAccess(wsHandler))
 
 	server := &http.Server{
-		Handler:           mux,
+		Handler:           RecoverMiddleware(s.logger.With("component", "internal_api"))(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	s.listener = ln
@@ -128,10 +130,13 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 
 	go func() {
 		if serveErr := server.Serve(ln); serveErr != nil && serveErr != http.ErrServerClosed {
-			s.logger.Printf("internal api serve failed: %v", serveErr)
+			s.logger.Error("internal api serve failed", "error", serveErr)
 		}
 	}()
-	s.logger.Printf("internal api listening on %s ws=%s", strings.TrimSpace(s.cfg.ListenAddr), wsPath)
+	s.logger.Info("internal api listening",
+		"listen_addr", strings.TrimSpace(s.cfg.ListenAddr),
+		"ws_path", wsPath,
+	)
 	return nil
 }
 

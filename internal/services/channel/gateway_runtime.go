@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"dalek/internal/contracts"
+	"dalek/internal/services/core"
 	"dalek/internal/store"
 
 	"gorm.io/gorm"
@@ -54,6 +55,7 @@ type ProjectResolver interface {
 type GatewayOptions struct {
 	QueueDepth         int
 	DefaultTurnTimeout time.Duration
+	Logger             *slog.Logger
 }
 
 type GatewayInboundRequest struct {
@@ -73,6 +75,7 @@ type InboundItem struct {
 type Gateway struct {
 	db       *gorm.DB
 	resolver ProjectResolver
+	logger   *slog.Logger
 
 	queue *InboundQueue
 	bus   *EventBus
@@ -133,15 +136,33 @@ func NewGateway(db *gorm.DB, resolver ProjectResolver, opt GatewayOptions) (*Gat
 	if turnTimeout < 0 {
 		turnTimeout = 0
 	}
+	logger := core.EnsureLogger(opt.Logger).With("service", "channel_gateway")
 	return &Gateway{
 		db:                 db,
 		resolver:           resolver,
+		logger:             logger,
 		queue:              NewInboundQueue(queueDepth),
 		bus:                NewEventBusWithAudit(db),
 		defaultTurnTimeout: turnTimeout,
 		workers:            map[string]chan InboundItem{},
 		stoppedCh:          make(chan struct{}),
 	}, nil
+}
+
+func (g *Gateway) slog() *slog.Logger {
+	if g == nil || g.logger == nil {
+		return core.DiscardLogger()
+	}
+	return g.logger
+}
+
+func (g *Gateway) logInterrupt(phase string, attrs ...any) {
+	all := []any{
+		"cmd", "stop",
+		"phase", strings.TrimSpace(phase),
+	}
+	all = append(all, attrs...)
+	g.slog().Info("channel interrupt", all...)
 }
 
 func (g *Gateway) EventBus() *EventBus {
@@ -395,13 +416,13 @@ func (g *Gateway) processInboundItem(item InboundItem) {
 		if isTurnTerminal(cached.JobStatus) {
 			g.publishFromResult(item.ProjectName, item.Envelope.PeerConversationID, item.Envelope.PeerMessageID, *cached)
 		} else {
-			log.Printf(
-				"gateway dedup skip runtime: project=%s conversation=%s peer_msg=%s dedup_type=peer_message_id job_id=%d status=%s",
-				strings.TrimSpace(item.ProjectName),
-				strings.TrimSpace(item.Envelope.PeerConversationID),
-				strings.TrimSpace(item.Envelope.PeerMessageID),
-				cached.JobID,
-				strings.TrimSpace(string(cached.JobStatus)),
+			g.slog().Info("gateway dedup skip runtime",
+				"project", strings.TrimSpace(item.ProjectName),
+				"conversation", strings.TrimSpace(item.Envelope.PeerConversationID),
+				"peer_msg", strings.TrimSpace(item.Envelope.PeerMessageID),
+				"dedup_type", "peer_message_id",
+				"job_id", cached.JobID,
+				"status", strings.TrimSpace(string(cached.JobStatus)),
 			)
 		}
 		return
@@ -522,12 +543,13 @@ func (g *Gateway) persistInboundAccepted(ctx context.Context, item InboundItem) 
 				res.ConversationID = conv.ID
 				res.InboundMessageID = inbound.ID
 				cached = &res
-				log.Printf(
-					"gateway dedup hit: dedup_type=peer_message_id dedup_key=%s inbound_id=%d job_id=%d status=%s action=skip",
-					strings.TrimSpace(item.Envelope.PeerMessageID),
-					inbound.ID,
-					existingJob.ID,
-					strings.TrimSpace(string(existingJob.Status)),
+				g.slog().Info("gateway dedup hit",
+					"dedup_type", "peer_message_id",
+					"dedup_key", strings.TrimSpace(item.Envelope.PeerMessageID),
+					"inbound_id", inbound.ID,
+					"job_id", existingJob.ID,
+					"status", strings.TrimSpace(string(existingJob.Status)),
+					"action", "skip",
 				)
 				if isTurnTerminal(existingJob.Status) {
 					return nil
@@ -1147,9 +1169,11 @@ func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType, a
 	if peerConversationID == "" {
 		peerConversationID = peerProjectKey
 	}
-	log.Printf(
-		"channel_interrupt cmd=stop phase=cmd_received channel_type=%s adapter=%s peer_project_key=%s peer_conversation_id=%s",
-		channelType, adapter, peerProjectKey, peerConversationID,
+	g.logInterrupt("cmd_received",
+		"channel_type", channelType,
+		"adapter", adapter,
+		"peer_project_key", peerProjectKey,
+		"peer_conversation_id", peerConversationID,
 	)
 	if peerProjectKey == "" || peerConversationID == "" {
 		return "", InterruptResult{}, fmt.Errorf("peer project key / conversation id 不能为空")
@@ -1157,23 +1181,30 @@ func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType, a
 
 	projectName, err := g.LookupBoundProject(ctx, channelType, adapter, peerProjectKey)
 	if err != nil {
-		log.Printf(
-			"channel_interrupt cmd=stop phase=locator_error channel_type=%s adapter=%s peer_project_key=%s err=%v",
-			channelType, adapter, peerProjectKey, err,
+		g.logInterrupt("locator_error",
+			"channel_type", channelType,
+			"adapter", adapter,
+			"peer_project_key", peerProjectKey,
+			"error", err,
 		)
 		return "", InterruptResult{}, err
 	}
 	projectName = strings.TrimSpace(projectName)
 	if projectName == "" {
-		log.Printf(
-			"channel_interrupt cmd=stop phase=locator_result channel_type=%s adapter=%s peer_project_key=%s locator=miss",
-			channelType, adapter, peerProjectKey,
+		g.logInterrupt("locator_result",
+			"channel_type", channelType,
+			"adapter", adapter,
+			"peer_project_key", peerProjectKey,
+			"locator", "miss",
 		)
 		return "", InterruptResult{}, nil
 	}
-	log.Printf(
-		"channel_interrupt cmd=stop phase=locator_result channel_type=%s adapter=%s peer_project_key=%s locator=hit project=%s",
-		channelType, adapter, peerProjectKey, projectName,
+	g.logInterrupt("locator_result",
+		"channel_type", channelType,
+		"adapter", adapter,
+		"peer_project_key", peerProjectKey,
+		"locator", "hit",
+		"project", projectName,
 	)
 	projectCtx, err := g.resolver.Resolve(projectName)
 	if err != nil {
@@ -1185,31 +1216,29 @@ func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType, a
 	interrupter, ok := projectCtx.Runtime.(ProjectRuntimeInterrupter)
 	if !ok || interrupter == nil {
 		result := InterruptResult{Status: InterruptStatusMiss}
-		log.Printf(
-			"channel_interrupt cmd=stop phase=runner_result project=%s status=%s runner_hit=%t ctx_canceled=%t runner_error=%q",
-			projectName,
-			result.Status,
-			result.RunnerInterrupted,
-			result.ContextCanceled,
-			result.RunnerErrorMessage(),
+		g.logInterrupt("runner_result",
+			"project", projectName,
+			"status", result.Status,
+			"runner_hit", result.RunnerInterrupted,
+			"context_canceled", result.ContextCanceled,
+			"runner_error", result.RunnerErrorMessage(),
 		)
 		return projectName, result, nil
 	}
 	result, err := interrupter.InterruptConversation(ctx, channelType, adapter, peerConversationID)
 	if err != nil {
-		log.Printf(
-			"channel_interrupt cmd=stop phase=runner_error project=%s err=%v",
-			projectName, err,
+		g.logInterrupt("runner_error",
+			"project", projectName,
+			"error", err,
 		)
 		return projectName, result, err
 	}
-	log.Printf(
-		"channel_interrupt cmd=stop phase=runner_result project=%s status=%s runner_hit=%t ctx_canceled=%t runner_error=%q",
-		projectName,
-		result.Status,
-		result.RunnerInterrupted,
-		result.ContextCanceled,
-		result.RunnerErrorMessage(),
+	g.logInterrupt("runner_result",
+		"project", projectName,
+		"status", result.Status,
+		"runner_hit", result.RunnerInterrupted,
+		"context_canceled", result.ContextCanceled,
+		"runner_error", result.RunnerErrorMessage(),
 	)
 	return projectName, result, nil
 }

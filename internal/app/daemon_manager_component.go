@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -30,7 +30,7 @@ type managerRunProjectIndexWarmer interface {
 type daemonManagerComponent struct {
 	home     *Home
 	registry *ProjectRegistry
-	logger   *log.Logger
+	logger   *slog.Logger
 	interval time.Duration
 	host     managerDispatchHost
 
@@ -53,7 +53,7 @@ type recoveryProjectSummary struct {
 	TicketsBlocked int
 }
 
-func newDaemonManagerComponent(home *Home, logger *log.Logger, registries ...*ProjectRegistry) *daemonManagerComponent {
+func newDaemonManagerComponent(home *Home, logger *slog.Logger, registries ...*ProjectRegistry) *daemonManagerComponent {
 	var registry *ProjectRegistry
 	if len(registries) > 0 {
 		registry = registries[0]
@@ -853,7 +853,7 @@ func (m *daemonManagerComponent) logf(format string, args ...any) {
 	if m == nil || m.logger == nil {
 		return
 	}
-	m.logger.Printf(format, args...)
+	m.logger.Info(fmt.Sprintf(format, args...))
 }
 
 type daemonManagerDispatchSubmitter struct {

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
+
+	"dalek/internal/services/core"
 
 	"dalek/internal/contracts"
 )
@@ -31,13 +33,26 @@ const (
 type ToolApprovalBridge struct {
 	mu      sync.Mutex
 	waiters map[uint]chan PendingActionDecision
+	logger  *slog.Logger
 }
 
 // NewToolApprovalBridge creates a new bridge.
-func NewToolApprovalBridge() *ToolApprovalBridge {
+func NewToolApprovalBridge(loggers ...*slog.Logger) *ToolApprovalBridge {
+	logger := core.DiscardLogger()
+	if len(loggers) > 0 && loggers[0] != nil {
+		logger = loggers[0]
+	}
 	return &ToolApprovalBridge{
 		waiters: make(map[uint]chan PendingActionDecision),
+		logger:  logger,
 	}
+}
+
+func (b *ToolApprovalBridge) slog() *slog.Logger {
+	if b == nil || b.logger == nil {
+		return core.DiscardLogger()
+	}
+	return b.logger
 }
 
 // Wait blocks until a decision is received for the given action ID
@@ -61,15 +76,27 @@ func (b *ToolApprovalBridge) NotifyIfWaiting(actionID uint, decision PendingActi
 	defer b.mu.Unlock()
 	ch, ok := b.waiters[actionID]
 	if !ok || ch == nil {
-		log.Printf("tool_approval notify miss: action=%d decision=%s", actionID, decision)
+		b.slog().Info("tool approval notify",
+			"action_id", actionID,
+			"decision", decision,
+			"result", "miss",
+		)
 		return false, false
 	}
 	select {
 	case ch <- decision:
-		log.Printf("tool_approval notify ok: action=%d decision=%s", actionID, decision)
+		b.slog().Info("tool approval notify",
+			"action_id", actionID,
+			"decision", decision,
+			"result", "ok",
+		)
 		return true, true
 	default:
-		log.Printf("tool_approval notify skipped(buffer_full): action=%d decision=%s", actionID, decision)
+		b.slog().Warn("tool approval notify skipped",
+			"action_id", actionID,
+			"decision", decision,
+			"reason", "buffer_full",
+		)
 		return false, true
 	}
 }
@@ -86,7 +113,7 @@ func (b *ToolApprovalBridge) register(actionID uint) <-chan PendingActionDecisio
 	defer b.mu.Unlock()
 	ch := make(chan PendingActionDecision, 1)
 	b.waiters[actionID] = ch
-	log.Printf("tool_approval waiter registered: action=%d", actionID)
+	b.slog().Info("tool approval waiter registered", "action_id", actionID)
 	return ch
 }
 
@@ -94,7 +121,7 @@ func (b *ToolApprovalBridge) unregister(actionID uint) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	delete(b.waiters, actionID)
-	log.Printf("tool_approval waiter unregistered: action=%d", actionID)
+	b.slog().Info("tool approval waiter unregistered", "action_id", actionID)
 }
 
 func (b *ToolApprovalBridge) Close() {
@@ -114,7 +141,7 @@ func (b *ToolApprovalBridge) Close() {
 		default:
 		}
 		close(ch)
-		log.Printf("tool_approval waiter closed: action=%d", actionID)
+		b.slog().Info("tool approval waiter closed", "action_id", actionID)
 	}
 }
 

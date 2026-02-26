@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -50,7 +50,7 @@ var internalGatewayWSUpgrader = websocket.Upgrader{
 	CheckOrigin: func(_ *http.Request) bool { return true },
 }
 
-func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGatewayWSOptions, logger *log.Logger) (string, http.HandlerFunc) {
+func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGatewayWSOptions, logger *slog.Logger) (string, http.HandlerFunc) {
 	path := normalizeInternalGatewayWSPath(rawOpt.Path)
 	defaultSender := strings.TrimSpace(rawOpt.DefaultSender)
 	if defaultSender == "" {
@@ -288,9 +288,9 @@ func randomInternalGatewayHex(nbytes int) string {
 	return hex.EncodeToString(buf)
 }
 
-func logInternalGatewayWSf(logger *log.Logger, format string, args ...any) {
+func logInternalGatewayWSf(logger *slog.Logger, format string, args ...any) {
 	if logger == nil {
 		return
 	}
-	logger.Printf(format, args...)
+	logger.Info(fmt.Sprintf(format, args...))
 }

@@ -2,6 +2,7 @@ package pm
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 type Service struct {
 	p                 *core.Project
 	worker            *worker.Service
+	logger            *slog.Logger
 	mu                sync.RWMutex
 	dispatchSubmitter DispatchSubmitter
 	statusChangeHook  WorkflowStatusChangeHook
@@ -23,9 +25,14 @@ type Service struct {
 }
 
 func New(p *core.Project, workerSvc *worker.Service) *Service {
+	logger := core.DiscardLogger()
+	if p != nil {
+		logger = core.EnsureLogger(p.Logger).With("service", "pm")
+	}
 	return &Service{
 		p:                       p,
 		worker:                  workerSvc,
+		logger:                  logger,
 		workerReadyTimeout:      defaultWorkerReadyTimeout,
 		workerReadyPollInterval: defaultWorkerReadyPollInterval,
 	}
@@ -84,4 +91,11 @@ func (s *Service) require() (*core.Project, *gorm.DB, error) {
 		return nil, nil, fmt.Errorf("pm service 缺少 task runtime")
 	}
 	return s.p, s.p.DB, nil
+}
+
+func (s *Service) slog() *slog.Logger {
+	if s == nil || s.logger == nil {
+		return core.DiscardLogger()
+	}
+	return s.logger
 }

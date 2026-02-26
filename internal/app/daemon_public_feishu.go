@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -160,7 +160,7 @@ type daemonFeishuHTTPSender struct {
 	baseURL   string
 	appID     string
 	appSecret string
-	logger    *log.Logger
+	logger    *slog.Logger
 
 	mu         sync.Mutex
 	token      string
@@ -170,7 +170,7 @@ type daemonFeishuHTTPSender struct {
 	userNames   sync.Map
 }
 
-func newDaemonFeishuSender(cfg HomeDaemonPublicFeishuConfig, logger *log.Logger) daemonFeishuMessageSender {
+func newDaemonFeishuSender(cfg HomeDaemonPublicFeishuConfig, logger *slog.Logger) daemonFeishuMessageSender {
 	if !cfg.Enabled {
 		return &daemonFeishuNoopSender{}
 	}
@@ -197,7 +197,7 @@ func newDaemonFeishuSender(cfg HomeDaemonPublicFeishuConfig, logger *log.Logger)
 	}
 }
 
-func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, rawOpt daemonFeishuWebhookOptions, logger *log.Logger) http.HandlerFunc {
+func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, rawOpt daemonFeishuWebhookOptions, logger *slog.Logger) http.HandlerFunc {
 	opt := rawOpt
 	if strings.TrimSpace(opt.Adapter) == "" {
 		opt.Adapter = defaultDaemonFeishuAdapter
@@ -803,7 +803,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 	}
 }
 
-func handleDaemonFeishuCardActionTrigger(w http.ResponseWriter, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, opt daemonFeishuWebhookOptions, req daemonFeishuWebhookRequest, logger *log.Logger) {
+func handleDaemonFeishuCardActionTrigger(w http.ResponseWriter, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, opt daemonFeishuWebhookOptions, req daemonFeishuWebhookRequest, logger *slog.Logger) {
 	eventType := strings.TrimSpace(req.Header.EventType)
 	if eventType == "" {
 		eventType = strings.TrimSpace(req.Event.Type)
@@ -2076,12 +2076,12 @@ func (s *daemonFeishuHTTPSender) logf(format string, args ...any) {
 	if s == nil || s.logger == nil {
 		return
 	}
-	s.logger.Printf(format, args...)
+	s.logger.Info(fmt.Sprintf(format, args...))
 }
 
-func logDaemonFeishuf(logger *log.Logger, format string, args ...any) {
+func logDaemonFeishuf(logger *slog.Logger, format string, args ...any) {
 	if logger == nil {
 		return
 	}
-	logger.Printf(format, args...)
+	logger.Info(fmt.Sprintf(format, args...))
 }

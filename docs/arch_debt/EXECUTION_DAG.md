@@ -75,6 +75,14 @@
 - 依赖确认：
   - `T25 -> T24` 的前置已稳定，可基于同一 migration 入口继续追加类型化迁移版本。
 
+## W01 产出回写（T38）
+
+- 统一日志入口：落地 `log/slog` + 依赖注入，`internal/services/core/project.go` 新增 `Logger *slog.Logger`，并新增 `internal/services/core/logger.go`（默认/静默/兜底 logger）。
+- services 层日志迁移：`internal/services/channel`、`internal/services/pm`、`internal/services/gatewaysend` 已移除 `log.Printf`，改为注入 logger 输出结构化字段。
+- daemon 安全屏障：新增 `internal/services/daemon/middleware.go::RecoverMiddleware`，并接入 Internal API 与 Public Gateway，handler panic 不再击穿进程。
+- 测试补齐：新增 logger 与 recover 行为测试（`core/logger_test.go`、`daemon/middleware_test.go`、`channel/tool_approval_test.go`），支持可控日志输出断言。
+- 下游约束更新：后续票（含 `T32`）必须复用 `*slog.Logger` 注入链路，且 daemon HTTP handler 必须经过 recover middleware。
+
 ## 每轮启动 Dispatch 必带指令（强制）
 
 每次启动 `Wxx` 前，dispatch prompt 必须包含以下 7 项，缺一不可：

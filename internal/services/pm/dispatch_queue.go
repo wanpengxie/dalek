@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"time"
@@ -316,9 +315,19 @@ func (s *Service) renewPMDispatchJobLease(ctx context.Context, jobID uint, runne
 	if err := db.WithContext(ctx).Select("task_run_id").First(&job, jobID).Error; err == nil && job.TaskRunID != 0 {
 		taskRuntime, terr := s.taskRuntimeForDB(db)
 		if terr != nil {
-			log.Printf("pm dispatch renew lease 同步 task_run 失败: job=%d run=%d runner=%s err=%v", jobID, job.TaskRunID, runnerID, terr)
+			s.slog().Warn("pm dispatch renew lease sync task run failed",
+				"job_id", jobID,
+				"task_run_id", job.TaskRunID,
+				"runner_id", runnerID,
+				"error", terr,
+			)
 		} else if err := taskRuntime.RenewLease(ctx, job.TaskRunID, runnerID, &lease); err != nil {
-			log.Printf("pm dispatch renew lease 同步 task_run 失败: job=%d run=%d runner=%s err=%v", jobID, job.TaskRunID, runnerID, err)
+			s.slog().Warn("pm dispatch renew lease sync task run failed",
+				"job_id", jobID,
+				"task_run_id", job.TaskRunID,
+				"runner_id", runnerID,
+				"error", err,
+			)
 		}
 	}
 	return nil
