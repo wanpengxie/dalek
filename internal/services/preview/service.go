@@ -1,4 +1,4 @@
-package logs
+package preview
 
 import (
 	"context"
@@ -9,32 +9,36 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/infra"
 	"dalek/internal/services/core"
-	"dalek/internal/services/worker"
 )
 
-// Service 提供“实时日志/尾部预览”能力。
+// WorkerLookup 收口 preview 仅需的 worker 查询能力。
+type WorkerLookup interface {
+	LatestWorker(ctx context.Context, ticketID uint) (*contracts.Worker, error)
+}
+
+// Service 提供 tmux pane 输出尾部预览能力。
 //
 // 说明：
 // - 当前实现仍以 tmux capture-pane 作为最小可用的 tail 预览来源（用于 TUI 快速查看输出）。
 // - 后续将替换为 SDK executor 的结构化日志流（见 docs/STATUS_MODEL_V2.md、docs/WATCHER_REMOVAL_AND_SDK_EXECUTOR.md）。
 type Service struct {
 	p      *core.Project
-	worker *worker.Service
+	worker WorkerLookup
 }
 
-func New(p *core.Project, workerSvc *worker.Service) *Service {
+func New(p *core.Project, workerSvc WorkerLookup) *Service {
 	return &Service{p: p, worker: workerSvc}
 }
 
 func (s *Service) require() (*core.Project, error) {
 	if s == nil || s.p == nil {
-		return nil, fmt.Errorf("logs service 缺少 project 上下文")
+		return nil, fmt.Errorf("preview service 缺少 project 上下文")
 	}
 	if s.p.Tmux == nil {
-		return nil, fmt.Errorf("logs service 缺少 tmux client")
+		return nil, fmt.Errorf("preview service 缺少 tmux client")
 	}
 	if s.worker == nil {
-		return nil, fmt.Errorf("logs service 缺少 worker service")
+		return nil, fmt.Errorf("preview service 缺少 worker lookup")
 	}
 	return s.p, nil
 }
