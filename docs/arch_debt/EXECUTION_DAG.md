@@ -12,8 +12,8 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-27`
-- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W09A` `W10A` `W10B` `W10C` `W11A`
-- 当前批次：`W11A`（`done`）
+- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W09A` `W10A` `W10B` `W10C` `W11A` `W12A`
+- 当前批次：`W12A`（`done`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
@@ -31,6 +31,7 @@
 - W10B 已完成票：`T17(24)` `T36(43)`（Channel 边界清洗 + PM 可靠性补齐）
 - W10C 已完成票：`T08(15)`（Channel CLI/SDK 执行入口统一到 services/agentexec）
 - W11A 已完成票：`T09(16)`（生命周期去重 + config 拆分 + Wait 可取消）
+- W12A 已完成票：`T51`（PM DispatchQueue 分层拆解：queue/completion/workflow）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -99,6 +100,24 @@
   - 在复验环境覆写 `DALEK_DISPATCH_DEPTH=0` 后执行 `go test ./...`，全量通过。
 - 依赖推进：
   - `T07 -> T08 -> T09` 已闭环，AgentExec 三票收口完成。
+
+## W12A 回写（T51 PM DispatchQueue 分层拆解与职责收敛）
+
+- 状态：`T51` 已完成（2026-02-27）。
+- 关键产物：
+  - `internal/services/pm/dispatch_queue.go` 已瘦身为队列调度核心（enqueue/claim/renew），行数降至 `298`。
+  - 新增 `internal/services/pm/dispatch_queue_helpers.go`（`100` 行）：收敛 request/runner 生成、唯一约束冲突判断、job 查询/轮询与 JSON helper。
+  - 新增 `internal/services/pm/dispatch_queue_complete.go`（`289` 行）：收敛完成与状态推进路径（success/failed/force-fail/task_run stop 同步）。
+  - 新增 `internal/services/pm/dispatch_queue_workflow.go`（`80` 行）：集中 dispatch 驱动的 workflow promote/demote 逻辑，明确与 `fsm.ShouldPromoteOnDispatchClaim` / `fsm.ShouldDemoteOnDispatchFailed` 的边界。
+  - 测试按职责拆分：
+    - `dispatch_queue_test.go`：保留队列调度测试（enqueue 路径）
+    - `dispatch_queue_complete_test.go`：完成/force-fail 关键路径
+    - `dispatch_queue_workflow_test.go`：promote/demote workflow 推进
+- 回归验证：
+  - `go test ./internal/services/pm/...` 通过（`ok dalek/internal/services/pm 65.820s`）。
+- 依赖更新说明：
+  - 上游复用已对齐：继续复用 `T06` 的 PM 常量集中与 `T36` 的 lease/recovery 观测能力，未新增并行实现。
+  - 下游约束更新：后续 PM dispatch 相关改动必须沿用 `queue -> complete -> workflow` 三层边界，禁止把 workflow promote/demote 回流到队列调度文件。
 
 ## W10B 回写（T36 PM 可靠性与测试补齐）
 
