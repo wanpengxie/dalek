@@ -3,18 +3,14 @@ package app
 import (
 	"context"
 	"dalek/internal/contracts"
-	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	daemonsvc "dalek/internal/services/daemon"
 	pmsvc "dalek/internal/services/pm"
-
-	"gorm.io/gorm"
 )
 
 const defaultDaemonManagerTickInterval = 30 * time.Second
@@ -168,13 +164,12 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			continue
 		}
 		p, err := m.registry.Open(name)
-		if err != nil || p == nil || p.core == nil || p.core.DB == nil {
+		if err != nil || p == nil || p.core == nil || p.core.DB == nil || p.pm == nil || p.worker == nil {
 			if err != nil {
 				m.logf("recovery open project failed: project=%s err=%v", name, err)
 			}
 			continue
 		}
-		db := p.core.DB.WithContext(ctx)
 		pmState, pmErr := p.GetPMState(ctx)
 		autopilotEnabled := false
 		if pmErr != nil {
@@ -185,7 +180,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 		summary := recoveryProjectSummary{}
 
 		recoveredRunIDs := map[uint]struct{}{}
-		if recovered, recoveredRuns, err := m.recoverStuckDispatchJobs(ctx, db, name, now, autopilotEnabled); err != nil {
+		if recovered, recoveredRuns, err := p.pm.RecoverStuckDispatchJobs(ctx, name, now, autopilotEnabled); err != nil {
 			m.logf("recovery dispatch jobs failed: project=%s err=%v", name, err)
 		} else {
 			summary.DispatchJobs = recovered.DispatchJobs
@@ -195,46 +190,10 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			recoveredRunIDs = recoveredRuns
 		}
 
-		var active []contracts.TaskRun
-		activeQuery := db.Where("orchestration_state IN ?", []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning})
-		if excluded := sortedRunIDsFromSet(recoveredRunIDs); len(excluded) > 0 {
-			activeQuery = activeQuery.Where("id NOT IN ?", excluded)
-		}
-		if err := activeQuery.Find(&active).Error; err != nil {
-			m.logf("recovery query active runs failed: project=%s err=%v", name, err)
+		if recovered, err := p.pm.RecoverActiveTaskRuns(ctx, name, now, recoveredRunIDs); err != nil {
+			m.logf("recovery active runs failed: project=%s err=%v", name, err)
 		} else {
-			for _, run := range active {
-				errMsg := "daemon restart recovery: previous run marked failed"
-				if err := db.Model(&contracts.TaskRun{}).Where("id = ?", run.ID).Updates(map[string]any{
-					"orchestration_state": contracts.TaskFailed,
-					"error_code":          "daemon_recovered",
-					"error_message":       errMsg,
-					"finished_at":         now,
-					"updated_at":          now,
-				}).Error; err != nil {
-					m.logf("recovery mark failed error: project=%s run=%d err=%v", name, run.ID, err)
-					continue
-				}
-				summary.TaskRuns++
-				_ = db.Create(&contracts.TaskEvent{
-					TaskRunID:   run.ID,
-					EventType:   "daemon_recovery_failed",
-					ToStateJSON: `{"orchestration_state":"failed"}`,
-					Note:        errMsg,
-					PayloadJSON: `{"source":"daemon_recovery"}`,
-					CreatedAt:   now,
-				}).Error
-				_ = db.Create(&contracts.InboxItem{
-					Key:      fmt.Sprintf("daemon_recovery_run_%d", run.ID),
-					Status:   contracts.InboxOpen,
-					Severity: contracts.InboxWarn,
-					Reason:   contracts.InboxIncident,
-					Title:    fmt.Sprintf("daemon recovery: run %d 已标记失败", run.ID),
-					Body:     fmt.Sprintf("project=%s owner=%s task=%s ticket=%d worker=%d", name, string(run.OwnerType), strings.TrimSpace(run.TaskType), run.TicketID, run.WorkerID),
-					TicketID: run.TicketID,
-					WorkerID: run.WorkerID,
-				}).Error
-			}
+			summary.TaskRuns += recovered
 		}
 		if rolled, err := p.RecoverStuckShapingNotes(ctx, 5*time.Minute); err != nil {
 			m.logf("recovery note shaping failed: project=%s err=%v", name, err)
@@ -250,14 +209,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			summary.Workers = fixed
 		}
 		if pmErr == nil && pmState.ID != 0 {
-			if err := db.Model(&contracts.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
-				"last_recovery_at":            &now,
-				"last_recovery_dispatch_jobs": summary.DispatchJobs,
-				"last_recovery_task_runs":     summary.TaskRuns,
-				"last_recovery_notes":         summary.Notes,
-				"last_recovery_workers":       summary.Workers,
-				"updated_at":                  now,
-			}).Error; err != nil {
+			if err := p.pm.UpdateRecoverySummary(ctx, pmState.ID, now, summary.DispatchJobs, summary.TaskRuns, summary.Notes, summary.Workers); err != nil {
 				m.logf("recovery summary persist failed: project=%s err=%v", name, err)
 			}
 		}
@@ -300,17 +252,14 @@ func (m *daemonManagerComponent) warmupRunProjectIndex(ctx context.Context) {
 			continue
 		}
 		p, err := m.registry.Open(projectName)
-		if err != nil || p == nil || p.core == nil || p.core.DB == nil {
+		if err != nil || p == nil || p.pm == nil {
 			if err != nil {
 				m.logf("warmup run index open project failed: project=%s err=%v", projectName, err)
 			}
 			continue
 		}
-		var runIDs []uint
-		if err := p.core.DB.WithContext(ctx).
-			Model(&contracts.TaskRun{}).
-			Where("orchestration_state IN ?", []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
-			Pluck("id", &runIDs).Error; err != nil {
+		runIDs, err := p.pm.ListActiveTaskRunIDs(ctx)
+		if err != nil {
 			m.logf("warmup run index query active runs failed: project=%s err=%v", projectName, err)
 			continue
 		}
@@ -323,233 +272,6 @@ func (m *daemonManagerComponent) warmupRunProjectIndex(ctx context.Context) {
 	if activeProjects > 0 || totalRuns > 0 {
 		m.logf("warmup run index summary: projects=%d indexed_runs=%d", activeProjects, totalRuns)
 	}
-}
-
-func (m *daemonManagerComponent) recoverStuckDispatchJobs(ctx context.Context, db *gorm.DB, projectName string, now time.Time, autopilotEnabled bool) (recoveryProjectSummary, map[uint]struct{}, error) {
-	out := recoveryProjectSummary{}
-	recoveredRunIDs := map[uint]struct{}{}
-	if db == nil {
-		return out, recoveredRunIDs, nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	var jobs []contracts.PMDispatchJob
-	if err := db.
-		Where("status IN ?", []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
-		Order("id asc").
-		Find(&jobs).Error; err != nil {
-		return out, recoveredRunIDs, err
-	}
-	if len(jobs) == 0 {
-		return out, recoveredRunIDs, nil
-	}
-
-	targetStatus := contracts.TicketBlocked
-	retryAction := "blocked"
-	retryReason := "daemon recovery: dispatch interrupted, ticket moved to blocked"
-	if autopilotEnabled {
-		targetStatus = contracts.TicketQueued
-		retryAction = "queued"
-		retryReason = "daemon recovery: dispatch interrupted, ticket queued for redispatch"
-	}
-
-	for _, job := range jobs {
-		errMsg := "daemon restart recovery: dispatch job marked failed"
-		recovered := false
-		taskRunRecovered := false
-		queued := false
-		blocked := false
-		err := db.Transaction(func(tx *gorm.DB) error {
-			res := tx.Model(&contracts.PMDispatchJob{}).
-				Where("id = ? AND status IN ?", job.ID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
-				Updates(map[string]any{
-					"status":            contracts.PMDispatchFailed,
-					"error":             errMsg,
-					"runner_id":         "",
-					"lease_expires_at":  nil,
-					"active_ticket_key": nil,
-					"finished_at":       &now,
-					"updated_at":        now,
-				})
-			if res.Error != nil {
-				return res.Error
-			}
-			if res.RowsAffected == 0 {
-				return nil
-			}
-			recovered = true
-
-			if job.TaskRunID != 0 {
-				changed, err := markTaskRunFailedTx(tx, job.TaskRunID, "daemon_recovered", errMsg, now)
-				if err != nil {
-					return err
-				}
-				if changed {
-					taskRunRecovered = true
-					eventPayload := marshalRecoveryJSON(map[string]any{
-						"source":          "daemon_recovery",
-						"dispatch_job_id": job.ID,
-						"ticket_id":       job.TicketID,
-						"worker_id":       job.WorkerID,
-						"request_id":      strings.TrimSpace(job.RequestID),
-						"retry_action":    retryAction,
-					})
-					_ = tx.Create(&contracts.TaskEvent{
-						TaskRunID:   job.TaskRunID,
-						EventType:   "daemon_recovery_dispatch_failed",
-						ToStateJSON: `{"orchestration_state":"failed"}`,
-						Note:        errMsg,
-						PayloadJSON: eventPayload,
-						CreatedAt:   now,
-					}).Error
-				}
-			}
-
-			changed, err := m.applyTicketStatusTx(ctx, tx, job, targetStatus, retryReason, "daemon.recovery", now)
-			if err != nil {
-				return err
-			}
-			if changed {
-				if targetStatus == contracts.TicketQueued {
-					queued = true
-				} else if targetStatus == contracts.TicketBlocked {
-					blocked = true
-				}
-			}
-
-			_ = tx.Create(&contracts.InboxItem{
-				Key:      fmt.Sprintf("daemon_recovery_dispatch_%d", job.ID),
-				Status:   contracts.InboxOpen,
-				Severity: contracts.InboxWarn,
-				Reason:   contracts.InboxIncident,
-				Title:    fmt.Sprintf("daemon recovery: dispatch %d 已标记失败", job.ID),
-				Body:     fmt.Sprintf("project=%s ticket=%d worker=%d request=%s action=%s", projectName, job.TicketID, job.WorkerID, strings.TrimSpace(job.RequestID), retryAction),
-				TicketID: job.TicketID,
-				WorkerID: job.WorkerID,
-			}).Error
-			return nil
-		})
-		if err != nil {
-			m.logf("recovery dispatch job failed: project=%s job=%d err=%v", projectName, job.ID, err)
-			continue
-		}
-		if recovered {
-			out.DispatchJobs++
-		}
-		if taskRunRecovered {
-			out.TaskRuns++
-			recoveredRunIDs[job.TaskRunID] = struct{}{}
-		}
-		if queued {
-			out.TicketsQueued++
-		}
-		if blocked {
-			out.TicketsBlocked++
-		}
-	}
-	return out, recoveredRunIDs, nil
-}
-
-func markTaskRunFailedTx(tx *gorm.DB, runID uint, errorCode, errMsg string, now time.Time) (bool, error) {
-	if tx == nil || runID == 0 {
-		return false, nil
-	}
-	errorCode = strings.TrimSpace(errorCode)
-	if errorCode == "" {
-		errorCode = "daemon_recovered"
-	}
-	res := tx.Model(&contracts.TaskRun{}).
-		Where("id = ? AND orchestration_state IN ?", runID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
-		Updates(map[string]any{
-			"orchestration_state": contracts.TaskFailed,
-			"error_code":          errorCode,
-			"error_message":       errMsg,
-			"finished_at":         now,
-			"updated_at":          now,
-		})
-	if res.Error != nil {
-		return false, res.Error
-	}
-	return res.RowsAffected > 0, nil
-}
-
-func sortedRunIDsFromSet(runIDs map[uint]struct{}) []uint {
-	if len(runIDs) == 0 {
-		return nil
-	}
-	ids := make([]uint, 0, len(runIDs))
-	for id := range runIDs {
-		if id == 0 {
-			continue
-		}
-		ids = append(ids, id)
-	}
-	if len(ids) == 0 {
-		return nil
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	return ids
-}
-
-func (m *daemonManagerComponent) applyTicketStatusTx(ctx context.Context, tx *gorm.DB, job contracts.PMDispatchJob, target contracts.TicketWorkflowStatus, reason, source string, now time.Time) (bool, error) {
-	if tx == nil || job.TicketID == 0 {
-		return false, nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	source = strings.TrimSpace(source)
-	if source == "" {
-		source = "daemon.recovery"
-	}
-	var ticket contracts.Ticket
-	if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&ticket, job.TicketID).Error; err != nil {
-		return false, err
-	}
-	from := contracts.CanonicalTicketWorkflowStatus(ticket.WorkflowStatus)
-	if from == contracts.TicketDone || from == contracts.TicketArchived || from == target {
-		return false, nil
-	}
-	if err := tx.WithContext(ctx).
-		Model(&contracts.Ticket{}).
-		Where("id = ?", ticket.ID).
-		Updates(map[string]any{
-			"workflow_status": target,
-			"updated_at":      now,
-		}).Error; err != nil {
-		return false, err
-	}
-	ev := contracts.TicketWorkflowEvent{
-		CreatedAt:  now,
-		TicketID:   ticket.ID,
-		FromStatus: from,
-		ToStatus:   target,
-		Source:     source,
-		Reason:     strings.TrimSpace(reason),
-		PayloadJSON: marshalRecoveryJSON(map[string]any{
-			"ticket_id":       ticket.ID,
-			"worker_id":       job.WorkerID,
-			"dispatch_id":     job.ID,
-			"request_id":      strings.TrimSpace(job.RequestID),
-			"target_workflow": string(target),
-		}),
-	}
-	if err := tx.WithContext(ctx).Create(&ev).Error; err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func marshalRecoveryJSON(v any) string {
-	if v == nil {
-		return ""
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
 }
 
 func (m *daemonManagerComponent) reconcileWorkerSessions(ctx context.Context, p *Project) (int, error) {
@@ -626,7 +348,9 @@ func (m *daemonManagerComponent) reconcileWorkerSessions(ctx context.Context, p 
 			TicketID: w.TicketID,
 			WorkerID: w.ID,
 		}
-		_ = p.core.DB.WithContext(ctx).Create(&item).Error
+		if p.pm != nil {
+			_, _ = p.pm.UpsertOpenInbox(ctx, item)
+		}
 	}
 	for socket, serr := range probeFailedBySocket {
 		m.logf("recovery worker session probe failed: project=%s socket=%s err=%v", strings.TrimSpace(p.Name()), socket, serr)
@@ -652,7 +376,7 @@ func (m *daemonManagerComponent) runTick(parent context.Context) {
 }
 
 func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context, p *Project, projectName string) {
-	if m == nil || p == nil || p.core == nil || p.core.DB == nil {
+	if m == nil || p == nil || p.pm == nil {
 		return
 	}
 	if ctx == nil {
@@ -660,7 +384,6 @@ func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context,
 	}
 	projectName = strings.TrimSpace(projectName)
 	now := time.Now()
-	db := p.core.DB.WithContext(ctx)
 
 	pmState, pmErr := p.GetPMState(ctx)
 	autopilotEnabled := false
@@ -669,133 +392,19 @@ func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context,
 	} else {
 		autopilotEnabled = pmState.AutopilotEnabled
 	}
-
-	var jobs []contracts.PMDispatchJob
-	if err := db.
-		Where("status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at < ?", contracts.PMDispatchRunning, now).
-		Order("id asc").
-		Find(&jobs).Error; err != nil {
-		m.logf("lease check query failed: project=%s err=%v", projectName, err)
+	summary, err := p.pm.CheckExpiredDispatchLeases(ctx, projectName, now, autopilotEnabled)
+	if err != nil {
+		m.logf("lease check recover failed: project=%s err=%v", projectName, err)
 		return
 	}
-	if len(jobs) == 0 {
-		return
-	}
-
-	targetStatus := contracts.TicketBlocked
-	retryAction := "blocked"
-	retryReason := "dispatch lease expired: ticket moved to blocked"
-	if autopilotEnabled {
-		targetStatus = contracts.TicketQueued
-		retryAction = "queued"
-		retryReason = "dispatch lease expired: ticket queued for redispatch"
-	}
-
-	recoveredJobs := 0
-	recoveredRuns := 0
-	ticketsQueued := 0
-	ticketsBlocked := 0
-	for _, job := range jobs {
-		errMsg := "dispatch lease expired: dispatch job marked failed"
-		recovered := false
-		taskRunRecovered := false
-		queued := false
-		blocked := false
-		err := db.Transaction(func(tx *gorm.DB) error {
-			res := tx.Model(&contracts.PMDispatchJob{}).
-				Where("id = ? AND status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at < ?", job.ID, contracts.PMDispatchRunning, now).
-				Updates(map[string]any{
-					"status":            contracts.PMDispatchFailed,
-					"error":             errMsg,
-					"runner_id":         "",
-					"lease_expires_at":  nil,
-					"active_ticket_key": nil,
-					"finished_at":       &now,
-					"updated_at":        now,
-				})
-			if res.Error != nil {
-				return res.Error
-			}
-			if res.RowsAffected == 0 {
-				return nil
-			}
-			recovered = true
-
-			if job.TaskRunID != 0 {
-				changed, err := markTaskRunFailedTx(tx, job.TaskRunID, "lease_expired", errMsg, now)
-				if err != nil {
-					return err
-				}
-				if changed {
-					taskRunRecovered = true
-					payload := marshalRecoveryJSON(map[string]any{
-						"source":          "lease_expired",
-						"dispatch_job_id": job.ID,
-						"ticket_id":       job.TicketID,
-						"worker_id":       job.WorkerID,
-						"request_id":      strings.TrimSpace(job.RequestID),
-						"retry_action":    retryAction,
-					})
-					_ = tx.Create(&contracts.TaskEvent{
-						TaskRunID:   job.TaskRunID,
-						EventType:   "lease_expired_dispatch_failed",
-						ToStateJSON: `{"orchestration_state":"failed"}`,
-						Note:        errMsg,
-						PayloadJSON: payload,
-						CreatedAt:   now,
-					}).Error
-				}
-			}
-
-			changed, err := m.applyTicketStatusTx(ctx, tx, job, targetStatus, retryReason, "daemon.lease_expired", now)
-			if err != nil {
-				return err
-			}
-			if changed {
-				if targetStatus == contracts.TicketQueued {
-					queued = true
-				} else if targetStatus == contracts.TicketBlocked {
-					blocked = true
-				}
-			}
-
-			_ = tx.Create(&contracts.InboxItem{
-				Key:      fmt.Sprintf("lease_expired_dispatch_%d", job.ID),
-				Status:   contracts.InboxOpen,
-				Severity: contracts.InboxWarn,
-				Reason:   contracts.InboxIncident,
-				Title:    fmt.Sprintf("lease expired: dispatch %d 已标记失败", job.ID),
-				Body:     fmt.Sprintf("project=%s ticket=%d worker=%d request=%s action=%s", projectName, job.TicketID, job.WorkerID, strings.TrimSpace(job.RequestID), retryAction),
-				TicketID: job.TicketID,
-				WorkerID: job.WorkerID,
-			}).Error
-			return nil
-		})
-		if err != nil {
-			m.logf("lease check recover failed: project=%s job=%d err=%v", projectName, job.ID, err)
-			continue
-		}
-		if recovered {
-			recoveredJobs++
-		}
-		if taskRunRecovered {
-			recoveredRuns++
-		}
-		if queued {
-			ticketsQueued++
-		}
-		if blocked {
-			ticketsBlocked++
-		}
-	}
-	if recoveredJobs > 0 || recoveredRuns > 0 {
+	if summary.DispatchJobs > 0 || summary.TaskRuns > 0 {
 		m.logf(
 			"lease check summary: project=%s recovered_jobs=%d recovered_runs=%d queued=%d blocked=%d autopilot=%v",
 			projectName,
-			recoveredJobs,
-			recoveredRuns,
-			ticketsQueued,
-			ticketsBlocked,
+			summary.DispatchJobs,
+			summary.TaskRuns,
+			summary.TicketsQueued,
+			summary.TicketsBlocked,
 			autopilotEnabled,
 		)
 	}

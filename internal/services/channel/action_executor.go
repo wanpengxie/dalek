@@ -28,19 +28,27 @@ type ActionResult struct {
 }
 
 type ActionExecutor struct {
-	project *core.Project
+	project   *core.Project
+	ticketSvc *ticketsvc.Service
+	pmSvc     *pmsvc.Service
+	workerSvc *workersvc.Service
 }
 
-func newActionExecutor(project *core.Project) *ActionExecutor {
-	return &ActionExecutor{project: project}
+func newActionExecutor(project *core.Project, ticketSvc *ticketsvc.Service, pmSvc *pmsvc.Service, workerSvc *workersvc.Service) *ActionExecutor {
+	return &ActionExecutor{
+		project:   project,
+		ticketSvc: ticketSvc,
+		pmSvc:     pmSvc,
+		workerSvc: workerSvc,
+	}
 }
 
 func (e *ActionExecutor) Execute(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if e == nil || e.project == nil || e.project.DB == nil {
-		return ActionResult{}, fmt.Errorf("action executor 缺少 project/db 上下文")
+	if e == nil || e.project == nil || e.project.DB == nil || e.ticketSvc == nil || e.pmSvc == nil || e.workerSvc == nil {
+		return ActionResult{}, fmt.Errorf("action executor 依赖未完成注入")
 	}
 
 	action.Normalize()
@@ -80,7 +88,7 @@ func (e *ActionExecutor) Execute(ctx context.Context, action contracts.TurnActio
 func (e *ActionExecutor) executeListTickets(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
 	includeArchived := actionArgBool(action.Args, false, "include_archived", "includeArchived")
 	limit := actionArgInt(action.Args, 20, 1, 200, "limit")
-	tickets, err := ticketsvc.New(e.project.DB).List(ctx, includeArchived)
+	tickets, err := e.ticketSvc.List(ctx, includeArchived)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -115,7 +123,7 @@ func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contrac
 	if err != nil {
 		return ActionResult{}, err
 	}
-	tk, err := ticketsvc.New(e.project.DB).GetByID(ctx, ticketID)
+	tk, err := e.ticketSvc.GetByID(ctx, ticketID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ActionResult{}, fmt.Errorf("ticket 不存在: t%d", ticketID)
@@ -149,7 +157,7 @@ func (e *ActionExecutor) executeCreateTicket(ctx context.Context, action contrac
 		description = title
 	}
 
-	tk, err := ticketsvc.New(e.project.DB).CreateWithDescription(ctx, title, description)
+	tk, err := e.ticketSvc.CreateWithDescription(ctx, title, description)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -175,9 +183,7 @@ func (e *ActionExecutor) executeStartTicket(ctx context.Context, action contract
 		return ActionResult{}, err
 	}
 	baseBranch := actionArgString(action.Args, "base_branch", "baseBranch", "base")
-	ticketSvc := ticketsvc.New(e.project.DB)
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
-	worker, err := pmSvc.StartTicketWithOptions(ctx, ticketID, pmsvc.StartOptions{
+	worker, err := e.pmSvc.StartTicketWithOptions(ctx, ticketID, pmsvc.StartOptions{
 		BaseBranch: strings.TrimSpace(baseBranch),
 	})
 	if err != nil {
@@ -208,9 +214,7 @@ func (e *ActionExecutor) executeDispatchTicket(ctx context.Context, action contr
 		return ActionResult{}, err
 	}
 	entryPrompt := actionArgString(action.Args, "entry_prompt", "entryPrompt", "prompt")
-	ticketSvc := ticketsvc.New(e.project.DB)
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
-	res, err := pmSvc.DispatchTicketWithOptions(ctx, ticketID, pmsvc.DispatchOptions{EntryPrompt: entryPrompt})
+	res, err := e.pmSvc.DispatchTicketWithOptions(ctx, ticketID, pmsvc.DispatchOptions{EntryPrompt: entryPrompt})
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -236,7 +240,7 @@ func (e *ActionExecutor) executeInterruptTicket(ctx context.Context, action cont
 	if err != nil {
 		return ActionResult{}, err
 	}
-	res, err := workersvc.New(e.project, ticketsvc.New(e.project.DB)).InterruptTicket(ctx, ticketID)
+	res, err := e.workerSvc.InterruptTicket(ctx, ticketID)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -262,7 +266,7 @@ func (e *ActionExecutor) executeStopTicket(ctx context.Context, action contracts
 	if err != nil {
 		return ActionResult{}, err
 	}
-	if err := workersvc.New(e.project, ticketsvc.New(e.project.DB)).StopTicket(ctx, ticketID); err != nil {
+	if err := e.workerSvc.StopTicket(ctx, ticketID); err != nil {
 		return ActionResult{}, err
 	}
 	return ActionResult{
@@ -277,9 +281,7 @@ func (e *ActionExecutor) executeArchiveTicket(ctx context.Context, action contra
 	if err != nil {
 		return ActionResult{}, err
 	}
-	ticketSvc := ticketsvc.New(e.project.DB)
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
-	if err := pmSvc.ArchiveTicket(ctx, ticketID); err != nil {
+	if err := e.pmSvc.ArchiveTicket(ctx, ticketID); err != nil {
 		return ActionResult{}, err
 	}
 	return ActionResult{
@@ -296,9 +298,7 @@ func (e *ActionExecutor) executeListMergeItems(ctx context.Context, action contr
 	if statusRaw != "" {
 		opt.Status = contracts.MergeStatus(statusRaw)
 	}
-	ticketSvc := ticketsvc.New(e.project.DB)
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
-	items, err := pmSvc.ListMergeItems(ctx, opt)
+	items, err := e.pmSvc.ListMergeItems(ctx, opt)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -329,9 +329,7 @@ func (e *ActionExecutor) executeApproveMerge(ctx context.Context, action contrac
 		return ActionResult{}, err
 	}
 	approvedBy := actionArgString(action.Args, "approved_by", "approvedBy", "decider")
-	ticketSvc := ticketsvc.New(e.project.DB)
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
-	if err := pmSvc.ApproveMerge(ctx, mergeItemID, approvedBy); err != nil {
+	if err := e.pmSvc.ApproveMerge(ctx, mergeItemID, approvedBy); err != nil {
 		return ActionResult{}, err
 	}
 	return ActionResult{
@@ -347,9 +345,7 @@ func (e *ActionExecutor) executeRejectMerge(ctx context.Context, action contract
 		return ActionResult{}, err
 	}
 	note := actionArgString(action.Args, "note", "reason")
-	ticketSvc := ticketsvc.New(e.project.DB)
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
-	if err := pmSvc.DiscardMerge(ctx, mergeItemID, note); err != nil {
+	if err := e.pmSvc.DiscardMerge(ctx, mergeItemID, note); err != nil {
 		return ActionResult{}, err
 	}
 	return ActionResult{
@@ -534,7 +530,12 @@ func (s *Service) executeAction(ctx context.Context, action contracts.TurnAction
 		result.Message = "channel service 缺少 project 上下文"
 		return result
 	}
-	execRes, err := newActionExecutor(s.p).Execute(ctx, action)
+	executor := s.actionExecutor()
+	if executor == nil {
+		result.Message = "channel service action executor 初始化失败"
+		return result
+	}
+	execRes, err := executor.Execute(ctx, action)
 	if err != nil {
 		result.Success = false
 		result.Message = strings.TrimSpace(err.Error())

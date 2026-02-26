@@ -16,6 +16,9 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/services/channel/agentcli"
 	"dalek/internal/services/core"
+	pmsvc "dalek/internal/services/pm"
+	ticketsvc "dalek/internal/services/ticket"
+	workersvc "dalek/internal/services/worker"
 
 	"gorm.io/gorm"
 )
@@ -28,6 +31,9 @@ type Service struct {
 	runningMu sync.Mutex
 	running   *runningTurn
 
+	actionExecMu sync.Mutex
+	actionExec   *ActionExecutor
+
 	chatRunners        ChatRunnerManager
 	toolApprovalBridge *ToolApprovalBridge
 }
@@ -37,13 +43,31 @@ func New(p *core.Project) *Service {
 	if p != nil {
 		logger = core.EnsureLogger(p.Logger).With("service", "channel")
 	}
-	return &Service{
+	svc := &Service{
 		p:                  p,
 		logger:             logger,
 		turnSem:            make(chan struct{}, 1),
 		chatRunners:        newDefaultChatRunnerManager(nil),
 		toolApprovalBridge: NewToolApprovalBridge(logger.With("component", "tool_approval")),
 	}
+	svc.actionExec = svc.actionExecutor()
+	return svc
+}
+
+func (s *Service) actionExecutor() *ActionExecutor {
+	if s == nil || s.p == nil || s.p.DB == nil {
+		return nil
+	}
+	s.actionExecMu.Lock()
+	defer s.actionExecMu.Unlock()
+	if s.actionExec != nil {
+		return s.actionExec
+	}
+	ticketSvc := ticketsvc.New(s.p.DB)
+	workerSvc := workersvc.New(s.p, ticketSvc)
+	pmSvc := pmsvc.New(s.p, workerSvc)
+	s.actionExec = newActionExecutor(s.p, ticketSvc, pmSvc, workerSvc)
+	return s.actionExec
 }
 
 type runningTurn struct {
