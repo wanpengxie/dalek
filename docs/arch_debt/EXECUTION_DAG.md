@@ -33,6 +33,23 @@
 - `T35 -> T36`
 - `T38 -> T32`
 
+## W01 回写（T39 FSM 基础组件）
+
+- 状态：`T39` 已交付，`internal/fsm/` 成为状态转换权威入口。
+- 通用 API（下游统一复用）：
+  - `fsm.CanTransition`
+  - `fsm.ValidTransitions` / `fsm.ValidTargets`
+  - `fsm.IsTerminal`
+- 已落地权威转换表：
+  - `fsm.TicketWorkflowTable`
+  - `fsm.WorkerLifecycleTable`
+  - `fsm.PMDispatchJobTable`
+  - `fsm.TaskRunOrchestrationTable`
+- T20/T27/T34 已解锁复用入口：
+  - `T20`：复用 `fsm.TaskRunOrchestrationTable` + `fsm.CanTaskRunTransition`，禁止新增 TaskRun 隐式转换条件。
+  - `T27`：复用 `fsm.TicketWorkflowTable` + `fsm.CanTicketWorkflowTransition`，收敛 ticket workflow 规则到单一来源。
+  - `T34`：复用 `fsm.PMDispatchJobTable`/`fsm.WorkerLifecycleTable` + `fsm.CanTransition`，统一调度链路状态守卫。
+
 ## 执行批次（拓扑分层）
 
 | 批次 | 票数 | tickets | 说明 |
