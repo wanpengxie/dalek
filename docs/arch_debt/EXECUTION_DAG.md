@@ -313,6 +313,23 @@ Tickets: <T.. T.. T..>
 - 下游约束更新：
   - `T35` 必须复用 `gatewaysend.Service` 入口做 PM 通知解耦，禁止回退到包内直接裸 DB 访问。
 
+## W04 回写（T29 Daemon ExecutionHost 拆分）
+
+- 状态：`T29` 已完成（2026-02-26），`execution_host.go` 已完成类型独立与并发逻辑分文件。
+- 交付物：
+  - 新增 `internal/services/daemon/execution_host_types.go`，迁移 interfaces/DTO/错误类型/运行时 handle 类型。
+  - 新增 `internal/services/daemon/execution_host_runner.go`，迁移 execute* goroutine、slot 控制、probe 与异步通知链路。
+  - 新增 `internal/services/daemon/execution_host_index.go`，迁移索引系统、请求幂等查询、handle 生命周期管理与扫描回退查询。
+  - 新增 `internal/services/daemon/execution_host_component.go` 与 `execution_host_note.go`，保持组件接口与 Note API 清晰分层。
+  - `internal/services/daemon/execution_host.go` 已瘦身至 `494` 行，仅保留核心结构、生命周期与主提交流程。
+- 回归结果：
+  - `go test ./internal/services/daemon/... -count=1` 通过
+  - `go build ./...` 通过
+  - `go vet ./internal/services/daemon/...` 通过
+- 依赖与下游影响：
+  - `T30` 可直接在拆分后的 `runner/index/types` 边界上继续推进，不再需要先做文件级切分。
+  - daemon recover/logger 与 `contracts/core project` 注入方式保持不变，外部 API 行为无回退。
+
 ## 每批执行建议
 
 1. 每批结束后，先清单回写：更新 `CRITICAL/HIGH/MEDIUM_SELECTED/LOW_SELECTED` 中对应 ID 状态。
