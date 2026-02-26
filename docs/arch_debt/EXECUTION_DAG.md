@@ -13,7 +13,7 @@
 
 - 更新时间：`2026-02-27`
 - 已完成批次：`W01` `W02` `W03` `W04` `W05`
-- 当前批次：`W06A + W09A`（`in_execution`）
+- 当前批次：`W06A + W09A + W10A`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
@@ -25,6 +25,7 @@
 - W08A 已完成票：`T18(25)`（Provider/默认值/客户端归位）
 - W09A 已完成票：`T33(40)`
 - W09A 进行中票：`T35(42)`
+- W10A 已完成票：`T32(39)`（logs->preview 重命名 + WorkerLookup 收口）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
