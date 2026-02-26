@@ -145,6 +145,11 @@ func TestOpenAndMigrate_TicketArchivedTakesPrecedenceOverStatus(t *testing.T) {
 		t.Fatalf("insert legacy ticket failed: %v", err)
 	}
 
+	// 回退版本标记，模拟“老库停留在 v3，待执行 v4+”。
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 4;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations failed: %v", err)
+	}
+
 	// 再次迁移：应把 archived=1 映射为 workflow_status=archived（不能被 status='done' 覆盖）。
 	if _, err := OpenAndMigrate(dbPath); err != nil {
 		t.Fatalf("OpenAndMigrate (2nd) failed: %v", err)
@@ -182,13 +187,18 @@ func TestOpenAndMigrate_NormalizesLegacyWorkflowAliases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
-
-	legacy := Ticket{
-		Title:          "legacy-alias",
-		WorkflowStatus: TicketWorkflowStatus("in_progress"),
+	now := time.Now()
+	if err := db.Exec(
+		"INSERT INTO tickets (created_at, updated_at, title, description, priority, workflow_status) VALUES (?, ?, 'legacy-alias', '', 0, 'in_progress');",
+		now,
+		now,
+	).Error; err != nil {
+		t.Fatalf("insert legacy ticket failed: %v", err)
 	}
-	if err := db.Create(&legacy).Error; err != nil {
-		t.Fatalf("create legacy ticket failed: %v", err)
+
+	// 回退版本标记，模拟“老库停留在 v3，待执行 v4+”。
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 4;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations failed: %v", err)
 	}
 
 	if _, err := OpenAndMigrate(dbPath); err != nil {
@@ -200,7 +210,7 @@ func TestOpenAndMigrate_NormalizesLegacyWorkflowAliases(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 	var got Ticket
-	if err := db2.First(&got, legacy.ID).Error; err != nil {
+	if err := db2.Where("title = ?", "legacy-alias").First(&got).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
 	if got.WorkflowStatus != TicketActive {
@@ -518,6 +528,11 @@ func TestOpenAndMigrate_NoteStatusMigrationToShaped(t *testing.T) {
 		).Error; err != nil {
 			t.Fatalf("insert legacy note status=%s failed: %v", st, err)
 		}
+	}
+
+	// 回退版本标记，模拟“老库停留在 v4，待执行 v5+”。
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 5;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations failed: %v", err)
 	}
 
 	if _, err := OpenAndMigrate(dbPath); err != nil {

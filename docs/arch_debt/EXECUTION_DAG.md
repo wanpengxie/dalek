@@ -48,6 +48,16 @@
 | W09 | 4 | `T09` `T33` `T34` `T35` | PM 调度主链与 agentexec 收尾 |
 | W10 | 3 | `T36` `T32` `T05` | 可靠性与测试补齐 + 日志包收口 + cmd 测试闭环 |
 
+## W01 回写（T24）
+
+- 状态：`T24` 已完成（2026-02-26）
+- 交付物：
+  - `internal/store` 已引入版本化迁移入口（`RunMigrations`）与 `schema_migrations` 版本记录表。
+  - `AutoMigrate` 已改为统一走 migration runner，启动流程不再内联执行破坏性迁移语句。
+  - 已补齐迁移相关测试：基线迁移、幂等重跑、失败中断、老库升级路径。
+- 依赖确认：
+  - `T25 -> T24` 的前置已稳定，可基于同一 migration 入口继续追加类型化迁移版本。
+
 ## 每轮启动 Dispatch 必带指令（强制）
 
 每次启动 `Wxx` 前，dispatch prompt 必须包含以下 7 项，缺一不可：

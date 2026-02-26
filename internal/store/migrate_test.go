@@ -1,0 +1,124 @@
+package store
+
+import (
+	"errors"
+	"path/filepath"
+	"testing"
+
+	"gorm.io/gorm"
+)
+
+func TestOpenAndMigrate_TracksBaselineMigrations(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	rows := loadMigrationRowsForTest(t, db)
+	want := len(storeMigrations())
+	if len(rows) != want {
+		t.Fatalf("expected %d migration records, got=%d", want, len(rows))
+	}
+	for i, row := range rows {
+		if row.Version != i+1 {
+			t.Fatalf("expected migration version=%d, got=%d", i+1, row.Version)
+		}
+		if row.Name == "" {
+			t.Fatalf("migration version=%d should have non-empty name", row.Version)
+		}
+		if row.AppliedAt == "" {
+			t.Fatalf("migration version=%d should have applied_at", row.Version)
+		}
+	}
+}
+
+func TestOpenAndMigrate_IdempotentMigrationUpgrade(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+	before := loadMigrationRowsForTest(t, db)
+
+	db2, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate (2nd) failed: %v", err)
+	}
+	after := loadMigrationRowsForTest(t, db2)
+
+	if len(before) != len(after) {
+		t.Fatalf("expected migration row count stable, before=%d after=%d", len(before), len(after))
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			t.Fatalf("migration rows should remain unchanged on idempotent rerun, before=%+v after=%+v", before[i], after[i])
+		}
+	}
+}
+
+func TestRunMigrations_FailureStopsAtVersion(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+
+	executed := make([]int, 0, 3)
+	err = RunMigrations(db, []Migration{
+		{
+			Version: 1,
+			Name:    "ok_1",
+			Up: func(db *gorm.DB) error {
+				executed = append(executed, 1)
+				return nil
+			},
+		},
+		{
+			Version: 2,
+			Name:    "boom_2",
+			Up: func(db *gorm.DB) error {
+				executed = append(executed, 2)
+				return errors.New("boom")
+			},
+		},
+		{
+			Version: 3,
+			Name:    "skip_3",
+			Up: func(db *gorm.DB) error {
+				executed = append(executed, 3)
+				return nil
+			},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected migration failure")
+	}
+	if len(executed) != 2 || executed[0] != 1 || executed[1] != 2 {
+		t.Fatalf("expected execution stop at failed version, got=%v", executed)
+	}
+
+	rows := loadMigrationRowsForTest(t, db)
+	if len(rows) != 1 || rows[0].Version != 1 {
+		t.Fatalf("expected only v1 recorded after failure, got=%+v", rows)
+	}
+}
+
+type migrationRow struct {
+	Version   int    `gorm:"column:version"`
+	Name      string `gorm:"column:name"`
+	AppliedAt string `gorm:"column:applied_at"`
+}
+
+func loadMigrationRowsForTest(t *testing.T, db *gorm.DB) []migrationRow {
+	t.Helper()
+	var rows []migrationRow
+	if err := db.Raw(`
+SELECT version, name, applied_at
+FROM schema_migrations
+ORDER BY version ASC;
+`).Scan(&rows).Error; err != nil {
+		t.Fatalf("query schema_migrations failed: %v", err)
+	}
+	return rows
+}
