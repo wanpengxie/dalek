@@ -18,7 +18,6 @@ import (
 	"dalek/internal/app"
 	"dalek/internal/contracts"
 	channelsvc "dalek/internal/services/channel"
-	"dalek/internal/store"
 )
 
 func runCmd(t *testing.T, dir string, name string, args ...string) (string, string, error) {
@@ -433,7 +432,7 @@ func startGatewayDaemonWithCLITestChannelForE2E(t *testing.T, homeDir string) (s
 	if err != nil {
 		t.Fatalf("OpenProjectByName failed: %v", err)
 	}
-	gatewayDB, err := store.OpenGatewayDB(h.GatewayDBPath)
+	gatewayDB, err := h.OpenGatewayDB()
 	if err != nil {
 		t.Fatalf("OpenGatewayDB failed: %v", err)
 	}

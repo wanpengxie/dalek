@@ -130,6 +130,17 @@ func (h *Home) SaveRegistry(r Registry) error {
 	return writeRegistryAtomic(h.RegistryPath, r)
 }
 
+func (h *Home) OpenGatewayDB() (*gorm.DB, error) {
+	if h == nil {
+		return nil, fmt.Errorf("home 为空")
+	}
+	dbPath := strings.TrimSpace(h.GatewayDBPath)
+	if dbPath == "" {
+		return nil, fmt.Errorf("gateway db path 不能为空")
+	}
+	return store.OpenGatewayDB(dbPath)
+}
+
 func (h *Home) ListProjects() ([]RegisteredProject, error) {
 	r, err := h.LoadRegistry()
 	if err != nil {

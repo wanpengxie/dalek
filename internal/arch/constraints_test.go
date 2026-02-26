@@ -228,3 +228,56 @@ func TestChannelServiceDoesNotDirectlyCallAgentCLIRun(t *testing.T) {
 		return true
 	})
 }
+
+func TestCmdTestsDoNotImportStore(t *testing.T) {
+	root := repoRoot(t)
+	cmdDir := filepath.Join(root, "cmd", "dalek")
+	files := listGoFiles(t, cmdDir)
+	for _, path := range files {
+		if !strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		f := parseFile(t, path)
+		for _, imp := range f.Imports {
+			p := strings.Trim(imp.Path.Value, `"`)
+			if p == "dalek/internal/store" {
+				t.Fatalf("cmd 测试不应 import internal/store（%s）", rel)
+			}
+		}
+	}
+}
+
+func TestCmdTestsServicesImportAllowlist(t *testing.T) {
+	root := repoRoot(t)
+	cmdDir := filepath.Join(root, "cmd", "dalek")
+	files := listGoFiles(t, cmdDir)
+	allowlist := map[string]map[string]bool{
+		"cmd/dalek/cmd_gateway_feishu_test.go": {
+			"dalek/internal/services/channel": true,
+		},
+		"cmd/dalek/e2e_cli_test.go": {
+			"dalek/internal/services/channel": true,
+		},
+	}
+
+	for _, path := range files {
+		if !strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		f := parseFile(t, path)
+		for _, imp := range f.Imports {
+			p := strings.Trim(imp.Path.Value, `"`)
+			if !strings.HasPrefix(p, "dalek/internal/services/") {
+				continue
+			}
+			allow := allowlist[rel]
+			if !allow[p] {
+				t.Fatalf("cmd 测试 import internal/services 必须在 allowlist（%s import %s）", rel, p)
+			}
+		}
+	}
+}
