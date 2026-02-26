@@ -8,7 +8,7 @@ import (
 
 func (h *ExecutionHost) lookupDispatchRequest(project string, ticketID uint, requestID string) (DispatchSubmitReceipt, bool) {
 	h.mu.RLock()
-	handle := h.requests[strings.TrimSpace(requestID)]
+	handle := h.requests[requestID]
 	h.mu.RUnlock()
 	if handle == nil {
 		return DispatchSubmitReceipt{}, false
@@ -16,7 +16,7 @@ func (h *ExecutionHost) lookupDispatchRequest(project string, ticketID uint, req
 	if handle.kind != runKindDispatch {
 		return DispatchSubmitReceipt{}, false
 	}
-	if strings.TrimSpace(handle.project) != strings.TrimSpace(project) || handle.ticketID != ticketID {
+	if handle.project != project || handle.ticketID != ticketID {
 		return DispatchSubmitReceipt{}, false
 	}
 	return h.dispatchReceiptFromHandle(handle), true
@@ -30,19 +30,19 @@ func (h *ExecutionHost) dispatchReceiptFromHandle(handle *executionRunHandle) Di
 	defer h.mu.RUnlock()
 	return DispatchSubmitReceipt{
 		Accepted:  true,
-		Project:   strings.TrimSpace(handle.project),
-		RequestID: strings.TrimSpace(handle.requestID),
+		Project:   handle.project,
+		RequestID: handle.requestID,
 		TaskRunID: handle.runID,
 		JobID:     handle.jobID,
 		TicketID:  handle.ticketID,
 		WorkerID:  handle.workerID,
-		JobStatus: strings.TrimSpace(handle.jobStatus),
+		JobStatus: handle.jobStatus,
 	}
 }
 
 func (h *ExecutionHost) lookupWorkerRequest(project string, ticketID uint, requestID string) (WorkerRunSubmitReceipt, bool) {
 	h.mu.RLock()
-	handle := h.requests[strings.TrimSpace(requestID)]
+	handle := h.requests[requestID]
 	h.mu.RUnlock()
 	if handle == nil {
 		return WorkerRunSubmitReceipt{}, false
@@ -50,7 +50,7 @@ func (h *ExecutionHost) lookupWorkerRequest(project string, ticketID uint, reque
 	if handle.kind != runKindWorker {
 		return WorkerRunSubmitReceipt{}, false
 	}
-	if strings.TrimSpace(handle.project) != strings.TrimSpace(project) || handle.ticketID != ticketID {
+	if handle.project != project || handle.ticketID != ticketID {
 		return WorkerRunSubmitReceipt{}, false
 	}
 	return h.workerReceiptFromHandle(handle), true
@@ -58,7 +58,7 @@ func (h *ExecutionHost) lookupWorkerRequest(project string, ticketID uint, reque
 
 func (h *ExecutionHost) lookupSubagentRequest(project string, requestID string) (SubagentSubmitReceipt, bool) {
 	h.mu.RLock()
-	handle := h.requests[strings.TrimSpace(requestID)]
+	handle := h.requests[requestID]
 	h.mu.RUnlock()
 	if handle == nil {
 		return SubagentSubmitReceipt{}, false
@@ -66,7 +66,7 @@ func (h *ExecutionHost) lookupSubagentRequest(project string, requestID string) 
 	if handle.kind != runKindSubagent {
 		return SubagentSubmitReceipt{}, false
 	}
-	if strings.TrimSpace(handle.project) != strings.TrimSpace(project) {
+	if handle.project != project {
 		return SubagentSubmitReceipt{}, false
 	}
 	return h.subagentReceiptFromHandle(handle), true
@@ -80,8 +80,8 @@ func (h *ExecutionHost) workerReceiptFromHandle(handle *executionRunHandle) Work
 	defer h.mu.RUnlock()
 	return WorkerRunSubmitReceipt{
 		Accepted:  true,
-		Project:   strings.TrimSpace(handle.project),
-		RequestID: strings.TrimSpace(handle.requestID),
+		Project:   handle.project,
+		RequestID: handle.requestID,
 		TaskRunID: handle.runID,
 		TicketID:  handle.ticketID,
 		WorkerID:  handle.workerID,
@@ -96,11 +96,11 @@ func (h *ExecutionHost) subagentReceiptFromHandle(handle *executionRunHandle) Su
 	defer h.mu.RUnlock()
 	return SubagentSubmitReceipt{
 		Accepted:   true,
-		Project:    strings.TrimSpace(handle.project),
+		Project:    handle.project,
 		TaskRunID:  handle.runID,
-		RequestID:  strings.TrimSpace(handle.requestID),
-		Provider:   strings.TrimSpace(handle.provider),
-		Model:      strings.TrimSpace(handle.model),
+		RequestID:  handle.requestID,
+		Provider:   handle.provider,
+		Model:      handle.model,
 		RuntimeDir: "",
 	}
 }
@@ -180,7 +180,7 @@ func (h *ExecutionHost) addRunProjectIndexLocked(runID uint, project string) {
 	}
 	projects := h.runProjectIndex[runID]
 	for _, existing := range projects {
-		if strings.TrimSpace(existing) == project {
+		if existing == project {
 			return
 		}
 	}
@@ -273,9 +273,9 @@ func (h *ExecutionHost) summarizePendingHandles(handles []*executionRunHandle) (
 		ticketID := handle.ticketID
 		workerID := handle.workerID
 		entry := fmt.Sprintf("kind=%s project=%s request=%s run=%d ticket=%d worker=%d",
-			strings.TrimSpace(string(handle.kind)),
-			strings.TrimSpace(handle.project),
-			strings.TrimSpace(handle.requestID),
+			string(handle.kind),
+			handle.project,
+			handle.requestID,
 			runID,
 			ticketID,
 			workerID,
@@ -349,7 +349,7 @@ func (h *ExecutionHost) findRunStatusInProjects(ctx context.Context, runID uint,
 		if status == nil {
 			continue
 		}
-		if strings.TrimSpace(status.Project) == "" {
+		if status.Project == "" {
 			status.Project = projectName
 		}
 		return status, projectName, nil

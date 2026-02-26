@@ -99,7 +99,7 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	if s == nil {
 		return fmt.Errorf("internal api 为空")
 	}
-	ln, err := net.Listen("tcp", strings.TrimSpace(s.cfg.ListenAddr))
+	ln, err := net.Listen("tcp", s.cfg.ListenAddr)
 	if err != nil {
 		return err
 	}
@@ -130,7 +130,7 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 		}
 	}()
 	s.logger.Info("internal api listening",
-		"listen_addr", strings.TrimSpace(s.cfg.ListenAddr),
+		"listen_addr", s.cfg.ListenAddr,
 		"ws_path", wsPath,
 	)
 	return nil
@@ -277,8 +277,8 @@ func (s *InternalAPI) handleDispatchSubmit(w http.ResponseWriter, r *http.Reques
 	runID := receipt.TaskRunID
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"accepted":    true,
-		"project":     strings.TrimSpace(receipt.Project),
-		"request_id":  strings.TrimSpace(receipt.RequestID),
+		"project":     receipt.Project,
+		"request_id":  receipt.RequestID,
 		"task_run_id": runID,
 		"ticket_id":   receipt.TicketID,
 		"worker_id":   receipt.WorkerID,
@@ -317,8 +317,8 @@ func (s *InternalAPI) handleWorkerRunSubmit(w http.ResponseWriter, r *http.Reque
 	runID := receipt.TaskRunID
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"accepted":    true,
-		"project":     strings.TrimSpace(receipt.Project),
-		"request_id":  strings.TrimSpace(receipt.RequestID),
+		"project":     receipt.Project,
+		"request_id":  receipt.RequestID,
 		"task_run_id": runID,
 		"ticket_id":   receipt.TicketID,
 		"worker_id":   receipt.WorkerID,
@@ -358,11 +358,11 @@ func (s *InternalAPI) handleSubagentSubmit(w http.ResponseWriter, r *http.Reques
 	runID := receipt.TaskRunID
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"accepted":    true,
-		"project":     strings.TrimSpace(receipt.Project),
-		"request_id":  strings.TrimSpace(receipt.RequestID),
-		"provider":    strings.TrimSpace(receipt.Provider),
-		"model":       strings.TrimSpace(receipt.Model),
-		"runtime_dir": strings.TrimSpace(receipt.RuntimeDir),
+		"project":     receipt.Project,
+		"request_id":  receipt.RequestID,
+		"provider":    receipt.Provider,
+		"model":       receipt.Model,
+		"runtime_dir": receipt.RuntimeDir,
 		"task_run_id": runID,
 		"query": map[string]string{
 			"show":   fmt.Sprintf("dalek agent show --run-id %d", runID),
@@ -392,7 +392,7 @@ func (s *InternalAPI) handleNoteSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"accepted":       true,
-		"project":        strings.TrimSpace(receipt.Project),
+		"project":        receipt.Project,
 		"note_id":        receipt.NoteID,
 		"shaped_item_id": receipt.ShapedItemID,
 		"deduped":        receipt.Deduped,
@@ -463,9 +463,9 @@ func (s *InternalAPI) handleRunCancel(w http.ResponseWriter, r *http.Request, ru
 		"run_id":     runID,
 		"found":      result.Found,
 		"canceled":   result.Canceled,
-		"project":    strings.TrimSpace(result.Project),
-		"request_id": strings.TrimSpace(result.RequestID),
-		"reason":     strings.TrimSpace(result.Reason),
+		"project":    result.Project,
+		"request_id": result.RequestID,
+		"reason":     result.Reason,
 	})
 }
 
@@ -573,7 +573,7 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 
 func writeAPIError(w http.ResponseWriter, code int, codeName, cause string) {
 	writeJSON(w, code, map[string]any{
-		"error": strings.TrimSpace(codeName),
-		"cause": strings.TrimSpace(cause),
+		"error": codeName,
+		"cause": cause,
 	})
 }

@@ -11,7 +11,7 @@ import (
 
 const (
 	defaultExecutionHostConcurrency = 4
-	workerRunIDProbeTimeout         = 2 * time.Second
+	workerRunReadyTimeout           = 2 * time.Second
 )
 
 // StopTimeoutError 表示 ExecutionHost.Stop 在上下文截止前仍有运行未退出。
@@ -104,6 +104,7 @@ type WorkerRunOptions struct {
 type WorkerRunResult struct {
 	TicketID uint
 	WorkerID uint
+	RunID    uint
 }
 
 type WorkerRunSubmitRequest struct {

@@ -40,8 +40,16 @@ func TestParseInboundText(t *testing.T) {
 	if err != nil {
 		t.Fatalf("json text parse failed: %v", err)
 	}
-	if text != "hi" || sender != "u1" {
+	if text != "  hi  " || sender != "u1" {
 		t.Fatalf("json text parse unexpected: text=%q sender=%q", text, sender)
+	}
+
+	text, sender, err = ParseInboundText([]byte(`"  ws text  "`))
+	if err != nil {
+		t.Fatalf("json string parse failed: %v", err)
+	}
+	if text != "  ws text  " || sender != "" {
+		t.Fatalf("json string parse unexpected: text=%q sender=%q", text, sender)
 	}
 
 	if _, _, err := ParseInboundText([]byte(`{"text":"   "}`)); err == nil {

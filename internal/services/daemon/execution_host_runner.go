@@ -2,9 +2,6 @@ package daemon
 
 import (
 	"context"
-	"fmt"
-	"strings"
-	"time"
 )
 
 func (h *ExecutionHost) executeDispatch(handle *executionRunHandle) {
@@ -13,12 +10,12 @@ func (h *ExecutionHost) executeDispatch(handle *executionRunHandle) {
 	}
 	defer h.wg.Done()
 	defer h.finalizeHandle(handle)
-	defer h.notifyRunSettled(strings.TrimSpace(handle.project))
+	defer h.notifyRunSettled(handle.project)
 
 	if !h.acquireSlot(handle.ctx) {
 		if handle.ctx.Err() != nil {
 			h.logger.Info("execution host dispatch canceled before start",
-				"request_id", strings.TrimSpace(handle.requestID),
+				"request_id", handle.requestID,
 			)
 		}
 		return
@@ -35,8 +32,8 @@ func (h *ExecutionHost) executeDispatch(handle *executionRunHandle) {
 		return
 	}
 	err = project.RunDispatchJob(handle.ctx, handle.jobID, DispatchRunOptions{
-		RunnerID:    strings.TrimSpace(handle.runnerID),
-		EntryPrompt: strings.TrimSpace(handle.entryPrompt),
+		RunnerID:    handle.runnerID,
+		EntryPrompt: handle.entryPrompt,
 	})
 	if err != nil {
 		if handle.ctx.Err() != nil {
@@ -65,12 +62,12 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 	}
 	defer h.wg.Done()
 	defer h.finalizeHandle(handle)
-	defer h.notifyRunSettled(strings.TrimSpace(handle.project))
+	defer h.notifyRunSettled(handle.project)
 
 	if !h.acquireSlot(handle.ctx) {
 		if handle.ctx.Err() != nil {
 			h.logger.Info("execution host worker run canceled before start",
-				"request_id", strings.TrimSpace(handle.requestID),
+				"request_id", handle.requestID,
 			)
 		}
 		return
@@ -95,7 +92,7 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 	resCh := make(chan WorkerRunResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		res, runErr := project.DirectDispatchWorker(handle.ctx, handle.ticketID, WorkerRunOptions{EntryPrompt: strings.TrimSpace(handle.entryPrompt)})
+		res, runErr := project.DirectDispatchWorker(handle.ctx, handle.ticketID, WorkerRunOptions{EntryPrompt: handle.entryPrompt})
 		if runErr != nil {
 			errCh <- runErr
 			return
@@ -103,20 +100,18 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 		resCh <- res
 	}()
 
-	foundRun := false
-	if status, serr := h.probeWorkerRunID(handle, project, baselineRunID); serr == nil && status != nil {
-		h.attachHandleRun(handle, status.RunID, status.WorkerID)
-		foundRun = true
-	}
-
 	select {
 	case res := <-resCh:
-		if handle.workerID == 0 {
+		if res.RunID != 0 {
+			h.attachHandleRun(handle, res.RunID, res.WorkerID)
+		} else if res.WorkerID != 0 {
 			h.mu.Lock()
-			handle.workerID = res.WorkerID
+			if handle.workerID == 0 {
+				handle.workerID = res.WorkerID
+			}
 			h.mu.Unlock()
 		}
-		if !foundRun {
+		if handle.runID == 0 {
 			if status, serr := project.FindLatestWorkerRun(context.Background(), handle.ticketID, baselineRunID); serr == nil && status != nil {
 				h.attachHandleRun(handle, status.RunID, status.WorkerID)
 			}
@@ -127,7 +122,7 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 			"request_id", handle.requestID,
 		)
 	case runErr := <-errCh:
-		if !foundRun {
+		if handle.runID == 0 {
 			if status, serr := project.FindLatestWorkerRun(context.Background(), handle.ticketID, baselineRunID); serr == nil && status != nil {
 				h.attachHandleRun(handle, status.RunID, status.WorkerID)
 			}
@@ -153,12 +148,12 @@ func (h *ExecutionHost) executeSubagentRun(handle *executionRunHandle) {
 	}
 	defer h.wg.Done()
 	defer h.finalizeHandle(handle)
-	defer h.notifyRunSettled(strings.TrimSpace(handle.project))
+	defer h.notifyRunSettled(handle.project)
 
 	if !h.acquireSlot(handle.ctx) {
 		if handle.ctx.Err() != nil {
 			h.logger.Info("execution host subagent canceled before start",
-				"request_id", strings.TrimSpace(handle.requestID),
+				"request_id", handle.requestID,
 			)
 		}
 		return
@@ -175,7 +170,7 @@ func (h *ExecutionHost) executeSubagentRun(handle *executionRunHandle) {
 		return
 	}
 	err = project.RunSubagentJob(handle.ctx, handle.runID, SubagentRunOptions{
-		RunnerID: strings.TrimSpace(handle.runnerID),
+		RunnerID: handle.runnerID,
 	})
 	if err != nil {
 		if handle.ctx.Err() != nil {
@@ -200,31 +195,10 @@ func (h *ExecutionHost) executeSubagentRun(handle *executionRunHandle) {
 	)
 }
 
-func (h *ExecutionHost) probeWorkerRunID(handle *executionRunHandle, project ExecutionHostProject, baselineRunID uint) (*RunStatus, error) {
-	if handle == nil || project == nil {
-		return nil, fmt.Errorf("probe worker run 参数无效")
-	}
-	deadline := time.Now().Add(workerRunIDProbeTimeout)
-	for {
-		if time.Now().After(deadline) {
-			return nil, nil
-		}
-		if handle.ctx.Err() != nil {
-			return nil, handle.ctx.Err()
-		}
-		status, err := project.FindLatestWorkerRun(handle.ctx, handle.ticketID, baselineRunID)
-		if err == nil && status != nil {
-			return status, nil
-		}
-		time.Sleep(80 * time.Millisecond)
-	}
-}
-
 func (h *ExecutionHost) notifyRunSettled(project string) {
 	if h == nil || h.onRunSettled == nil {
 		return
 	}
-	project = strings.TrimSpace(project)
 	if project == "" {
 		return
 	}
@@ -235,7 +209,6 @@ func (h *ExecutionHost) notifyNoteAdded(project string) {
 	if h == nil || h.onNoteAdded == nil {
 		return
 	}
-	project = strings.TrimSpace(project)
 	if project == "" {
 		return
 	}

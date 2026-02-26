@@ -110,6 +110,7 @@ func (p *daemonProjectAdapter) DirectDispatchWorker(ctx context.Context, ticketI
 	return daemonsvc.WorkerRunResult{
 		TicketID: res.TicketID,
 		WorkerID: res.WorkerID,
+		RunID:    res.LastRunID,
 	}, nil
 }
 
