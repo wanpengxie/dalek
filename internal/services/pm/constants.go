@@ -34,10 +34,11 @@ const (
 	defaultWorkerReadyPollInterval = 200 * time.Millisecond
 	workflowStatusNotifyTimeout    = 10 * time.Second
 
-	dispatchLeaseRenewInterval  = 10 * time.Second
-	dispatchLeaseTTLBuffer      = 60 * time.Second
-	dispatchLeaseTTLMin         = 2 * time.Minute
-	defaultDispatchPollInterval = 100 * time.Millisecond
+	dispatchLeaseRenewInterval         = 10 * time.Second
+	dispatchLeaseTTLBuffer             = 60 * time.Second
+	dispatchLeaseTTLMin                = 2 * time.Minute
+	defaultDispatchPollInterval        = 100 * time.Millisecond
+	leaseRenewalEscalateThreshold uint = 3 // 连续失败次数达到此阈值后升级为 Error 日志
 
 	managerStartTimeout      = 5*time.Minute + 30*time.Second
 	tmuxListSessionsTimeout  = 2 * time.Second

@@ -6,9 +6,18 @@ import (
 	"strings"
 	"time"
 
+	"dalek/internal/agent/run"
 	"dalek/internal/contracts"
 	"dalek/internal/store"
 )
+
+// launchWorkerSDK 委托到测试 mock 或真实的 launchWorkerSDKHandle。
+func (s *Service) launchWorkerSDK(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (run.AgentRunHandle, error) {
+	if s.sdkHandleLauncher != nil {
+		return s.sdkHandleLauncher(ctx, t, w, entryPrompt)
+	}
+	return s.launchWorkerSDKHandle(ctx, t, w, entryPrompt)
+}
 
 // WorkerLoopResult 是 executeWorkerLoop 的返回结果。
 type WorkerLoopResult struct {
@@ -53,7 +62,7 @@ func (s *Service) executeWorkerLoop(ctx context.Context, t contracts.Ticket, w c
 		result.Stages++
 
 		// 1) 启动 worker SDK handle
-		handle, err := s.launchWorkerSDKHandle(loopCtx, t, w, prompt)
+		handle, err := s.launchWorkerSDK(loopCtx, t, w, prompt)
 		if err != nil {
 			s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop launch failed stage=%d: %v", result.Stages, err))
 			return result, fmt.Errorf("worker_loop stage %d launch 失败: %w", result.Stages, err)
