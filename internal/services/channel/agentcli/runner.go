@@ -1,71 +1,124 @@
 package agentcli
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"dalek/internal/agent/provider"
+	"dalek/internal/services/agentexec"
 )
+
+type PreparedCommand struct {
+	Command    string
+	Args       []string
+	Stdin      string
+	OutputMode OutputMode
+}
+
+func PrepareCommand(backend Backend, req RunRequest) (PreparedCommand, error) {
+	command := strings.TrimSpace(backend.Command)
+	if command == "" {
+		return PreparedCommand{}, fmt.Errorf("agent backend command 为空")
+	}
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		return PreparedCommand{}, fmt.Errorf("用户消息为空，无法调用 project manager agent")
+	}
+	args, stdin, outputMode := buildArgsAndInput(backend, req)
+	return PreparedCommand{
+		Command:    command,
+		Args:       append([]string(nil), args...),
+		Stdin:      stdin,
+		OutputMode: outputMode,
+	}, nil
+}
+
+func ParseOutput(raw string, mode OutputMode, backend Backend) (text string, sessionID string, events []Event) {
+	return parseOutput(raw, mode, backend)
+}
 
 func Run(ctx context.Context, backend Backend, req RunRequest) (Result, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	command := strings.TrimSpace(backend.Command)
-	if command == "" {
-		return Result{}, fmt.Errorf("agent backend command 为空")
+	prepared, err := PrepareCommand(backend, req)
+	if err != nil {
+		return Result{}, err
 	}
-	prompt := strings.TrimSpace(req.Prompt)
-	if prompt == "" {
-		return Result{}, fmt.Errorf("用户消息为空，无法调用 project manager agent")
+	executor := agentexec.NewProcessExecutor(agentexec.ProcessConfig{
+		Provider: channelBackendProvider{
+			command:    prepared.Command,
+			args:       prepared.Args,
+			outputMode: prepared.OutputMode,
+			backend:    backend,
+		},
+		WorkDir: strings.TrimSpace(req.WorkDir),
+		Stdin:   prepared.Stdin,
+	})
+	handle, err := executor.Execute(ctx, strings.TrimSpace(req.Prompt))
+	if err != nil {
+		return Result{}, fmt.Errorf("project manager agent 调用失败: %s", buildProcessErrorDetail("", "", err.Error()))
 	}
-
-	args, stdin, outputMode := buildArgsAndInput(backend, req)
-
-	cmd := exec.CommandContext(ctx, command, args...)
-	if strings.TrimSpace(req.WorkDir) != "" {
-		cmd.Dir = strings.TrimSpace(req.WorkDir)
-	}
-	if stdin != "" {
-		cmd.Stdin = strings.NewReader(stdin)
-	}
-
-	var stdoutBuf bytes.Buffer
-	var stderrBuf bytes.Buffer
-	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stderrBuf
-
-	runErr := cmd.Run()
-	stdout := strings.TrimSpace(stdoutBuf.String())
-	stderr := strings.TrimSpace(stderrBuf.String())
+	runRes, waitErr := handle.Wait()
 
 	result := Result{
-		Command:    strings.TrimSpace(command),
-		Stdout:     stdout,
-		Stderr:     stderr,
-		OutputMode: outputMode,
+		Command:    strings.TrimSpace(prepared.Command),
+		Stdout:     strings.TrimSpace(runRes.Stdout),
+		Stderr:     strings.TrimSpace(runRes.Stderr),
+		OutputMode: prepared.OutputMode,
 	}
-
-	if runErr != nil {
+	if waitErr != nil {
+		fallback := strings.TrimSpace(waitErr.Error())
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			detail := buildProcessErrorDetail(stdout, stderr, ctxErr.Error())
-			return result, fmt.Errorf("project manager agent 调用失败: %s", detail)
+			fallback = ctxErr.Error()
 		}
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
-			return result, fmt.Errorf("project manager agent 调用失败: %s", buildProcessErrorDetail(stdout, stderr, fmt.Sprintf("exit code=%d", exitErr.ExitCode())))
-		}
-		return result, fmt.Errorf("project manager agent 调用失败: %s", buildProcessErrorDetail(stdout, stderr, runErr.Error()))
+		return result, fmt.Errorf("project manager agent 调用失败: %s", buildProcessErrorDetail(result.Stdout, result.Stderr, fallback))
 	}
 
-	text, sessionID, events := parseOutput(stdout, outputMode, backend)
+	text, sessionID, events := parseOutput(result.Stdout, prepared.OutputMode, backend)
 	result.Text = strings.TrimSpace(text)
 	result.SessionID = strings.TrimSpace(sessionID)
 	result.Events = events
 	return result, nil
+}
+
+type channelBackendProvider struct {
+	command    string
+	args       []string
+	outputMode OutputMode
+	backend    Backend
+}
+
+func (p channelBackendProvider) Name() string {
+	name := strings.TrimSpace(p.command)
+	if name == "" {
+		return "channel_backend"
+	}
+	return name
+}
+
+func (p channelBackendProvider) BuildCommand(prompt string) (string, []string) {
+	_ = prompt
+	return strings.TrimSpace(p.command), append([]string(nil), p.args...)
+}
+
+func (p channelBackendProvider) ParseOutput(stdout string) provider.ParsedOutput {
+	text, _, events := parseOutput(stdout, p.outputMode, p.backend)
+	outEvents := make([]any, 0, len(events))
+	for _, ev := range events {
+		outEvents = append(outEvents, map[string]any{
+			"type":       strings.TrimSpace(ev.Type),
+			"text":       strings.TrimSpace(ev.Text),
+			"raw_json":   strings.TrimSpace(ev.RawJSON),
+			"session_id": strings.TrimSpace(ev.SessionID),
+		})
+	}
+	return provider.ParsedOutput{
+		Text:   strings.TrimSpace(text),
+		Events: outEvents,
+	}
 }
 
 func buildArgsAndInput(backend Backend, req RunRequest) (args []string, stdin string, outputMode OutputMode) {

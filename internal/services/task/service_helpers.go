@@ -40,7 +40,7 @@ func toJSON(v any) string {
 
 func validOwnerType(v contracts.TaskOwnerType) bool {
 	switch v {
-	case contracts.TaskOwnerWorker, contracts.TaskOwnerPM, contracts.TaskOwnerSubagent:
+	case contracts.TaskOwnerWorker, contracts.TaskOwnerPM, contracts.TaskOwnerSubagent, contracts.TaskOwnerChannel:
 		return true
 	default:
 		return false
