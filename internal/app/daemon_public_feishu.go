@@ -29,7 +29,7 @@ const (
 	daemonFeishuStreamProgressMax   = 240
 	daemonFeishuProgressHistoryMax  = 20
 	daemonFeishuUserNameCacheTTL    = 10 * time.Minute
-	daemonFeishuEventDedupTTL       = 5 * time.Minute
+	daemonFeishuEventDedupTTL       = 24 * time.Hour
 	daemonFeishuEventDedupCap       = 10000
 )
 
