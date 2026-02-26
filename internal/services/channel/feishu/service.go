@@ -475,7 +475,8 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			if gateway == nil || outboxID == 0 {
 				return
 			}
-			ctx, cancel := context.WithTimeout(relayCtx, 3*time.Second)
+			// outbox 回写不能依赖 relayCtx，否则在 final reply 成功后 relayCancel 会导致状态无法落库。
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			if err := gateway.MarkOutboxDelivery(ctx, outboxID, delivered, cause); err != nil {
 				logFinal("mark outbox failed outbox=%d delivered=%v err=%v", outboxID, delivered, err)
@@ -491,7 +492,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			finalAttempt int
 		)
 		sendTextFallback := func(attempt int, source string, outboxID uint, reply string, prevErr error) bool {
-			textCtx, textCancel := context.WithTimeout(relayCtx, 8*time.Second)
+			textCtx, textCancel := context.WithTimeout(context.Background(), 8*time.Second)
 			textErr := sender.SendText(textCtx, chatID, reply)
 			textCancel()
 			if textErr == nil {
@@ -557,7 +558,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			cardJSON := buildDaemonFeishuResultCardJSON(reply)
 			var lastErr error
 			for i := 0; i < 2; i++ {
-				sendCtx, sendCancel := context.WithTimeout(relayCtx, 8*time.Second)
+				sendCtx, sendCancel := context.WithTimeout(context.Background(), 8*time.Second)
 				resultMid, sendErr := sender.SendCardInteractive(sendCtx, chatID, cardJSON)
 				sendCancel()
 				if sendErr == nil && resultMid != "" {
@@ -622,7 +623,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			cardJSON := buildDaemonFeishuApprovalCardJSON(reply, result.PendingActions)
 			var lastErr error
 			for i := 0; i < 2; i++ {
-				sendCtx, sendCancel := context.WithTimeout(relayCtx, 8*time.Second)
+				sendCtx, sendCancel := context.WithTimeout(context.Background(), 8*time.Second)
 				resultMid, sendErr := sender.SendCardInteractive(sendCtx, chatID, cardJSON)
 				sendCancel()
 				if sendErr == nil && resultMid != "" {

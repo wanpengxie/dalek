@@ -3,6 +3,7 @@ package store
 import (
 	"dalek/internal/contracts"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,6 +114,53 @@ func TestLockMigrate_DoesNotBreakLiveOwnerLock(t *testing.T) {
 	_, err = lockMigrate(dbPath, 120*time.Millisecond)
 	if err == nil || !strings.Contains(err.Error(), "获取迁移锁超时") {
 		t.Fatalf("expected timeout for live owner lock, got=%v", err)
+	}
+}
+
+func TestIsInMemorySQLitePath(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{path: ":memory:", want: true},
+		{path: " :memory: ", want: true},
+		{path: "file::memory:?cache=shared", want: true},
+		{path: "file:test.db?mode=memory&cache=shared", want: true},
+		{path: filepath.Join(t.TempDir(), "dalek.sqlite3"), want: false},
+		{path: "", want: false},
+	}
+	for _, tc := range cases {
+		got := isInMemorySQLitePath(tc.path)
+		if got != tc.want {
+			t.Fatalf("isInMemorySQLitePath(%q)=%v want=%v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestOpenAndMigrate_InMemorySkipsLockDir(t *testing.T) {
+	wd := t.TempDir()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prev)
+	}()
+
+	db, err := OpenAndMigrate(":memory:")
+	if err != nil {
+		t.Fatalf("OpenAndMigrate(:memory:) failed: %v", err)
+	}
+	if db == nil {
+		t.Fatalf("expected non-nil db")
+	}
+
+	lockDir := filepath.Join(wd, ":memory:.migrate.lock")
+	if _, statErr := os.Stat(lockDir); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("in-memory db should not create migrate lock dir, statErr=%v", statErr)
 	}
 }
 

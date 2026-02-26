@@ -946,6 +946,39 @@ func TestDaemonFeishuWebhookHandler_RelayTimeoutSendsTimeoutReply(t *testing.T) 
 	t.Fatalf("timeout reply not delivered, messages=%+v", msgs)
 }
 
+func TestDaemonFeishuWebhookHandler_RelayDeadlineExceededStillSendsTimeoutReply(t *testing.T) {
+	// 让 relayCtx 先于 idle timer 触发，覆盖 <-relayCtx.Done() 分支。
+	setDaemonFeishuRelayTimeoutsForTest(t, 180*time.Millisecond, 2*time.Second)
+
+	runtime := &testDaemonFeishuDelayedNoEventRuntime{delay: 900 * time.Millisecond}
+	_, gateway, resolver := newTestDaemonFeishuGatewayWithRuntime(t, runtime)
+	if _, err := gateway.BindProject(context.Background(), contracts.ChannelTypeIM, defaultDaemonFeishuAdapter, "chat-relay-deadline", "demo"); err != nil {
+		t.Fatalf("BindProject failed: %v", err)
+	}
+
+	sender := &testDaemonFeishuSender{}
+	handler := newDaemonFeishuWebhookHandler(gateway, resolver, sender, daemonFeishuWebhookOptions{
+		Adapter:     defaultDaemonFeishuAdapter,
+		VerifyToken: "token-ok",
+	}, nil)
+
+	postDaemonFeishuTextEvent(t, handler, "token-ok", "chat-relay-deadline", "msg-relay-deadline", "open-user-1", "hello")
+
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		msgs := sender.snapshot()
+		for _, msg := range msgs {
+			if strings.Contains(msg.Text, "处理超时") {
+				return
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	msgs := sender.snapshot()
+	t.Fatalf("timeout reply not delivered on relay deadline branch, messages=%+v", msgs)
+}
+
 func TestDaemonFeishuWebhookHandler_RelayIdleTimerResetByEvents(t *testing.T) {
 	setDaemonFeishuRelayTimeoutsForTest(t, 900*time.Millisecond, 120*time.Millisecond)
 

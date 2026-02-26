@@ -51,11 +51,13 @@ func AutoMigrate(db *gorm.DB) error {
 }
 
 func OpenAndMigrate(path string) (*gorm.DB, error) {
-	unlock, err := lockMigrate(path, 10*time.Second)
-	if err != nil {
-		return nil, err
+	if !isInMemorySQLitePath(path) {
+		unlock, err := lockMigrate(path, 10*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
 	}
-	defer unlock()
 
 	db, err := Open(path)
 	if err != nil {
@@ -73,12 +75,29 @@ func OpenGatewayDB(path string) (*gorm.DB, error) {
 	if path == "" {
 		return nil, fmt.Errorf("gateway db path 为空")
 	}
-	if path != ":memory:" {
+	if !isInMemorySQLitePath(path) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, fmt.Errorf("创建 gateway db 目录失败: %w", err)
 		}
 	}
 	return OpenAndMigrate(path)
+}
+
+func isInMemorySQLitePath(path string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(path))
+	if normalized == "" {
+		return false
+	}
+	if normalized == ":memory:" {
+		return true
+	}
+	if strings.HasPrefix(normalized, "file::memory:") {
+		return true
+	}
+	if strings.HasPrefix(normalized, "file:") && strings.Contains(normalized, "mode=memory") {
+		return true
+	}
+	return false
 }
 
 func lockMigrate(dbPath string, timeout time.Duration) (func(), error) {
