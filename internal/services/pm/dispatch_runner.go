@@ -46,22 +46,8 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 		"runner_id": strings.TrimSpace(runnerID),
 	})
 
-	stopRenew := make(chan struct{})
+	stopRenew := s.startLeaseRenewal(ctx, job, contracts.Worker{ID: job.WorkerID}, runnerID, leaseTTL)
 	defer close(stopRenew)
-	go func() {
-		ticker := time.NewTicker(dispatchLeaseRenewInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stopRenew:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				_ = s.renewPMDispatchJobLease(context.Background(), job.ID, runnerID, leaseTTL)
-			}
-		}
-	}()
 
 	var t contracts.Ticket
 	if err := db.WithContext(ctx).First(&t, job.TicketID).Error; err != nil {
@@ -140,6 +126,67 @@ func (s *Service) executePMDispatchJob(ctx context.Context, job contracts.PMDisp
 	out.WorkerLoopNextAction = strings.TrimSpace(loopResult.LastNextAction)
 	s.recordDispatchEvent(ctx, now, w, "worker_loop_done", fmt.Sprintf("worker loop 完成 stages=%d next_action=%s", loopResult.Stages, strings.TrimSpace(loopResult.LastNextAction)))
 	return out, nil
+}
+
+// startLeaseRenewal 启动后台 goroutine 定期续租 dispatch job 的 lease。
+// 返回 stop channel，调用方 close(stop) 即可停止续租。
+// 续租失败时会记录日志和事件；连续失败达到阈值后升级为 Error 级别。
+func (s *Service) startLeaseRenewal(ctx context.Context, job contracts.PMDispatchJob, w contracts.Worker, runnerID string, leaseTTL time.Duration) chan struct{} {
+	stopRenew := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(dispatchLeaseRenewInterval)
+		defer ticker.Stop()
+		var consecutiveFailures uint
+		for {
+			select {
+			case <-stopRenew:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				err := s.renewPMDispatchJobLease(context.Background(), job.ID, runnerID, leaseTTL)
+				if err == nil {
+					if consecutiveFailures > 0 {
+						s.slog().Info("pm dispatch lease renewal recovered",
+							"job_id", job.ID,
+							"runner_id", runnerID,
+							"previous_failures", consecutiveFailures,
+						)
+					}
+					consecutiveFailures = 0
+					continue
+				}
+				consecutiveFailures++
+				if consecutiveFailures >= leaseRenewalEscalateThreshold {
+					s.slog().Error("pm dispatch lease renewal failed (escalated)",
+						"job_id", job.ID,
+						"runner_id", runnerID,
+						"consecutive_failures", consecutiveFailures,
+						"error", err,
+					)
+				} else {
+					s.slog().Warn("pm dispatch lease renewal failed",
+						"job_id", job.ID,
+						"runner_id", runnerID,
+						"consecutive_failures", consecutiveFailures,
+						"error", err,
+					)
+				}
+				_ = s.worker.AppendWorkerTaskEvent(context.Background(), w.ID,
+					"lease_renewal_failed",
+					fmt.Sprintf("dispatch job %d lease renewal failed (attempt %d): %v", job.ID, consecutiveFailures, err),
+					map[string]any{
+						"job_id":               job.ID,
+						"runner_id":            runnerID,
+						"consecutive_failures": consecutiveFailures,
+						"ticket_id":            job.TicketID,
+					},
+					time.Now(),
+				)
+			}
+		}
+	}()
+	return stopRenew
 }
 
 func (s *Service) recordDispatchEvent(ctx context.Context, ts time.Time, w contracts.Worker, typ, note string) {

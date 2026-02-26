@@ -12,8 +12,8 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-27`
-- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W10A` `W10C`
-- 当前批次：`W10C`（`done`）
+- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W09A` `W10A` `W10B` `W10C`
+- 当前批次：`W10B + W10C`（`done`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
@@ -77,6 +77,29 @@
   - 以上命令全部通过。
 - 依赖推进：
   - `T07 -> T08` 已闭环，`T09` 可在统一执行入口之上继续推进会话/收口改造。
+
+## W10B 回写（T36 PM 可靠性与测试补齐）
+
+- 状态：`T36` 已完成（2026-02-27）。
+- 关键产物：
+  - **续租 goroutine 可观测性**：`internal/services/pm/dispatch_runner.go` 中的续租 goroutine 已从 `_ = s.renewPMDispatchJobLease(...)` 重构为 `startLeaseRenewal` 方法。新增连续失败计数器、Warn/Error 分级日志（达到 `leaseRenewalEscalateThreshold=3` 次后升级为 Error）、`lease_renewal_failed` 事件记录。
+  - **context 泄露治理**：`internal/services/pm/context_cancel.go` 的 `newCancelOnlyContext` 已从 goroutine 监听模式重写为 `context.AfterFunc`（Go 1.21+），消除 goroutine 泄露风险。取消语义不变：仅传播 `context.Canceled`，不传播 `context.DeadlineExceeded`。
+  - **核心路径测试补齐**：
+    - 新增 `worker_loop_test.go`（8 个测试）：覆盖 StopsOnDone / StopsOnWaitUser / StopsOnEmptyNextAction / ContinuesThenStops / LaunchError / WaitError / DefaultPromptOnEmpty / ContextCancellation。
+    - 新增 `worker_ready_wait_test.go`（9 个测试）：覆盖 AlreadyRunning / NilWorker / EmptySession / StoppedWorkerRejects / FailedWorkerRejects / TimeoutWhileCreating / TransitionCreatingToRunning / ParentContextCancel / TransitionToStopped。
+    - 新增 `dispatch_runner_test.go`（5 个测试）：覆盖 LogsOnFailure / EscalatesAfterThreshold / StopsOnClose / StopsOnContextCancel / RecordsEvent。
+  - 测试注入模式：`service.go` 新增 `sdkHandleLauncher` 可选函数字段，`worker_loop.go` 新增 `launchWorkerSDK` 委托方法，生产路径零影响，测试可注入 fake handle。
+- 验收结果：
+  - `go test ./internal/services/pm/...` 通过（22 个新增测试 + 全部已有测试）
+  - `go test ./...` 通过（65.947s）
+  - `go build ./...` 通过
+  - `go vet ./...` 通过
+  - 2026-02-27 复验：在派发上下文环境执行 `go test ./...` 时会被 `DALEK_DISPATCH_DEPTH=1` 的二次派发保护拦截；按执行合约覆写 `DALEK_DISPATCH_DEPTH=0 go test ./... -count=1` 后全量通过。
+- 变更统计：9 files changed, 963 insertions(+), 29 deletions(-)。
+- 下游约束更新：
+  - 后续涉及续租逻辑改动必须维护 `startLeaseRenewal` 方法的日志/事件可观测性，禁止回退为静默吞错模式。
+  - 后续涉及 context 取消传播的改动必须复用 `context.AfterFunc` 模式，禁止新增 goroutine 监听 parent context。
+  - `sdkHandleLauncher` 注入口仅供测试使用，生产代码不得设置此字段。
 
 ## W08A 回写（T18 Provider/默认值/客户端归位）
 
