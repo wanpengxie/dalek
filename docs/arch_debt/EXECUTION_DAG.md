@@ -12,8 +12,8 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-27`
-- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W09A` `W10A` `W10B` `W10C` `W11A` `W12A`
-- 当前批次：`W12A`（`done`）
+- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W09A` `W10A` `W10B` `W10C` `W11A` `W12A` `W12B`
+- 当前批次：`W12B`（`done`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
@@ -32,6 +32,7 @@
 - W10C 已完成票：`T08(15)`（Channel CLI/SDK 执行入口统一到 services/agentexec）
 - W11A 已完成票：`T09(16)`（生命周期去重 + config 拆分 + Wait 可取消）
 - W12A 已完成票：`T50`（Task/Core 运行态模型统一与状态机归一）`T51`（PM DispatchQueue 分层拆解：queue/completion/workflow）`T52`（Channel 并发语义+依赖边界+context 传播收口）
+- W12B 已完成票：`T53`（Facade 类型边界强化与 Project 组件瘦身）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -41,6 +42,33 @@
   - gateway/ws 改造必须复用 `internal/services/channel/ws/*` 与 `internal/gateway/client/*`。
   - 跨层枚举/状态类型统一引用 `internal/contracts/*`（禁止回流到 `store` 常量）。
   - TaskRuntime 输入/事件类型与 next_action→semantic_phase 映射统一引用 `internal/contracts/task_runtime_input.go`（禁止在 `core/task` 重复定义）。
+
+## W12B 回写（T53 ARCH-DEBT 收口D：Facade 类型边界强化与 Project 组件瘦身）
+
+- 状态：`T53` 已完成（2026-02-27）。
+- 关键产物：
+  - **facade_types.go 透明别名收敛**：删除 ~30 个 `type X = contracts.X` 透明别名和常量重导出。仅保留 `ProjectConfig = repo.Config`（repo 不在 contracts 体系）和 3 个 Parse 函数。
+  - **tmux 辅助函数分离**：新增 `internal/app/tmux.go`，将 `TmuxSocketDir`/`ListTmuxSocketFiles`/`ListTmuxSessions`/`KillTmuxServer`/`KillTmuxSession` 从 facade_types.go 移出。
+  - **Project 按职责拆分**：`project.go` 从 989 行精简到 173 行（-82.5%），方法按职责分到 7 个文件：
+    - `project.go`：struct 定义 + 核心配置 + Close + ChannelService + ApplyAgentProviderModel
+    - `project_ticket.go`：ticket 查询与写入（ListTicketViews, ListTickets, Create*, Archive*, etc.）
+    - `project_worker.go`：worker 生命周期（Interrupt*, Stop*, Cleanup*, Attach*, etc.）
+    - `project_dispatch.go`：dispatch & start（Start*, Dispatch*, DirectDispatch*, FindLatestWorkerRun）
+    - `project_task.go`：task 执行观测与 subagent（ListTaskStatus, Get*, Create/Finish/CancelTaskRun, etc.）
+    - `project_manager.go`：PM manager 管理（ManagerSessionName, GetPMState, ManagerTick, etc.）
+    - `project_inbox_merge.go`：inbox 与 merge queue（ListInbox, ProposeMerge, ApproveMerge, etc.）
+  - **ChannelService 暴露约束**：新增 `TestCmdChannelServiceImportAllowlist` 架构守卫测试，限制 `internal/services/channel` import 仅允许在 4 个 gateway cmd 文件中。
+  - **外部调用方更新**：cmd/dalek 4 文件、internal/ui/tui 4 文件统一从 `app.X` 改为 `contracts.X`。
+- 回归验证：
+  - `go test ./internal/app/...` 通过
+  - `go test ./internal/arch/...` 通过（含新增 ChannelService allowlist 守卫）
+  - `go test ./internal/ui/tui/...` 通过
+  - `go vet ./...` 通过
+  - `go build ./...` 通过
+- 依赖变化说明：
+  - facade 边界大幅收窄：cmd/tui 不再通过 app 中转 contracts 类型，直接引用 contracts。
+  - ChannelService 暴露受控：新增 allowlist 约束，防止后续 cmd 文件非 gateway 场景引入 channel 依赖。
+  - 新增约束：后续对 `internal/services/channel` 的新引用必须更新 arch constraint 白名单或通过 facade 接口访问。
 
 ## W12A 回写（T50 ARCH-DEBT 收口A：Task/Core 运行态模型统一与状态机归一）
 

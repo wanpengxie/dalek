@@ -95,24 +95,24 @@ type WorktreeCleanupResult struct {
 }
 
 type TicketView struct {
-	Ticket       Ticket
-	LatestWorker *Worker
+	Ticket       contracts.Ticket
+	LatestWorker *contracts.Worker
 	SessionAlive bool
 	// SessionProbeFailed=true 表示 tmux 会话探测失败（非离线）。
 	SessionProbeFailed bool
 
-	DerivedStatus TicketWorkflowStatus
+	DerivedStatus contracts.TicketWorkflowStatus
 
 	Capability contracts.TicketCapability
 
 	TaskRunID uint
 
-	RuntimeHealthState TaskRuntimeHealthState
+	RuntimeHealthState contracts.TaskRuntimeHealthState
 	RuntimeNeedsUser   bool
 	RuntimeSummary     string
 	RuntimeObservedAt  *time.Time
 
-	SemanticPhase      TaskSemanticPhase
+	SemanticPhase      contracts.TaskSemanticPhase
 	SemanticNextAction string
 	SemanticSummary    string
 	SemanticReportedAt *time.Time
@@ -130,7 +130,7 @@ type WatchResult struct {
 	ObservedAt time.Time
 	Duration   time.Duration
 
-	State     TaskRuntimeHealthState
+	State     contracts.TaskRuntimeHealthState
 	NeedsUser bool
 	Summary   string
 	Source    string
@@ -143,12 +143,12 @@ type WatchResult struct {
 }
 
 type ListInboxOptions struct {
-	Status InboxStatus
+	Status contracts.InboxStatus
 	Limit  int
 }
 
 type ListMergeOptions struct {
-	Status MergeStatus
+	Status contracts.MergeStatus
 	Limit  int
 }
 
@@ -184,7 +184,7 @@ type ManagerTickResult struct {
 }
 
 type ListTaskOptions struct {
-	OwnerType       TaskOwnerType
+	OwnerType       contracts.TaskOwnerType
 	TaskType        string
 	TicketID        uint
 	WorkerID        uint

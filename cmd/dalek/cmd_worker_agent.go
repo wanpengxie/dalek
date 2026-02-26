@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dalek/internal/app"
+	"dalek/internal/contracts"
 )
 
 func cmdWorker(args []string) {
@@ -250,8 +251,8 @@ func cmdWorkerReport(args []string) {
 		)
 	}
 
-	r := app.WorkerReport{
-		Schema:     app.WorkerReportSchemaV1,
+	r := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
 		ReportedAt: time.Now().Format(time.RFC3339),
 		ProjectKey: strings.TrimSpace(p.Key()),
 		WorkerID:   uint(*workerID),

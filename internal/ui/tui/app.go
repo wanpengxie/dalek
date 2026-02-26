@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"dalek/internal/app"
+	"dalek/internal/contracts"
 	"dalek/internal/repo"
 )
 
@@ -119,13 +120,13 @@ func newAppModel(h *app.Home, initialProject string) appModel {
 		addPath:            ti,
 		lastProjectsErr:    "",
 		registerRepoRoot:   "",
-			registerWarn:       "",
-			currentProjectName: strings.TrimSpace(initialProject),
-			p:                  nil,
-			monitor:            model{},
-			hasMonitor:         false,
-		}
-		return m
+		registerWarn:       "",
+		currentProjectName: strings.TrimSpace(initialProject),
+		p:                  nil,
+		monitor:            model{},
+		hasMonitor:         false,
+	}
+	return m
 }
 
 func detectWorkingDir() string {
@@ -183,12 +184,12 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadProjectsCmd()
 		}
 
-			m.currentProjectName = msg.Name
-			m.p = msg.P
-			m.lastProjectsErr = ""
+		m.currentProjectName = msg.Name
+		m.p = msg.P
+		m.lastProjectsErr = ""
 
-			// best-effort：确保 manager session 可 attach（尽量不让错误阻塞）
-			_, _ = m.p.EnsureManagerSession(context.Background())
+		// best-effort：确保 manager session 可 attach（尽量不让错误阻塞）
+		_, _ = m.p.EnsureManagerSession(context.Background())
 
 		mon := newModel(m.p, m.home, m.currentProjectName)
 		return m.setMonitor(mon)
@@ -235,20 +236,20 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch m.page {
 		case pageProjects:
 			return m.updateProjectsKeys(msg)
-			case pageMonitor:
-				// q 退出（monitor 自己也会 quit，但这里先做一次 cancel/stop）
-				if msg.String() == "q" || msg.String() == "ctrl+c" {
-					m.cancel()
-					return m, tea.Quit
-				}
+		case pageMonitor:
+			// q 退出（monitor 自己也会 quit，但这里先做一次 cancel/stop）
+			if msg.String() == "q" || msg.String() == "ctrl+c" {
+				m.cancel()
+				return m, tea.Quit
+			}
 
 			// Esc：当 monitor 处于“表格主界面”时返回 projects；否则交给 monitor 自己处理（比如退出编辑）。
-				if msg.String() == "esc" && m.hasMonitor && m.monitor.mode == modeTable {
-					m.page = pageProjects
-					m.p = nil
-					m.hasMonitor = false
-					return m, m.loadProjectsCmd()
-				}
+			if msg.String() == "esc" && m.hasMonitor && m.monitor.mode == modeTable {
+				m.page = pageProjects
+				m.p = nil
+				m.hasMonitor = false
+				return m, m.loadProjectsCmd()
+			}
 
 			mon, cmd := m.monitorUpdate(msg)
 			m = mon
@@ -379,15 +380,15 @@ func mustListProjects(h *app.Home) []app.RegisteredProject {
 
 func summarizeQueueStatus(views []app.TicketView) queueStatusSummary {
 	out := queueStatusSummary{Total: len(views)}
-		for _, v := range views {
-			switch v.DerivedStatus {
-			case app.TicketQueued:
-				out.Queued++
-			case app.TicketActive:
-				out.Running++
-			case app.TicketBlocked:
-				out.Blocked++
-			case app.TicketDone:
+	for _, v := range views {
+		switch v.DerivedStatus {
+		case contracts.TicketQueued:
+			out.Queued++
+		case contracts.TicketActive:
+			out.Running++
+		case contracts.TicketBlocked:
+			out.Blocked++
+		case contracts.TicketDone:
 			out.Done++
 		default:
 			out.Backlog++
@@ -431,7 +432,7 @@ func collectPendingIssues(views []app.TicketView, limit int) []string {
 		}
 	}
 	for _, v := range views {
-		if v.RuntimeHealthState != app.TaskHealthStalled {
+		if v.RuntimeHealthState != contracts.TaskHealthStalled {
 			continue
 		}
 		if !addIssue(v, "运行错误") {
@@ -439,7 +440,7 @@ func collectPendingIssues(views []app.TicketView, limit int) []string {
 		}
 	}
 	for _, v := range views {
-		if v.DerivedStatus != app.TicketBlocked {
+		if v.DerivedStatus != contracts.TicketBlocked {
 			continue
 		}
 		if !addIssue(v, "状态阻塞") {
@@ -451,11 +452,11 @@ func collectPendingIssues(views []app.TicketView, limit int) []string {
 
 func (m appModel) updateProjectsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.projectsMode {
-		case projectsModeList:
-			switch msg.String() {
-			case "q", "ctrl+c":
-				m.cancel()
-				return m, tea.Quit
+	case projectsModeList:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			m.cancel()
+			return m, tea.Quit
 		case "r":
 			return m, m.loadProjectsCmd()
 		case "n":
@@ -502,11 +503,11 @@ func (m appModel) updateProjectsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.addPath, cmd = m.addPath.Update(msg)
 		return m, cmd
-		case projectsModeRegisterConfirm:
-			switch msg.String() {
-			case "q", "ctrl+c":
-				m.cancel()
-				return m, tea.Quit
+	case projectsModeRegisterConfirm:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			m.cancel()
+			return m, tea.Quit
 		case "esc", "n":
 			m.projectsMode = projectsModeList
 			m.registerRepoRoot = ""
@@ -521,11 +522,11 @@ func (m appModel) updateProjectsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.registerAndOpenCmd(m.registerRepoRoot)
 		}
 		return m, nil
-		case projectsModeRegisterWarn:
-			switch msg.String() {
-			case "q", "ctrl+c":
-				m.cancel()
-				return m, tea.Quit
+	case projectsModeRegisterWarn:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			m.cancel()
+			return m, tea.Quit
 		case "enter", "esc":
 			m.projectsMode = projectsModeList
 			m.registerWarn = ""

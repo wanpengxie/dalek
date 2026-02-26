@@ -8,7 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"dalek/internal/app"
+	"dalek/internal/contracts"
 )
 
 func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -25,7 +25,7 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		sel := m.selectedRow()
 		m.lastSelected = sel
 		m.tailRef = sel
-		m.tailPreview = app.TailPreview{}
+		m.tailPreview = contracts.TailPreview{}
 		m.tailErr = ""
 		m.tailUpdatedAt = time.Time{}
 		if sel.kind != rowNone && !m.tailInFlight && m.canCaptureTail(sel) {
@@ -44,11 +44,11 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshManual = true
 		m.refreshTicketID = id
 		m.refreshStarted = time.Now()
-			if id != 0 {
-				m.status = fmt.Sprintf("刷新中 t%d...", id)
-			} else {
-				m.status = "刷新中..."
-			}
+		if id != 0 {
+			m.status = fmt.Sprintf("刷新中 t%d...", id)
+		} else {
+			m.status = "刷新中..."
+		}
 		return m, m.manualRefreshCmd(id)
 	case "n":
 		m.mode = modeNewTicket
@@ -194,7 +194,7 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.status = fmt.Sprintf("调整优先级 t%d...", id)
 		return m, m.bumpPriorityCmd(id, -1)
-		case "0", "1", "2", "3", "4":
+	case "0", "1", "2", "3", "4":
 		id, ok, denied := m.selectedTicketForAction(ticketActionStatus)
 		if !ok {
 			if denied != "" {
@@ -203,19 +203,19 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-			var st app.TicketWorkflowStatus
-			switch msg.String() {
-			case "0":
-				st = app.TicketBacklog
-			case "1":
-				st = app.TicketQueued
-			case "2":
-				st = app.TicketActive
-			case "3":
-				st = app.TicketBlocked
-			case "4":
-				st = app.TicketDone
-			}
+		var st contracts.TicketWorkflowStatus
+		switch msg.String() {
+		case "0":
+			st = contracts.TicketBacklog
+		case "1":
+			st = contracts.TicketQueued
+		case "2":
+			st = contracts.TicketActive
+		case "3":
+			st = contracts.TicketBlocked
+		case "4":
+			st = contracts.TicketDone
+		}
 		m.status = fmt.Sprintf("设置状态 t%d -> %s...", id, string(st))
 		return m, m.setTicketStatusCmd(id, st)
 	case "t":
@@ -236,7 +236,7 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeTable && curSel != prevSel {
 		m.lastSelected = curSel
 		m.tailRef = curSel
-		m.tailPreview = app.TailPreview{}
+		m.tailPreview = contracts.TailPreview{}
 		m.tailErr = ""
 		m.tailUpdatedAt = time.Time{}
 		if curSel.kind != rowNone && !m.tailInFlight && m.canCaptureTail(curSel) {
