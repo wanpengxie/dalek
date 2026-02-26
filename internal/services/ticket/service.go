@@ -39,9 +39,6 @@ func (s *Service) CreateWithDescription(ctx context.Context, title, description 
 		return nil, fmt.Errorf("title 不能为空")
 	}
 	description = strings.TrimSpace(description)
-	if description == "" {
-		return nil, fmt.Errorf("description 不能为空")
-	}
 	t := contracts.Ticket{
 		Title:          title,
 		Description:    description,
@@ -49,6 +46,21 @@ func (s *Service) CreateWithDescription(ctx context.Context, title, description 
 		Priority:       0,
 	}
 	if err := db.WithContext(ctx).Create(&t).Error; err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (s *Service) GetByID(ctx context.Context, id uint) (*contracts.Ticket, error) {
+	db, err := s.requireDB()
+	if err != nil {
+		return nil, err
+	}
+	if id == 0 {
+		return nil, fmt.Errorf("ticket id 不能为空")
+	}
+	var t contracts.Ticket
+	if err := db.WithContext(ctx).First(&t, id).Error; err != nil {
 		return nil, err
 	}
 	return &t, nil

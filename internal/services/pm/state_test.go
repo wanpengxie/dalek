@@ -12,6 +12,7 @@ import (
 	"dalek/internal/repo"
 	"dalek/internal/services/core"
 	tasksvc "dalek/internal/services/task"
+	ticketsvc "dalek/internal/services/ticket"
 	workersvc "dalek/internal/services/worker"
 	"dalek/internal/store"
 )
@@ -96,7 +97,7 @@ func newPMServiceForTest(t *testing.T) (*Service, *core.Project) {
 		t.Fatalf("NewProject failed: %v", err)
 	}
 
-	workerSvc := workersvc.New(p)
+	workerSvc := workersvc.New(p, ticketsvc.New(p.DB))
 	pmSvc := New(p, workerSvc)
 	return pmSvc, p
 }

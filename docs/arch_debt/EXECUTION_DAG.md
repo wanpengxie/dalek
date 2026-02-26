@@ -12,14 +12,18 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-26`
-- 已完成批次：`W01` `W02` `W03` `W04`
-- 当前批次：`W06A`（`in_execution`）
+- 已完成批次：`W01` `W02` `W03`
+- 已完成批次：`W01` `W02` `W03` `W04` `W05`
+- 当前批次：`W06A + W07A + W08A`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
 - W04 已完成票：`T22(29)` `T14(21)` `T31(38)` `T29(36)`
 - W05 已完成票：`T23(30)` `T15(22)` `T30(37)` `T37(44)`
-- W06A 进行中票：`T12(19)` `T26(33)`
+- W06A 已完成票：`T26(33)`
+- W06A 进行中票：`T12(19)`
+- W07A 进行中票：`T28(35)`
+- W08A 进行中票：`T18(25)`
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -252,6 +256,23 @@ Tickets: <T.. T.. T..>
 - 对后续票约束：
   - `T23` 继续迁移剩余高传播结构（`PMState/TaskRun/SubagentRun/Channel*`）时，必须沿用本轮 `contracts` 权威边界，不得回流到 `store`。
   - `T26` 修复 ticket service 与 worker 读写路径时，新增跨层类型只允许使用 `contracts`，不得新增 facade 透明别名泄露底层实现。
+
+## W06A 回写（T26 Ticket Service 修复与收敛）
+
+- 状态：`T26` 已完成（2026-02-26），ticket create/get/report 主链路保持稳定，worker 不再直连 ticket 表。
+- 关键产物：
+  - `internal/services/ticket/service.go`：修复 `Create` 空 description 场景，新增 `GetByID(ctx, id)`。
+  - `internal/services/worker/{service,start,views,cleanup}.go`：引入 `TicketReader` 依赖并替换 3 处 `tickets` 直连查询，ticket 读取统一走 service。
+  - `internal/app/home.go` 与 `channel/pm` 相关装配点已适配 `worker.New(project, ticketSvc)`，避免构造回退导致绕层访问。
+  - `internal/services/ticket/service_test.go` 补齐空 description 与 `GetByID` 测试；worker/pm/channel 测试装配同步更新。
+- 解锁状态（T26 对下游）：
+  - `T27`：`T21 -> T22 -> T26` 链路已满足，且 `T39` 已完成，workflow 收口可直接进入实施。
+  - `T13`：`T26` 前置已满足；`T13` 仍需等待 `T12` 完成后进入全量解锁。
+- 回归验证：
+  - `go test ./internal/services/ticket/... ./internal/services/worker/...` 通过
+  - `go test ./...` 通过
+  - `go build ./...` 通过
+  - `go vet ./...` 通过
 
 ## W03 回写（T01 Notebook 归位）
 

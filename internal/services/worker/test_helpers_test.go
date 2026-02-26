@@ -2,6 +2,7 @@ package worker
 
 import (
 	"dalek/internal/contracts"
+	"dalek/internal/services/ticket"
 	"strings"
 	"testing"
 
@@ -19,7 +20,7 @@ func newServiceForTest(t *testing.T) (*Service, *core.Project, *fakeTmuxClient, 
 	t.Helper()
 
 	cp, fTmux, fGit := testutil.NewTestProject(t)
-	return New(cp), cp, fTmux, fGit
+	return New(cp, ticket.New(cp.DB)), cp, fTmux, fGit
 }
 
 func createTicket(t *testing.T, db *gorm.DB, title string) store.Ticket {

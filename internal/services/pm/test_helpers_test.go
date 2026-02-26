@@ -2,6 +2,7 @@ package pm
 
 import (
 	"dalek/internal/contracts"
+	"dalek/internal/services/ticket"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ func newServiceForTest(t *testing.T) (*Service, *core.Project, *fakeTmuxClient, 
 	t.Helper()
 
 	cp, fTmux, fGit := testutil.NewTestProject(t)
-	workerSvc := worker.New(cp)
+	workerSvc := worker.New(cp, ticket.New(cp.DB))
 	pmSvc := New(cp, workerSvc)
 	return pmSvc, cp, fTmux, fGit
 }

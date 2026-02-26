@@ -115,8 +115,8 @@ func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contrac
 	if err != nil {
 		return ActionResult{}, err
 	}
-	var tk contracts.Ticket
-	if err := e.project.DB.WithContext(ctx).First(&tk, ticketID).Error; err != nil {
+	tk, err := ticketsvc.New(e.project.DB).GetByID(ctx, ticketID)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ActionResult{}, fmt.Errorf("ticket 不存在: t%d", ticketID)
 		}
@@ -175,7 +175,8 @@ func (e *ActionExecutor) executeStartTicket(ctx context.Context, action contract
 		return ActionResult{}, err
 	}
 	baseBranch := actionArgString(action.Args, "base_branch", "baseBranch", "base")
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	ticketSvc := ticketsvc.New(e.project.DB)
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
 	worker, err := pmSvc.StartTicketWithOptions(ctx, ticketID, pmsvc.StartOptions{
 		BaseBranch: strings.TrimSpace(baseBranch),
 	})
@@ -207,7 +208,8 @@ func (e *ActionExecutor) executeDispatchTicket(ctx context.Context, action contr
 		return ActionResult{}, err
 	}
 	entryPrompt := actionArgString(action.Args, "entry_prompt", "entryPrompt", "prompt")
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	ticketSvc := ticketsvc.New(e.project.DB)
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
 	res, err := pmSvc.DispatchTicketWithOptions(ctx, ticketID, pmsvc.DispatchOptions{EntryPrompt: entryPrompt})
 	if err != nil {
 		return ActionResult{}, err
@@ -234,7 +236,7 @@ func (e *ActionExecutor) executeInterruptTicket(ctx context.Context, action cont
 	if err != nil {
 		return ActionResult{}, err
 	}
-	res, err := workersvc.New(e.project).InterruptTicket(ctx, ticketID)
+	res, err := workersvc.New(e.project, ticketsvc.New(e.project.DB)).InterruptTicket(ctx, ticketID)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -260,7 +262,7 @@ func (e *ActionExecutor) executeStopTicket(ctx context.Context, action contracts
 	if err != nil {
 		return ActionResult{}, err
 	}
-	if err := workersvc.New(e.project).StopTicket(ctx, ticketID); err != nil {
+	if err := workersvc.New(e.project, ticketsvc.New(e.project.DB)).StopTicket(ctx, ticketID); err != nil {
 		return ActionResult{}, err
 	}
 	return ActionResult{
@@ -275,7 +277,8 @@ func (e *ActionExecutor) executeArchiveTicket(ctx context.Context, action contra
 	if err != nil {
 		return ActionResult{}, err
 	}
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	ticketSvc := ticketsvc.New(e.project.DB)
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
 	if err := pmSvc.ArchiveTicket(ctx, ticketID); err != nil {
 		return ActionResult{}, err
 	}
@@ -293,7 +296,8 @@ func (e *ActionExecutor) executeListMergeItems(ctx context.Context, action contr
 	if statusRaw != "" {
 		opt.Status = contracts.MergeStatus(statusRaw)
 	}
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	ticketSvc := ticketsvc.New(e.project.DB)
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
 	items, err := pmSvc.ListMergeItems(ctx, opt)
 	if err != nil {
 		return ActionResult{}, err
@@ -325,7 +329,8 @@ func (e *ActionExecutor) executeApproveMerge(ctx context.Context, action contrac
 		return ActionResult{}, err
 	}
 	approvedBy := actionArgString(action.Args, "approved_by", "approvedBy", "decider")
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	ticketSvc := ticketsvc.New(e.project.DB)
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
 	if err := pmSvc.ApproveMerge(ctx, mergeItemID, approvedBy); err != nil {
 		return ActionResult{}, err
 	}
@@ -342,7 +347,8 @@ func (e *ActionExecutor) executeRejectMerge(ctx context.Context, action contract
 		return ActionResult{}, err
 	}
 	note := actionArgString(action.Args, "note", "reason")
-	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
+	ticketSvc := ticketsvc.New(e.project.DB)
+	pmSvc := pmsvc.New(e.project, workersvc.New(e.project, ticketSvc))
 	if err := pmSvc.DiscardMerge(ctx, mergeItemID, note); err != nil {
 		return ActionResult{}, err
 	}

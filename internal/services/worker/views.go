@@ -117,17 +117,16 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 	if err != nil {
 		return nil, err
 	}
+	ticketSvc, err := s.ticketSvc()
+	if err != nil {
+		return nil, err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	var tickets []contracts.Ticket
-	if err := db.WithContext(ctx).
-		Where("workflow_status != ?", contracts.TicketArchived).
-		Order("priority desc").
-		Order("updated_at desc").
-		Order("id desc").
-		Find(&tickets).Error; err != nil {
+	tickets, err := ticketSvc.List(ctx, false)
+	if err != nil {
 		return nil, err
 	}
 

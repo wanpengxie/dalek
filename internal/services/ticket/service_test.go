@@ -3,10 +3,13 @@ package ticket
 import (
 	"context"
 	"dalek/internal/contracts"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	"dalek/internal/store"
+
+	"gorm.io/gorm"
 )
 
 func TestService_CreateAndList(t *testing.T) {
@@ -32,7 +35,7 @@ func TestService_CreateAndList(t *testing.T) {
 	}
 }
 
-func TestService_CreateWithDescription_RequiresDescription(t *testing.T) {
+func TestService_Create_AllowsEmptyDescription(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
 	db, err := store.OpenAndMigrate(dbPath)
 	if err != nil {
@@ -40,8 +43,20 @@ func TestService_CreateWithDescription_RequiresDescription(t *testing.T) {
 	}
 
 	svc := New(db)
-	if _, err := svc.CreateWithDescription(context.Background(), "hello", "   "); err == nil {
-		t.Fatalf("expected error when description is empty")
+	tk, err := svc.Create(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if tk.Description != "" {
+		t.Fatalf("expected empty description, got %q", tk.Description)
+	}
+
+	tk2, err := svc.CreateWithDescription(context.Background(), "world", "   ")
+	if err != nil {
+		t.Fatalf("create with empty description failed: %v", err)
+	}
+	if tk2.Description != "" {
+		t.Fatalf("expected empty description after trim, got %q", tk2.Description)
 	}
 }
 
@@ -81,5 +96,34 @@ func TestService_UpdateText_RequiresDescription(t *testing.T) {
 
 	if err := svc.UpdateText(context.Background(), tk.ID, "new title", "   "); err == nil {
 		t.Fatalf("expected error when description is empty")
+	}
+}
+
+func TestService_GetByID(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	svc := New(db)
+	created, err := svc.CreateWithDescription(context.Background(), "hello", "desc")
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	got, err := svc.GetByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetByID failed: %v", err)
+	}
+	if got.ID != created.ID {
+		t.Fatalf("id mismatch: got=%d want=%d", got.ID, created.ID)
+	}
+	if got.Title != created.Title {
+		t.Fatalf("title mismatch: got=%q want=%q", got.Title, created.Title)
+	}
+
+	if _, err := svc.GetByID(context.Background(), created.ID+1000); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected gorm.ErrRecordNotFound, got=%v", err)
 	}
 }
