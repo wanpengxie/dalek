@@ -21,6 +21,8 @@ import (
 	ticketsvc "dalek/internal/services/ticket"
 	workersvc "dalek/internal/services/worker"
 	"dalek/internal/store"
+
+	"gorm.io/gorm"
 )
 
 // Project 是对“单个已打开项目”的应用层 Facade。
@@ -118,6 +120,13 @@ func (p *Project) ChannelService() *channelsvc.Service {
 		return nil
 	}
 	return p.channel
+}
+
+func (p *Project) OpenDBForTest() (*gorm.DB, error) {
+	if p == nil || p.core == nil || p.core.DB == nil {
+		return nil, fmt.Errorf("project db 为空")
+	}
+	return p.core.DB, nil
 }
 
 func (p *Project) Close() error {

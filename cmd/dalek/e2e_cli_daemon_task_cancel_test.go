@@ -1,6 +1,7 @@
 package main
 
 import (
+	"dalek/internal/app"
 	"dalek/internal/contracts"
 	"encoding/json"
 	"net/http"
@@ -10,16 +11,21 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"dalek/internal/repo"
-	"dalek/internal/store"
 )
 
-func seedRunningTaskRunForCancelE2E(t *testing.T, repoRoot string, runID uint, requestID string) {
+func seedRunningTaskRunForCancelE2E(t *testing.T, homeDir string, runID uint, requestID string) {
 	t.Helper()
-	db, err := store.OpenAndMigrate(repo.NewLayout(repoRoot).DBPath)
+	h, err := app.OpenHome(homeDir)
 	if err != nil {
-		t.Fatalf("OpenAndMigrate failed: %v", err)
+		t.Fatalf("OpenHome failed: %v", err)
+	}
+	p, err := h.OpenProjectByName("demo")
+	if err != nil {
+		t.Fatalf("OpenProjectByName failed: %v", err)
+	}
+	db, err := p.OpenDBForTest()
+	if err != nil {
+		t.Fatalf("OpenDBForTest failed: %v", err)
 	}
 	now := time.Now()
 	run := contracts.TaskRun{
@@ -42,11 +48,19 @@ func seedRunningTaskRunForCancelE2E(t *testing.T, repoRoot string, runID uint, r
 	}
 }
 
-func loadTaskRunForCancelE2E(t *testing.T, repoRoot string, runID uint) contracts.TaskRun {
+func loadTaskRunForCancelE2E(t *testing.T, homeDir string, runID uint) contracts.TaskRun {
 	t.Helper()
-	db, err := store.OpenAndMigrate(repo.NewLayout(repoRoot).DBPath)
+	h, err := app.OpenHome(homeDir)
 	if err != nil {
-		t.Fatalf("OpenAndMigrate failed: %v", err)
+		t.Fatalf("OpenHome failed: %v", err)
+	}
+	p, err := h.OpenProjectByName("demo")
+	if err != nil {
+		t.Fatalf("OpenProjectByName failed: %v", err)
+	}
+	db, err := p.OpenDBForTest()
+	if err != nil {
+		t.Fatalf("OpenDBForTest failed: %v", err)
 	}
 	var run contracts.TaskRun
 	if err := db.Where("id = ?", runID).First(&run).Error; err != nil {
@@ -62,7 +76,7 @@ func TestCLI_TaskCancel_UsesDaemonAPIThenMarksDB(t *testing.T) {
 	prepareDemoProjectWithOneTicket(t, bin, repoRoot, home)
 
 	runID := uint(9001)
-	seedRunningTaskRunForCancelE2E(t, repoRoot, runID, "task-cancel-e2e-online")
+	seedRunningTaskRunForCancelE2E(t, home, runID, "task-cancel-e2e-online")
 
 	var cancelCalled atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +133,7 @@ func TestCLI_TaskCancel_UsesDaemonAPIThenMarksDB(t *testing.T) {
 	if !cancelCalled.Load() {
 		t.Fatalf("expected daemon cancel endpoint called")
 	}
-	run := loadTaskRunForCancelE2E(t, repoRoot, runID)
+	run := loadTaskRunForCancelE2E(t, home, runID)
 	if run.OrchestrationState != contracts.TaskCanceled {
 		t.Fatalf("expected run canceled in DB, got=%s", run.OrchestrationState)
 	}
@@ -132,7 +146,7 @@ func TestCLI_TaskCancel_DaemonUnavailableFallbackWarnsAndMarksDB(t *testing.T) {
 	prepareDemoProjectWithOneTicket(t, bin, repoRoot, home)
 
 	runID := uint(9002)
-	seedRunningTaskRunForCancelE2E(t, repoRoot, runID, "task-cancel-e2e-offline")
+	seedRunningTaskRunForCancelE2E(t, home, runID, "task-cancel-e2e-offline")
 	configureDaemonInternalListenForE2E(t, home, "http://127.0.0.1:1")
 
 	stdout, _ := runCLIOK(
@@ -164,7 +178,7 @@ func TestCLI_TaskCancel_DaemonUnavailableFallbackWarnsAndMarksDB(t *testing.T) {
 	if !strings.Contains(resp.Warning, "已降级为仅标记数据库") {
 		t.Fatalf("expected fallback warning in response, got=%q", resp.Warning)
 	}
-	run := loadTaskRunForCancelE2E(t, repoRoot, runID)
+	run := loadTaskRunForCancelE2E(t, home, runID)
 	if run.OrchestrationState != contracts.TaskCanceled {
 		t.Fatalf("expected run canceled in DB, got=%s", run.OrchestrationState)
 	}

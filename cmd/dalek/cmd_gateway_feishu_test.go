@@ -8,16 +8,17 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"dalek/internal/app"
 	"dalek/internal/contracts"
 	channelsvc "dalek/internal/services/channel"
-	"dalek/internal/store"
+
+	"gorm.io/gorm"
 )
 
 type staticProjectResolver struct {
@@ -50,6 +51,19 @@ func (r *staticProjectResolver) ListProjects() ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+func openGatewayDBForFeishuTest(t *testing.T) *gorm.DB {
+	t.Helper()
+	h, err := app.OpenHome(t.TempDir())
+	if err != nil {
+		t.Fatalf("OpenHome failed: %v", err)
+	}
+	db, err := h.OpenGatewayDB()
+	if err != nil {
+		t.Fatalf("OpenGatewayDB failed: %v", err)
+	}
+	return db
 }
 
 type echoProjectRuntime struct{}
@@ -453,11 +467,7 @@ func (s *cardFailTextOKSender) PatchCard(ctx context.Context, messageID, cardJSO
 }
 
 func TestGatewayFeishuWebhook_BindForwardUnbindFlow(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	db, err := store.OpenGatewayDB(dbPath)
-	if err != nil {
-		t.Fatalf("OpenGatewayDB failed: %v", err)
-	}
+	db := openGatewayDBForFeishuTest(t)
 
 	resolver := &staticProjectResolver{
 		projects: map[string]*channelsvc.ProjectContext{
@@ -511,11 +521,7 @@ func TestGatewayFeishuWebhook_BindForwardUnbindFlow(t *testing.T) {
 }
 
 func TestGatewayFeishuWebhook_ForwardIncludesSenderName(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	db, err := store.OpenGatewayDB(dbPath)
-	if err != nil {
-		t.Fatalf("OpenGatewayDB failed: %v", err)
-	}
+	db := openGatewayDBForFeishuTest(t)
 
 	runtime := &captureInboundRuntime{}
 	resolver := &staticProjectResolver{
@@ -566,11 +572,7 @@ func TestGatewayFeishuWebhook_ForwardIncludesSenderName(t *testing.T) {
 }
 
 func TestGatewayFeishuWebhook_InterruptCommand(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	db, err := store.OpenGatewayDB(dbPath)
-	if err != nil {
-		t.Fatalf("OpenGatewayDB failed: %v", err)
-	}
+	db := openGatewayDBForFeishuTest(t)
 
 	runtime := &interruptableProjectRuntime{interruptOK: true}
 	resolver := &staticProjectResolver{
@@ -622,11 +624,7 @@ func TestGatewayFeishuWebhook_InterruptCommand(t *testing.T) {
 }
 
 func TestGatewayFeishuWebhook_NewCommand(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	db, err := store.OpenGatewayDB(dbPath)
-	if err != nil {
-		t.Fatalf("OpenGatewayDB failed: %v", err)
-	}
+	db := openGatewayDBForFeishuTest(t)
 
 	runtime := &interruptableProjectRuntime{resetOK: true}
 	resolver := &staticProjectResolver{
@@ -672,11 +670,7 @@ func TestGatewayFeishuWebhook_NewCommand(t *testing.T) {
 }
 
 func TestGatewayFeishuWebhook_EventBusRelayFiltersByPeerMessageID(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	db, err := store.OpenGatewayDB(dbPath)
-	if err != nil {
-		t.Fatalf("OpenGatewayDB failed: %v", err)
-	}
+	db := openGatewayDBForFeishuTest(t)
 
 	resolver := &staticProjectResolver{
 		projects: map[string]*channelsvc.ProjectContext{
@@ -738,11 +732,7 @@ func TestGatewayFeishuWebhook_EventBusRelayFiltersByPeerMessageID(t *testing.T) 
 }
 
 func TestGatewayFeishuWebhook_DedupByEventID(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	db, err := store.OpenGatewayDB(dbPath)
-	if err != nil {
-		t.Fatalf("OpenGatewayDB failed: %v", err)
-	}
+	db := openGatewayDBForFeishuTest(t)
 
 	runtime := &countingProjectRuntime{}
 	resolver := &staticProjectResolver{
@@ -806,11 +796,7 @@ func TestGatewayFeishuWebhook_DedupByEventID(t *testing.T) {
 }
 
 func TestGatewayFeishuWebhook_FinalReplyRetryAndOutboxSent(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	db, err := store.OpenGatewayDB(dbPath)
-	if err != nil {
-		t.Fatalf("OpenGatewayDB failed: %v", err)
-	}
+	db := openGatewayDBForFeishuTest(t)
 
 	resolver := &staticProjectResolver{
 		projects: map[string]*channelsvc.ProjectContext{
@@ -884,11 +870,7 @@ func TestGatewayFeishuWebhook_FinalReplyRetryAndOutboxSent(t *testing.T) {
 }
 
 func TestGatewayFeishuWebhook_FinalReplyFailedMarksOutboxFailed(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	db, err := store.OpenGatewayDB(dbPath)
-	if err != nil {
-		t.Fatalf("OpenGatewayDB failed: %v", err)
-	}
+	db := openGatewayDBForFeishuTest(t)
 
 	resolver := &staticProjectResolver{
 		projects: map[string]*channelsvc.ProjectContext{
@@ -950,11 +932,7 @@ func TestGatewayFeishuWebhook_FinalReplyFailedMarksOutboxFailed(t *testing.T) {
 }
 
 func TestGatewayFeishuWebhook_FinalReplyCardFailed_FallbackToText(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "gateway.db")
-	db, err := store.OpenGatewayDB(dbPath)
-	if err != nil {
-		t.Fatalf("OpenGatewayDB failed: %v", err)
-	}
+	db := openGatewayDBForFeishuTest(t)
 
 	resolver := &staticProjectResolver{
 		projects: map[string]*channelsvc.ProjectContext{

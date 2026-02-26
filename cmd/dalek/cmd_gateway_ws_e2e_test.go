@@ -16,7 +16,6 @@ import (
 
 	"dalek/internal/app"
 	"dalek/internal/repo"
-	"dalek/internal/store"
 )
 
 func TestGatewayWS_E2E_AcceptanceFlow(t *testing.T) {
@@ -88,7 +87,7 @@ func TestGatewayWS_E2E_AcceptanceFlow(t *testing.T) {
 	}
 
 	// 3) 服务端 inbox 通知
-	if err := insertOpenInboxItem(t, repoRoot, seedTicket.ID, "ws inbox notify"); err != nil {
+	if err := insertOpenInboxItem(t, p, seedTicket.ID, "ws inbox notify"); err != nil {
 		t.Fatalf("insert inbox failed: %v", err)
 	}
 	inboxFrame := mustReadWSFrameUntil(t, conn, 6*time.Second, func(f gatewayWSOutboundFrame) bool {
@@ -244,14 +243,13 @@ func mustReadWSFrameUntil(t *testing.T, conn *websocket.Conn, timeout time.Durat
 	}
 }
 
-func insertOpenInboxItem(t *testing.T, repoRoot string, ticketID uint, title string) error {
+func insertOpenInboxItem(t *testing.T, p *app.Project, ticketID uint, title string) error {
 	t.Helper()
-	layout := repo.NewLayout(repoRoot)
-	db, err := store.OpenAndMigrate(layout.DBPath)
+	db, err := p.OpenDBForTest()
 	if err != nil {
 		return err
 	}
-	return db.Create(&store.InboxItem{
+	return db.Create(&contracts.InboxItem{
 		Key:      fmt.Sprintf("ws-test-inbox-%d", time.Now().UnixNano()),
 		Status:   contracts.InboxOpen,
 		Severity: contracts.InboxWarn,
