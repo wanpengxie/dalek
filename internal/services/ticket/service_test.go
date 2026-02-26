@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"path/filepath"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestService_CreateAndList(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("expected 1 ticket, got %d", len(items))
 	}
-	if items[0].WorkflowStatus != store.TicketBacklog {
+	if items[0].WorkflowStatus != contracts.TicketBacklog {
 		t.Fatalf("unexpected status: %s", items[0].WorkflowStatus)
 	}
 }

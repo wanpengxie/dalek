@@ -1,8 +1,19 @@
-package store
+package contracts
 
 import "strings"
 
-// CanonicalTicketWorkflowStatus 统一历史与当前的 workflow_status 枚举值。
+type TicketWorkflowStatus string
+
+const (
+	TicketBacklog  TicketWorkflowStatus = "backlog"
+	TicketQueued   TicketWorkflowStatus = "queued"
+	TicketActive   TicketWorkflowStatus = "active"
+	TicketBlocked  TicketWorkflowStatus = "blocked"
+	TicketDone     TicketWorkflowStatus = "done"
+	TicketArchived TicketWorkflowStatus = "archived"
+)
+
+// CanonicalTicketWorkflowStatus normalizes historical and current workflow values.
 func CanonicalTicketWorkflowStatus(st TicketWorkflowStatus) TicketWorkflowStatus {
 	v := TicketWorkflowStatus(strings.TrimSpace(strings.ToLower(string(st))))
 	switch v {

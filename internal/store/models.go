@@ -1,43 +1,27 @@
 package store
 
-import "time"
+import (
+	"time"
 
-type TicketWorkflowStatus string
-
-const (
-	TicketBacklog  TicketWorkflowStatus = "backlog"
-	TicketQueued   TicketWorkflowStatus = "queued"
-	TicketActive   TicketWorkflowStatus = "active"
-	TicketBlocked  TicketWorkflowStatus = "blocked"
-	TicketDone     TicketWorkflowStatus = "done"
-	TicketArchived TicketWorkflowStatus = "archived"
+	"dalek/internal/contracts"
 )
 
 type Ticket struct {
-	ID             uint                 `gorm:"primaryKey"`
-	CreatedAt      time.Time            `gorm:"not null"`
-	UpdatedAt      time.Time            `gorm:"not null"`
-	Title          string               `gorm:"type:text;not null"`
-	Description    string               `gorm:"type:text;not null;default:''"`
-	WorkflowStatus TicketWorkflowStatus `gorm:"column:workflow_status;type:text;not null;default:'backlog';index"`
-	Priority       int                  `gorm:"not null;default:0"`
+	ID             uint                           `gorm:"primaryKey"`
+	CreatedAt      time.Time                      `gorm:"not null"`
+	UpdatedAt      time.Time                      `gorm:"not null"`
+	Title          string                         `gorm:"type:text;not null"`
+	Description    string                         `gorm:"type:text;not null;default:''"`
+	WorkflowStatus contracts.TicketWorkflowStatus `gorm:"column:workflow_status;type:text;not null;default:'backlog';index"`
+	Priority       int                            `gorm:"not null;default:0"`
 }
 
-type WorkerStatus string
-
-const (
-	WorkerCreating WorkerStatus = "creating"
-	WorkerRunning  WorkerStatus = "running"
-	WorkerStopped  WorkerStatus = "stopped"
-	WorkerFailed   WorkerStatus = "failed"
-)
-
 type Worker struct {
-	ID        uint         `gorm:"primaryKey"`
-	CreatedAt time.Time    `gorm:"not null"`
-	UpdatedAt time.Time    `gorm:"not null"`
-	TicketID  uint         `gorm:"uniqueIndex;not null"`
-	Status    WorkerStatus `gorm:"type:text;not null;index"`
+	ID        uint                   `gorm:"primaryKey"`
+	CreatedAt time.Time              `gorm:"not null"`
+	UpdatedAt time.Time              `gorm:"not null"`
+	TicketID  uint                   `gorm:"uniqueIndex;not null"`
+	Status    contracts.WorkerStatus `gorm:"type:text;not null;index"`
 
 	WorktreePath string `gorm:"type:text;not null"`
 	Branch       string `gorm:"type:text;not null"`
@@ -88,31 +72,6 @@ func (PMState) TableName() string {
 	return "pm_states"
 }
 
-type InboxStatus string
-
-const (
-	InboxOpen    InboxStatus = "open"
-	InboxDone    InboxStatus = "done"
-	InboxSnoozed InboxStatus = "snoozed"
-)
-
-type InboxSeverity string
-
-const (
-	InboxInfo    InboxSeverity = "info"
-	InboxWarn    InboxSeverity = "warn"
-	InboxBlocker InboxSeverity = "blocker"
-)
-
-type InboxReason string
-
-const (
-	InboxNeedsUser        InboxReason = "needs_user"
-	InboxApprovalRequired InboxReason = "approval_required"
-	InboxQuestion         InboxReason = "question"
-	InboxIncident         InboxReason = "incident"
-)
-
 type InboxItem struct {
 	ID        uint      `gorm:"primaryKey"`
 	CreatedAt time.Time `gorm:"not null"`
@@ -120,9 +79,9 @@ type InboxItem struct {
 
 	Key string `gorm:"type:text;not null;default:'';index"`
 
-	Status   InboxStatus   `gorm:"type:text;not null"`
-	Severity InboxSeverity `gorm:"type:text;not null"`
-	Reason   InboxReason   `gorm:"type:text;not null"`
+	Status   contracts.InboxStatus   `gorm:"type:text;not null"`
+	Severity contracts.InboxSeverity `gorm:"type:text;not null"`
+	Reason   contracts.InboxReason   `gorm:"type:text;not null"`
 
 	Title string `gorm:"type:text;not null"`
 	Body  string `gorm:"type:text;not null;default:''"`
@@ -135,26 +94,14 @@ type InboxItem struct {
 	ClosedAt     *time.Time `gorm:""`
 }
 
-type MergeStatus string
-
-const (
-	MergeProposed      MergeStatus = "proposed"
-	MergeChecksRunning MergeStatus = "checks_running"
-	MergeReady         MergeStatus = "ready"
-	MergeApproved      MergeStatus = "approved"
-	MergeMerged        MergeStatus = "merged"
-	MergeDiscarded     MergeStatus = "discarded"
-	MergeBlocked       MergeStatus = "blocked"
-)
-
 type MergeItem struct {
 	ID        uint      `gorm:"primaryKey"`
 	CreatedAt time.Time `gorm:"not null"`
 	UpdatedAt time.Time `gorm:"not null"`
 
-	Status   MergeStatus `gorm:"type:text;not null"`
-	TicketID uint        `gorm:"not null;index"`
-	WorkerID uint        `gorm:"not null;default:0;index"`
+	Status   contracts.MergeStatus `gorm:"type:text;not null"`
+	TicketID uint                  `gorm:"not null;index"`
+	WorkerID uint                  `gorm:"not null;default:0;index"`
 
 	Branch     string `gorm:"type:text;not null;default:''"`
 	ChecksJSON string `gorm:"type:text;not null;default:''"`
@@ -164,15 +111,6 @@ type MergeItem struct {
 
 	MergedAt *time.Time `gorm:""`
 }
-
-type PMDispatchJobStatus string
-
-const (
-	PMDispatchPending   PMDispatchJobStatus = "pending"
-	PMDispatchRunning   PMDispatchJobStatus = "running"
-	PMDispatchSucceeded PMDispatchJobStatus = "succeeded"
-	PMDispatchFailed    PMDispatchJobStatus = "failed"
-)
 
 type PMDispatchJob struct {
 	ID        uint      `gorm:"primaryKey"`
@@ -187,7 +125,7 @@ type PMDispatchJob struct {
 	// 同 ticket 同时最多一个 active dispatch job（pending/running）。
 	ActiveTicketKey *uint `gorm:"uniqueIndex"`
 
-	Status PMDispatchJobStatus `gorm:"type:text;not null;index"`
+	Status contracts.PMDispatchJobStatus `gorm:"type:text;not null;index"`
 
 	RunnerID       string     `gorm:"type:text;not null;default:''"`
 	LeaseExpiresAt *time.Time `gorm:""`
@@ -204,62 +142,13 @@ func (PMDispatchJob) TableName() string {
 	return "pm_dispatch_jobs"
 }
 
-type TaskOwnerType string
-
-const (
-	TaskOwnerWorker   TaskOwnerType = "worker"
-	TaskOwnerPM       TaskOwnerType = "pm"
-	TaskOwnerSubagent TaskOwnerType = "subagent"
-)
-
-const (
-	TaskTypeDispatchTicket  = "dispatch_ticket"
-	TaskTypeDeliverTicket   = "deliver_ticket"
-	TaskTypePMDispatchAgent = "pm_dispatch_agent"
-	TaskTypeSubagentRun     = "subagent_run"
-)
-
-type TaskOrchestrationState string
-
-const (
-	TaskPending   TaskOrchestrationState = "pending"
-	TaskRunning   TaskOrchestrationState = "running"
-	TaskSucceeded TaskOrchestrationState = "succeeded"
-	TaskFailed    TaskOrchestrationState = "failed"
-	TaskCanceled  TaskOrchestrationState = "canceled"
-)
-
-type TaskRuntimeHealthState string
-
-const (
-	TaskHealthUnknown     TaskRuntimeHealthState = "unknown"
-	TaskHealthAlive       TaskRuntimeHealthState = "alive"
-	TaskHealthIdle        TaskRuntimeHealthState = "idle"
-	TaskHealthBusy        TaskRuntimeHealthState = "busy"
-	TaskHealthStalled     TaskRuntimeHealthState = "stalled"
-	TaskHealthWaitingUser TaskRuntimeHealthState = "waiting_user"
-	TaskHealthDead        TaskRuntimeHealthState = "dead"
-)
-
-type TaskSemanticPhase string
-
-const (
-	TaskPhaseInit         TaskSemanticPhase = "init"
-	TaskPhasePlanning     TaskSemanticPhase = "planning"
-	TaskPhaseImplementing TaskSemanticPhase = "implementing"
-	TaskPhaseTesting      TaskSemanticPhase = "testing"
-	TaskPhaseReviewing    TaskSemanticPhase = "reviewing"
-	TaskPhaseDone         TaskSemanticPhase = "done"
-	TaskPhaseBlocked      TaskSemanticPhase = "blocked"
-)
-
 type TaskRun struct {
 	ID        uint      `gorm:"primaryKey"`
 	CreatedAt time.Time `gorm:"not null"`
 	UpdatedAt time.Time `gorm:"not null"`
 
-	OwnerType TaskOwnerType `gorm:"type:text;not null;index"`
-	TaskType  string        `gorm:"type:text;not null;index"`
+	OwnerType contracts.TaskOwnerType `gorm:"type:text;not null;index"`
+	TaskType  string                  `gorm:"type:text;not null;index"`
 
 	ProjectKey string `gorm:"type:text;not null;index"`
 	TicketID   uint   `gorm:"not null;default:0;index"`
@@ -270,10 +159,10 @@ type TaskRun struct {
 
 	RequestID string `gorm:"type:text;not null;uniqueIndex"`
 
-	OrchestrationState TaskOrchestrationState `gorm:"type:text;not null;index"`
-	RunnerID           string                 `gorm:"type:text;not null;default:''"`
-	LeaseExpiresAt     *time.Time             `gorm:""`
-	Attempt            int                    `gorm:"not null;default:0"`
+	OrchestrationState contracts.TaskOrchestrationState `gorm:"type:text;not null;index"`
+	RunnerID           string                           `gorm:"type:text;not null;default:''"`
+	LeaseExpiresAt     *time.Time                       `gorm:""`
+	Attempt            int                              `gorm:"not null;default:0"`
 
 	RequestPayloadJSON string `gorm:"type:text;not null;default:''"`
 	ResultPayloadJSON  string `gorm:"type:text;not null;default:''"`
@@ -314,11 +203,11 @@ type TaskRuntimeSample struct {
 	ID        uint      `gorm:"primaryKey"`
 	CreatedAt time.Time `gorm:"not null"`
 
-	TaskRunID uint                   `gorm:"not null;index"`
-	State     TaskRuntimeHealthState `gorm:"column:runtime_health_state;type:text;not null;index"`
-	NeedsUser bool                   `gorm:"not null;default:false"`
-	Summary   string                 `gorm:"type:text;not null;default:''"`
-	Source    string                 `gorm:"type:text;not null;default:''"`
+	TaskRunID uint                             `gorm:"not null;index"`
+	State     contracts.TaskRuntimeHealthState `gorm:"column:runtime_health_state;type:text;not null;index"`
+	NeedsUser bool                             `gorm:"not null;default:false"`
+	Summary   string                           `gorm:"type:text;not null;default:''"`
+	Source    string                           `gorm:"type:text;not null;default:''"`
 
 	ObservedAt  time.Time `gorm:"not null;index"`
 	MetricsJSON string    `gorm:"type:text;not null;default:''"`
@@ -332,11 +221,11 @@ type TaskSemanticReport struct {
 	ID        uint      `gorm:"primaryKey"`
 	CreatedAt time.Time `gorm:"not null"`
 
-	TaskRunID  uint              `gorm:"not null;index"`
-	Phase      TaskSemanticPhase `gorm:"column:semantic_phase;type:text;not null;index"`
-	Milestone  string            `gorm:"type:text;not null;default:''"`
-	NextAction string            `gorm:"type:text;not null;default:''"`
-	Summary    string            `gorm:"type:text;not null;default:''"`
+	TaskRunID  uint                        `gorm:"not null;index"`
+	Phase      contracts.TaskSemanticPhase `gorm:"column:semantic_phase;type:text;not null;index"`
+	Milestone  string                      `gorm:"type:text;not null;default:''"`
+	NextAction string                      `gorm:"type:text;not null;default:''"`
+	Summary    string                      `gorm:"type:text;not null;default:''"`
 
 	ReportPayloadJSON string    `gorm:"type:text;not null;default:''"`
 	ReportedAt        time.Time `gorm:"not null;index"`
@@ -370,8 +259,8 @@ type TicketWorkflowEvent struct {
 
 	TicketID uint `gorm:"not null;index"`
 
-	FromStatus TicketWorkflowStatus `gorm:"column:from_workflow_status;type:text;not null;default:'';index"`
-	ToStatus   TicketWorkflowStatus `gorm:"column:to_workflow_status;type:text;not null;default:'';index"`
+	FromStatus contracts.TicketWorkflowStatus `gorm:"column:from_workflow_status;type:text;not null;default:'';index"`
+	ToStatus   contracts.TicketWorkflowStatus `gorm:"column:to_workflow_status;type:text;not null;default:'';index"`
 
 	Source      string `gorm:"type:text;not null;default:'';index"`
 	Reason      string `gorm:"type:text;not null;default:''"`
@@ -390,8 +279,8 @@ type WorkerStatusEvent struct {
 	WorkerID uint `gorm:"not null;index"`
 	TicketID uint `gorm:"not null;default:0;index"`
 
-	FromStatus WorkerStatus `gorm:"column:from_worker_status;type:text;not null;default:'';index"`
-	ToStatus   WorkerStatus `gorm:"column:to_worker_status;type:text;not null;default:'';index"`
+	FromStatus contracts.WorkerStatus `gorm:"column:from_worker_status;type:text;not null;default:'';index"`
+	ToStatus   contracts.WorkerStatus `gorm:"column:to_worker_status;type:text;not null;default:'';index"`
 
 	Source      string `gorm:"type:text;not null;default:'';index"`
 	Reason      string `gorm:"type:text;not null;default:''"`
@@ -449,23 +338,14 @@ func (TaskStatusView) TableName() string {
 	return "task_status_view"
 }
 
-type ChannelType string
-
-const (
-	ChannelWeb ChannelType = "web"
-	ChannelIM  ChannelType = "im"
-	ChannelCLI ChannelType = "cli"
-	ChannelAPI ChannelType = "api"
-)
-
 type ChannelBinding struct {
 	ID        uint      `gorm:"primaryKey"`
 	CreatedAt time.Time `gorm:"not null"`
 	UpdatedAt time.Time `gorm:"not null"`
 
-	ProjectName string      `gorm:"type:text;not null;default:'';index"`
-	ChannelType ChannelType `gorm:"type:text;not null;index;uniqueIndex:idx_channel_binding_identity,priority:1"`
-	Adapter     string      `gorm:"type:text;not null;index;uniqueIndex:idx_channel_binding_identity,priority:2"`
+	ProjectName string                `gorm:"type:text;not null;default:'';index"`
+	ChannelType contracts.ChannelType `gorm:"type:text;not null;index;uniqueIndex:idx_channel_binding_identity,priority:1"`
+	Adapter     string                `gorm:"type:text;not null;index;uniqueIndex:idx_channel_binding_identity,priority:2"`
 
 	PeerProjectKey string `gorm:"type:text;not null;default:'';uniqueIndex:idx_channel_binding_identity,priority:3"`
 	RolePolicyJSON string `gorm:"type:text;not null;default:'{}'"`
@@ -486,47 +366,22 @@ type ChannelConversation struct {
 	LastMessageAt  *time.Time `gorm:""`
 }
 
-type ChannelMessageDirection string
-
-const (
-	ChannelMessageIn  ChannelMessageDirection = "in"
-	ChannelMessageOut ChannelMessageDirection = "out"
-)
-
-type ChannelMessageStatus string
-
-const (
-	ChannelMessageAccepted  ChannelMessageStatus = "accepted"
-	ChannelMessageProcessed ChannelMessageStatus = "processed"
-	ChannelMessageSent      ChannelMessageStatus = "sent"
-	ChannelMessageFailed    ChannelMessageStatus = "failed"
-)
-
 type ChannelMessage struct {
 	ID        uint      `gorm:"primaryKey"`
 	CreatedAt time.Time `gorm:"not null"`
 
-	ConversationID uint                    `gorm:"not null;index;uniqueIndex:idx_channel_message_dedup,priority:2"`
-	Direction      ChannelMessageDirection `gorm:"type:text;not null;index;uniqueIndex:idx_channel_message_dedup,priority:1"`
+	ConversationID uint                              `gorm:"not null;index;uniqueIndex:idx_channel_message_dedup,priority:2"`
+	Direction      contracts.ChannelMessageDirection `gorm:"type:text;not null;index;uniqueIndex:idx_channel_message_dedup,priority:1"`
 
 	Adapter       string  `gorm:"type:text;not null;default:'';index;uniqueIndex:idx_channel_message_dedup,priority:3"`
 	PeerMessageID *string `gorm:"type:text;uniqueIndex:idx_channel_message_dedup,priority:4"`
 
-	SenderID    string               `gorm:"type:text;not null;default:''"`
-	SenderName  string               `gorm:"type:text;not null;default:''"`
-	ContentText string               `gorm:"type:text;not null;default:''"`
-	PayloadJSON string               `gorm:"type:text;not null;default:'{}'"`
-	Status      ChannelMessageStatus `gorm:"type:text;not null;index"`
+	SenderID    string                         `gorm:"type:text;not null;default:''"`
+	SenderName  string                         `gorm:"type:text;not null;default:''"`
+	ContentText string                         `gorm:"type:text;not null;default:''"`
+	PayloadJSON string                         `gorm:"type:text;not null;default:'{}'"`
+	Status      contracts.ChannelMessageStatus `gorm:"type:text;not null;index"`
 }
-
-type ChannelTurnJobStatus string
-
-const (
-	ChannelTurnPending   ChannelTurnJobStatus = "pending"
-	ChannelTurnRunning   ChannelTurnJobStatus = "running"
-	ChannelTurnSucceeded ChannelTurnJobStatus = "succeeded"
-	ChannelTurnFailed    ChannelTurnJobStatus = "failed"
-)
 
 type ChannelTurnJob struct {
 	ID        uint      `gorm:"primaryKey"`
@@ -536,26 +391,16 @@ type ChannelTurnJob struct {
 	ConversationID   uint `gorm:"not null;index"`
 	InboundMessageID uint `gorm:"not null;uniqueIndex"`
 
-	Status         ChannelTurnJobStatus `gorm:"type:text;not null;index"`
-	RunnerID       string               `gorm:"type:text;not null;default:''"`
-	LeaseExpiresAt *time.Time           `gorm:""`
-	Attempt        int                  `gorm:"not null;default:0"`
-	Error          string               `gorm:"type:text;not null;default:''"`
-	ResultJSON     string               `gorm:"type:text;not null;default:''"`
+	Status         contracts.ChannelTurnJobStatus `gorm:"type:text;not null;index"`
+	RunnerID       string                         `gorm:"type:text;not null;default:''"`
+	LeaseExpiresAt *time.Time                     `gorm:""`
+	Attempt        int                            `gorm:"not null;default:0"`
+	Error          string                         `gorm:"type:text;not null;default:''"`
+	ResultJSON     string                         `gorm:"type:text;not null;default:''"`
 
 	StartedAt  *time.Time `gorm:""`
 	FinishedAt *time.Time `gorm:""`
 }
-
-type ChannelPendingActionStatus string
-
-const (
-	ChannelPendingActionPending  ChannelPendingActionStatus = "pending"
-	ChannelPendingActionApproved ChannelPendingActionStatus = "approved"
-	ChannelPendingActionRejected ChannelPendingActionStatus = "rejected"
-	ChannelPendingActionExecuted ChannelPendingActionStatus = "executed"
-	ChannelPendingActionFailed   ChannelPendingActionStatus = "failed"
-)
 
 type ChannelPendingAction struct {
 	ID        uint      `gorm:"primaryKey"`
@@ -565,10 +410,10 @@ type ChannelPendingAction struct {
 	ConversationID uint `gorm:"not null;index"`
 	JobID          uint `gorm:"not null;index"`
 
-	ActionJSON   string                     `gorm:"type:text;not null;default:'{}'"`
-	Status       ChannelPendingActionStatus `gorm:"type:text;not null;index"`
-	Decider      string                     `gorm:"type:text;not null;default:''"`
-	DecisionNote string                     `gorm:"type:text;not null;default:''"`
+	ActionJSON   string                               `gorm:"type:text;not null;default:'{}'"`
+	Status       contracts.ChannelPendingActionStatus `gorm:"type:text;not null;index"`
+	Decider      string                               `gorm:"type:text;not null;default:''"`
+	DecisionNote string                               `gorm:"type:text;not null;default:''"`
 
 	DecidedAt  *time.Time `gorm:""`
 	ExecutedAt *time.Time `gorm:""`
@@ -596,16 +441,6 @@ type EventBusLog struct {
 	JobErrorType  string `gorm:"type:text;not null;default:''"`
 }
 
-type ChannelOutboxStatus string
-
-const (
-	ChannelOutboxPending ChannelOutboxStatus = "pending"
-	ChannelOutboxSending ChannelOutboxStatus = "sending"
-	ChannelOutboxSent    ChannelOutboxStatus = "sent"
-	ChannelOutboxFailed  ChannelOutboxStatus = "failed"
-	ChannelOutboxDead    ChannelOutboxStatus = "dead"
-)
-
 type ChannelOutbox struct {
 	ID        uint      `gorm:"primaryKey"`
 	CreatedAt time.Time `gorm:"not null"`
@@ -614,9 +449,9 @@ type ChannelOutbox struct {
 	MessageID uint   `gorm:"not null;uniqueIndex"`
 	Adapter   string `gorm:"type:text;not null;default:'';index"`
 
-	PayloadJSON string              `gorm:"type:text;not null;default:'{}'"`
-	Status      ChannelOutboxStatus `gorm:"type:text;not null;index"`
-	RetryCount  int                 `gorm:"not null;default:0"`
-	NextRetryAt *time.Time          `gorm:""`
-	LastError   string              `gorm:"type:text;not null;default:''"`
+	PayloadJSON string                        `gorm:"type:text;not null;default:'{}'"`
+	Status      contracts.ChannelOutboxStatus `gorm:"type:text;not null;index"`
+	RetryCount  int                           `gorm:"not null;default:0"`
+	NextRetryAt *time.Time                    `gorm:""`
+	LastError   string                        `gorm:"type:text;not null;default:''"`
 }

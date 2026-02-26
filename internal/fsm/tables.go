@@ -1,120 +1,122 @@
 package fsm
 
-import "dalek/internal/store"
+import (
+	"dalek/internal/contracts"
+)
 
-var TicketWorkflowTable = TransitionTable[store.TicketWorkflowStatus]{
+var TicketWorkflowTable = TransitionTable[contracts.TicketWorkflowStatus]{
 	Name:          "ticket_workflow",
-	InitialStates: []store.TicketWorkflowStatus{store.TicketBacklog},
-	TerminalStates: []store.TicketWorkflowStatus{
-		store.TicketArchived,
+	InitialStates: []contracts.TicketWorkflowStatus{contracts.TicketBacklog},
+	TerminalStates: []contracts.TicketWorkflowStatus{
+		contracts.TicketArchived,
 	},
-	Transitions: map[store.TicketWorkflowStatus][]store.TicketWorkflowStatus{
-		store.TicketBacklog: {
-			store.TicketQueued,
-			store.TicketArchived,
+	Transitions: map[contracts.TicketWorkflowStatus][]contracts.TicketWorkflowStatus{
+		contracts.TicketBacklog: {
+			contracts.TicketQueued,
+			contracts.TicketArchived,
 		},
-		store.TicketQueued: {
-			store.TicketActive,
-			store.TicketBlocked,
-			store.TicketArchived,
+		contracts.TicketQueued: {
+			contracts.TicketActive,
+			contracts.TicketBlocked,
+			contracts.TicketArchived,
 		},
-		store.TicketActive: {
-			store.TicketDone,
-			store.TicketBlocked,
-			store.TicketArchived,
+		contracts.TicketActive: {
+			contracts.TicketDone,
+			contracts.TicketBlocked,
+			contracts.TicketArchived,
 		},
-		store.TicketBlocked: {
-			store.TicketActive,
-			store.TicketArchived,
+		contracts.TicketBlocked: {
+			contracts.TicketActive,
+			contracts.TicketArchived,
 		},
-		store.TicketDone: {
-			store.TicketArchived,
+		contracts.TicketDone: {
+			contracts.TicketArchived,
 		},
-		store.TicketArchived: {},
+		contracts.TicketArchived: {},
 	},
 }
 
-var WorkerLifecycleTable = TransitionTable[store.WorkerStatus]{
+var WorkerLifecycleTable = TransitionTable[contracts.WorkerStatus]{
 	Name:          "worker_lifecycle",
-	InitialStates: []store.WorkerStatus{store.WorkerStopped},
-	Transitions: map[store.WorkerStatus][]store.WorkerStatus{
-		store.WorkerStopped: {
-			store.WorkerCreating,
+	InitialStates: []contracts.WorkerStatus{contracts.WorkerStopped},
+	Transitions: map[contracts.WorkerStatus][]contracts.WorkerStatus{
+		contracts.WorkerStopped: {
+			contracts.WorkerCreating,
 		},
-		store.WorkerCreating: {
-			store.WorkerRunning,
-			store.WorkerFailed,
+		contracts.WorkerCreating: {
+			contracts.WorkerRunning,
+			contracts.WorkerFailed,
 		},
-		store.WorkerRunning: {
-			store.WorkerStopped,
-			store.WorkerFailed,
+		contracts.WorkerRunning: {
+			contracts.WorkerStopped,
+			contracts.WorkerFailed,
 		},
-		store.WorkerFailed: {
-			store.WorkerCreating,
+		contracts.WorkerFailed: {
+			contracts.WorkerCreating,
 		},
 	},
 }
 
-var PMDispatchJobTable = TransitionTable[store.PMDispatchJobStatus]{
+var PMDispatchJobTable = TransitionTable[contracts.PMDispatchJobStatus]{
 	Name:          "pm_dispatch_job",
-	InitialStates: []store.PMDispatchJobStatus{store.PMDispatchPending},
-	TerminalStates: []store.PMDispatchJobStatus{
-		store.PMDispatchSucceeded,
-		store.PMDispatchFailed,
+	InitialStates: []contracts.PMDispatchJobStatus{contracts.PMDispatchPending},
+	TerminalStates: []contracts.PMDispatchJobStatus{
+		contracts.PMDispatchSucceeded,
+		contracts.PMDispatchFailed,
 	},
-	Transitions: map[store.PMDispatchJobStatus][]store.PMDispatchJobStatus{
-		store.PMDispatchPending: {
-			store.PMDispatchRunning,
-			store.PMDispatchFailed,
+	Transitions: map[contracts.PMDispatchJobStatus][]contracts.PMDispatchJobStatus{
+		contracts.PMDispatchPending: {
+			contracts.PMDispatchRunning,
+			contracts.PMDispatchFailed,
 		},
-		store.PMDispatchRunning: {
-			store.PMDispatchSucceeded,
-			store.PMDispatchFailed,
+		contracts.PMDispatchRunning: {
+			contracts.PMDispatchSucceeded,
+			contracts.PMDispatchFailed,
 		},
-		store.PMDispatchSucceeded: {},
-		store.PMDispatchFailed:    {},
+		contracts.PMDispatchSucceeded: {},
+		contracts.PMDispatchFailed:    {},
 	},
 }
 
-var TaskRunOrchestrationTable = TransitionTable[store.TaskOrchestrationState]{
+var TaskRunOrchestrationTable = TransitionTable[contracts.TaskOrchestrationState]{
 	Name:          "task_run_orchestration",
-	InitialStates: []store.TaskOrchestrationState{store.TaskPending},
-	TerminalStates: []store.TaskOrchestrationState{
-		store.TaskCanceled,
+	InitialStates: []contracts.TaskOrchestrationState{contracts.TaskPending},
+	TerminalStates: []contracts.TaskOrchestrationState{
+		contracts.TaskCanceled,
 	},
-	Transitions: map[store.TaskOrchestrationState][]store.TaskOrchestrationState{
-		store.TaskPending: {
-			store.TaskRunning,
-			store.TaskFailed,
-			store.TaskCanceled,
+	Transitions: map[contracts.TaskOrchestrationState][]contracts.TaskOrchestrationState{
+		contracts.TaskPending: {
+			contracts.TaskRunning,
+			contracts.TaskFailed,
+			contracts.TaskCanceled,
 		},
-		store.TaskRunning: {
-			store.TaskSucceeded,
-			store.TaskFailed,
-			store.TaskCanceled,
+		contracts.TaskRunning: {
+			contracts.TaskSucceeded,
+			contracts.TaskFailed,
+			contracts.TaskCanceled,
 		},
-		store.TaskSucceeded: {
-			store.TaskCanceled,
+		contracts.TaskSucceeded: {
+			contracts.TaskCanceled,
 		},
-		store.TaskFailed: {
-			store.TaskCanceled,
+		contracts.TaskFailed: {
+			contracts.TaskCanceled,
 		},
-		store.TaskCanceled: {},
+		contracts.TaskCanceled: {},
 	},
 }
 
-func CanTicketWorkflowTransition(from, to store.TicketWorkflowStatus) bool {
+func CanTicketWorkflowTransition(from, to contracts.TicketWorkflowStatus) bool {
 	return TicketWorkflowTable.CanTransition(from, to)
 }
 
-func CanWorkerLifecycleTransition(from, to store.WorkerStatus) bool {
+func CanWorkerLifecycleTransition(from, to contracts.WorkerStatus) bool {
 	return WorkerLifecycleTable.CanTransition(from, to)
 }
 
-func CanPMDispatchJobTransition(from, to store.PMDispatchJobStatus) bool {
+func CanPMDispatchJobTransition(from, to contracts.PMDispatchJobStatus) bool {
 	return PMDispatchJobTable.CanTransition(from, to)
 }
 
-func CanTaskRunTransition(from, to store.TaskOrchestrationState) bool {
+func CanTaskRunTransition(from, to contracts.TaskOrchestrationState) bool {
 	return TaskRunOrchestrationTable.CanTransition(from, to)
 }

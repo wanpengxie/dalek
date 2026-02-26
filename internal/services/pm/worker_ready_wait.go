@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,7 +14,7 @@ import (
 type workerReadyTimeoutError struct {
 	TicketID   uint
 	WorkerID   uint
-	LastStatus store.WorkerStatus
+	LastStatus contracts.WorkerStatus
 	Waited     time.Duration
 }
 
@@ -69,10 +70,10 @@ func (s *Service) waitWorkerReadyForDispatch(ctx context.Context, ticketID uint,
 	if initial == nil || strings.TrimSpace(initial.TmuxSession) == "" {
 		return nil, s.workerMissingSessionError()
 	}
-	if initial.Status == store.WorkerRunning {
+	if initial.Status == contracts.WorkerRunning {
 		return initial, nil
 	}
-	if initial.Status != store.WorkerCreating {
+	if initial.Status != contracts.WorkerCreating {
 		return nil, s.workerNotRunningError(initial)
 	}
 
@@ -123,10 +124,10 @@ func (s *Service) waitWorkerReadyForDispatch(ctx context.Context, ticketID uint,
 			return nil, s.workerMissingSessionError()
 		}
 		current = w
-		if current.Status == store.WorkerRunning {
+		if current.Status == contracts.WorkerRunning {
 			return current, nil
 		}
-		if current.Status != store.WorkerCreating {
+		if current.Status != contracts.WorkerCreating {
 			return nil, s.workerNotRunningError(current)
 		}
 	}

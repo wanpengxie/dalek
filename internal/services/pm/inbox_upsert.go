@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -62,16 +63,16 @@ func upsertOpenInboxWithDB(ctx context.Context, db *gorm.DB, item store.InboxIte
 		return false, fmt.Errorf("inbox key 不能为空")
 	}
 	if strings.TrimSpace(string(item.Status)) == "" {
-		item.Status = store.InboxOpen
+		item.Status = contracts.InboxOpen
 	}
-	if item.Status != store.InboxOpen {
+	if item.Status != contracts.InboxOpen {
 		return false, fmt.Errorf("upsertOpenInbox 只支持 status=open")
 	}
 	if strings.TrimSpace(string(item.Severity)) == "" {
-		item.Severity = store.InboxInfo
+		item.Severity = contracts.InboxInfo
 	}
 	if strings.TrimSpace(string(item.Reason)) == "" {
-		item.Reason = store.InboxQuestion
+		item.Reason = contracts.InboxQuestion
 	}
 	if strings.TrimSpace(item.Title) == "" {
 		item.Title = item.Key
@@ -79,7 +80,7 @@ func upsertOpenInboxWithDB(ctx context.Context, db *gorm.DB, item store.InboxIte
 
 	var existing store.InboxItem
 	err := db.WithContext(ctx).
-		Where("key = ? AND status = ?", item.Key, store.InboxOpen).
+		Where("key = ? AND status = ?", item.Key, contracts.InboxOpen).
 		Order("id desc").
 		First(&existing).Error
 	if err == nil {
@@ -102,7 +103,7 @@ func upsertOpenInboxWithDB(ctx context.Context, db *gorm.DB, item store.InboxIte
 	if err != gorm.ErrRecordNotFound {
 		return false, err
 	}
-	item.Status = store.InboxOpen
+	item.Status = contracts.InboxOpen
 	if err := db.WithContext(ctx).Create(&item).Error; err != nil {
 		return false, err
 	}

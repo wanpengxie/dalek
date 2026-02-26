@@ -17,18 +17,18 @@ type TicketView struct {
 	// SessionProbeFailed=true 表示 tmux 探测失败（不是“离线”）。
 	SessionProbeFailed bool
 
-	DerivedStatus store.TicketWorkflowStatus
+	DerivedStatus contracts.TicketWorkflowStatus
 
 	Capability contracts.TicketCapability
 
 	TaskRunID uint
 
-	RuntimeHealthState store.TaskRuntimeHealthState
+	RuntimeHealthState contracts.TaskRuntimeHealthState
 	RuntimeNeedsUser   bool
 	RuntimeSummary     string
 	RuntimeObservedAt  *time.Time
 
-	SemanticPhase      store.TaskSemanticPhase
+	SemanticPhase      contracts.TaskSemanticPhase
 	SemanticNextAction string
 	SemanticSummary    string
 	SemanticReportedAt *time.Time
@@ -38,14 +38,14 @@ type TicketView struct {
 	LastEventAt   *time.Time
 }
 
-func computeTicketCapability(workflow store.TicketWorkflowStatus, w *store.Worker, sessionAlive bool, sessionProbeFailed bool, hasActiveDispatch bool, runtimeNeedsUser bool, runtimeHealth store.TaskRuntimeHealthState) contracts.TicketCapability {
-	wf := store.TicketWorkflowStatus(strings.TrimSpace(strings.ToLower(string(workflow))))
+func computeTicketCapability(workflow contracts.TicketWorkflowStatus, w *store.Worker, sessionAlive bool, sessionProbeFailed bool, hasActiveDispatch bool, runtimeNeedsUser bool, runtimeHealth contracts.TaskRuntimeHealthState) contracts.TicketCapability {
+	wf := contracts.TicketWorkflowStatus(strings.TrimSpace(strings.ToLower(string(workflow))))
 	if wf == "" {
-		wf = store.TicketBacklog
+		wf = contracts.TicketBacklog
 	}
 
 	hasWorker := w != nil
-	workerStatus := store.WorkerStatus("")
+	workerStatus := contracts.WorkerStatus("")
 	session := ""
 	if w != nil {
 		workerStatus = w.Status
@@ -55,8 +55,8 @@ func computeTicketCapability(workflow store.TicketWorkflowStatus, w *store.Worke
 	tmuxKnownDead := hasSession && !sessionProbeFailed && !sessionAlive
 
 	cap := contracts.TicketCapability{}
-	isDone := wf == store.TicketDone
-	isArchived := wf == store.TicketArchived
+	isDone := wf == contracts.TicketDone
+	isArchived := wf == contracts.TicketArchived
 
 	// start：只按 workflow 门禁（资源是否存在由后端决定是否复用/重建）。
 	cap.CanStart = !isDone && !isArchived
@@ -77,17 +77,17 @@ func computeTicketCapability(workflow store.TicketWorkflowStatus, w *store.Worke
 	// archive：要求没有 running worker，且没有进行中的 dispatch。
 	cap.CanArchive = !isArchived &&
 		!hasActiveDispatch &&
-		(!hasWorker || workerStatus != store.WorkerRunning)
+		(!hasWorker || workerStatus != contracts.WorkerRunning)
 
 	// Reason：给 UI 一个可读提示（不做门禁）。
 	switch {
-	case wf == store.TicketArchived:
+	case wf == contracts.TicketArchived:
 		cap.Reason = "已归档"
 	case isDone:
 		cap.Reason = "已完成"
 	case runtimeNeedsUser:
 		cap.Reason = "等待输入"
-	case runtimeHealth == store.TaskHealthStalled:
+	case runtimeHealth == contracts.TaskHealthStalled:
 		cap.Reason = "运行错误"
 	case hasActiveDispatch:
 		cap.Reason = "dispatch 进行中"
@@ -123,7 +123,7 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 
 	var tickets []store.Ticket
 	if err := db.WithContext(ctx).
-		Where("workflow_status != ?", store.TicketArchived).
+		Where("workflow_status != ?", contracts.TicketArchived).
 		Order("priority desc").
 		Order("updated_at desc").
 		Order("id desc").
@@ -192,7 +192,7 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 		return nil, err
 	}
 	taskViews, err := taskRuntime.ListStatus(ctx, core.TaskRuntimeListStatusOptions{
-		OwnerType:       store.TaskOwnerWorker,
+		OwnerType:       contracts.TaskOwnerWorker,
 		IncludeTerminal: true,
 		Limit:           5000,
 	})
@@ -214,7 +214,7 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 	if len(ticketIDs) > 0 {
 		var jobs []store.PMDispatchJob
 		if err := db.WithContext(ctx).
-			Where("ticket_id IN ? AND status IN ?", ticketIDs, []store.PMDispatchJobStatus{store.PMDispatchPending, store.PMDispatchRunning}).
+			Where("ticket_id IN ? AND status IN ?", ticketIDs, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 			Order("ticket_id asc").
 			Order("id desc").
 			Find(&jobs).Error; err != nil {
@@ -233,17 +233,17 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 
 	views := make([]TicketView, 0, len(tickets))
 	for _, t := range tickets {
-		d := store.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
+		d := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
 
 		var lw *store.Worker
 		alive := false
 		sessionProbeFailed := false
 		runID := uint(0)
-		rHealth := store.TaskHealthUnknown
+		rHealth := contracts.TaskHealthUnknown
 		rNeeds := false
 		rSummary := ""
 		var rObservedAt *time.Time
-		semPhase := store.TaskSemanticPhase("")
+		semPhase := contracts.TaskSemanticPhase("")
 		semNext := ""
 		semSummary := ""
 		var semReportedAt *time.Time
@@ -270,14 +270,14 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 
 		if tv, ok := latestTaskByTicket[t.ID]; ok {
 			runID = tv.RunID
-			rHealth = store.TaskRuntimeHealthState(strings.TrimSpace(tv.RuntimeHealthState))
+			rHealth = contracts.TaskRuntimeHealthState(strings.TrimSpace(tv.RuntimeHealthState))
 			if strings.TrimSpace(string(rHealth)) == "" {
-				rHealth = store.TaskHealthUnknown
+				rHealth = contracts.TaskHealthUnknown
 			}
 			rNeeds = tv.RuntimeNeedsUser
 			rSummary = strings.TrimSpace(tv.RuntimeSummary)
 			rObservedAt = tv.RuntimeObservedAt
-			semPhase = store.TaskSemanticPhase(strings.TrimSpace(tv.SemanticPhase))
+			semPhase = contracts.TaskSemanticPhase(strings.TrimSpace(tv.SemanticPhase))
 			semNext = strings.TrimSpace(tv.SemanticNextAction)
 			semSummary = strings.TrimSpace(tv.SemanticSummary)
 			semReportedAt = tv.SemanticReportedAt
@@ -290,26 +290,26 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 		cap := computeTicketCapability(d, lw, alive, sessionProbeFailed, hasDispatch, rNeeds, rHealth)
 
 		if lw == nil && runID == 0 {
-			rHealth = store.TaskHealthUnknown
+			rHealth = contracts.TaskHealthUnknown
 		} else if !sessionProbeFailed && !alive {
 			// session 不在时，给一个更直观的派生态
 			if lw != nil {
 				switch lw.Status {
-				case store.WorkerStopped:
-					rHealth = store.TaskHealthDead
-				case store.WorkerFailed:
-					rHealth = store.TaskHealthStalled
-				case store.WorkerRunning:
+				case contracts.WorkerStopped:
+					rHealth = contracts.TaskHealthDead
+				case contracts.WorkerFailed:
+					rHealth = contracts.TaskHealthStalled
+				case contracts.WorkerRunning:
 					// session 不在线时，避免 UI 误显示“在线/运行中”。
-					rHealth = store.TaskHealthDead
+					rHealth = contracts.TaskHealthDead
 				default:
 					// unknown
 				}
 			}
 		} else {
 			// session 探测失败：保守处理为 unknown，不降级到 dead/backlog。
-			if rHealth == store.TaskHealthDead {
-				rHealth = store.TaskHealthUnknown
+			if rHealth == contracts.TaskHealthDead {
+				rHealth = contracts.TaskHealthUnknown
 			}
 		}
 

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -44,12 +45,12 @@ func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 	now := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).Model(&store.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
-			"status":     store.WorkerStopped,
+			"status":     contracts.WorkerStopped,
 			"stopped_at": &now,
 		}).Error; err != nil {
 			return err
 		}
-		if err := s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, store.WorkerStopped, "worker.stop", "stop 命令停止 worker", map[string]any{
+		if err := s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, contracts.WorkerStopped, "worker.stop", "stop 命令停止 worker", map[string]any{
 			"worker_id":    w.ID,
 			"ticket_id":    w.TicketID,
 			"tmux_socket":  strings.TrimSpace(w.TmuxSocket),

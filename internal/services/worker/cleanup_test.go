@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,7 +24,7 @@ func TestCleanupTicketWorktree_DryRunThenClean(t *testing.T) {
 
 	w := store.Worker{
 		TicketID:     tk.ID,
-		Status:       store.WorkerStopped,
+		Status:       contracts.WorkerStopped,
 		WorktreePath: worktreePath,
 		Branch:       "ts/demo/t1",
 		TmuxSocket:   "dalek",
@@ -32,7 +33,7 @@ func TestCleanupTicketWorktree_DryRunThenClean(t *testing.T) {
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketArchived).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketArchived).Error; err != nil {
 		t.Fatalf("archive ticket failed: %v", err)
 	}
 
@@ -84,7 +85,7 @@ func TestCleanupTicketWorktree_RejectsNonArchived(t *testing.T) {
 
 	w := store.Worker{
 		TicketID:     tk.ID,
-		Status:       store.WorkerStopped,
+		Status:       contracts.WorkerStopped,
 		WorktreePath: filepath.Join(t.TempDir(), "wt"),
 		Branch:       "ts/demo/t2",
 		TmuxSocket:   "dalek",

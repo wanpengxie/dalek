@@ -174,7 +174,7 @@ func SendProjectTextWithLogger(ctx context.Context, db *gorm.DB, resolver contra
 	if err := db.WithContext(ctx).
 		Where("project_name = ? AND channel_type = ? AND adapter = ? AND enabled = 1",
 			projectName,
-			store.ChannelIM,
+			contracts.ChannelTypeIM,
 			AdapterFeishu).
 		Order("id ASC").
 		Find(&bindings).Error; err != nil {
@@ -191,11 +191,11 @@ func SendProjectTextWithLogger(ctx context.Context, db *gorm.DB, resolver contra
 	for _, binding := range bindings {
 		delivery, err := sendOneBinding(ctx, db, sender, logger, binding, projectName, cardProjectName, text)
 		if err != nil {
-			delivery.Status = string(store.ChannelOutboxFailed)
+			delivery.Status = string(contracts.ChannelOutboxFailed)
 			delivery.Error = strings.TrimSpace(err.Error())
 			failed++
 		} else {
-			delivery.Status = string(store.ChannelOutboxSent)
+			delivery.Status = string(contracts.ChannelOutboxSent)
 			delivered++
 		}
 		results = append(results, delivery)
@@ -293,10 +293,10 @@ func findRecentDuplicateDelivery(ctx context.Context, db *gorm.DB, binding store
 	err = db.WithContext(ctx).
 		Where("conversation_id = ? AND direction = ? AND adapter = ? AND content_text = ? AND status = ? AND created_at >= ?",
 			conv.ID,
-			store.ChannelMessageOut,
+			contracts.ChannelMessageOut,
 			strings.TrimSpace(binding.Adapter),
 			text,
-			store.ChannelMessageSent,
+			contracts.ChannelMessageSent,
 			cutoff).
 		Order("id DESC").
 		First(&msg).Error
@@ -311,7 +311,7 @@ func findRecentDuplicateDelivery(ctx context.Context, db *gorm.DB, binding store
 	if err := db.WithContext(ctx).Where("message_id = ?", msg.ID).First(&outbox).Error; err != nil {
 		return Delivery{}, false, err
 	}
-	if outbox.Status != store.ChannelOutboxSent {
+	if outbox.Status != contracts.ChannelOutboxSent {
 		return Delivery{}, false, nil
 	}
 
@@ -348,13 +348,13 @@ func createPending(ctx context.Context, db *gorm.DB, binding store.ChannelBindin
 		peerMessageID := fmt.Sprintf("send-%d-%s", time.Now().UnixNano(), randomHex(2))
 		message := store.ChannelMessage{
 			ConversationID: conv.ID,
-			Direction:      store.ChannelMessageOut,
+			Direction:      contracts.ChannelMessageOut,
 			Adapter:        strings.TrimSpace(binding.Adapter),
 			PeerMessageID:  &peerMessageID,
 			SenderID:       "gateway.send",
 			ContentText:    strings.TrimSpace(text),
 			PayloadJSON:    payloadJSON,
-			Status:         store.ChannelMessageProcessed,
+			Status:         contracts.ChannelMessageProcessed,
 		}
 		if err := tx.WithContext(ctx).Create(&message).Error; err != nil {
 			return err
@@ -365,7 +365,7 @@ func createPending(ctx context.Context, db *gorm.DB, binding store.ChannelBindin
 			MessageID:   message.ID,
 			Adapter:     strings.TrimSpace(binding.Adapter),
 			PayloadJSON: payloadJSON,
-			Status:      store.ChannelOutboxPending,
+			Status:      contracts.ChannelOutboxPending,
 			RetryCount:  0,
 			LastError:   "",
 		}
@@ -417,12 +417,12 @@ func ensureConversationTx(ctx context.Context, tx *gorm.DB, bindingID uint, peer
 func markSending(ctx context.Context, db *gorm.DB, outboxID uint) error {
 	now := time.Now()
 	res := db.WithContext(ctx).Model(&store.ChannelOutbox{}).
-		Where("id = ? AND status IN ?", outboxID, []store.ChannelOutboxStatus{
-			store.ChannelOutboxPending,
-			store.ChannelOutboxFailed,
+		Where("id = ? AND status IN ?", outboxID, []contracts.ChannelOutboxStatus{
+			contracts.ChannelOutboxPending,
+			contracts.ChannelOutboxFailed,
 		}).
 		Updates(map[string]any{
-			"status":        store.ChannelOutboxSending,
+			"status":        contracts.ChannelOutboxSending,
 			"retry_count":   gorm.Expr("retry_count + 1"),
 			"last_error":    "",
 			"next_retry_at": nil,
@@ -443,7 +443,7 @@ func markSent(ctx context.Context, db *gorm.DB, state persistState) error {
 		if err := tx.WithContext(ctx).Model(&store.ChannelOutbox{}).
 			Where("id = ?", state.outbox.ID).
 			Updates(map[string]any{
-				"status":        store.ChannelOutboxSent,
+				"status":        contracts.ChannelOutboxSent,
 				"last_error":    "",
 				"next_retry_at": nil,
 				"updated_at":    now,
@@ -452,7 +452,7 @@ func markSent(ctx context.Context, db *gorm.DB, state persistState) error {
 		}
 		if err := tx.WithContext(ctx).Model(&store.ChannelMessage{}).
 			Where("id = ?", state.message.ID).
-			Update("status", store.ChannelMessageSent).Error; err != nil {
+			Update("status", contracts.ChannelMessageSent).Error; err != nil {
 			return err
 		}
 		return tx.WithContext(ctx).Model(&store.ChannelConversation{}).
@@ -474,7 +474,7 @@ func markFailed(ctx context.Context, db *gorm.DB, state persistState, cause erro
 		if err := tx.WithContext(ctx).Model(&store.ChannelOutbox{}).
 			Where("id = ?", state.outbox.ID).
 			Updates(map[string]any{
-				"status":        store.ChannelOutboxFailed,
+				"status":        contracts.ChannelOutboxFailed,
 				"last_error":    errMsg,
 				"next_retry_at": nil,
 				"updated_at":    now,
@@ -483,7 +483,7 @@ func markFailed(ctx context.Context, db *gorm.DB, state persistState, cause erro
 		}
 		return tx.WithContext(ctx).Model(&store.ChannelMessage{}).
 			Where("id = ?", state.message.ID).
-			Update("status", store.ChannelMessageFailed).Error
+			Update("status", contracts.ChannelMessageFailed).Error
 	})
 }
 

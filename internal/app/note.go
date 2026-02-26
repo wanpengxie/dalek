@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha1"
+	"dalek/internal/contracts"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -343,7 +344,7 @@ func (p *Project) upsertNoteInbox(ctx context.Context, key, title, body string, 
 
 	var existing store.InboxItem
 	err := p.core.DB.WithContext(ctx).
-		Where("key = ? AND status = ?", key, store.InboxOpen).
+		Where("key = ? AND status = ?", key, contracts.InboxOpen).
 		Order("id desc").
 		First(&existing).Error
 	if err == nil {
@@ -361,9 +362,9 @@ func (p *Project) upsertNoteInbox(ctx context.Context, key, title, body string, 
 	}
 	item := store.InboxItem{
 		Key:      key,
-		Status:   store.InboxOpen,
-		Severity: store.InboxWarn,
-		Reason:   store.InboxIncident,
+		Status:   contracts.InboxOpen,
+		Severity: contracts.InboxWarn,
+		Reason:   contracts.InboxIncident,
 		Title:    strings.TrimSpace(title),
 		Body:     body,
 	}
@@ -499,7 +500,7 @@ func (p *Project) ApproveNote(ctx context.Context, id uint, reviewedBy string) (
 		ticket := store.Ticket{
 			Title:          trimOneLineNote(title),
 			Description:    strings.TrimSpace(desc),
-			WorkflowStatus: store.TicketBacklog,
+			WorkflowStatus: contracts.TicketBacklog,
 			Priority:       0,
 		}
 		if ticket.Title == "" {

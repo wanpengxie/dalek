@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -252,9 +253,9 @@ func insertOpenInboxItem(t *testing.T, repoRoot string, ticketID uint, title str
 	}
 	return db.Create(&store.InboxItem{
 		Key:      fmt.Sprintf("ws-test-inbox-%d", time.Now().UnixNano()),
-		Status:   store.InboxOpen,
-		Severity: store.InboxWarn,
-		Reason:   store.InboxQuestion,
+		Status:   contracts.InboxOpen,
+		Severity: contracts.InboxWarn,
+		Reason:   contracts.InboxQuestion,
 		Title:    strings.TrimSpace(title),
 		Body:     "ws test inbox item",
 		TicketID: ticketID,

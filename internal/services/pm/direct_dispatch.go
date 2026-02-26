@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -48,10 +49,10 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return DirectDispatchResult{}, err
 	}
-	if t.WorkflowStatus == store.TicketArchived {
+	if t.WorkflowStatus == contracts.TicketArchived {
 		return DirectDispatchResult{}, fmt.Errorf("ticket 已归档：t%d", ticketID)
 	}
-	if t.WorkflowStatus == store.TicketDone {
+	if t.WorkflowStatus == contracts.TicketDone {
 		return DirectDispatchResult{}, fmt.Errorf("ticket 已完成：t%d", ticketID)
 	}
 
@@ -69,19 +70,19 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	if w == nil || strings.TrimSpace(w.TmuxSession) == "" {
 		return DirectDispatchResult{}, fmt.Errorf("该 ticket 尚未启动（没有 worker/session），请先按 s 或运行 start")
 	}
-	if w.Status == store.WorkerCreating {
+	if w.Status == contracts.WorkerCreating {
 		ready, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
 		if waitErr != nil {
 			return DirectDispatchResult{}, waitErr
 		}
 		w = ready
 	}
-	if autoStart && w.Status != store.WorkerRunning && w.Status != store.WorkerStopped {
+	if autoStart && w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
 		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
 		if err != nil {
 			return DirectDispatchResult{}, err
 		}
-		if w != nil && w.Status == store.WorkerCreating {
+		if w != nil && w.Status == contracts.WorkerCreating {
 			ready, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
 			if waitErr != nil {
 				return DirectDispatchResult{}, waitErr
@@ -89,11 +90,11 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 			w = ready
 		}
 	}
-	if w.Status != store.WorkerRunning && w.Status != store.WorkerStopped {
+	if w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
 		return DirectDispatchResult{}, fmt.Errorf("该 ticket 的最新 worker 不在 running（w%d status=%s），请重新启动", w.ID, w.Status)
 	}
 
-	if w.Status == store.WorkerStopped {
+	if w.Status == contracts.WorkerStopped {
 		socket := strings.TrimSpace(w.TmuxSocket)
 		if socket == "" {
 			socket = strings.TrimSpace(p.Config.WithDefaults().TmuxSocket)
@@ -109,7 +110,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 					if err != nil {
 						return DirectDispatchResult{}, err
 					}
-					if w != nil && w.Status == store.WorkerCreating {
+					if w != nil && w.Status == contracts.WorkerCreating {
 						ready, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
 						if waitErr != nil {
 							return DirectDispatchResult{}, waitErr
@@ -121,7 +122,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 				}
 			}
 		}
-		if w.Status == store.WorkerStopped {
+		if w.Status == contracts.WorkerStopped {
 			if err := s.worker.MarkWorkerRunning(ctx, w.ID, time.Now()); err != nil {
 				return DirectDispatchResult{}, fmt.Errorf("恢复 worker 运行态失败（w%d）：%w", w.ID, err)
 			}
@@ -136,13 +137,13 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	// 先推进到 active，失败时回滚，避免残留 active 悬挂态。
 	workflowPromoted := false
 	prevWorkflow := normalizeTicketWorkflowStatus(t.WorkflowStatus)
-	if prevWorkflow != store.TicketActive {
+	if prevWorkflow != contracts.TicketActive {
 		now := time.Now()
 		if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			res := tx.WithContext(ctx).Model(&store.Ticket{}).
-				Where("id = ? AND workflow_status != ? AND workflow_status != ?", ticketID, store.TicketDone, store.TicketArchived).
+				Where("id = ? AND workflow_status != ? AND workflow_status != ?", ticketID, contracts.TicketDone, contracts.TicketArchived).
 				Updates(map[string]any{
-					"workflow_status": store.TicketActive,
+					"workflow_status": contracts.TicketActive,
 					"updated_at":      now,
 				})
 			if res.Error != nil {
@@ -151,7 +152,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 			if res.RowsAffected == 0 {
 				return nil
 			}
-			return s.appendTicketWorkflowEventTx(ctx, tx, ticketID, prevWorkflow, store.TicketActive, "pm.direct_dispatch", "direct dispatch 开始", map[string]any{
+			return s.appendTicketWorkflowEventTx(ctx, tx, ticketID, prevWorkflow, contracts.TicketActive, "pm.direct_dispatch", "direct dispatch 开始", map[string]any{
 				"ticket_id":    ticketID,
 				"worker_id":    w.ID,
 				"entry_prompt": entryPrompt,
@@ -161,7 +162,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		}
 		var refreshed store.Ticket
 		if rerr := db.WithContext(ctx).Select("workflow_status").First(&refreshed, ticketID).Error; rerr == nil {
-			workflowPromoted = normalizeTicketWorkflowStatus(refreshed.WorkflowStatus) == store.TicketActive && prevWorkflow != store.TicketActive
+			workflowPromoted = normalizeTicketWorkflowStatus(refreshed.WorkflowStatus) == contracts.TicketActive && prevWorkflow != contracts.TicketActive
 		}
 	}
 
@@ -181,7 +182,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 			// best-effort：仅在 workflow 仍为 active 时回滚，避免覆盖并发 report 推进后的状态。
 			if workflowPromoted {
 				res := tx.WithContext(ctx).Model(&store.Ticket{}).
-					Where("id = ? AND workflow_status = ?", ticketID, store.TicketActive).
+					Where("id = ? AND workflow_status = ?", ticketID, contracts.TicketActive).
 					Updates(map[string]any{
 						"workflow_status": prevWorkflow,
 						"updated_at":      now,
@@ -190,7 +191,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 					return res.Error
 				}
 				if res.RowsAffected > 0 {
-					if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, store.TicketActive, prevWorkflow, "pm.direct_dispatch", "direct dispatch 失败回滚 workflow", map[string]any{
+					if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, contracts.TicketActive, prevWorkflow, "pm.direct_dispatch", "direct dispatch 失败回滚 workflow", map[string]any{
 						"ticket_id": ticketID,
 						"worker_id": w.ID,
 						"error":     loopErrMsg,
@@ -201,9 +202,9 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 			}
 			_, uerr := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
 				Key:      inboxKeyWorkerIncident(w.ID, "direct_dispatch_failed"),
-				Status:   store.InboxOpen,
-				Severity: store.InboxWarn,
-				Reason:   store.InboxIncident,
+				Status:   contracts.InboxOpen,
+				Severity: contracts.InboxWarn,
+				Reason:   contracts.InboxIncident,
 				Title:    fmt.Sprintf("直接派发失败：t%d w%d", ticketID, w.ID),
 				Body:     loopErrMsg,
 				TicketID: ticketID,

@@ -44,7 +44,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-1","type":"agent_message
 
 	// 模拟上一轮 loop 已退出：worker 状态变为 stopped，但 tmux session 仍在线。
 	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"status": store.WorkerStopped,
+		"status": contracts.WorkerStopped,
 	}).Error; err != nil {
 		t.Fatalf("mark worker stopped failed: %v", err)
 	}
@@ -92,7 +92,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-stopped-offline","type":
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"status": store.WorkerStopped,
+		"status": contracts.WorkerStopped,
 	}).Error; err != nil {
 		t.Fatalf("mark worker stopped failed: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestDirectDispatchWorker_RollbackWorkflowOnLoopFailure(t *testing.T) {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketBlocked,
+		"workflow_status": contracts.TicketBlocked,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket blocked failed: %v", err)
@@ -136,7 +136,7 @@ func TestDirectDispatchWorker_RollbackWorkflowOnLoopFailure(t *testing.T) {
 	if err := p.DB.First(&after, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if after.WorkflowStatus != store.TicketBlocked {
+	if after.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("workflow should rollback to blocked, got=%s", after.WorkflowStatus)
 	}
 }
@@ -170,7 +170,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-wait","type":"agent_mess
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"status":     store.WorkerCreating,
+		"status":     contracts.WorkerCreating,
 		"updated_at": time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set worker creating failed: %v", err)
@@ -181,7 +181,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-wait","type":"agent_mess
 	go func() {
 		time.Sleep(80 * time.Millisecond)
 		_ = p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-			"status":     store.WorkerRunning,
+			"status":     contracts.WorkerRunning,
 			"updated_at": time.Now(),
 		}).Error
 	}()
@@ -235,7 +235,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-auto-start","type":"agen
 	if err := p.DB.First(&w, out.WorkerID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
 	}
-	if w.Status != store.WorkerRunning && w.Status != store.WorkerStopped {
+	if w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
 		t.Fatalf("expected running/stopped worker after direct auto-start, got=%s", w.Status)
 	}
 	if strings.TrimSpace(w.TmuxSession) == "" {
@@ -293,7 +293,7 @@ func TestManagerTick_IgnoresContinueRedispatch(t *testing.T) {
 	if err := p.DB.First(&beforeTicket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if beforeTicket.WorkflowStatus != store.TicketActive {
+	if beforeTicket.WorkflowStatus != contracts.TicketActive {
 		t.Fatalf("expected ticket active before manager tick, got=%s", beforeTicket.WorkflowStatus)
 	}
 

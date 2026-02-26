@@ -103,14 +103,14 @@ func (r *daemonGatewayProjectRuntime) GatewayTurnTimeout() time.Duration {
 	return r.project.GatewayTurnTimeout()
 }
 
-func (r *daemonGatewayProjectRuntime) InterruptConversation(ctx context.Context, channelType, adapter, peerConversationID string) (channelsvc.InterruptResult, error) {
+func (r *daemonGatewayProjectRuntime) InterruptConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (channelsvc.InterruptResult, error) {
 	if r == nil || r.channel == nil {
 		return channelsvc.InterruptResult{}, fmt.Errorf("project runtime 为空")
 	}
 	return r.channel.InterruptPeerConversation(ctx, channelType, adapter, peerConversationID)
 }
 
-func (r *daemonGatewayProjectRuntime) ResetConversationSession(ctx context.Context, channelType, adapter, peerConversationID string) (bool, error) {
+func (r *daemonGatewayProjectRuntime) ResetConversationSession(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error) {
 	if r == nil || r.channel == nil {
 		return false, fmt.Errorf("project runtime 为空")
 	}

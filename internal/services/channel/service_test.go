@@ -52,10 +52,10 @@ func TestProcessInbound_ListTicketsAndOutboxSent(t *testing.T) {
 	}
 	svc := newChannelServiceWithFakeAgent(t, db)
 
-	if err := db.Create(&store.Ticket{Title: "ticket-a", WorkflowStatus: store.TicketBacklog, Priority: 2}).Error; err != nil {
+	if err := db.Create(&store.Ticket{Title: "ticket-a", WorkflowStatus: contracts.TicketBacklog, Priority: 2}).Error; err != nil {
 		t.Fatalf("seed ticket-a failed: %v", err)
 	}
-	if err := db.Create(&store.Ticket{Title: "ticket-b", WorkflowStatus: store.TicketActive, Priority: 1}).Error; err != nil {
+	if err := db.Create(&store.Ticket{Title: "ticket-b", WorkflowStatus: contracts.TicketActive, Priority: 1}).Error; err != nil {
 		t.Fatalf("seed ticket-b failed: %v", err)
 	}
 
@@ -75,7 +75,7 @@ func TestProcessInbound_ListTicketsAndOutboxSent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessInbound failed: %v", err)
 	}
-	if result.JobStatus != store.ChannelTurnSucceeded {
+	if result.JobStatus != contracts.ChannelTurnSucceeded {
 		t.Fatalf("expected succeeded, got %s err=%s", result.JobStatus, result.JobError)
 	}
 	if strings.TrimSpace(result.ReplyText) == "" {
@@ -86,7 +86,7 @@ func TestProcessInbound_ListTicketsAndOutboxSent(t *testing.T) {
 	if err := db.First(&inbound, result.InboundMessageID).Error; err != nil {
 		t.Fatalf("query inbound failed: %v", err)
 	}
-	if inbound.Status != store.ChannelMessageProcessed {
+	if inbound.Status != contracts.ChannelMessageProcessed {
 		t.Fatalf("inbound status should be processed, got %s", inbound.Status)
 	}
 	if strings.TrimSpace(inbound.SenderName) != "Alice" {
@@ -97,7 +97,7 @@ func TestProcessInbound_ListTicketsAndOutboxSent(t *testing.T) {
 	if err := db.First(&outbound, result.OutboundMessageID).Error; err != nil {
 		t.Fatalf("query outbound failed: %v", err)
 	}
-	if outbound.Status != store.ChannelMessageSent {
+	if outbound.Status != contracts.ChannelMessageSent {
 		t.Fatalf("outbound status should be sent, got %s", outbound.Status)
 	}
 
@@ -105,7 +105,7 @@ func TestProcessInbound_ListTicketsAndOutboxSent(t *testing.T) {
 	if err := db.First(&outbox, result.OutboxID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
-	if outbox.Status != store.ChannelOutboxSent {
+	if outbox.Status != contracts.ChannelOutboxSent {
 		t.Fatalf("outbox status should be sent, got %s", outbox.Status)
 	}
 }
@@ -149,7 +149,7 @@ func TestProcessInbound_IdempotentByAdapterAndPeerMessageID(t *testing.T) {
 
 	var msgCount int64
 	if err := db.Model(&store.ChannelMessage{}).
-		Where("direction = ? AND adapter = ? AND peer_message_id = ?", store.ChannelMessageIn, "web.ws", "web-msg-1").
+		Where("direction = ? AND adapter = ? AND peer_message_id = ?", contracts.ChannelMessageIn, "web.ws", "web-msg-1").
 		Count(&msgCount).Error; err != nil {
 		t.Fatalf("count inbound messages failed: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestProcessInbound_IdempotentScopeIncludesConversation(t *testing.T) {
 
 	var msgCount int64
 	if err := db.Model(&store.ChannelMessage{}).
-		Where("direction = ? AND adapter = ? AND peer_message_id = ?", store.ChannelMessageIn, "web.ws", "web-msg-dup").
+		Where("direction = ? AND adapter = ? AND peer_message_id = ?", contracts.ChannelMessageIn, "web.ws", "web-msg-dup").
 		Count(&msgCount).Error; err != nil {
 		t.Fatalf("count inbound messages failed: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestProcessInbound_TicketDetailActionSuccess(t *testing.T) {
 
 	ticket := store.Ticket{
 		Title:          "detail-target",
-		WorkflowStatus: store.TicketActive,
+		WorkflowStatus: contracts.TicketActive,
 		Priority:       3,
 		Description:    "for ticket_detail test",
 	}
@@ -256,7 +256,7 @@ func TestProcessInbound_TicketDetailActionSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessInbound failed: %v", err)
 	}
-	if result.JobStatus != store.ChannelTurnSucceeded {
+	if result.JobStatus != contracts.ChannelTurnSucceeded {
 		t.Fatalf("expected succeeded, got %s err=%s", result.JobStatus, result.JobError)
 	}
 	if !strings.Contains(result.ReplyText, fmt.Sprintf("t%d", ticket.ID)) {
@@ -288,7 +288,7 @@ func TestProcessInbound_CreateTicketActionSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessInbound failed: %v", err)
 	}
-	if result.JobStatus != store.ChannelTurnSucceeded {
+	if result.JobStatus != contracts.ChannelTurnSucceeded {
 		t.Fatalf("expected succeeded, got %s err=%s", result.JobStatus, result.JobError)
 	}
 	if !strings.Contains(result.ReplyText, title) {
@@ -332,7 +332,7 @@ func TestProcessInbound_StructuredTurnResponseCreatesPendingActions(t *testing.T
 	if err != nil {
 		t.Fatalf("ProcessInbound failed: %v", err)
 	}
-	if result.JobStatus != store.ChannelTurnSucceeded {
+	if result.JobStatus != contracts.ChannelTurnSucceeded {
 		t.Fatalf("expected succeeded, got %s", result.JobStatus)
 	}
 	if strings.TrimSpace(result.ReplyText) != "请确认是否执行" {
@@ -342,7 +342,7 @@ func TestProcessInbound_StructuredTurnResponseCreatesPendingActions(t *testing.T
 		t.Fatalf("expected 1 pending action, got=%d", len(result.PendingActions))
 	}
 	got := result.PendingActions[0]
-	if got.Status != store.ChannelPendingActionPending {
+	if got.Status != contracts.ChannelPendingActionPending {
 		t.Fatalf("pending action status should be pending, got=%s", got.Status)
 	}
 	if strings.TrimSpace(got.Action.Name) != contracts.ActionCreateTicket {
@@ -356,7 +356,7 @@ func TestProcessInbound_StructuredTurnResponseCreatesPendingActions(t *testing.T
 	if len(rows) != 1 {
 		t.Fatalf("expected 1 pending action row, got=%d", len(rows))
 	}
-	if rows[0].Status != store.ChannelPendingActionPending {
+	if rows[0].Status != contracts.ChannelPendingActionPending {
 		t.Fatalf("db pending action status mismatch: %s", rows[0].Status)
 	}
 }
@@ -412,7 +412,7 @@ func TestDecidePendingAction_ApproveExecutesAndMarksExecuted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecidePendingAction approve failed: %v", err)
 	}
-	if decision.Action.Status != store.ChannelPendingActionExecuted {
+	if decision.Action.Status != contracts.ChannelPendingActionExecuted {
 		t.Fatalf("pending action status should be executed, got=%s", decision.Action.Status)
 	}
 	if strings.TrimSpace(decision.ExecutionMessage) == "" {
@@ -480,7 +480,7 @@ func TestDecidePendingAction_RejectMarksRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecidePendingAction reject failed: %v", err)
 	}
-	if decision.Action.Status != store.ChannelPendingActionRejected {
+	if decision.Action.Status != contracts.ChannelPendingActionRejected {
 		t.Fatalf("pending action status should be rejected, got=%s", decision.Action.Status)
 	}
 
@@ -526,7 +526,7 @@ func TestProcessInbound_FailedWhenAgentNoResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessInbound should return job result instead of hard error, got: %v", err)
 	}
-	if result.JobStatus != store.ChannelTurnFailed {
+	if result.JobStatus != contracts.ChannelTurnFailed {
 		t.Fatalf("expected failed when agent has no response, got status=%s error=%s", result.JobStatus, result.JobError)
 	}
 	if !strings.Contains(result.JobError, "无响应") {
@@ -774,7 +774,7 @@ func TestProcessInbound_TimeoutStillReturnsFailedJobResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessInbound should return failed job result instead of hard error, got: %v", err)
 	}
-	if result.JobStatus != store.ChannelTurnFailed {
+	if result.JobStatus != contracts.ChannelTurnFailed {
 		t.Fatalf("expected failed on timeout, got status=%s error=%s", result.JobStatus, result.JobError)
 	}
 	if strings.TrimSpace(result.JobError) == "" {
@@ -801,7 +801,7 @@ func TestInterruptPeerConversation_CancelsRunningTurnWhenRunnerNotInterrupted(t 
 
 	binding := store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
 		PeerProjectKey: "",
 		RolePolicyJSON: "{}",
@@ -864,7 +864,7 @@ func TestInterruptPeerConversation_UsesRunnerInterruptWithoutCancel(t *testing.T
 
 	binding := store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
 		PeerProjectKey: "",
 		RolePolicyJSON: "{}",
@@ -921,7 +921,7 @@ func TestResetPeerConversationSession_ClearsSessionAndClosesRunner(t *testing.T)
 
 	binding := store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
 		PeerProjectKey: "",
 		RolePolicyJSON: "{}",
@@ -984,7 +984,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 
 	binding := store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelWeb,
+		ChannelType:    contracts.ChannelTypeWeb,
 		Adapter:        "web.ws",
 		PeerProjectKey: "",
 		RolePolicyJSON: "{}",
@@ -1002,12 +1002,12 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 	}
 	outMsg := store.ChannelMessage{
 		ConversationID: conv.ID,
-		Direction:      store.ChannelMessageOut,
+		Direction:      contracts.ChannelMessageOut,
 		Adapter:        "",
 		SenderID:       "pm",
 		ContentText:    "reply",
 		PayloadJSON:    "{}",
-		Status:         store.ChannelMessageProcessed,
+		Status:         contracts.ChannelMessageProcessed,
 	}
 	if err := db.Create(&outMsg).Error; err != nil {
 		t.Fatalf("create outbound message failed: %v", err)
@@ -1016,7 +1016,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 		MessageID:   outMsg.ID,
 		Adapter:     "",
 		PayloadJSON: "{}",
-		Status:      store.ChannelOutboxPending,
+		Status:      contracts.ChannelOutboxPending,
 	}
 	if err := db.Create(&outbox).Error; err != nil {
 		t.Fatalf("create outbox failed: %v", err)
@@ -1031,7 +1031,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 	if err := db.First(&gotOutbox, outbox.ID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
-	if gotOutbox.Status != store.ChannelOutboxFailed {
+	if gotOutbox.Status != contracts.ChannelOutboxFailed {
 		t.Fatalf("outbox status should be failed, got %s", gotOutbox.Status)
 	}
 	if !strings.Contains(gotOutbox.LastError, "adapter 为空") {
@@ -1042,7 +1042,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 	if err := db.First(&gotMsg, outMsg.ID).Error; err != nil {
 		t.Fatalf("query outbound message failed: %v", err)
 	}
-	if gotMsg.Status != store.ChannelMessageFailed {
+	if gotMsg.Status != contracts.ChannelMessageFailed {
 		t.Fatalf("outbound message status should be failed, got %s", gotMsg.Status)
 	}
 }
@@ -1080,7 +1080,7 @@ func TestProcessInbound_CodexBackend_JSONLAndEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessInbound failed: %v", err)
 	}
-	if result.JobStatus != store.ChannelTurnSucceeded {
+	if result.JobStatus != contracts.ChannelTurnSucceeded {
 		t.Fatalf("expected succeeded, got %s err=%s", result.JobStatus, result.JobError)
 	}
 	if !strings.Contains(result.ReplyText, "codex final reply") {
@@ -1134,7 +1134,7 @@ func TestProcessInbound_ResolveBackendFromProjectConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessInbound failed: %v", err)
 	}
-	if result.JobStatus != store.ChannelTurnSucceeded {
+	if result.JobStatus != contracts.ChannelTurnSucceeded {
 		t.Fatalf("expected succeeded, got %s err=%s", result.JobStatus, result.JobError)
 	}
 	if result.AgentProvider != "codex" {
@@ -1182,7 +1182,7 @@ func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessInbound failed: %v", err)
 	}
-	if result.JobStatus != store.ChannelTurnSucceeded {
+	if result.JobStatus != contracts.ChannelTurnSucceeded {
 		t.Fatalf("expected succeeded, got %s err=%s", result.JobStatus, result.JobError)
 	}
 	if !strings.Contains(result.ReplyText, "codex sdk final reply") {

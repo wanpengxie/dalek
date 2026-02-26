@@ -3,6 +3,7 @@ package run
 import (
 	"bytes"
 	"context"
+	"dalek/internal/contracts"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -12,14 +13,13 @@ import (
 
 	"dalek/internal/agent/provider"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 )
 
 type ProcessConfig struct {
 	Provider provider.Provider
 	Runtime  core.TaskRuntime
 
-	OwnerType store.TaskOwnerType
+	OwnerType contracts.TaskOwnerType
 	TaskType  string
 
 	ProjectKey  string
@@ -82,7 +82,7 @@ func (e *ProcessExecutor) Execute(ctx context.Context, prompt string) (AgentRunH
 			SubjectType:        strings.TrimSpace(e.cfg.SubjectType),
 			SubjectID:          strings.TrimSpace(e.cfg.SubjectID),
 			RequestID:          req,
-			OrchestrationState: store.TaskPending,
+			OrchestrationState: contracts.TaskPending,
 			RequestPayloadJSON: payload,
 		})
 		if err != nil {
@@ -125,7 +125,7 @@ func (e *ProcessExecutor) Execute(ctx context.Context, prompt string) (AgentRunH
 			TaskRunID: runID,
 			EventType: "task_started",
 			ToState: map[string]any{
-				"orchestration_state": store.TaskRunning,
+				"orchestration_state": contracts.TaskRunning,
 				"runner_id":           runnerID,
 			},
 			Note:      "process executor started",
@@ -221,8 +221,8 @@ func (h *processHandle) waitOnce() (AgentRunResult, error) {
 			_ = h.runtime.AppendEvent(h.execCtx, core.TaskRuntimeEventInput{
 				TaskRunID: h.runID,
 				EventType: "task_succeeded",
-				FromState: map[string]any{"orchestration_state": store.TaskRunning},
-				ToState:   map[string]any{"orchestration_state": store.TaskSucceeded},
+				FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
+				ToState:   map[string]any{"orchestration_state": contracts.TaskSucceeded},
 				Note:      "process executor finished",
 				CreatedAt: now,
 			})
@@ -233,8 +233,8 @@ func (h *processHandle) waitOnce() (AgentRunResult, error) {
 				_ = h.runtime.AppendEvent(h.execCtx, core.TaskRuntimeEventInput{
 					TaskRunID: h.runID,
 					EventType: "task_canceled",
-					FromState: map[string]any{"orchestration_state": store.TaskRunning},
-					ToState:   map[string]any{"orchestration_state": store.TaskCanceled},
+					FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
+					ToState:   map[string]any{"orchestration_state": contracts.TaskCanceled},
 					Note:      msg,
 					CreatedAt: now,
 				})
@@ -243,8 +243,8 @@ func (h *processHandle) waitOnce() (AgentRunResult, error) {
 				_ = h.runtime.AppendEvent(h.execCtx, core.TaskRuntimeEventInput{
 					TaskRunID: h.runID,
 					EventType: "task_failed",
-					FromState: map[string]any{"orchestration_state": store.TaskRunning},
-					ToState:   map[string]any{"orchestration_state": store.TaskFailed},
+					FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
+					ToState:   map[string]any{"orchestration_state": contracts.TaskFailed},
 					Note:      msg,
 					CreatedAt: now,
 				})

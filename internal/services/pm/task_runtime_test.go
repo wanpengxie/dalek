@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 	tk := createTicket(t, p.DB, "pm-task-runtime")
 	w := store.Worker{
 		TicketID:     tk.ID,
-		Status:       store.WorkerRunning,
+		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/demo-ticket-21",
 		TmuxSocket:   "dalek",
@@ -28,7 +29,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 	rt := tasksvc.New(p.DB)
 	now := time.Now().UTC().Truncate(time.Second)
 	oldRun, err := rt.CreateRun(context.Background(), tasksvc.CreateRunInput{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         p.Key,
 		TicketID:           tk.ID,
@@ -36,7 +37,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 		SubjectType:        "ticket",
 		SubjectID:          "21",
 		RequestID:          "wrk_old_dispatch_21",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &now,
 	})
 	if err != nil {
@@ -53,8 +54,8 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 		tk,
 		w,
 		".dalek/PLAN.md",
-		store.TaskHealthBusy,
-		store.TaskPhaseImplementing,
+		contracts.TaskHealthBusy,
+		contracts.TaskPhaseImplementing,
 		"continue",
 		"dispatch accepted",
 		map[string]any{"source": "pm_test"},
@@ -76,7 +77,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 	if oldAfter == nil {
 		t.Fatalf("old run not found")
 	}
-	if oldAfter.OrchestrationState != store.TaskCanceled {
+	if oldAfter.OrchestrationState != contracts.TaskCanceled {
 		t.Fatalf("expected old run canceled, got=%s", oldAfter.OrchestrationState)
 	}
 
@@ -87,7 +88,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 	if newAfter == nil {
 		t.Fatalf("new run not found")
 	}
-	if newAfter.OrchestrationState != store.TaskRunning {
+	if newAfter.OrchestrationState != contracts.TaskRunning {
 		t.Fatalf("expected new run running, got=%s", newAfter.OrchestrationState)
 	}
 
@@ -95,7 +96,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 	if err := p.DB.Where("task_run_id = ?", created.ID).Order("id desc").First(&runtimeSample).Error; err != nil {
 		t.Fatalf("query runtime sample failed: %v", err)
 	}
-	if runtimeSample.State != store.TaskHealthBusy {
+	if runtimeSample.State != contracts.TaskHealthBusy {
 		t.Fatalf("expected runtime sample state busy, got=%s", runtimeSample.State)
 	}
 
@@ -103,7 +104,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 	if err := p.DB.Where("task_run_id = ?", created.ID).Order("id desc").First(&semantic).Error; err != nil {
 		t.Fatalf("query semantic report failed: %v", err)
 	}
-	if semantic.Phase != store.TaskPhaseImplementing {
+	if semantic.Phase != contracts.TaskPhaseImplementing {
 		t.Fatalf("expected semantic phase implementing, got=%s", semantic.Phase)
 	}
 	if semantic.NextAction != "continue" {

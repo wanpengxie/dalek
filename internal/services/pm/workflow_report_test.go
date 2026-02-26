@@ -35,15 +35,15 @@ func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketBlocked {
+	if ticket.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("expected ticket blocked, got=%s", ticket.WorkflowStatus)
 	}
 
 	var inbox store.InboxItem
-	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), store.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("wait_user should create inbox immediately: %v", err)
 	}
-	if inbox.Reason != store.InboxNeedsUser || inbox.Severity != store.InboxBlocker {
+	if inbox.Reason != contracts.InboxNeedsUser || inbox.Severity != contracts.InboxBlocker {
 		t.Fatalf("unexpected inbox reason/severity: %s/%s", inbox.Reason, inbox.Severity)
 	}
 	if !strings.Contains(inbox.Body, "缺少生产环境 API token") || !strings.Contains(inbox.Body, "FEISHU_APP_ID") {
@@ -75,7 +75,7 @@ func TestApplyWorkerReport_DoneCreatesMergeProposalAndApprovalInboxSynchronously
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketDone {
+	if ticket.WorkflowStatus != contracts.TicketDone {
 		t.Fatalf("expected ticket done, got=%s", ticket.WorkflowStatus)
 	}
 
@@ -83,7 +83,7 @@ func TestApplyWorkerReport_DoneCreatesMergeProposalAndApprovalInboxSynchronously
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&mi).Error; err != nil {
 		t.Fatalf("done report should create merge proposal immediately: %v", err)
 	}
-	if mi.Status != store.MergeProposed {
+	if mi.Status != contracts.MergeProposed {
 		t.Fatalf("unexpected merge status: %s", mi.Status)
 	}
 	if strings.TrimSpace(mi.Branch) == "" {
@@ -91,10 +91,10 @@ func TestApplyWorkerReport_DoneCreatesMergeProposalAndApprovalInboxSynchronously
 	}
 
 	var inbox store.InboxItem
-	if err := p.DB.Where("merge_item_id = ? AND status = ?", mi.ID, store.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+	if err := p.DB.Where("merge_item_id = ? AND status = ?", mi.ID, contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("done report should create approval inbox immediately: %v", err)
 	}
-	if inbox.Reason != store.InboxApprovalRequired {
+	if inbox.Reason != contracts.InboxApprovalRequired {
 		t.Fatalf("unexpected inbox reason: %s", inbox.Reason)
 	}
 }

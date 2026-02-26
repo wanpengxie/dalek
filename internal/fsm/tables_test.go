@@ -1,9 +1,8 @@
 package fsm
 
 import (
+	"dalek/internal/contracts"
 	"testing"
-
-	"dalek/internal/store"
 )
 
 func TestDomainTablesValidate(t *testing.T) {
@@ -28,16 +27,16 @@ func TestDomainTablesValidate(t *testing.T) {
 func TestTicketWorkflowTable(t *testing.T) {
 	tests := []struct {
 		name string
-		from store.TicketWorkflowStatus
-		to   store.TicketWorkflowStatus
+		from contracts.TicketWorkflowStatus
+		to   contracts.TicketWorkflowStatus
 		want bool
 	}{
-		{name: "backlog_to_queued", from: store.TicketBacklog, to: store.TicketQueued, want: true},
-		{name: "queued_to_active", from: store.TicketQueued, to: store.TicketActive, want: true},
-		{name: "active_to_done", from: store.TicketActive, to: store.TicketDone, want: true},
-		{name: "done_to_archived", from: store.TicketDone, to: store.TicketArchived, want: true},
-		{name: "done_to_active_forbidden", from: store.TicketDone, to: store.TicketActive, want: false},
-		{name: "archived_to_queued_forbidden", from: store.TicketArchived, to: store.TicketQueued, want: false},
+		{name: "backlog_to_queued", from: contracts.TicketBacklog, to: contracts.TicketQueued, want: true},
+		{name: "queued_to_active", from: contracts.TicketQueued, to: contracts.TicketActive, want: true},
+		{name: "active_to_done", from: contracts.TicketActive, to: contracts.TicketDone, want: true},
+		{name: "done_to_archived", from: contracts.TicketDone, to: contracts.TicketArchived, want: true},
+		{name: "done_to_active_forbidden", from: contracts.TicketDone, to: contracts.TicketActive, want: false},
+		{name: "archived_to_queued_forbidden", from: contracts.TicketArchived, to: contracts.TicketQueued, want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,15 +47,15 @@ func TestTicketWorkflowTable(t *testing.T) {
 		})
 	}
 
-	if !TicketWorkflowTable.IsTerminal(store.TicketArchived) {
+	if !TicketWorkflowTable.IsTerminal(contracts.TicketArchived) {
 		t.Fatalf("archived should be terminal")
 	}
-	if TicketWorkflowTable.IsTerminal(store.TicketDone) {
+	if TicketWorkflowTable.IsTerminal(contracts.TicketDone) {
 		t.Fatalf("done should not be terminal")
 	}
 
-	valid := ValidTransitions(TicketWorkflowTable, store.TicketQueued)
-	if len(valid) != 3 || valid[0] != store.TicketActive || valid[1] != store.TicketBlocked || valid[2] != store.TicketArchived {
+	valid := ValidTransitions(TicketWorkflowTable, contracts.TicketQueued)
+	if len(valid) != 3 || valid[0] != contracts.TicketActive || valid[1] != contracts.TicketBlocked || valid[2] != contracts.TicketArchived {
 		t.Fatalf("unexpected valid transitions for queued: %v", valid)
 	}
 }
@@ -64,16 +63,16 @@ func TestTicketWorkflowTable(t *testing.T) {
 func TestWorkerLifecycleTable(t *testing.T) {
 	tests := []struct {
 		name string
-		from store.WorkerStatus
-		to   store.WorkerStatus
+		from contracts.WorkerStatus
+		to   contracts.WorkerStatus
 		want bool
 	}{
-		{name: "stopped_to_creating", from: store.WorkerStopped, to: store.WorkerCreating, want: true},
-		{name: "creating_to_running", from: store.WorkerCreating, to: store.WorkerRunning, want: true},
-		{name: "running_to_failed", from: store.WorkerRunning, to: store.WorkerFailed, want: true},
-		{name: "failed_to_creating", from: store.WorkerFailed, to: store.WorkerCreating, want: true},
-		{name: "creating_to_stopped_forbidden", from: store.WorkerCreating, to: store.WorkerStopped, want: false},
-		{name: "running_to_creating_forbidden", from: store.WorkerRunning, to: store.WorkerCreating, want: false},
+		{name: "stopped_to_creating", from: contracts.WorkerStopped, to: contracts.WorkerCreating, want: true},
+		{name: "creating_to_running", from: contracts.WorkerCreating, to: contracts.WorkerRunning, want: true},
+		{name: "running_to_failed", from: contracts.WorkerRunning, to: contracts.WorkerFailed, want: true},
+		{name: "failed_to_creating", from: contracts.WorkerFailed, to: contracts.WorkerCreating, want: true},
+		{name: "creating_to_stopped_forbidden", from: contracts.WorkerCreating, to: contracts.WorkerStopped, want: false},
+		{name: "running_to_creating_forbidden", from: contracts.WorkerRunning, to: contracts.WorkerCreating, want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,16 +87,16 @@ func TestWorkerLifecycleTable(t *testing.T) {
 func TestPMDispatchJobTable(t *testing.T) {
 	tests := []struct {
 		name string
-		from store.PMDispatchJobStatus
-		to   store.PMDispatchJobStatus
+		from contracts.PMDispatchJobStatus
+		to   contracts.PMDispatchJobStatus
 		want bool
 	}{
-		{name: "pending_to_running", from: store.PMDispatchPending, to: store.PMDispatchRunning, want: true},
-		{name: "pending_to_failed", from: store.PMDispatchPending, to: store.PMDispatchFailed, want: true},
-		{name: "running_to_succeeded", from: store.PMDispatchRunning, to: store.PMDispatchSucceeded, want: true},
-		{name: "running_to_failed", from: store.PMDispatchRunning, to: store.PMDispatchFailed, want: true},
-		{name: "succeeded_to_running_forbidden", from: store.PMDispatchSucceeded, to: store.PMDispatchRunning, want: false},
-		{name: "failed_to_pending_forbidden", from: store.PMDispatchFailed, to: store.PMDispatchPending, want: false},
+		{name: "pending_to_running", from: contracts.PMDispatchPending, to: contracts.PMDispatchRunning, want: true},
+		{name: "pending_to_failed", from: contracts.PMDispatchPending, to: contracts.PMDispatchFailed, want: true},
+		{name: "running_to_succeeded", from: contracts.PMDispatchRunning, to: contracts.PMDispatchSucceeded, want: true},
+		{name: "running_to_failed", from: contracts.PMDispatchRunning, to: contracts.PMDispatchFailed, want: true},
+		{name: "succeeded_to_running_forbidden", from: contracts.PMDispatchSucceeded, to: contracts.PMDispatchRunning, want: false},
+		{name: "failed_to_pending_forbidden", from: contracts.PMDispatchFailed, to: contracts.PMDispatchPending, want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,7 +107,7 @@ func TestPMDispatchJobTable(t *testing.T) {
 		})
 	}
 
-	if !PMDispatchJobTable.IsTerminal(store.PMDispatchSucceeded) || !PMDispatchJobTable.IsTerminal(store.PMDispatchFailed) {
+	if !PMDispatchJobTable.IsTerminal(contracts.PMDispatchSucceeded) || !PMDispatchJobTable.IsTerminal(contracts.PMDispatchFailed) {
 		t.Fatalf("succeeded/failed should be terminal")
 	}
 }
@@ -116,20 +115,20 @@ func TestPMDispatchJobTable(t *testing.T) {
 func TestTaskRunOrchestrationTable(t *testing.T) {
 	tests := []struct {
 		name string
-		from store.TaskOrchestrationState
-		to   store.TaskOrchestrationState
+		from contracts.TaskOrchestrationState
+		to   contracts.TaskOrchestrationState
 		want bool
 	}{
-		{name: "pending_to_running", from: store.TaskPending, to: store.TaskRunning, want: true},
-		{name: "pending_to_failed", from: store.TaskPending, to: store.TaskFailed, want: true},
-		{name: "pending_to_canceled", from: store.TaskPending, to: store.TaskCanceled, want: true},
-		{name: "running_to_succeeded", from: store.TaskRunning, to: store.TaskSucceeded, want: true},
-		{name: "running_to_failed", from: store.TaskRunning, to: store.TaskFailed, want: true},
-		{name: "running_to_canceled", from: store.TaskRunning, to: store.TaskCanceled, want: true},
-		{name: "succeeded_to_canceled", from: store.TaskSucceeded, to: store.TaskCanceled, want: true},
-		{name: "failed_to_canceled", from: store.TaskFailed, to: store.TaskCanceled, want: true},
-		{name: "canceled_to_running_forbidden", from: store.TaskCanceled, to: store.TaskRunning, want: false},
-		{name: "pending_to_succeeded_forbidden", from: store.TaskPending, to: store.TaskSucceeded, want: false},
+		{name: "pending_to_running", from: contracts.TaskPending, to: contracts.TaskRunning, want: true},
+		{name: "pending_to_failed", from: contracts.TaskPending, to: contracts.TaskFailed, want: true},
+		{name: "pending_to_canceled", from: contracts.TaskPending, to: contracts.TaskCanceled, want: true},
+		{name: "running_to_succeeded", from: contracts.TaskRunning, to: contracts.TaskSucceeded, want: true},
+		{name: "running_to_failed", from: contracts.TaskRunning, to: contracts.TaskFailed, want: true},
+		{name: "running_to_canceled", from: contracts.TaskRunning, to: contracts.TaskCanceled, want: true},
+		{name: "succeeded_to_canceled", from: contracts.TaskSucceeded, to: contracts.TaskCanceled, want: true},
+		{name: "failed_to_canceled", from: contracts.TaskFailed, to: contracts.TaskCanceled, want: true},
+		{name: "canceled_to_running_forbidden", from: contracts.TaskCanceled, to: contracts.TaskRunning, want: false},
+		{name: "pending_to_succeeded_forbidden", from: contracts.TaskPending, to: contracts.TaskSucceeded, want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -140,10 +139,10 @@ func TestTaskRunOrchestrationTable(t *testing.T) {
 		})
 	}
 
-	if !TaskRunOrchestrationTable.IsTerminal(store.TaskCanceled) {
+	if !TaskRunOrchestrationTable.IsTerminal(contracts.TaskCanceled) {
 		t.Fatalf("canceled should be terminal")
 	}
-	if TaskRunOrchestrationTable.IsTerminal(store.TaskSucceeded) || TaskRunOrchestrationTable.IsTerminal(store.TaskFailed) {
+	if TaskRunOrchestrationTable.IsTerminal(contracts.TaskSucceeded) || TaskRunOrchestrationTable.IsTerminal(contracts.TaskFailed) {
 		t.Fatalf("succeeded/failed should not be terminal in this table")
 	}
 }

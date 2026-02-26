@@ -33,7 +33,7 @@ func (r *testDaemonFeishuRuntime) ProcessInbound(ctx context.Context, env contra
 	}
 	return channelsvc.ProcessResult{
 		ReplyText: strings.TrimSpace(r.reply),
-		JobStatus: store.ChannelTurnSucceeded,
+		JobStatus: contracts.ChannelTurnSucceeded,
 	}, nil
 }
 
@@ -47,7 +47,7 @@ func (r *testDaemonFeishuNoEventRuntime) ProcessInbound(ctx context.Context, env
 	_ = ctx
 	return channelsvc.ProcessResult{
 		ReplyText: "done: " + strings.TrimSpace(env.Text),
-		JobStatus: store.ChannelTurnSucceeded,
+		JobStatus: contracts.ChannelTurnSucceeded,
 	}, nil
 }
 
@@ -68,7 +68,7 @@ func (r *testDaemonFeishuCountingRuntime) ProcessInbound(ctx context.Context, en
 	r.mu.Unlock()
 	return channelsvc.ProcessResult{
 		ReplyText: "ok",
-		JobStatus: store.ChannelTurnSucceeded,
+		JobStatus: contracts.ChannelTurnSucceeded,
 	}, nil
 }
 
@@ -105,7 +105,7 @@ func (r *testDaemonFeishuScriptedEventRuntime) ProcessInbound(ctx context.Contex
 	return channelsvc.ProcessResult{
 		RunID:     runID,
 		ReplyText: "done " + msgID,
-		JobStatus: store.ChannelTurnSucceeded,
+		JobStatus: contracts.ChannelTurnSucceeded,
 		AgentEvents: []channelsvc.AgentEvent{
 			{
 				RunID:  runID,
@@ -142,7 +142,7 @@ func (r *testDaemonFeishuDelayedNoEventRuntime) ProcessInbound(ctx context.Conte
 	}
 	return channelsvc.ProcessResult{
 		ReplyText: "done slow " + strings.TrimSpace(env.PeerMessageID),
-		JobStatus: store.ChannelTurnSucceeded,
+		JobStatus: contracts.ChannelTurnSucceeded,
 	}, nil
 }
 
@@ -176,7 +176,7 @@ func (r *testDaemonFeishuApprovalRuntime) ProcessInbound(ctx context.Context, en
 				Name: contracts.ActionCreateTicket,
 				Args: map[string]any{"title": "approval-ticket"},
 			},
-			Status: store.ChannelPendingActionPending,
+			Status: contracts.ChannelPendingActionPending,
 		},
 	}
 	if r != nil && len(r.pending) > 0 {
@@ -184,7 +184,7 @@ func (r *testDaemonFeishuApprovalRuntime) ProcessInbound(ctx context.Context, en
 	}
 	return channelsvc.ProcessResult{
 		ReplyText:      reply,
-		JobStatus:      store.ChannelTurnSucceeded,
+		JobStatus:      contracts.ChannelTurnSucceeded,
 		PendingActions: pending,
 	}, nil
 }
@@ -207,10 +207,10 @@ func (r *testDaemonFeishuApprovalRuntime) DecidePendingAction(ctx context.Contex
 	if r.decisionReply.Action.ID != 0 {
 		return r.decisionReply, nil
 	}
-	finalStatus := store.ChannelPendingActionExecuted
+	finalStatus := contracts.ChannelPendingActionExecuted
 	msg := "已执行审批操作"
 	if req.Decision == channelsvc.PendingActionReject {
-		finalStatus = store.ChannelPendingActionRejected
+		finalStatus = contracts.ChannelPendingActionRejected
 		msg = "已拒绝审批操作"
 	}
 	return channelsvc.PendingActionDecisionResult{
@@ -241,7 +241,7 @@ type testDaemonFeishuInterruptRuntime struct {
 
 	mu                 sync.Mutex
 	interruptCalls     int
-	lastChannelType    string
+	lastChannelType    contracts.ChannelType
 	lastAdapter        string
 	lastConversationID string
 }
@@ -251,7 +251,7 @@ func (r *testDaemonFeishuInterruptRuntime) ProcessInbound(ctx context.Context, e
 	return channelsvc.ProcessResult{
 		RunID:     "run-feishu-interrupt",
 		ReplyText: "echo: " + strings.TrimSpace(env.Text),
-		JobStatus: store.ChannelTurnSucceeded,
+		JobStatus: contracts.ChannelTurnSucceeded,
 	}, nil
 }
 
@@ -259,11 +259,11 @@ func (r *testDaemonFeishuInterruptRuntime) GatewayTurnTimeout() time.Duration {
 	return 3 * time.Second
 }
 
-func (r *testDaemonFeishuInterruptRuntime) InterruptConversation(ctx context.Context, channelType, adapter, peerConversationID string) (channelsvc.InterruptResult, error) {
+func (r *testDaemonFeishuInterruptRuntime) InterruptConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (channelsvc.InterruptResult, error) {
 	_ = ctx
 	r.mu.Lock()
 	r.interruptCalls++
-	r.lastChannelType = strings.TrimSpace(channelType)
+	r.lastChannelType = contracts.ChannelType(strings.TrimSpace(string(channelType)))
 	r.lastAdapter = strings.TrimSpace(adapter)
 	r.lastConversationID = strings.TrimSpace(peerConversationID)
 	r.mu.Unlock()
@@ -588,7 +588,7 @@ func TestDaemonFeishuWebhookHandler_PendingActionsSendApprovalCard(t *testing.T)
 		pending: []channelsvc.PendingActionView{
 			{
 				ID:     42,
-				Status: store.ChannelPendingActionPending,
+				Status: contracts.ChannelPendingActionPending,
 				Action: contracts.TurnAction{
 					Name: contracts.ActionCreateTicket,
 					Args: map[string]any{"title": "approval ticket"},
@@ -637,7 +637,7 @@ func TestDaemonFeishuWebhookHandler_CardActionTriggerDecideAndPatch(t *testing.T
 		decisionReply: channelsvc.PendingActionDecisionResult{
 			Action: channelsvc.PendingActionView{
 				ID:     42,
-				Status: store.ChannelPendingActionExecuted,
+				Status: contracts.ChannelPendingActionExecuted,
 				Action: contracts.TurnAction{
 					Name: contracts.ActionCreateTicket,
 				},
@@ -694,7 +694,7 @@ func TestDaemonFeishuWebhookHandler_CardActionTriggerV1EventTypeFallback(t *test
 		decisionReply: channelsvc.PendingActionDecisionResult{
 			Action: channelsvc.PendingActionView{
 				ID:     42,
-				Status: store.ChannelPendingActionExecuted,
+				Status: contracts.ChannelPendingActionExecuted,
 				Action: contracts.TurnAction{
 					Name: contracts.ActionCreateTicket,
 				},
@@ -898,7 +898,7 @@ func TestDaemonFeishuWebhookHandler_DedupByEventID(t *testing.T) {
 	}
 
 	var inboundCount int64
-	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", store.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
+	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
 		t.Fatalf("count inbound message failed: %v", err)
 	}
 	if inboundCount != 1 {
@@ -1024,7 +1024,7 @@ func TestDaemonFeishuWebhookHandler_FinalReplyCardFailedFallbackToTextAndOutboxS
 		msgs := sender.snapshot()
 		for _, msg := range msgs {
 			if strings.TrimSpace(msg.Kind) == "text" && strings.Contains(msg.Text, "done: hello") {
-				outbox := waitDaemonFeishuOutboxStatus(t, db, store.ChannelOutboxSent, 4*time.Second)
+				outbox := waitDaemonFeishuOutboxStatus(t, db, contracts.ChannelOutboxSent, 4*time.Second)
 				if strings.TrimSpace(outbox.LastError) != "" {
 					t.Fatalf("outbox last_error should be empty when text fallback succeeded, got=%q", outbox.LastError)
 				}
@@ -1054,13 +1054,13 @@ func TestDaemonFeishuWebhookHandler_FinalReplyFailedMarksOutboxFailed(t *testing
 
 	postDaemonFeishuTextEvent(t, handler, "token-ok", "chat-failed", "msg-failed", "open-user-1", "hello")
 
-	outbox := waitDaemonFeishuOutboxStatus(t, db, store.ChannelOutboxFailed, 8*time.Second)
+	outbox := waitDaemonFeishuOutboxStatus(t, db, contracts.ChannelOutboxFailed, 8*time.Second)
 	if !strings.Contains(strings.TrimSpace(outbox.LastError), "mock send failed") {
 		t.Fatalf("outbox last_error should include send error, got=%q", outbox.LastError)
 	}
 }
 
-func waitDaemonFeishuOutboxStatus(t *testing.T, db *gorm.DB, want store.ChannelOutboxStatus, timeout time.Duration) store.ChannelOutbox {
+func waitDaemonFeishuOutboxStatus(t *testing.T, db *gorm.DB, want contracts.ChannelOutboxStatus, timeout time.Duration) store.ChannelOutbox {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

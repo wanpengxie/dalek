@@ -14,7 +14,6 @@ import (
 
 	"dalek/internal/app"
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 const defaultGatewayDaemonWSURL = "ws://127.0.0.1:18081/ws"
@@ -91,7 +90,7 @@ func cmdGatewayIngress(args []string) {
 			"dalek gateway ingress --text \"你好\" -o json",
 		)
 	}
-	channelType := fs.String("channel", contracts.ChannelTypeCLI, "channel type: web|im|cli|api")
+	channelType := fs.String("channel", string(contracts.ChannelTypeCLI), "channel type: web|im|cli|api")
 	adapter := fs.String("adapter", "", "adapter 名（如 web.ws/cli.local）")
 	bindingID := fs.Uint("binding", 0, "binding id（可选）")
 	conversationID := fs.String("conv", "", "外部会话 id（可选）")
@@ -117,7 +116,7 @@ func cmdGatewayIngress(args []string) {
 
 	env := contracts.InboundEnvelope{
 		Schema:             contracts.ChannelInboundSchemaV1,
-		ChannelType:        strings.TrimSpace(*channelType),
+		ChannelType:        contracts.ChannelType(strings.TrimSpace(*channelType)),
 		Adapter:            strings.TrimSpace(*adapter),
 		BindingID:          uint(*bindingID),
 		PeerConversationID: strings.TrimSpace(*conversationID),
@@ -135,7 +134,7 @@ func cmdGatewayIngress(args []string) {
 	if err != nil {
 		exitRuntimeError(out, "gateway ingress 失败", err.Error(), "检查 gateway 与项目运行状态后重试")
 	}
-	failed := result.JobStatus != store.ChannelTurnSucceeded
+	failed := result.JobStatus != contracts.ChannelTurnSucceeded
 
 	if out == outputJSON {
 		if failed {
@@ -203,8 +202,8 @@ func cmdGatewayChat(args []string) {
 	finalFrame = normalizeGatewayChatFinalFrame(finalFrame)
 
 	if out == outputJSON {
-		jobStatus := store.ChannelTurnJobStatus(strings.TrimSpace(finalFrame.JobStatus))
-		if jobStatus != store.ChannelTurnSucceeded {
+		jobStatus := contracts.ChannelTurnJobStatus(strings.TrimSpace(finalFrame.JobStatus))
+		if jobStatus != contracts.ChannelTurnSucceeded {
 			exitOnGatewayTurnFailed(
 				out,
 				"gateway chat",
@@ -231,7 +230,7 @@ func cmdGatewayChat(args []string) {
 		exitOnGatewayTurnFailed(
 			outputText,
 			"gateway chat",
-			store.ChannelTurnJobStatus(strings.TrimSpace(finalFrame.JobStatus)),
+			contracts.ChannelTurnJobStatus(strings.TrimSpace(finalFrame.JobStatus)),
 			strings.TrimSpace(finalFrame.JobError),
 			strings.TrimSpace(finalFrame.JobErrorType),
 		)
@@ -410,7 +409,7 @@ func normalizeGatewayChatFinalFrame(frame gatewayWSOutboundFrame) gatewayWSOutbo
 	frame.JobError = strings.TrimSpace(frame.JobError)
 	if frame.Type == "error" {
 		if frame.JobStatus == "" {
-			frame.JobStatus = string(store.ChannelTurnFailed)
+			frame.JobStatus = string(contracts.ChannelTurnFailed)
 		}
 		if frame.JobError == "" {
 			frame.JobError = frame.Text
@@ -420,7 +419,7 @@ func normalizeGatewayChatFinalFrame(frame gatewayWSOutboundFrame) gatewayWSOutbo
 		}
 	}
 	if frame.JobStatus == "" {
-		frame.JobStatus = string(store.ChannelTurnSucceeded)
+		frame.JobStatus = string(contracts.ChannelTurnSucceeded)
 	}
 	return frame
 }
@@ -429,8 +428,8 @@ func printGatewayResultJSON(result any) {
 	printJSONOrExit(result)
 }
 
-func exitOnGatewayTurnFailed(out cliOutputFormat, cmd string, status store.ChannelTurnJobStatus, jobErr, jobErrType string) {
-	if status == store.ChannelTurnSucceeded {
+func exitOnGatewayTurnFailed(out cliOutputFormat, cmd string, status contracts.ChannelTurnJobStatus, jobErr, jobErrType string) {
+	if status == contracts.ChannelTurnSucceeded {
 		return
 	}
 	errMsg := strings.TrimSpace(jobErr)

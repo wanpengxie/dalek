@@ -45,7 +45,7 @@ type DispatchSubmission struct {
 	RequestID  string
 	TicketID   uint
 	WorkerID   uint
-	JobStatus  store.PMDispatchJobStatus
+	JobStatus  contracts.PMDispatchJobStatus
 	Dispatched bool
 }
 
@@ -75,7 +75,7 @@ func (s *Service) SubmitDispatchTicket(ctx context.Context, ticketID uint, opt D
 		TicketID:   job.TicketID,
 		WorkerID:   job.WorkerID,
 		JobStatus:  job.Status,
-		Dispatched: job.Status == store.PMDispatchPending || job.Status == store.PMDispatchRunning,
+		Dispatched: job.Status == contracts.PMDispatchPending || job.Status == contracts.PMDispatchRunning,
 	}
 	if out.TaskRunID == 0 && strings.TrimSpace(out.RequestID) != "" {
 		if rt, terr := s.taskRuntime(); terr == nil {
@@ -124,7 +124,7 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 		}
 		return DispatchResult{}, err
 	}
-	if finalJob.Status != store.PMDispatchSucceeded {
+	if finalJob.Status != contracts.PMDispatchSucceeded {
 		if strings.TrimSpace(finalJob.Error) != "" {
 			return DispatchResult{}, fmt.Errorf("dispatch 失败: %s", strings.TrimSpace(finalJob.Error))
 		}
@@ -151,19 +151,19 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 			return err
 		}
 		from := normalizeTicketWorkflowStatus(cur.WorkflowStatus)
-		if from == store.TicketDone || from == store.TicketArchived || from == store.TicketActive {
+		if from == contracts.TicketDone || from == contracts.TicketArchived || from == contracts.TicketActive {
 			return nil
 		}
 		now := time.Now()
 		if err := tx.WithContext(ctx).Model(&store.Ticket{}).
 			Where("id = ?", ticketID).
 			Updates(map[string]any{
-				"workflow_status": store.TicketActive,
+				"workflow_status": contracts.TicketActive,
 				"updated_at":      now,
 			}).Error; err != nil {
 			return err
 		}
-		return s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, store.TicketActive, "pm.dispatch", "dispatch 成功推进到 active", map[string]any{
+		return s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketActive, "pm.dispatch", "dispatch 成功推进到 active", map[string]any{
 			"worker_id":   finalJob.WorkerID,
 			"request_id":  strings.TrimSpace(finalJob.RequestID),
 			"dispatch_id": finalJob.ID,
@@ -196,10 +196,10 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return store.Ticket{}, nil, err
 	}
-	if t.WorkflowStatus == store.TicketArchived {
+	if t.WorkflowStatus == contracts.TicketArchived {
 		return store.Ticket{}, nil, fmt.Errorf("ticket 已归档，不能派发（dispatch）：t%d", ticketID)
 	}
-	if t.WorkflowStatus == store.TicketDone {
+	if t.WorkflowStatus == contracts.TicketDone {
 		return store.Ticket{}, nil, fmt.Errorf("ticket 已完成，不能派发（dispatch）：t%d", ticketID)
 	}
 	w, err := s.worker.LatestWorker(ctx, ticketID)
@@ -215,19 +215,19 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 	if w == nil || strings.TrimSpace(w.TmuxSession) == "" {
 		return store.Ticket{}, nil, s.workerMissingSessionError()
 	}
-	if w.Status == store.WorkerCreating {
+	if w.Status == contracts.WorkerCreating {
 		ready, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
 		if waitErr != nil {
 			return store.Ticket{}, nil, waitErr
 		}
 		w = ready
 	}
-	if autoStart && w.Status != store.WorkerRunning {
+	if autoStart && w.Status != contracts.WorkerRunning {
 		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
 		if err != nil {
 			return store.Ticket{}, nil, err
 		}
-		if w != nil && w.Status == store.WorkerCreating {
+		if w != nil && w.Status == contracts.WorkerCreating {
 			ready, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
 			if waitErr != nil {
 				return store.Ticket{}, nil, waitErr
@@ -235,7 +235,7 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 			w = ready
 		}
 	}
-	if w.Status != store.WorkerRunning {
+	if w.Status != contracts.WorkerRunning {
 		return store.Ticket{}, nil, s.workerNotRunningError(w)
 	}
 	return t, w, nil

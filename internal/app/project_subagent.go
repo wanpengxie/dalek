@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +15,6 @@ import (
 	agentprovider "dalek/internal/agent/provider"
 	"dalek/internal/agent/sdkrunner"
 	tasksvc "dalek/internal/services/task"
-	"dalek/internal/store"
 )
 
 func (p *Project) SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptions) (SubagentSubmission, error) {
@@ -43,7 +43,7 @@ func (p *Project) SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptio
 		return SubagentSubmission{}, err
 	}
 	if existingRun != nil {
-		if existingRun.OwnerType != store.TaskOwnerSubagent || strings.TrimSpace(existingRun.TaskType) != store.TaskTypeSubagentRun {
+		if existingRun.OwnerType != contracts.TaskOwnerSubagent || strings.TrimSpace(existingRun.TaskType) != contracts.TaskTypeSubagentRun {
 			return SubagentSubmission{}, fmt.Errorf("request_id 已被其他任务占用: %s", requestID)
 		}
 		existingRec, serr := p.task.FindSubagentRunByTaskRunID(ctx, existingRun.ID)
@@ -68,19 +68,19 @@ func (p *Project) SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptio
 		"prompt":   prompt,
 	})
 	createdRun, err := p.task.CreateRun(ctx, tasksvc.CreateRunInput{
-		OwnerType:          store.TaskOwnerSubagent,
-		TaskType:           store.TaskTypeSubagentRun,
+		OwnerType:          contracts.TaskOwnerSubagent,
+		TaskType:           contracts.TaskTypeSubagentRun,
 		ProjectKey:         strings.TrimSpace(p.Key()),
 		SubjectType:        "project",
 		SubjectID:          strings.TrimSpace(p.Key()),
 		RequestID:          requestID,
-		OrchestrationState: store.TaskPending,
+		OrchestrationState: contracts.TaskPending,
 		RequestPayloadJSON: strings.TrimSpace(string(requestPayload)),
 	})
 	if err != nil {
 		return SubagentSubmission{}, err
 	}
-	if createdRun.OwnerType != store.TaskOwnerSubagent || strings.TrimSpace(createdRun.TaskType) != store.TaskTypeSubagentRun {
+	if createdRun.OwnerType != contracts.TaskOwnerSubagent || strings.TrimSpace(createdRun.TaskType) != contracts.TaskTypeSubagentRun {
 		return SubagentSubmission{}, fmt.Errorf("request_id 已被其他任务占用: %s", requestID)
 	}
 
@@ -104,14 +104,14 @@ func (p *Project) SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptio
 		TaskRunID: createdRun.ID,
 		EventType: "task_enqueued",
 		ToState: map[string]any{
-			"orchestration_state": store.TaskPending,
+			"orchestration_state": contracts.TaskPending,
 		},
 		Note:      "subagent run enqueued",
 		CreatedAt: now,
 	})
 	_ = p.task.AppendRuntimeSample(ctx, tasksvc.RuntimeSampleInput{
 		TaskRunID:  createdRun.ID,
-		State:      store.TaskHealthIdle,
+		State:      contracts.TaskHealthIdle,
 		NeedsUser:  false,
 		Summary:    "subagent queued",
 		Source:     "agent.subagent.submit",
@@ -119,7 +119,7 @@ func (p *Project) SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptio
 	})
 	_ = p.task.AppendSemanticReport(ctx, tasksvc.SemanticReportInput{
 		TaskRunID:  createdRun.ID,
-		Phase:      store.TaskPhasePlanning,
+		Phase:      contracts.TaskPhasePlanning,
 		Milestone:  "subagent_enqueued",
 		NextAction: "continue",
 		Summary:    "subagent accepted",
@@ -154,7 +154,7 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 	if runRec == nil {
 		return fmt.Errorf("task run 不存在: %d", taskRunID)
 	}
-	if runRec.OwnerType != store.TaskOwnerSubagent || strings.TrimSpace(runRec.TaskType) != store.TaskTypeSubagentRun {
+	if runRec.OwnerType != contracts.TaskOwnerSubagent || strings.TrimSpace(runRec.TaskType) != contracts.TaskTypeSubagentRun {
 		return fmt.Errorf("task run 不是 subagent 任务: %d", taskRunID)
 	}
 	subRec, err := p.task.FindSubagentRunByTaskRunID(ctx, taskRunID)
@@ -214,9 +214,9 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 	_ = p.task.AppendEvent(ctx, tasksvc.TaskEventInput{
 		TaskRunID: taskRunID,
 		EventType: "task_started",
-		FromState: map[string]any{"orchestration_state": store.TaskPending},
+		FromState: map[string]any{"orchestration_state": contracts.TaskPending},
 		ToState: map[string]any{
-			"orchestration_state": store.TaskRunning,
+			"orchestration_state": contracts.TaskRunning,
 			"runner_id":           runnerID,
 		},
 		Note:      "subagent started",
@@ -224,7 +224,7 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 	})
 	_ = p.task.AppendRuntimeSample(ctx, tasksvc.RuntimeSampleInput{
 		TaskRunID:  taskRunID,
-		State:      store.TaskHealthBusy,
+		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
 		Summary:    "subagent running",
 		Source:     "agent.subagent.run",
@@ -232,7 +232,7 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 	})
 	_ = p.task.AppendSemanticReport(ctx, tasksvc.SemanticReportInput{
 		TaskRunID:  taskRunID,
-		Phase:      store.TaskPhaseImplementing,
+		Phase:      contracts.TaskPhaseImplementing,
 		Milestone:  "subagent_started",
 		NextAction: "continue",
 		Summary:    "subagent started",
@@ -308,14 +308,14 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 			_ = p.task.AppendEvent(context.Background(), tasksvc.TaskEventInput{
 				TaskRunID: taskRunID,
 				EventType: "task_canceled",
-				FromState: map[string]any{"orchestration_state": store.TaskRunning},
-				ToState:   map[string]any{"orchestration_state": store.TaskCanceled},
+				FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
+				ToState:   map[string]any{"orchestration_state": contracts.TaskCanceled},
 				Note:      errorMsg,
 				CreatedAt: finishedAt,
 			})
 			_ = p.task.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
 				TaskRunID:  taskRunID,
-				State:      store.TaskHealthDead,
+				State:      contracts.TaskHealthDead,
 				NeedsUser:  true,
 				Summary:    errorMsg,
 				Source:     "agent.subagent.run",
@@ -323,7 +323,7 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 			})
 			_ = p.task.AppendSemanticReport(context.Background(), tasksvc.SemanticReportInput{
 				TaskRunID:  taskRunID,
-				Phase:      store.TaskPhaseBlocked,
+				Phase:      contracts.TaskPhaseBlocked,
 				Milestone:  "subagent_canceled",
 				NextAction: "wait_user",
 				Summary:    errorMsg,
@@ -340,9 +340,9 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 			_ = p.task.AppendEvent(context.Background(), tasksvc.TaskEventInput{
 				TaskRunID: taskRunID,
 				EventType: "task_failed",
-				FromState: map[string]any{"orchestration_state": store.TaskRunning},
+				FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
 				ToState: map[string]any{
-					"orchestration_state": store.TaskFailed,
+					"orchestration_state": contracts.TaskFailed,
 					"error_code":          errorCode,
 				},
 				Note:      errorMsg,
@@ -350,7 +350,7 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 			})
 			_ = p.task.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
 				TaskRunID:  taskRunID,
-				State:      store.TaskHealthStalled,
+				State:      contracts.TaskHealthStalled,
 				NeedsUser:  true,
 				Summary:    errorMsg,
 				Source:     "agent.subagent.run",
@@ -358,7 +358,7 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 			})
 			_ = p.task.AppendSemanticReport(context.Background(), tasksvc.SemanticReportInput{
 				TaskRunID:  taskRunID,
-				Phase:      store.TaskPhaseBlocked,
+				Phase:      contracts.TaskPhaseBlocked,
 				Milestone:  "subagent_failed",
 				NextAction: "wait_user",
 				Summary:    errorMsg,
@@ -378,20 +378,20 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 			"request_id":    strings.TrimSpace(subRec.RequestID),
 			"task_run_id":   taskRunID,
 			"finished_at":   finishedAt.Format(time.RFC3339),
-			"orchestration": store.TaskSucceeded,
+			"orchestration": contracts.TaskSucceeded,
 		})
 		_ = p.task.MarkRunSucceeded(context.Background(), taskRunID, strings.TrimSpace(string(resultJSON)), finishedAt)
 		_ = p.task.AppendEvent(context.Background(), tasksvc.TaskEventInput{
 			TaskRunID: taskRunID,
 			EventType: "task_succeeded",
-			FromState: map[string]any{"orchestration_state": store.TaskRunning},
-			ToState:   map[string]any{"orchestration_state": store.TaskSucceeded},
+			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
+			ToState:   map[string]any{"orchestration_state": contracts.TaskSucceeded},
 			Note:      "subagent completed",
 			CreatedAt: finishedAt,
 		})
 		_ = p.task.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
 			TaskRunID:  taskRunID,
-			State:      store.TaskHealthIdle,
+			State:      contracts.TaskHealthIdle,
 			NeedsUser:  false,
 			Summary:    "subagent completed",
 			Source:     "agent.subagent.run",
@@ -399,7 +399,7 @@ func (p *Project) RunSubagentJob(ctx context.Context, taskRunID uint, opt Subage
 		})
 		_ = p.task.AppendSemanticReport(context.Background(), tasksvc.SemanticReportInput{
 			TaskRunID:  taskRunID,
-			Phase:      store.TaskPhaseDone,
+			Phase:      contracts.TaskPhaseDone,
 			Milestone:  "subagent_completed",
 			NextAction: "done",
 			Summary:    "subagent completed",

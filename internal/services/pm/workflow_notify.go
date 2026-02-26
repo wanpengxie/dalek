@@ -25,8 +25,8 @@ type WorkflowStatusChangeHook interface {
 type StatusChangeEvent struct {
 	TicketID   uint
 	WorkerID   uint
-	FromStatus store.TicketWorkflowStatus
-	ToStatus   store.TicketWorkflowStatus
+	FromStatus contracts.TicketWorkflowStatus
+	ToStatus   contracts.TicketWorkflowStatus
 	Source     string
 	Detail     string
 	OccurredAt time.Time
@@ -90,7 +90,7 @@ func (n *GatewayStatusNotifier) OnStatusChange(ctx context.Context, event Status
 	if err != nil {
 		return err
 	}
-	if event.ToStatus == store.TicketDone {
+	if event.ToStatus == contracts.TicketDone {
 		if mergeDetail, merr := n.loadMergeDetail(ctx, event.TicketID); merr == nil && strings.TrimSpace(mergeDetail) != "" {
 			if cur := strings.TrimSpace(event.Detail); cur != "" {
 				event.Detail = strings.TrimSpace(mergeDetail) + "\n" + cur
@@ -130,7 +130,7 @@ func (n *GatewayStatusNotifier) loadTicketTitle(ctx context.Context, ticketID ui
 
 func shouldNotifyTicketStatusChange(event StatusChangeEvent) bool {
 	switch normalizeTicketWorkflowStatus(event.ToStatus) {
-	case store.TicketDone, store.TicketBlocked:
+	case contracts.TicketDone, contracts.TicketBlocked:
 		return true
 	default:
 		return false
@@ -143,7 +143,7 @@ func (n *GatewayStatusNotifier) loadMergeDetail(ctx context.Context, ticketID ui
 	}
 	var mi store.MergeItem
 	err := n.projectDB.WithContext(ctx).
-		Where("ticket_id = ? AND status != ?", ticketID, store.MergeMerged).
+		Where("ticket_id = ? AND status != ?", ticketID, contracts.MergeMerged).
 		Order("id desc").
 		First(&mi).Error
 	if err != nil {
@@ -197,7 +197,7 @@ func buildStatusChangeNotifyText(event StatusChangeEvent, ticketTitle string) st
 	return strings.Join(lines, "\n")
 }
 
-func (s *Service) buildStatusChangeEvent(ticketID uint, from, to store.TicketWorkflowStatus, source string, occurredAt time.Time) *StatusChangeEvent {
+func (s *Service) buildStatusChangeEvent(ticketID uint, from, to contracts.TicketWorkflowStatus, source string, occurredAt time.Time) *StatusChangeEvent {
 	from = normalizeTicketWorkflowStatus(from)
 	to = normalizeTicketWorkflowStatus(to)
 	if ticketID == 0 || from == "" || to == "" || from == to {

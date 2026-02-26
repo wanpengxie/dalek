@@ -13,12 +13,12 @@ import (
 	"gorm.io/gorm"
 )
 
-func validTicketWorkflowStatus(st store.TicketWorkflowStatus) bool {
+func validTicketWorkflowStatus(st contracts.TicketWorkflowStatus) bool {
 	return fsm.TicketWorkflowTable.IsKnownState(st)
 }
 
 // SetTicketWorkflowStatus 是“唯一写者（PM reducer）”对 ticket.workflow_status 的手动入口。
-func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, status store.TicketWorkflowStatus) error {
+func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, status contracts.TicketWorkflowStatus) error {
 	_, db, err := s.require()
 	if err != nil {
 		return err
@@ -29,7 +29,7 @@ func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, st
 	if ticketID == 0 {
 		return fmt.Errorf("ticket_id 不能为空")
 	}
-	status = store.TicketWorkflowStatus(strings.TrimSpace(strings.ToLower(string(status))))
+	status = contracts.TicketWorkflowStatus(strings.TrimSpace(strings.ToLower(string(status))))
 	if status == "" {
 		return fmt.Errorf("workflow_status 不能为空")
 	}
@@ -43,7 +43,7 @@ func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, st
 			return err
 		}
 		from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
-		if from == store.TicketArchived {
+		if from == contracts.TicketArchived {
 			return fmt.Errorf("ticket 已归档，不能修改 workflow_status: t%d", ticketID)
 		}
 		if from == status {
@@ -88,7 +88,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return err
 	}
-	if t.WorkflowStatus == store.TicketArchived {
+	if t.WorkflowStatus == contracts.TicketArchived {
 		return nil
 	}
 
@@ -96,7 +96,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 	var activeDispatch int64
 	if err := db.WithContext(ctx).
 		Model(&store.PMDispatchJob{}).
-		Where("ticket_id = ? AND status IN ?", ticketID, []store.PMDispatchJobStatus{store.PMDispatchPending, store.PMDispatchRunning}).
+		Where("ticket_id = ? AND status IN ?", ticketID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 		Count(&activeDispatch).Error; err != nil {
 		return err
 	}
@@ -107,7 +107,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 	var cnt int64
 	if err := db.WithContext(ctx).
 		Model(&store.Worker{}).
-		Where("ticket_id = ? AND status = ?", ticketID, store.WorkerRunning).
+		Where("ticket_id = ? AND status = ?", ticketID, contracts.WorkerRunning).
 		Count(&cnt).Error; err != nil {
 		return err
 	}
@@ -122,11 +122,11 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 			return err
 		}
 		from := normalizeTicketWorkflowStatus(cur.WorkflowStatus)
-		if from == store.TicketArchived {
+		if from == contracts.TicketArchived {
 			return nil
 		}
 		if err := tx.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
-			"workflow_status": store.TicketArchived,
+			"workflow_status": contracts.TicketArchived,
 			"updated_at":      now,
 		}).Error; err != nil {
 			return err
@@ -152,7 +152,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 			cleanupWorkerID = w.ID
 			cleanupWorktree = strings.TrimSpace(w.WorktreePath)
 		}
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, store.TicketArchived, "pm.archive", "手动归档 ticket", map[string]any{
+		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketArchived, "pm.archive", "手动归档 ticket", map[string]any{
 			"ticket_id":            ticketID,
 			"cleanup_requested":    cleanupRequested,
 			"cleanup_worker_id":    cleanupWorkerID,
@@ -161,7 +161,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 		}, now); err != nil {
 			return err
 		}
-		statusEvent = s.buildStatusChangeEvent(ticketID, from, store.TicketArchived, "pm.archive", now)
+		statusEvent = s.buildStatusChangeEvent(ticketID, from, contracts.TicketArchived, "pm.archive", now)
 		return nil
 	})
 	if err != nil {
@@ -210,14 +210,14 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 
 	// 2) workflow reducer（唯一写者）+ 因果 side effects（同事务）
 	next := strings.TrimSpace(strings.ToLower(r.NextAction))
-	var promoteTo store.TicketWorkflowStatus
+	var promoteTo contracts.TicketWorkflowStatus
 	switch next {
 	case string(contracts.NextDone):
-		promoteTo = store.TicketDone
+		promoteTo = contracts.TicketDone
 	case string(contracts.NextWaitUser):
-		promoteTo = store.TicketBlocked
+		promoteTo = contracts.TicketBlocked
 	case string(contracts.NextContinue):
-		promoteTo = store.TicketActive
+		promoteTo = contracts.TicketActive
 	default:
 		// unknown 不强推 workflow。
 		return nil
@@ -234,11 +234,11 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 		if err := tx.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 			return err
 		}
-		if t.WorkflowStatus == store.TicketArchived {
+		if t.WorkflowStatus == contracts.TicketArchived {
 			return nil
 		}
 		// 不允许自动把 done 回滚为 active（例如 report continue 误发）。
-		if t.WorkflowStatus == store.TicketDone && promoteTo == store.TicketActive {
+		if t.WorkflowStatus == contracts.TicketDone && promoteTo == contracts.TicketActive {
 			return nil
 		}
 		from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
@@ -276,9 +276,9 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 		case string(contracts.NextWaitUser):
 			_, err := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
 				Key:      inboxKeyNeedsUser(r.WorkerID),
-				Status:   store.InboxOpen,
-				Severity: store.InboxBlocker,
-				Reason:   store.InboxNeedsUser,
+				Status:   contracts.InboxOpen,
+				Severity: contracts.InboxBlocker,
+				Reason:   contracts.InboxNeedsUser,
 				Title:    fmt.Sprintf("需要你输入：t%d w%d", t.ID, r.WorkerID),
 				Body:     buildNeedsUserInboxBodyFromReport(r),
 				TicketID: t.ID,
@@ -330,9 +330,9 @@ func (s *Service) ensureMergeProposalForDoneTicketTx(ctx context.Context, tx *go
 		First(&existing).Error; err == nil {
 		_, err := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
 			Key:         inboxKeyMergeApproval(existing.ID),
-			Status:      store.InboxOpen,
-			Severity:    store.InboxWarn,
-			Reason:      store.InboxApprovalRequired,
+			Status:      contracts.InboxOpen,
+			Severity:    contracts.InboxWarn,
+			Reason:      contracts.InboxApprovalRequired,
 			Title:       fmt.Sprintf("待合并审批：t%d", ticketID),
 			Body:        fmt.Sprintf("merge_item=%d  branch=%s\n\n请确认是否允许合并，以及合并策略（squash/merge）。", existing.ID, strings.TrimSpace(existing.Branch)),
 			TicketID:    ticketID,
@@ -369,7 +369,7 @@ func (s *Service) ensureMergeProposalForDoneTicketTx(ctx context.Context, tx *go
 		return nil
 	}
 	mi := store.MergeItem{
-		Status:   store.MergeProposed,
+		Status:   contracts.MergeProposed,
 		TicketID: ticketID,
 		WorkerID: w.ID,
 		Branch:   branch,
@@ -379,9 +379,9 @@ func (s *Service) ensureMergeProposalForDoneTicketTx(ctx context.Context, tx *go
 	}
 	_, err := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
 		Key:         inboxKeyMergeApproval(mi.ID),
-		Status:      store.InboxOpen,
-		Severity:    store.InboxWarn,
-		Reason:      store.InboxApprovalRequired,
+		Status:      contracts.InboxOpen,
+		Severity:    contracts.InboxWarn,
+		Reason:      contracts.InboxApprovalRequired,
 		Title:       fmt.Sprintf("待合并审批：t%d", ticketID),
 		Body:        fmt.Sprintf("merge_item=%d  branch=%s\n\n请确认是否允许合并，以及合并策略（squash/merge）。", mi.ID, strings.TrimSpace(mi.Branch)),
 		TicketID:    ticketID,

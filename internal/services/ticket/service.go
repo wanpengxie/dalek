@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -44,10 +45,10 @@ func (s *Service) CreateWithDescription(ctx context.Context, title, description 
 		return nil, fmt.Errorf("description 不能为空")
 	}
 	t := store.Ticket{
-		Title:       title,
-		Description: description,
-		WorkflowStatus: store.TicketBacklog,
-		Priority:    0,
+		Title:          title,
+		Description:    description,
+		WorkflowStatus: contracts.TicketBacklog,
+		Priority:       0,
 	}
 	if err := db.WithContext(ctx).Create(&t).Error; err != nil {
 		return nil, err
@@ -62,7 +63,7 @@ func (s *Service) List(ctx context.Context, includeArchived bool) ([]store.Ticke
 	}
 	q := db.WithContext(ctx).Model(&store.Ticket{}).Order("priority desc").Order("updated_at desc").Order("id desc")
 	if !includeArchived {
-		q = q.Where("workflow_status != ?", store.TicketArchived)
+		q = q.Where("workflow_status != ?", contracts.TicketArchived)
 	}
 	var out []store.Ticket
 	if err := q.Find(&out).Error; err != nil {

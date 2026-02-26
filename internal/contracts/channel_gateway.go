@@ -11,13 +11,6 @@ const (
 	TurnResponseSchemaV1   = "dalek.turn_response.v1"
 )
 
-const (
-	ChannelTypeWeb = "web"
-	ChannelTypeIM  = "im"
-	ChannelTypeCLI = "cli"
-	ChannelTypeAPI = "api"
-)
-
 type InboundAttachment struct {
 	Type string `json:"type"`
 	URL  string `json:"url"`
@@ -27,9 +20,9 @@ type InboundAttachment struct {
 type InboundEnvelope struct {
 	Schema string `json:"schema"`
 
-	ChannelType string `json:"channel_type"`
-	Adapter     string `json:"adapter"`
-	BindingID   uint   `json:"binding_id"`
+	ChannelType ChannelType `json:"channel_type"`
+	Adapter     string      `json:"adapter"`
+	BindingID   uint        `json:"binding_id"`
 
 	PeerMessageID      string              `json:"peer_message_id"`
 	PeerConversationID string              `json:"peer_conversation_id"`
@@ -48,7 +41,7 @@ func (e *InboundEnvelope) Normalize() {
 	if e.Schema == "" {
 		e.Schema = ChannelInboundSchemaV1
 	}
-	e.ChannelType = strings.ToLower(strings.TrimSpace(e.ChannelType))
+	e.ChannelType = ChannelType(strings.ToLower(strings.TrimSpace(string(e.ChannelType))))
 	e.Adapter = strings.TrimSpace(e.Adapter)
 	e.PeerMessageID = strings.TrimSpace(e.PeerMessageID)
 	e.PeerConversationID = strings.TrimSpace(e.PeerConversationID)
@@ -68,10 +61,10 @@ func (e InboundEnvelope) Validate() error {
 	if strings.TrimSpace(e.Schema) != ChannelInboundSchemaV1 {
 		return fmt.Errorf("inbound schema 非法: %s", strings.TrimSpace(e.Schema))
 	}
-	switch strings.ToLower(strings.TrimSpace(e.ChannelType)) {
+	switch ChannelType(strings.ToLower(strings.TrimSpace(string(e.ChannelType)))) {
 	case ChannelTypeWeb, ChannelTypeIM, ChannelTypeCLI, ChannelTypeAPI:
 	default:
-		return fmt.Errorf("channel_type 非法: %s", strings.TrimSpace(e.ChannelType))
+		return fmt.Errorf("channel_type 非法: %s", strings.TrimSpace(string(e.ChannelType)))
 	}
 	if strings.TrimSpace(e.Adapter) == "" {
 		return fmt.Errorf("adapter 不能为空")

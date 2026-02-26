@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -254,7 +255,7 @@ func createTicket(t *testing.T, db *gorm.DB, title string) store.Ticket {
 	tk := store.Ticket{
 		Title:          strings.TrimSpace(title),
 		Description:    "test ticket description",
-		WorkflowStatus: store.TicketBacklog,
+		WorkflowStatus: contracts.TicketBacklog,
 	}
 	if err := db.Create(&tk).Error; err != nil {
 		t.Fatalf("create ticket failed: %v", err)

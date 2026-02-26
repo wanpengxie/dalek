@@ -105,7 +105,7 @@ func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt c
 	}
 	requestID := fmt.Sprintf("wrk_legacy_w%d_%d", w.ID, now.UnixNano())
 	created, err := rt.CreateRun(ctx, core.TaskRuntimeCreateRunInput{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         strings.TrimSpace(p.Key),
 		TicketID:           w.TicketID,
@@ -113,7 +113,7 @@ func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt c
 		SubjectType:        "ticket",
 		SubjectID:          fmt.Sprintf("%d", w.TicketID),
 		RequestID:          requestID,
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &now,
 		RequestPayloadJSON: workerTaskJSON(map[string]any{
 			"source": "worker_report",
@@ -127,14 +127,14 @@ func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt c
 		TaskRunID: created.ID,
 		EventType: "task_started",
 		ToState: map[string]any{
-			"orchestration_state": store.TaskRunning,
+			"orchestration_state": contracts.TaskRunning,
 		},
 		Note: reason,
 	})
 	return created, nil
 }
 
-func (s *Service) syncTaskRuntimeFromReport(ctx context.Context, w store.Worker, r contracts.WorkerReport, runtimeHealth store.TaskRuntimeHealthState, needsUser bool, summary string, source string, now time.Time) error {
+func (s *Service) syncTaskRuntimeFromReport(ctx context.Context, w store.Worker, r contracts.WorkerReport, runtimeHealth contracts.TaskRuntimeHealthState, needsUser bool, summary string, source string, now time.Time) error {
 	rt, err := s.taskRuntime()
 	if err != nil {
 		return err
@@ -142,7 +142,7 @@ func (s *Service) syncTaskRuntimeFromReport(ctx context.Context, w store.Worker,
 	return s.syncTaskRuntimeFromReportWithRuntime(ctx, rt, w, r, runtimeHealth, needsUser, summary, source, now)
 }
 
-func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt core.TaskRuntime, w store.Worker, r contracts.WorkerReport, runtimeHealth store.TaskRuntimeHealthState, needsUser bool, summary string, source string, now time.Time) error {
+func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt core.TaskRuntime, w store.Worker, r contracts.WorkerReport, runtimeHealth contracts.TaskRuntimeHealthState, needsUser bool, summary string, source string, now time.Time) error {
 	if rt == nil {
 		return fmt.Errorf("task runtime service 为空")
 	}
@@ -208,8 +208,8 @@ func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt c
 		if err := rt.AppendEvent(ctx, core.TaskRuntimeEventInput{
 			TaskRunID: run.ID,
 			EventType: "task_succeeded",
-			FromState: map[string]any{"orchestration_state": store.TaskRunning},
-			ToState:   map[string]any{"orchestration_state": store.TaskSucceeded},
+			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
+			ToState:   map[string]any{"orchestration_state": contracts.TaskSucceeded},
 			Note:      "worker report next_action=done",
 		}); err != nil {
 			return err
@@ -248,11 +248,11 @@ func (s *Service) finalizeWorkerTaskRunOnStopWithRuntime(ctx context.Context, rt
 	}
 	from := strings.TrimSpace(string(run.OrchestrationState))
 	if from == "" {
-		from = string(store.TaskRunning)
+		from = string(contracts.TaskRunning)
 	}
 	if err := rt.AppendRuntimeSample(ctx, core.TaskRuntimeRuntimeSampleInput{
 		TaskRunID:  run.ID,
-		State:      store.TaskHealthDead,
+		State:      contracts.TaskHealthDead,
 		NeedsUser:  false,
 		Summary:    reason,
 		Source:     source,
@@ -276,8 +276,8 @@ func (s *Service) finalizeWorkerTaskRunOnStopWithRuntime(ctx context.Context, rt
 			"orchestration_state": from,
 		},
 		ToState: map[string]any{
-			"orchestration_state":  store.TaskCanceled,
-			"runtime_health_state": store.TaskHealthDead,
+			"orchestration_state":  contracts.TaskCanceled,
+			"runtime_health_state": contracts.TaskHealthDead,
 		},
 		Note: reason,
 		Payload: map[string]any{

@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -96,7 +97,7 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 			ReasoningEffort: strings.TrimSpace(agentCfg.ReasoningEffort),
 			Command:         strings.TrimSpace(agentCfg.Command),
 			Runtime:         rt,
-			OwnerType:       store.TaskOwnerPM,
+			OwnerType:       contracts.TaskOwnerPM,
 			TaskType:        "pm_dispatch_agent",
 			ProjectKey:      strings.TrimSpace(p.Key),
 			TicketID:        t.ID,
@@ -121,7 +122,7 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 		executor = run.NewProcessExecutor(run.ProcessConfig{
 			Provider:    agentProvider,
 			Runtime:     rt,
-			OwnerType:   store.TaskOwnerPM,
+			OwnerType:   contracts.TaskOwnerPM,
 			TaskType:    "pm_dispatch_agent",
 			ProjectKey:  strings.TrimSpace(p.Key),
 			TicketID:    t.ID,

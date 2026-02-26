@@ -1,6 +1,7 @@
 package main
 
 import (
+	"dalek/internal/contracts"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ func seedRunningTaskRunForCancelE2E(t *testing.T, repoRoot string, runID uint, r
 	now := time.Now()
 	run := store.TaskRun{
 		ID:                 runID,
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
 		TicketID:           1,
@@ -31,7 +32,7 @@ func seedRunningTaskRunForCancelE2E(t *testing.T, repoRoot string, runID uint, r
 		SubjectType:        "ticket",
 		SubjectID:          "1",
 		RequestID:          strings.TrimSpace(requestID),
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		RunnerID:           "daemon_runner_e2e",
 		Attempt:            1,
 		StartedAt:          &now,
@@ -119,7 +120,7 @@ func TestCLI_TaskCancel_UsesDaemonAPIThenMarksDB(t *testing.T) {
 		t.Fatalf("expected daemon cancel endpoint called")
 	}
 	run := loadTaskRunForCancelE2E(t, repoRoot, runID)
-	if run.OrchestrationState != store.TaskCanceled {
+	if run.OrchestrationState != contracts.TaskCanceled {
 		t.Fatalf("expected run canceled in DB, got=%s", run.OrchestrationState)
 	}
 }
@@ -164,7 +165,7 @@ func TestCLI_TaskCancel_DaemonUnavailableFallbackWarnsAndMarksDB(t *testing.T) {
 		t.Fatalf("expected fallback warning in response, got=%q", resp.Warning)
 	}
 	run := loadTaskRunForCancelE2E(t, repoRoot, runID)
-	if run.OrchestrationState != store.TaskCanceled {
+	if run.OrchestrationState != contracts.TaskCanceled {
 		t.Fatalf("expected run canceled in DB, got=%s", run.OrchestrationState)
 	}
 }

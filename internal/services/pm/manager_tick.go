@@ -64,7 +64,7 @@ func workerBlocksAutopilot(v *store.TaskStatusView) bool {
 		return true
 	}
 	switch strings.TrimSpace(v.RuntimeHealthState) {
-	case string(store.TaskHealthWaitingUser), string(store.TaskHealthStalled):
+	case string(contracts.TaskHealthWaitingUser), string(contracts.TaskHealthStalled):
 		return true
 	}
 	switch strings.TrimSpace(strings.ToLower(v.SemanticNextAction)) {
@@ -134,9 +134,9 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 				body := taskEventBody(ev)
 				created, uerr := s.upsertOpenInbox(ctx, store.InboxItem{
 					Key:      key,
-					Status:   store.InboxOpen,
-					Severity: store.InboxWarn,
-					Reason:   store.InboxIncident,
+					Status:   contracts.InboxOpen,
+					Severity: contracts.InboxWarn,
+					Reason:   contracts.InboxIncident,
 					Title:    title,
 					Body:     body,
 					TicketID: ev.TicketID,
@@ -155,14 +155,14 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 				}
 
 				// needs_user 的强信号：直接建 inbox（并避免等到下一轮扫描）
-				if needsUser || runtimeHealth == string(store.TaskHealthWaitingUser) || nextAction == string(contracts.NextWaitUser) {
+				if needsUser || runtimeHealth == string(contracts.TaskHealthWaitingUser) || nextAction == string(contracts.NextWaitUser) {
 					key := inboxKeyNeedsUser(ev.WorkerID)
 					title := fmt.Sprintf("需要你输入：t%d w%d", ev.TicketID, ev.WorkerID)
 					created, uerr := s.upsertOpenInbox(ctx, store.InboxItem{
 						Key:      key,
-						Status:   store.InboxOpen,
-						Severity: store.InboxBlocker,
-						Reason:   store.InboxNeedsUser,
+						Status:   contracts.InboxOpen,
+						Severity: contracts.InboxBlocker,
+						Reason:   contracts.InboxNeedsUser,
 						Title:    title,
 						Body:     summary,
 						TicketID: ev.TicketID,
@@ -186,14 +186,14 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	// 3) 扫描 running workers：补齐 needs_user / stalled 的 inbox，并计算容量
 	var running []store.Worker
 	if err := db.WithContext(ctx).
-		Where("status = ?", store.WorkerRunning).
+		Where("status = ?", contracts.WorkerRunning).
 		Order("id asc").
 		Find(&running).Error; err != nil {
 		return res, err
 	}
 	runningTicketIDs := map[uint]bool{}
 	taskViews, err := taskRuntime.ListStatus(ctx, core.TaskRuntimeListStatusOptions{
-		OwnerType:       store.TaskOwnerWorker,
+		OwnerType:       contracts.TaskOwnerWorker,
 		IncludeTerminal: true,
 		Limit:           5000,
 	})
@@ -224,8 +224,8 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		if workerBlocksAutopilot(&tv) {
 			res.RunningBlocked++
 			key := inboxKeyNeedsUser(w.ID)
-			reason := store.InboxNeedsUser
-			severity := store.InboxBlocker
+			reason := contracts.InboxNeedsUser
+			severity := contracts.InboxBlocker
 			title := fmt.Sprintf("需要你输入：t%d w%d", w.TicketID, w.ID)
 			body := strings.TrimSpace(tv.RuntimeSummary)
 			if body == "" {
@@ -234,10 +234,10 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 			if body == "" {
 				body = strings.TrimSpace(tv.LastEventNote)
 			}
-			if strings.TrimSpace(tv.RuntimeHealthState) == string(store.TaskHealthStalled) {
+			if strings.TrimSpace(tv.RuntimeHealthState) == string(contracts.TaskHealthStalled) {
 				key = inboxKeyWorkerIncident(w.ID, "runtime_stalled")
-				reason = store.InboxIncident
-				severity = store.InboxWarn
+				reason = contracts.InboxIncident
+				severity = contracts.InboxWarn
 				title = fmt.Sprintf("运行受阻：t%d w%d", w.TicketID, w.ID)
 				if body == "" {
 					body = strings.TrimSpace(tv.ErrorMessage)
@@ -245,7 +245,7 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 			}
 			created, uerr := s.upsertOpenInbox(ctx, store.InboxItem{
 				Key:      key,
-				Status:   store.InboxOpen,
+				Status:   contracts.InboxOpen,
 				Severity: severity,
 				Reason:   reason,
 				Title:    title,
@@ -281,7 +281,7 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	// 4) merge queue：当 ticket 标成 done 时，自动创建 merge 提案（不自动合并）
 	var doneTickets []store.Ticket
 	_ = db.WithContext(ctx).
-		Where("workflow_status = ?", store.TicketDone).
+		Where("workflow_status = ?", contracts.TicketDone).
 		Order("id asc").
 		Find(&doneTickets).Error
 	for _, t := range doneTickets {
@@ -312,7 +312,7 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		}
 
 		mi := store.MergeItem{
-			Status:   store.MergeProposed,
+			Status:   contracts.MergeProposed,
 			TicketID: t.ID,
 			WorkerID: w.ID,
 			Branch:   branch,
@@ -325,9 +325,9 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 
 		_, _ = s.upsertOpenInbox(ctx, store.InboxItem{
 			Key:         inboxKeyMergeApproval(mi.ID),
-			Status:      store.InboxOpen,
-			Severity:    store.InboxWarn,
-			Reason:      store.InboxApprovalRequired,
+			Status:      contracts.InboxOpen,
+			Severity:    contracts.InboxWarn,
+			Reason:      contracts.InboxApprovalRequired,
 			Title:       fmt.Sprintf("待合并审批：t%d", t.ID),
 			Body:        fmt.Sprintf("merge_item=%d  branch=%s\n\n请确认是否允许合并，以及合并策略（squash/merge）。", mi.ID, strings.TrimSpace(mi.Branch)),
 			TicketID:    t.ID,
@@ -339,7 +339,7 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	if capacity > 0 && !opt.DryRun {
 		var queued []store.Ticket
 		if err := db.WithContext(ctx).
-			Where("workflow_status = ?", store.TicketQueued).
+			Where("workflow_status = ?", contracts.TicketQueued).
 			Order("priority desc").
 			Order("updated_at asc").
 			Order("id asc").
@@ -361,18 +361,18 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 					body := serr.Error()
 					_, _ = s.upsertOpenInbox(ctx, store.InboxItem{
 						Key:      key,
-						Status:   store.InboxOpen,
-						Severity: store.InboxWarn,
-						Reason:   store.InboxIncident,
+						Status:   contracts.InboxOpen,
+						Severity: contracts.InboxWarn,
+						Reason:   contracts.InboxIncident,
 						Title:    title,
 						Body:     body,
 						TicketID: t.ID,
 					})
 					continue
 				}
-				if w == nil || w.Status != store.WorkerRunning {
+				if w == nil || w.Status != contracts.WorkerRunning {
 					workerID := uint(0)
-					workerStatus := store.WorkerStatus("")
+					workerStatus := contracts.WorkerStatus("")
 					if w != nil {
 						workerID = w.ID
 						workerStatus = w.Status
@@ -380,9 +380,9 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 					msg := fmt.Sprintf("start 返回后 worker 未处于 running（t%d w%d status=%s）", t.ID, workerID, workerStatus)
 					_, _ = s.upsertOpenInbox(ctx, store.InboxItem{
 						Key:      inboxKeyTicketIncident(t.ID, "start_not_running"),
-						Status:   store.InboxOpen,
-						Severity: store.InboxBlocker,
-						Reason:   store.InboxIncident,
+						Status:   contracts.InboxOpen,
+						Severity: contracts.InboxBlocker,
+						Reason:   contracts.InboxIncident,
 						Title:    fmt.Sprintf("启动后 worker 未就绪：t%d", t.ID),
 						Body:     msg,
 						TicketID: t.ID,
@@ -412,9 +412,9 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 						title := fmt.Sprintf("派发失败：t%d w%d", t.ID, w.ID)
 						_, _ = s.upsertOpenInbox(ctx, store.InboxItem{
 							Key:      key,
-							Status:   store.InboxOpen,
-							Severity: store.InboxWarn,
-							Reason:   store.InboxIncident,
+							Status:   contracts.InboxOpen,
+							Severity: contracts.InboxWarn,
+							Reason:   contracts.InboxIncident,
 							Title:    title,
 							Body:     derr.Error(),
 							TicketID: t.ID,
@@ -437,9 +437,9 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 						title := fmt.Sprintf("派发失败：t%d w%d", t.ID, w.ID)
 						_, _ = s.upsertOpenInbox(ctx, store.InboxItem{
 							Key:      key,
-							Status:   store.InboxOpen,
-							Severity: store.InboxWarn,
-							Reason:   store.InboxIncident,
+							Status:   contracts.InboxOpen,
+							Severity: contracts.InboxWarn,
+							Reason:   contracts.InboxIncident,
 							Title:    title,
 							Body:     derr.Error(),
 							TicketID: t.ID,
@@ -458,9 +458,9 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 					errMsg := fmt.Sprintf("dispatch submitter 未配置：t%d w%d", t.ID, w.ID)
 					_, _ = s.upsertOpenInbox(ctx, store.InboxItem{
 						Key:      inboxKeyTicketIncident(t.ID, "dispatch_no_submitter"),
-						Status:   store.InboxOpen,
-						Severity: store.InboxBlocker,
-						Reason:   store.InboxIncident,
+						Status:   contracts.InboxOpen,
+						Severity: contracts.InboxBlocker,
+						Reason:   contracts.InboxIncident,
 						Title:    fmt.Sprintf("派发失败：t%d w%d", t.ID, w.ID),
 						Body:     errMsg,
 						TicketID: t.ID,

@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,7 +14,7 @@ import (
 )
 
 type CreateRunInput struct {
-	OwnerType store.TaskOwnerType
+	OwnerType contracts.TaskOwnerType
 	TaskType  string
 
 	ProjectKey  string
@@ -24,7 +25,7 @@ type CreateRunInput struct {
 
 	RequestID string
 
-	OrchestrationState store.TaskOrchestrationState
+	OrchestrationState contracts.TaskOrchestrationState
 	RunnerID           string
 	LeaseExpiresAt     *time.Time
 	Attempt            int
@@ -58,7 +59,7 @@ func (s *Service) CreateRun(ctx context.Context, in CreateRunInput) (store.TaskR
 		return store.TaskRun{}, fmt.Errorf("task_type 不能为空")
 	}
 	if !validOrchestrationState(in.OrchestrationState) {
-		in.OrchestrationState = store.TaskPending
+		in.OrchestrationState = contracts.TaskPending
 	}
 	if in.Attempt < 0 {
 		in.Attempt = 0
@@ -151,7 +152,7 @@ func (s *Service) LatestActiveWorkerRun(ctx context.Context, workerID uint) (*st
 	}
 	var run store.TaskRun
 	if err := db.WithContext(ctx).
-		Where("owner_type = ? AND worker_id = ? AND orchestration_state IN ?", store.TaskOwnerWorker, workerID, []store.TaskOrchestrationState{store.TaskPending, store.TaskRunning}).
+		Where("owner_type = ? AND worker_id = ? AND orchestration_state IN ?", contracts.TaskOwnerWorker, workerID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 		Order("id desc").
 		First(&run).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -181,9 +182,9 @@ func (s *Service) CancelActiveWorkerRuns(ctx context.Context, workerID uint, rea
 		reason = "canceled"
 	}
 	return db.WithContext(ctx).Model(&store.TaskRun{}).
-		Where("owner_type = ? AND worker_id = ? AND orchestration_state IN ?", store.TaskOwnerWorker, workerID, []store.TaskOrchestrationState{store.TaskPending, store.TaskRunning}).
+		Where("owner_type = ? AND worker_id = ? AND orchestration_state IN ?", contracts.TaskOwnerWorker, workerID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 		Updates(map[string]any{
-			"orchestration_state": store.TaskCanceled,
+			"orchestration_state": contracts.TaskCanceled,
 			"error_code":          "superseded",
 			"error_message":       reason,
 			"finished_at":         &now,
@@ -207,7 +208,7 @@ func (s *Service) MarkRunRunning(ctx context.Context, runID uint, runnerID strin
 		now = time.Now()
 	}
 	updates := map[string]any{
-		"orchestration_state": store.TaskRunning,
+		"orchestration_state": contracts.TaskRunning,
 		"runner_id":           strings.TrimSpace(runnerID),
 		"lease_expires_at":    leaseExpiresAt,
 		"started_at":          &now,
@@ -219,7 +220,7 @@ func (s *Service) MarkRunRunning(ctx context.Context, runID uint, runnerID strin
 		updates["attempt"] = gorm.Expr("attempt + 1")
 	}
 	res := db.WithContext(ctx).Model(&store.TaskRun{}).
-		Where("id = ? AND orchestration_state IN ?", runID, []store.TaskOrchestrationState{store.TaskPending, store.TaskRunning}).
+		Where("id = ? AND orchestration_state IN ?", runID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 		Updates(updates)
 	if res.Error != nil {
 		return res.Error
@@ -246,7 +247,7 @@ func (s *Service) RenewLease(ctx context.Context, runID uint, runnerID string, l
 		return fmt.Errorf("runner_id 不能为空")
 	}
 	res := db.WithContext(ctx).Model(&store.TaskRun{}).
-		Where("id = ? AND runner_id = ? AND orchestration_state = ?", runID, runnerID, store.TaskRunning).
+		Where("id = ? AND runner_id = ? AND orchestration_state = ?", runID, runnerID, contracts.TaskRunning).
 		Updates(map[string]any{
 			"lease_expires_at": leaseExpiresAt,
 		})
@@ -273,8 +274,8 @@ func (s *Service) MarkRunSucceeded(ctx context.Context, runID uint, resultPayloa
 	if now.IsZero() {
 		now = time.Now()
 	}
-	res := db.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ? AND orchestration_state != ?", runID, store.TaskCanceled).Updates(map[string]any{
-		"orchestration_state": store.TaskSucceeded,
+	res := db.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ? AND orchestration_state != ?", runID, contracts.TaskCanceled).Updates(map[string]any{
+		"orchestration_state": contracts.TaskSucceeded,
 		"result_payload_json": strings.TrimSpace(resultPayloadJSON),
 		"error_code":          "",
 		"error_message":       "",
@@ -305,8 +306,8 @@ func (s *Service) MarkRunFailed(ctx context.Context, runID uint, errorCode strin
 	if now.IsZero() {
 		now = time.Now()
 	}
-	res := db.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ? AND orchestration_state != ?", runID, store.TaskCanceled).Updates(map[string]any{
-		"orchestration_state": store.TaskFailed,
+	res := db.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ? AND orchestration_state != ?", runID, contracts.TaskCanceled).Updates(map[string]any{
+		"orchestration_state": contracts.TaskFailed,
 		"error_code":          strings.TrimSpace(errorCode),
 		"error_message":       strings.TrimSpace(errorMessage),
 		"runner_id":           "",
@@ -337,7 +338,7 @@ func (s *Service) MarkRunCanceled(ctx context.Context, runID uint, errorCode str
 		now = time.Now()
 	}
 	return db.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ?", runID).Updates(map[string]any{
-		"orchestration_state": store.TaskCanceled,
+		"orchestration_state": contracts.TaskCanceled,
 		"error_code":          strings.TrimSpace(errorCode),
 		"error_message":       strings.TrimSpace(errorMessage),
 		"runner_id":           "",

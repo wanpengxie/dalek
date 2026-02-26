@@ -104,7 +104,7 @@ func TestHandler_Success(t *testing.T) {
 
 	binding := store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
 		PeerProjectKey: "chat-demo-1",
 		RolePolicyJSON: "{}",
@@ -145,7 +145,7 @@ func TestHandler_Success(t *testing.T) {
 	if len(resp.Results) != 1 {
 		t.Fatalf("unexpected results len: %d", len(resp.Results))
 	}
-	if resp.Results[0].Status != string(store.ChannelOutboxSent) {
+	if resp.Results[0].Status != string(contracts.ChannelOutboxSent) {
 		t.Fatalf("unexpected result status: %q", resp.Results[0].Status)
 	}
 
@@ -164,14 +164,14 @@ func TestHandler_Success(t *testing.T) {
 	if err := db.First(&msg, resp.Results[0].MessageID).Error; err != nil {
 		t.Fatalf("query outbound message failed: %v", err)
 	}
-	if msg.Status != store.ChannelMessageSent {
+	if msg.Status != contracts.ChannelMessageSent {
 		t.Fatalf("message status should be sent, got=%s", msg.Status)
 	}
 	var outbox store.ChannelOutbox
 	if err := db.First(&outbox, resp.Results[0].OutboxID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
-	if outbox.Status != store.ChannelOutboxSent {
+	if outbox.Status != contracts.ChannelOutboxSent {
 		t.Fatalf("outbox status should be sent, got=%s", outbox.Status)
 	}
 }
@@ -185,7 +185,7 @@ func TestSendProjectText_DedupRecentContent(t *testing.T) {
 
 	binding := store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
 		PeerProjectKey: "chat-demo-dedup",
 		RolePolicyJSON: "{}",
@@ -217,7 +217,7 @@ func TestSendProjectText_DedupRecentContent(t *testing.T) {
 	if second.Results[0].OutboxID != first.Results[0].OutboxID {
 		t.Fatalf("dedup should reuse outbox id, got=%d want=%d", second.Results[0].OutboxID, first.Results[0].OutboxID)
 	}
-	if second.Results[0].Status != string(store.ChannelOutboxSent) {
+	if second.Results[0].Status != string(contracts.ChannelOutboxSent) {
 		t.Fatalf("dedup result status should be sent, got=%s", second.Results[0].Status)
 	}
 
@@ -227,7 +227,7 @@ func TestSendProjectText_DedupRecentContent(t *testing.T) {
 	}
 
 	var outboundCount int64
-	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", store.ChannelMessageOut).Count(&outboundCount).Error; err != nil {
+	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageOut).Count(&outboundCount).Error; err != nil {
 		t.Fatalf("count outbound failed: %v", err)
 	}
 	if outboundCount != 1 {
@@ -253,7 +253,7 @@ func TestHandler_UsesRepoBaseNameInCardTitle(t *testing.T) {
 	projectName := "Users-xiewanpeng-agi-dalek"
 	binding := store.ChannelBinding{
 		ProjectName:    projectName,
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
 		PeerProjectKey: "chat-demo-3",
 		RolePolicyJSON: "{}",
@@ -331,7 +331,7 @@ func TestHandler_SenderFailed_MarksOutboxFailed(t *testing.T) {
 
 	binding := store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
 		PeerProjectKey: "chat-demo-2",
 		RolePolicyJSON: "{}",
@@ -365,7 +365,7 @@ func TestHandler_SenderFailed_MarksOutboxFailed(t *testing.T) {
 	if len(resp.Results) != 1 {
 		t.Fatalf("unexpected results len: %d", len(resp.Results))
 	}
-	if resp.Results[0].Status != string(store.ChannelOutboxFailed) {
+	if resp.Results[0].Status != string(contracts.ChannelOutboxFailed) {
 		t.Fatalf("unexpected result status: %q", resp.Results[0].Status)
 	}
 	if strings.TrimSpace(resp.Results[0].Error) == "" {
@@ -376,14 +376,14 @@ func TestHandler_SenderFailed_MarksOutboxFailed(t *testing.T) {
 	if err := db.First(&msg, resp.Results[0].MessageID).Error; err != nil {
 		t.Fatalf("query outbound message failed: %v", err)
 	}
-	if msg.Status != store.ChannelMessageFailed {
+	if msg.Status != contracts.ChannelMessageFailed {
 		t.Fatalf("message status should be failed, got=%s", msg.Status)
 	}
 	var outbox store.ChannelOutbox
 	if err := db.First(&outbox, resp.Results[0].OutboxID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
-	if outbox.Status != store.ChannelOutboxFailed {
+	if outbox.Status != contracts.ChannelOutboxFailed {
 		t.Fatalf("outbox status should be failed, got=%s", outbox.Status)
 	}
 }

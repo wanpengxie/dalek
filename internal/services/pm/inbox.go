@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -12,7 +13,7 @@ import (
 )
 
 type ListInboxOptions struct {
-	Status store.InboxStatus
+	Status contracts.InboxStatus
 	Limit  int
 }
 
@@ -26,7 +27,7 @@ func (s *Service) ListInbox(ctx context.Context, opt ListInboxOptions) ([]store.
 	}
 	st := opt.Status
 	if strings.TrimSpace(string(st)) == "" {
-		st = store.InboxOpen
+		st = contracts.InboxOpen
 	}
 	limit := opt.Limit
 	if limit <= 0 {
@@ -77,12 +78,12 @@ func (s *Service) CloseInboxItem(ctx context.Context, id uint) error {
 	if err := db.WithContext(ctx).First(&it, id).Error; err != nil {
 		return err
 	}
-	if it.Status == store.InboxDone {
+	if it.Status == contracts.InboxDone {
 		return nil
 	}
 	now := time.Now()
 	return db.WithContext(ctx).Model(&store.InboxItem{}).Where("id = ?", id).Updates(map[string]any{
-		"status":     store.InboxDone,
+		"status":     contracts.InboxDone,
 		"closed_at":  &now,
 		"updated_at": now,
 	}).Error
@@ -103,12 +104,12 @@ func (s *Service) SnoozeInboxItem(ctx context.Context, id uint, until time.Time)
 	if err := db.WithContext(ctx).First(&it, id).Error; err != nil {
 		return err
 	}
-	if it.Status == store.InboxDone {
+	if it.Status == contracts.InboxDone {
 		return nil
 	}
 	now := time.Now()
 	return db.WithContext(ctx).Model(&store.InboxItem{}).Where("id = ?", id).Updates(map[string]any{
-		"status":        store.InboxSnoozed,
+		"status":        contracts.InboxSnoozed,
 		"snoozed_until": &until,
 		"updated_at":    now,
 	}).Error
@@ -126,12 +127,12 @@ func (s *Service) UnsnoozeInboxItem(ctx context.Context, id uint) error {
 	if err := db.WithContext(ctx).First(&it, id).Error; err != nil {
 		return err
 	}
-	if it.Status != store.InboxSnoozed {
+	if it.Status != contracts.InboxSnoozed {
 		return nil
 	}
 	now := time.Now()
 	return db.WithContext(ctx).Model(&store.InboxItem{}).Where("id = ?", id).Updates(map[string]any{
-		"status":        store.InboxOpen,
+		"status":        contracts.InboxOpen,
 		"snoozed_until": nil,
 		"updated_at":    now,
 	}).Error
@@ -165,7 +166,7 @@ func (s *Service) ensureInboxUniqueOpenKey(ctx context.Context, key string) erro
 	}
 	var items []store.InboxItem
 	if err := db.WithContext(ctx).
-		Where("key = ? AND status = ?", key, store.InboxOpen).
+		Where("key = ? AND status = ?", key, contracts.InboxOpen).
 		Order("id desc").
 		Find(&items).Error; err != nil {
 		return err

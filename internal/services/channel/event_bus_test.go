@@ -2,6 +2,7 @@ package channel
 
 import (
 	"bytes"
+	"dalek/internal/contracts"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,15 +18,15 @@ func TestEventBus_FilterByProjectAndConversation(t *testing.T) {
 	subAll, unsubAll := bus.Subscribe("*", "*", 4)
 	defer unsubAll()
 
-	bus.Publish(GatewayEvent{ProjectName: "alpha", ConversationID: "conv-1", Type: "assistant_message", JobStatus: store.ChannelTurnSucceeded})
+	bus.Publish(GatewayEvent{ProjectName: "alpha", ConversationID: "conv-1", Type: "assistant_message", JobStatus: contracts.ChannelTurnSucceeded})
 	mustReceiveEvent(t, subExact, "exact should receive alpha/conv-1")
 	mustReceiveEvent(t, subAll, "wildcard should receive alpha/conv-1")
 
-	bus.Publish(GatewayEvent{ProjectName: "alpha", ConversationID: "conv-2", Type: "assistant_message", JobStatus: store.ChannelTurnSucceeded})
+	bus.Publish(GatewayEvent{ProjectName: "alpha", ConversationID: "conv-2", Type: "assistant_message", JobStatus: contracts.ChannelTurnSucceeded})
 	mustNotReceiveEvent(t, subExact, "exact should ignore conv-2")
 	mustReceiveEvent(t, subAll, "wildcard should receive conv-2")
 
-	bus.Publish(GatewayEvent{ProjectName: "beta", ConversationID: "conv-1", Type: "assistant_message", JobStatus: store.ChannelTurnSucceeded})
+	bus.Publish(GatewayEvent{ProjectName: "beta", ConversationID: "conv-1", Type: "assistant_message", JobStatus: contracts.ChannelTurnSucceeded})
 	mustNotReceiveEvent(t, subExact, "exact should ignore beta")
 	mustReceiveEvent(t, subAll, "wildcard should receive beta")
 }
@@ -127,7 +128,7 @@ func TestEventBus_AuditWriteError_LogsAndDoesNotBlockPublish(t *testing.T) {
 		ConversationID: "conv-1",
 		PeerMessageID:  "msg-1",
 		Type:           "assistant_message",
-		JobStatus:      store.ChannelTurnSucceeded,
+		JobStatus:      contracts.ChannelTurnSucceeded,
 	})
 	_ = mustReceiveEvent(t, sub, "publish should continue even if audit write failed")
 

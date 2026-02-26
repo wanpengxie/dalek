@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestCompletePMDispatchJobSuccess_RollbackOnTaskRunSyncFailure(t *testing.T)
 		WorkerID:        1,
 		TaskRunID:       999999, // 故意不存在，触发 task run 同步失败
 		ActiveTicketKey: func(v uint) *uint { return &v }(tk.ID),
-		Status:          store.PMDispatchRunning,
+		Status:          contracts.PMDispatchRunning,
 		RunnerID:        runnerID,
 		LeaseExpiresAt:  &lease,
 		Attempt:         1,
@@ -44,7 +45,7 @@ func TestCompletePMDispatchJobSuccess_RollbackOnTaskRunSyncFailure(t *testing.T)
 	if err := p.DB.First(&after, job.ID).Error; err != nil {
 		t.Fatalf("query job failed: %v", err)
 	}
-	if after.Status != store.PMDispatchRunning {
+	if after.Status != contracts.PMDispatchRunning {
 		t.Fatalf("expected rollback keep running, got=%s", after.Status)
 	}
 	if strings.TrimSpace(after.RunnerID) != runnerID {
@@ -64,7 +65,7 @@ func TestCompletePMDispatchJobFailed_RollbackOnTaskRunSyncFailure(t *testing.T) 
 		WorkerID:        1,
 		TaskRunID:       999998, // 故意不存在，触发 task run 同步失败
 		ActiveTicketKey: func(v uint) *uint { return &v }(tk.ID),
-		Status:          store.PMDispatchRunning,
+		Status:          contracts.PMDispatchRunning,
 		RunnerID:        runnerID,
 		LeaseExpiresAt:  &lease,
 		Attempt:         1,
@@ -85,7 +86,7 @@ func TestCompletePMDispatchJobFailed_RollbackOnTaskRunSyncFailure(t *testing.T) 
 	if err := p.DB.First(&after, job.ID).Error; err != nil {
 		t.Fatalf("query job failed: %v", err)
 	}
-	if after.Status != store.PMDispatchRunning {
+	if after.Status != contracts.PMDispatchRunning {
 		t.Fatalf("expected rollback keep running, got=%s", after.Status)
 	}
 	if strings.TrimSpace(after.RunnerID) != runnerID {
@@ -102,7 +103,7 @@ func TestEnqueuePMDispatchJob_RejectsActiveJobOnDifferentWorker(t *testing.T) {
 		WorkerID:        101,
 		TaskRunID:       0,
 		ActiveTicketKey: func(v uint) *uint { return &v }(tk.ID),
-		Status:          store.PMDispatchPending,
+		Status:          contracts.PMDispatchPending,
 	}
 	if err := p.DB.Create(&active).Error; err != nil {
 		t.Fatalf("create active job failed: %v", err)
@@ -153,7 +154,7 @@ func TestEnqueuePMDispatchJob_IdempotentByRequestID(t *testing.T) {
 func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-claim-promote-active")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketQueued).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
@@ -170,7 +171,7 @@ func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 	if !claimed {
 		t.Fatalf("expected claimed=true")
 	}
-	if got.Status != store.PMDispatchRunning {
+	if got.Status != contracts.PMDispatchRunning {
 		t.Fatalf("expected running job, got=%s", got.Status)
 	}
 
@@ -178,15 +179,15 @@ func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketActive {
+	if ticket.WorkflowStatus != contracts.TicketActive {
 		t.Fatalf("expected ticket active after claim, got=%s", ticket.WorkflowStatus)
 	}
 
 	var ev store.TicketWorkflowEvent
-	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, store.TicketActive).Order("id desc").First(&ev).Error; err != nil {
+	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, contracts.TicketActive).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query workflow event failed: %v", err)
 	}
-	if ev.FromStatus != store.TicketQueued || ev.ToStatus != store.TicketActive {
+	if ev.FromStatus != contracts.TicketQueued || ev.ToStatus != contracts.TicketActive {
 		t.Fatalf("unexpected workflow event transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 	if ev.Source != "pm.dispatch" {
@@ -197,7 +198,7 @@ func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 func TestCompletePMDispatchJobFailed_DemotesTicketWorkflowToBlocked(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-failed-demote-blocked")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketActive).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
@@ -221,15 +222,15 @@ func TestCompletePMDispatchJobFailed_DemotesTicketWorkflowToBlocked(t *testing.T
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketBlocked {
+	if ticket.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("expected ticket blocked after dispatch failed, got=%s", ticket.WorkflowStatus)
 	}
 
 	var ev store.TicketWorkflowEvent
-	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, store.TicketBlocked).Order("id desc").First(&ev).Error; err != nil {
+	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, contracts.TicketBlocked).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query workflow event failed: %v", err)
 	}
-	if ev.FromStatus != store.TicketActive || ev.ToStatus != store.TicketBlocked {
+	if ev.FromStatus != contracts.TicketActive || ev.ToStatus != contracts.TicketBlocked {
 		t.Fatalf("unexpected workflow event transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 	if ev.Source != "pm.dispatch" {
@@ -237,10 +238,10 @@ func TestCompletePMDispatchJobFailed_DemotesTicketWorkflowToBlocked(t *testing.T
 	}
 
 	var inbox store.InboxItem
-	if err := p.DB.Where("key = ? AND status = ?", inboxKeyWorkerIncident(w.ID, "dispatch_failed"), store.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+	if err := p.DB.Where("key = ? AND status = ?", inboxKeyWorkerIncident(w.ID, "dispatch_failed"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("dispatch failed should create incident inbox: %v", err)
 	}
-	if inbox.Reason != store.InboxIncident {
+	if inbox.Reason != contracts.InboxIncident {
 		t.Fatalf("unexpected inbox reason: %s", inbox.Reason)
 	}
 	if inbox.TicketID != tk.ID || inbox.WorkerID != w.ID {
@@ -265,7 +266,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 	svc, p, _, _ := newServiceForTest(t)
 	ctx := context.Background()
 	tk := createTicket(t, p.DB, "dispatch-force-fail-pending")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketActive).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
@@ -287,7 +288,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 	if err := p.DB.First(&after, job.ID).Error; err != nil {
 		t.Fatalf("query dispatch job failed: %v", err)
 	}
-	if after.Status != store.PMDispatchFailed {
+	if after.Status != contracts.PMDispatchFailed {
 		t.Fatalf("expected failed dispatch status, got=%s", after.Status)
 	}
 	if strings.TrimSpace(after.RunnerID) != "" {
@@ -310,7 +311,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 	if err := p.DB.First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("query task run failed: %v", err)
 	}
-	if run.OrchestrationState != store.TaskFailed {
+	if run.OrchestrationState != contracts.TaskFailed {
 		t.Fatalf("expected task run failed, got=%s", run.OrchestrationState)
 	}
 	if strings.TrimSpace(run.ErrorCode) != "dispatch_force_failed_on_stop" {
@@ -332,12 +333,12 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketActive {
+	if ticket.WorkflowStatus != contracts.TicketActive {
 		t.Fatalf("ticket workflow should stay active, got=%s", ticket.WorkflowStatus)
 	}
 
 	var inboxCount int64
-	if err := p.DB.Model(&store.InboxItem{}).Where("ticket_id = ? AND reason = ?", tk.ID, store.InboxIncident).Count(&inboxCount).Error; err != nil {
+	if err := p.DB.Model(&store.InboxItem{}).Where("ticket_id = ? AND reason = ?", tk.ID, contracts.InboxIncident).Count(&inboxCount).Error; err != nil {
 		t.Fatalf("count incident inbox failed: %v", err)
 	}
 	if inboxCount != 0 {
@@ -349,7 +350,7 @@ func TestForceFailActiveDispatchesForTicket_FailsRunningJobAndTaskRun(t *testing
 	svc, p, _, _ := newServiceForTest(t)
 	ctx := context.Background()
 	tk := createTicket(t, p.DB, "dispatch-force-fail-running")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketActive).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
@@ -376,7 +377,7 @@ func TestForceFailActiveDispatchesForTicket_FailsRunningJobAndTaskRun(t *testing
 	if err := p.DB.First(&after, job.ID).Error; err != nil {
 		t.Fatalf("query dispatch job failed: %v", err)
 	}
-	if after.Status != store.PMDispatchFailed {
+	if after.Status != contracts.PMDispatchFailed {
 		t.Fatalf("expected failed dispatch status, got=%s", after.Status)
 	}
 	if strings.TrimSpace(after.RunnerID) != "" {
@@ -393,7 +394,7 @@ func TestForceFailActiveDispatchesForTicket_FailsRunningJobAndTaskRun(t *testing
 	if err := p.DB.First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("query task run failed: %v", err)
 	}
-	if run.OrchestrationState != store.TaskFailed {
+	if run.OrchestrationState != contracts.TaskFailed {
 		t.Fatalf("expected task run failed, got=%s", run.OrchestrationState)
 	}
 	if strings.TrimSpace(run.ErrorCode) != "dispatch_force_failed_on_stop" {
@@ -405,7 +406,7 @@ func createDispatchWorker(t *testing.T, db *gorm.DB, ticketID uint) store.Worker
 	t.Helper()
 	w := store.Worker{
 		TicketID:     ticketID,
-		Status:       store.WorkerRunning,
+		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/test-dispatch-worker",
 		TmuxSocket:   "dalek",

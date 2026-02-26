@@ -78,7 +78,7 @@ func TestInterruptPeerConversation_ReturnsMissWhenNoRunningTurn(t *testing.T) {
 
 	binding := store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
 		PeerProjectKey: "",
 		RolePolicyJSON: "{}",
@@ -132,7 +132,7 @@ func TestInterruptPeerConversation_ReturnsExecutionFailure(t *testing.T) {
 
 	binding := store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
 		PeerProjectKey: "",
 		RolePolicyJSON: "{}",

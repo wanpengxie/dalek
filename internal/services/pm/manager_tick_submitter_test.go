@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"strings"
 	"sync"
 	"testing"
@@ -35,7 +36,7 @@ func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-submitter")
 	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketQueued,
+		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
@@ -80,7 +81,7 @@ func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-fallback")
 	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketQueued,
+		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
@@ -110,13 +111,13 @@ func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 	}
 
 	var inbox store.InboxItem
-	if err := p.DB.Where("key = ? AND status = ?", inboxKeyTicketIncident(tk.ID, "dispatch_no_submitter"), store.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+	if err := p.DB.Where("key = ? AND status = ?", inboxKeyTicketIncident(tk.ID, "dispatch_no_submitter"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("expected dispatch_no_submitter inbox, err=%v", err)
 	}
-	if inbox.Severity != store.InboxBlocker {
+	if inbox.Severity != contracts.InboxBlocker {
 		t.Fatalf("expected blocker severity, got=%s", inbox.Severity)
 	}
-	if inbox.Reason != store.InboxIncident {
+	if inbox.Reason != contracts.InboxIncident {
 		t.Fatalf("expected incident reason, got=%s", inbox.Reason)
 	}
 }
@@ -125,7 +126,7 @@ func TestManagerTick_DryRunSkipsDispatchSubmitter(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-dry-run")
 	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketQueued,
+		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
@@ -150,7 +151,7 @@ func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-sync-dispatch")
 	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketQueued,
+		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
@@ -177,7 +178,7 @@ func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&job).Error; err != nil {
 		t.Fatalf("query pm dispatch job failed: %v", err)
 	}
-	if job.Status != store.PMDispatchSucceeded {
+	if job.Status != contracts.PMDispatchSucceeded {
 		t.Fatalf("expected sync dispatch job succeeded, got=%s", job.Status)
 	}
 }
@@ -186,7 +187,7 @@ func TestManagerTick_SyncDispatchHonorsDispatchTimeout(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-sync-timeout")
 	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketQueued,
+		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
@@ -215,7 +216,7 @@ func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *test
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-worker-ready-timeout")
 	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketQueued,
+		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
@@ -224,7 +225,7 @@ func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *test
 	submitter := &stubDispatchSubmitter{
 		err: &workerReadyTimeoutError{
 			TicketID:   tk.ID,
-			LastStatus: store.WorkerCreating,
+			LastStatus: contracts.WorkerCreating,
 			Waited:     5 * time.Second,
 		},
 	}
@@ -246,7 +247,7 @@ func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *test
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketBlocked {
+	if ticket.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("expected ticket blocked after worker ready timeout, got=%s", ticket.WorkflowStatus)
 	}
 
@@ -255,12 +256,12 @@ func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *test
 		t.Fatalf("load latest worker failed: %v", err)
 	}
 	var inbox store.InboxItem
-	if err := p.DB.Where("key = ? AND status = ?", inboxKeyWorkerIncident(w.ID, "worker_not_ready"), store.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+	if err := p.DB.Where("key = ? AND status = ?", inboxKeyWorkerIncident(w.ID, "worker_not_ready"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("expected worker_not_ready inbox, err=%v", err)
 	}
 
 	var ev store.TicketWorkflowEvent
-	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, store.TicketBlocked).Order("id desc").First(&ev).Error; err != nil {
+	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, contracts.TicketBlocked).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("expected workflow event blocked, err=%v", err)
 	}
 	if ev.Source != "pm.manager_tick" {

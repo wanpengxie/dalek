@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -12,12 +13,12 @@ import (
 )
 
 type ListMergeOptions struct {
-	Status store.MergeStatus
+	Status contracts.MergeStatus
 	Limit  int
 }
 
-func mergeTerminalStatuses() []store.MergeStatus {
-	return []store.MergeStatus{store.MergeMerged, store.MergeDiscarded}
+func mergeTerminalStatuses() []contracts.MergeStatus {
+	return []contracts.MergeStatus{contracts.MergeMerged, contracts.MergeDiscarded}
 }
 
 func (s *Service) ListMergeItems(ctx context.Context, opt ListMergeOptions) ([]store.MergeItem, error) {
@@ -77,7 +78,7 @@ func (s *Service) ProposeMerge(ctx context.Context, ticketID uint) (*store.Merge
 	}
 
 	mi := store.MergeItem{
-		Status:   store.MergeProposed,
+		Status:   contracts.MergeProposed,
 		TicketID: ticketID,
 		WorkerID: w.ID,
 		Branch:   strings.TrimSpace(w.Branch),
@@ -89,9 +90,9 @@ func (s *Service) ProposeMerge(ctx context.Context, ticketID uint) (*store.Merge
 	// 写 inbox：请求审批（低风险：只写记录，不做 merge）
 	_, _ = s.upsertOpenInbox(ctx, store.InboxItem{
 		Key:         inboxKeyMergeApproval(mi.ID),
-		Status:      store.InboxOpen,
-		Severity:    store.InboxWarn,
-		Reason:      store.InboxApprovalRequired,
+		Status:      contracts.InboxOpen,
+		Severity:    contracts.InboxWarn,
+		Reason:      contracts.InboxApprovalRequired,
 		Title:       fmt.Sprintf("待合并审批：t%d", ticketID),
 		Body:        fmt.Sprintf("merge_item=%d  branch=%s\n\n请确认是否允许合并，以及合并策略（squash/merge）。", mi.ID, strings.TrimSpace(mi.Branch)),
 		TicketID:    ticketID,
@@ -117,12 +118,12 @@ func (s *Service) ApproveMerge(ctx context.Context, mergeItemID uint, approvedBy
 	if err := db.WithContext(ctx).First(&mi, mergeItemID).Error; err != nil {
 		return err
 	}
-	if mi.Status == store.MergeMerged || mi.Status == store.MergeDiscarded {
+	if mi.Status == contracts.MergeMerged || mi.Status == contracts.MergeDiscarded {
 		return nil
 	}
 	now := time.Now()
 	return db.WithContext(ctx).Model(&store.MergeItem{}).Where("id = ?", mergeItemID).Updates(map[string]any{
-		"status":      store.MergeApproved,
+		"status":      contracts.MergeApproved,
 		"approved_by": approvedBy,
 		"approved_at": &now,
 		"updated_at":  now,
@@ -141,25 +142,25 @@ func (s *Service) DiscardMerge(ctx context.Context, mergeItemID uint, _ string) 
 	if err := db.WithContext(ctx).First(&mi, mergeItemID).Error; err != nil {
 		return err
 	}
-	if mi.Status == store.MergeDiscarded {
+	if mi.Status == contracts.MergeDiscarded {
 		return nil
 	}
-	if mi.Status == store.MergeMerged {
+	if mi.Status == contracts.MergeMerged {
 		return fmt.Errorf("merge#%d 已 merged，不能 discard", mergeItemID)
 	}
 
 	now := time.Now()
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).Model(&store.MergeItem{}).Where("id = ?", mergeItemID).Updates(map[string]any{
-			"status":     store.MergeDiscarded,
+			"status":     contracts.MergeDiscarded,
 			"updated_at": now,
 		}).Error; err != nil {
 			return err
 		}
 		if err := tx.WithContext(ctx).Model(&store.InboxItem{}).
-			Where("merge_item_id = ? AND status = ?", mergeItemID, store.InboxOpen).
+			Where("merge_item_id = ? AND status = ?", mergeItemID, contracts.InboxOpen).
 			Updates(map[string]any{
-				"status":     store.InboxDone,
+				"status":     contracts.InboxDone,
 				"closed_at":  &now,
 				"updated_at": now,
 			}).Error; err != nil {
@@ -181,15 +182,15 @@ func (s *Service) MarkMergeMerged(ctx context.Context, mergeItemID uint) error {
 	if err := db.WithContext(ctx).First(&mi, mergeItemID).Error; err != nil {
 		return err
 	}
-	if mi.Status == store.MergeDiscarded {
+	if mi.Status == contracts.MergeDiscarded {
 		return fmt.Errorf("merge#%d 已 discarded，不能标记 merged", mergeItemID)
 	}
 	now := time.Now()
 	var archiveErr error
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if mi.Status != store.MergeMerged {
+		if mi.Status != contracts.MergeMerged {
 			if err := tx.WithContext(ctx).Model(&store.MergeItem{}).Where("id = ?", mergeItemID).Updates(map[string]any{
-				"status":     store.MergeMerged,
+				"status":     contracts.MergeMerged,
 				"merged_at":  &now,
 				"updated_at": now,
 			}).Error; err != nil {
@@ -197,9 +198,9 @@ func (s *Service) MarkMergeMerged(ctx context.Context, mergeItemID uint) error {
 			}
 		}
 		if err := tx.WithContext(ctx).Model(&store.InboxItem{}).
-			Where("merge_item_id = ? AND status = ?", mergeItemID, store.InboxOpen).
+			Where("merge_item_id = ? AND status = ?", mergeItemID, contracts.InboxOpen).
 			Updates(map[string]any{
-				"status":     store.InboxDone,
+				"status":     contracts.InboxDone,
 				"closed_at":  &now,
 				"updated_at": now,
 			}).Error; err != nil {
@@ -210,21 +211,21 @@ func (s *Service) MarkMergeMerged(ctx context.Context, mergeItemID uint) error {
 		if mi.TicketID != 0 {
 			var cnt int64
 			if err := tx.WithContext(ctx).Model(&store.Worker{}).
-				Where("ticket_id = ? AND status = ?", mi.TicketID, store.WorkerRunning).
+				Where("ticket_id = ? AND status = ?", mi.TicketID, contracts.WorkerRunning).
 				Count(&cnt).Error; err != nil {
 				return err
 			}
 			if cnt == 0 {
 				res := tx.WithContext(ctx).Model(&store.Ticket{}).
-					Where("id = ? AND workflow_status = ?", mi.TicketID, store.TicketDone).
+					Where("id = ? AND workflow_status = ?", mi.TicketID, contracts.TicketDone).
 					Updates(map[string]any{
-						"workflow_status": store.TicketArchived,
+						"workflow_status": contracts.TicketArchived,
 						"updated_at":      now,
 					})
 				if res.Error != nil {
 					archiveErr = res.Error
 				} else if res.RowsAffected > 0 {
-					if err := s.appendTicketWorkflowEventTx(ctx, tx, mi.TicketID, store.TicketDone, store.TicketArchived, "pm.merge", "merge 完成后自动归档", map[string]any{
+					if err := s.appendTicketWorkflowEventTx(ctx, tx, mi.TicketID, contracts.TicketDone, contracts.TicketArchived, "pm.merge", "merge 完成后自动归档", map[string]any{
 						"merge_item_id": mergeItemID,
 						"ticket_id":     mi.TicketID,
 					}, now); err != nil {
@@ -245,9 +246,9 @@ func (s *Service) MarkMergeMerged(ctx context.Context, mergeItemID uint) error {
 		body := archiveErr.Error()
 		_, _ = s.upsertOpenInbox(ctx, store.InboxItem{
 			Key:         key,
-			Status:      store.InboxOpen,
-			Severity:    store.InboxWarn,
-			Reason:      store.InboxIncident,
+			Status:      contracts.InboxOpen,
+			Severity:    contracts.InboxWarn,
+			Reason:      contracts.InboxIncident,
 			Title:       title,
 			Body:        body,
 			TicketID:    mi.TicketID,

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,7 +90,7 @@ func TestIntegration_StartAndStopTicket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if w.Status != store.WorkerRunning {
+	if w.Status != contracts.WorkerRunning {
 		t.Fatalf("expected running worker, got %s", w.Status)
 	}
 	if strings.TrimSpace(w.TmuxSession) == "" {
@@ -114,7 +115,7 @@ func TestIntegration_StartAndStopTicket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WorkerByID failed: %v", err)
 	}
-	if w2.Status != store.WorkerStopped {
+	if w2.Status != contracts.WorkerStopped {
 		t.Fatalf("expected stopped worker, got %s", w2.Status)
 	}
 }
@@ -171,7 +172,7 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession(t *testing.T) {
 	if got == nil {
 		t.Fatalf("expected worker exists")
 	}
-	if got.Status != store.WorkerStopped {
+	if got.Status != contracts.WorkerStopped {
 		t.Fatalf("expected worker stopped after recovery, got=%s", got.Status)
 	}
 	if got.StoppedAt == nil {
@@ -191,7 +192,7 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession(t *testing.T) {
 	if inbox[0].TicketID != tk.ID || inbox[0].WorkerID != w.ID {
 		t.Fatalf("unexpected inbox relation: ticket=%d worker=%d", inbox[0].TicketID, inbox[0].WorkerID)
 	}
-	if inbox[0].Status != store.InboxOpen {
+	if inbox[0].Status != contracts.InboxOpen {
 		t.Fatalf("expected inbox open, got=%s", inbox[0].Status)
 	}
 }
@@ -209,7 +210,7 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession_ArchivedTicket(t 
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 
-	if err := p.core.DB.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketArchived).Error; err != nil {
+	if err := p.core.DB.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketArchived).Error; err != nil {
 		t.Fatalf("archive ticket failed: %v", err)
 	}
 
@@ -228,7 +229,7 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession_ArchivedTicket(t 
 	if got == nil {
 		t.Fatalf("expected worker exists")
 	}
-	if got.Status != store.WorkerStopped {
+	if got.Status != contracts.WorkerStopped {
 		t.Fatalf("expected worker stopped after recovery, got=%s", got.Status)
 	}
 	if got.StoppedAt == nil {
@@ -250,7 +251,7 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession_ArchivedTicket(t 
 	}
 }
 
-func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, jobStatus store.PMDispatchJobStatus) store.PMDispatchJob {
+func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, jobStatus contracts.PMDispatchJobStatus) store.PMDispatchJob {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := p.StartTicket(ctx, ticketID); err != nil {
@@ -266,11 +267,11 @@ func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, 
 	if err := p.core.DB.WithContext(ctx).First(&job, submission.JobID).Error; err != nil {
 		t.Fatalf("load dispatch job failed: %v", err)
 	}
-	if jobStatus == store.PMDispatchRunning {
+	if jobStatus == contracts.PMDispatchRunning {
 		now := time.Now()
 		lease := now.Add(2 * time.Minute)
 		if err := p.core.DB.WithContext(ctx).Model(&store.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
-			"status":           store.PMDispatchRunning,
+			"status":           contracts.PMDispatchRunning,
 			"runner_id":        "recovery-runner",
 			"lease_expires_at": &lease,
 			"started_at":       &now,
@@ -280,7 +281,7 @@ func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, 
 		}
 		if job.TaskRunID != 0 {
 			if err := p.core.DB.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
-				"orchestration_state": store.TaskRunning,
+				"orchestration_state": contracts.TaskRunning,
 				"runner_id":           "recovery-runner",
 				"lease_expires_at":    &lease,
 				"started_at":          &now,
@@ -302,7 +303,7 @@ func assertRecoveredDispatchJob(t *testing.T, p *Project, jobID uint) store.PMDi
 	if err := p.core.DB.WithContext(context.Background()).First(&got, jobID).Error; err != nil {
 		t.Fatalf("load recovered dispatch job failed: %v", err)
 	}
-	if got.Status != store.PMDispatchFailed {
+	if got.Status != contracts.PMDispatchFailed {
 		t.Fatalf("dispatch job should be failed after recovery, got=%s", got.Status)
 	}
 	if got.ActiveTicketKey != nil {
@@ -331,9 +332,9 @@ func TestIntegration_DaemonRecovery_PMDispatchRunning_AutopilotOff(t *testing.T)
 	if _, err := p.SetAutopilotEnabled(ctx, false); err != nil {
 		t.Fatalf("SetAutopilotEnabled(false) failed: %v", err)
 	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, store.PMDispatchRunning)
+	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
 	if err := p.core.DB.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketActive,
+		"workflow_status": contracts.TicketActive,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
@@ -354,7 +355,7 @@ func TestIntegration_DaemonRecovery_PMDispatchRunning_AutopilotOff(t *testing.T)
 	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
-	if run.OrchestrationState != store.TaskFailed {
+	if run.OrchestrationState != contracts.TaskFailed {
 		t.Fatalf("task run should be failed after recovery, got=%s", run.OrchestrationState)
 	}
 
@@ -362,7 +363,7 @@ func TestIntegration_DaemonRecovery_PMDispatchRunning_AutopilotOff(t *testing.T)
 	if err := p.core.DB.WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketBlocked {
+	if ticket.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("autopilot=false should demote ticket to blocked, got=%s", ticket.WorkflowStatus)
 	}
 
@@ -400,9 +401,9 @@ func TestIntegration_DaemonRecovery_PMDispatchPending_AutopilotOn(t *testing.T) 
 	if _, err := p.SetAutopilotEnabled(ctx, true); err != nil {
 		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
 	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, store.PMDispatchPending)
+	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchPending)
 	if err := p.core.DB.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketActive,
+		"workflow_status": contracts.TicketActive,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
@@ -417,7 +418,7 @@ func TestIntegration_DaemonRecovery_PMDispatchPending_AutopilotOn(t *testing.T) 
 	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
-	if run.OrchestrationState != store.TaskFailed {
+	if run.OrchestrationState != contracts.TaskFailed {
 		t.Fatalf("task run should be failed after recovery, got=%s", run.OrchestrationState)
 	}
 
@@ -425,7 +426,7 @@ func TestIntegration_DaemonRecovery_PMDispatchPending_AutopilotOn(t *testing.T) 
 	if err := p.core.DB.WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketQueued {
+	if ticket.WorkflowStatus != contracts.TicketQueued {
 		t.Fatalf("autopilot=true should move ticket to queued, got=%s", ticket.WorkflowStatus)
 	}
 
@@ -444,7 +445,7 @@ func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, store.PMDispatchRunning)
+	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
 	if job.TaskRunID == 0 {
 		t.Fatalf("expected dispatch job with task run")
 	}
@@ -456,7 +457,7 @@ func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) 
 	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
-	if run.OrchestrationState != store.TaskFailed {
+	if run.OrchestrationState != contracts.TaskFailed {
 		t.Fatalf("expected task run failed after recovery, got=%s", run.OrchestrationState)
 	}
 
@@ -516,24 +517,24 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 	if _, err := p.SetAutopilotEnabled(ctx, false); err != nil {
 		t.Fatalf("SetAutopilotEnabled(false) failed: %v", err)
 	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, store.PMDispatchRunning)
+	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
 	expiredAt := time.Now().Add(-3 * time.Minute)
 	if err := p.core.DB.WithContext(ctx).Model(&store.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
-		"status":           store.PMDispatchRunning,
+		"status":           contracts.PMDispatchRunning,
 		"lease_expires_at": &expiredAt,
 		"updated_at":       time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set dispatch lease expired failed: %v", err)
 	}
 	if err := p.core.DB.WithContext(ctx).Model(&store.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
-		"orchestration_state": store.TaskRunning,
+		"orchestration_state": contracts.TaskRunning,
 		"lease_expires_at":    &expiredAt,
 		"updated_at":          time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set task run lease expired failed: %v", err)
 	}
 	if err := p.core.DB.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketActive,
+		"workflow_status": contracts.TicketActive,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
@@ -551,7 +552,7 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
-	if run.OrchestrationState != store.TaskFailed {
+	if run.OrchestrationState != contracts.TaskFailed {
 		t.Fatalf("expected task run failed, got=%s", run.OrchestrationState)
 	}
 	if strings.TrimSpace(run.ErrorCode) != "lease_expired" {
@@ -606,7 +607,7 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 	if err := p.core.DB.WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketBlocked {
+	if ticket.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("autopilot=false should move ticket to blocked on lease expiry, got=%s", ticket.WorkflowStatus)
 	}
 }
@@ -630,7 +631,7 @@ func TestIntegration_DaemonRecovery_PMDispatchTerminalJobs_Unaffected(t *testing
 		RequestID:       fmt.Sprintf("terminal-succeeded-%d", now.UnixNano()),
 		TicketID:        tk.ID,
 		WorkerID:        w.ID,
-		Status:          store.PMDispatchSucceeded,
+		Status:          contracts.PMDispatchSucceeded,
 		ActiveTicketKey: nil,
 		ResultJSON:      `{"ok":true}`,
 		FinishedAt:      &doneFinished,
@@ -639,7 +640,7 @@ func TestIntegration_DaemonRecovery_PMDispatchTerminalJobs_Unaffected(t *testing
 		RequestID:       fmt.Sprintf("terminal-failed-%d", now.UnixNano()),
 		TicketID:        tk.ID,
 		WorkerID:        w.ID,
-		Status:          store.PMDispatchFailed,
+		Status:          contracts.PMDispatchFailed,
 		ActiveTicketKey: nil,
 		Error:           "already failed",
 		FinishedAt:      &failFinished,
@@ -658,14 +659,14 @@ func TestIntegration_DaemonRecovery_PMDispatchTerminalJobs_Unaffected(t *testing
 	if err := p.core.DB.WithContext(ctx).First(&doneAfter, doneJob.ID).Error; err != nil {
 		t.Fatalf("load done job failed: %v", err)
 	}
-	if doneAfter.Status != store.PMDispatchSucceeded {
+	if doneAfter.Status != contracts.PMDispatchSucceeded {
 		t.Fatalf("succeeded job should remain succeeded, got=%s", doneAfter.Status)
 	}
 	var failAfter store.PMDispatchJob
 	if err := p.core.DB.WithContext(ctx).First(&failAfter, failJob.ID).Error; err != nil {
 		t.Fatalf("load fail job failed: %v", err)
 	}
-	if failAfter.Status != store.PMDispatchFailed || !strings.Contains(failAfter.Error, "already failed") {
+	if failAfter.Status != contracts.PMDispatchFailed || !strings.Contains(failAfter.Error, "already failed") {
 		t.Fatalf("failed job should remain unchanged: %+v", failAfter)
 	}
 
@@ -699,7 +700,7 @@ func TestIntegration_StartStopArchiveFlow(t *testing.T) {
 			continue
 		}
 		found = true
-		if v.DerivedStatus != store.TicketQueued {
+		if v.DerivedStatus != contracts.TicketQueued {
 			t.Fatalf("expected queued after start, got=%s", v.DerivedStatus)
 		}
 	}
@@ -720,7 +721,7 @@ func TestIntegration_StartStopArchiveFlow(t *testing.T) {
 			continue
 		}
 		found = true
-		if v.DerivedStatus != store.TicketQueued {
+		if v.DerivedStatus != contracts.TicketQueued {
 			t.Fatalf("expected queued after stop, got=%s", v.DerivedStatus)
 		}
 	}
@@ -738,7 +739,7 @@ func TestIntegration_StartStopArchiveFlow(t *testing.T) {
 	archived := false
 	for _, it := range all {
 		if it.ID == tk.ID {
-			archived = it.WorkflowStatus == store.TicketArchived
+			archived = it.WorkflowStatus == contracts.TicketArchived
 			break
 		}
 	}
@@ -766,7 +767,7 @@ func TestIntegration_StopTicket_ForceFailActiveDispatchAndArchive(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, store.PMDispatchRunning)
+	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
 	if job.TaskRunID == 0 {
 		t.Fatalf("expected dispatch task_run_id before stop")
 	}
@@ -787,7 +788,7 @@ func TestIntegration_StopTicket_ForceFailActiveDispatchAndArchive(t *testing.T) 
 	if err := p.core.DB.WithContext(ctx).First(&afterJob, job.ID).Error; err != nil {
 		t.Fatalf("load dispatch job after stop failed: %v", err)
 	}
-	if afterJob.Status != store.PMDispatchFailed {
+	if afterJob.Status != contracts.PMDispatchFailed {
 		t.Fatalf("dispatch job should be failed after stop, got=%s", afterJob.Status)
 	}
 	if strings.TrimSpace(afterJob.RunnerID) != "" {
@@ -810,7 +811,7 @@ func TestIntegration_StopTicket_ForceFailActiveDispatchAndArchive(t *testing.T) 
 	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load dispatch task run failed: %v", err)
 	}
-	if run.OrchestrationState != store.TaskFailed {
+	if run.OrchestrationState != contracts.TaskFailed {
 		t.Fatalf("dispatch task run should be failed after stop, got=%s", run.OrchestrationState)
 	}
 	if strings.TrimSpace(run.ErrorCode) != "dispatch_force_failed_on_stop" {
@@ -837,11 +838,11 @@ func createRunningTaskRunForFinishAgentTest(t *testing.T, p *Project, requestID 
 	}
 	ctx := context.Background()
 	run, err := p.task.CreateRun(ctx, tasksvc.CreateRunInput{
-		OwnerType:          store.TaskOwnerPM,
+		OwnerType:          contracts.TaskOwnerPM,
 		TaskType:           "pm_dispatch_agent",
 		ProjectKey:         p.Key(),
 		RequestID:          strings.TrimSpace(requestID),
-		OrchestrationState: store.TaskPending,
+		OrchestrationState: contracts.TaskPending,
 	})
 	if err != nil {
 		t.Fatalf("CreateRun failed: %v", err)
@@ -868,8 +869,8 @@ func TestIntegration_FinishAgentRun_Succeeded(t *testing.T) {
 	if run == nil {
 		t.Fatalf("expected task run exists")
 	}
-	if run.OrchestrationState != store.TaskSucceeded {
-		t.Fatalf("unexpected orchestration_state: got=%s want=%s", run.OrchestrationState, store.TaskSucceeded)
+	if run.OrchestrationState != contracts.TaskSucceeded {
+		t.Fatalf("unexpected orchestration_state: got=%s want=%s", run.OrchestrationState, contracts.TaskSucceeded)
 	}
 	if run.FinishedAt == nil {
 		t.Fatalf("expected finished_at set")
@@ -906,8 +907,8 @@ func TestIntegration_FinishAgentRun_Failed(t *testing.T) {
 	if run == nil {
 		t.Fatalf("expected task run exists")
 	}
-	if run.OrchestrationState != store.TaskFailed {
-		t.Fatalf("unexpected orchestration_state: got=%s want=%s", run.OrchestrationState, store.TaskFailed)
+	if run.OrchestrationState != contracts.TaskFailed {
+		t.Fatalf("unexpected orchestration_state: got=%s want=%s", run.OrchestrationState, contracts.TaskFailed)
 	}
 	if strings.TrimSpace(run.ErrorCode) != "agent_exit" {
 		t.Fatalf("unexpected error_code: %s", run.ErrorCode)
@@ -943,10 +944,10 @@ func TestIntegration_CancelTaskRun_CancelsRunningAndAppendsEvent(t *testing.T) {
 	if !res.Found || !res.Canceled {
 		t.Fatalf("unexpected cancel result: %+v", res)
 	}
-	if strings.TrimSpace(res.FromState) != string(store.TaskRunning) {
+	if strings.TrimSpace(res.FromState) != string(contracts.TaskRunning) {
 		t.Fatalf("unexpected from_state: %s", res.FromState)
 	}
-	if strings.TrimSpace(res.ToState) != string(store.TaskCanceled) {
+	if strings.TrimSpace(res.ToState) != string(contracts.TaskCanceled) {
 		t.Fatalf("unexpected to_state: %s", res.ToState)
 	}
 
@@ -957,8 +958,8 @@ func TestIntegration_CancelTaskRun_CancelsRunningAndAppendsEvent(t *testing.T) {
 	if run == nil {
 		t.Fatalf("expected task run exists")
 	}
-	if run.OrchestrationState != store.TaskCanceled {
-		t.Fatalf("unexpected orchestration_state: got=%s want=%s", run.OrchestrationState, store.TaskCanceled)
+	if run.OrchestrationState != contracts.TaskCanceled {
+		t.Fatalf("unexpected orchestration_state: got=%s want=%s", run.OrchestrationState, contracts.TaskCanceled)
 	}
 
 	events, err := p.task.ListEvents(context.Background(), runID, 20)
@@ -1018,8 +1019,8 @@ func TestIntegration_CancelTaskRun_TerminalRunNotCanceled(t *testing.T) {
 	if run == nil {
 		t.Fatalf("expected task run exists")
 	}
-	if run.OrchestrationState != store.TaskSucceeded {
-		t.Fatalf("unexpected orchestration_state: got=%s want=%s", run.OrchestrationState, store.TaskSucceeded)
+	if run.OrchestrationState != contracts.TaskSucceeded {
+		t.Fatalf("unexpected orchestration_state: got=%s want=%s", run.OrchestrationState, contracts.TaskSucceeded)
 	}
 }
 

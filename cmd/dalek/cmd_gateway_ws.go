@@ -286,7 +286,7 @@ func newGatewayWSServerHandler(p *app.Project, rawOpt gatewayWSServerOptions) (s
 					if finalSeq <= 0 {
 						finalSeq = lastSeq + 1
 					}
-					if result.JobStatus != store.ChannelTurnSucceeded {
+					if result.JobStatus != contracts.ChannelTurnSucceeded {
 						finalEventType = "error"
 					}
 					if !send(gatewayWSOutboundFrame{
@@ -364,7 +364,7 @@ func newGatewayWSServerHandler(p *app.Project, rawOpt gatewayWSServerOptions) (s
 			pushInbox := func(force bool) {
 				ctx, cancel := projectCtx(opt.TurnTimeout)
 				items, err := p.ListInbox(ctx, app.ListInboxOptions{
-					Status: store.InboxOpen,
+					Status: contracts.InboxOpen,
 					Limit:  opt.InboxLimit,
 				})
 				cancel()

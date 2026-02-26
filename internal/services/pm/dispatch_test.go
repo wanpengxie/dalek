@@ -35,7 +35,7 @@ func TestDispatchTicket_SingleModeRunsPMAgent(t *testing.T) {
 	if err := p.DB.Order("id desc").First(&job).Error; err != nil {
 		t.Fatalf("load job failed: %v", err)
 	}
-	if job.Status != store.PMDispatchSucceeded {
+	if job.Status != contracts.PMDispatchSucceeded {
 		t.Fatalf("unexpected job status: %s", job.Status)
 	}
 	var payload contracts.PMDispatchJobResult
@@ -115,7 +115,7 @@ func TestDispatchTicket_AllowsTicketWithoutDescription(t *testing.T) {
 	tk := store.Ticket{
 		Title:          "dispatch-no-description",
 		Description:    "",
-		WorkflowStatus: store.TicketBacklog,
+		WorkflowStatus: contracts.TicketBacklog,
 	}
 	if err := p.DB.Create(&tk).Error; err != nil {
 		t.Fatalf("create ticket failed: %v", err)
@@ -264,7 +264,7 @@ func TestDispatchTicket_DefaultAutoStartWhenNotStarted(t *testing.T) {
 	if err := p.DB.First(&w, out.WorkerID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
 	}
-	if w.Status != store.WorkerRunning && w.Status != store.WorkerStopped {
+	if w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
 		t.Fatalf("expected worker running/stopped after auto-start dispatch, got=%s", w.Status)
 	}
 	if strings.TrimSpace(w.TmuxSession) == "" {
@@ -341,7 +341,7 @@ func TestSubmitDispatchTicket_AutoStartWhenNotStarted(t *testing.T) {
 	if err := p.DB.First(&w, sub.WorkerID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
 	}
-	if w.Status != store.WorkerRunning {
+	if w.Status != contracts.WorkerRunning {
 		t.Fatalf("expected running worker, got=%s", w.Status)
 	}
 	if strings.TrimSpace(w.TmuxSession) == "" {
@@ -358,7 +358,7 @@ func TestResolveDispatchTarget_WaitsCreatingWorkerReady(t *testing.T) {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"status":     store.WorkerCreating,
+		"status":     contracts.WorkerCreating,
 		"updated_at": time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set worker creating failed: %v", err)
@@ -370,7 +370,7 @@ func TestResolveDispatchTarget_WaitsCreatingWorkerReady(t *testing.T) {
 	go func() {
 		time.Sleep(80 * time.Millisecond)
 		_ = p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-			"status":     store.WorkerRunning,
+			"status":     contracts.WorkerRunning,
 			"updated_at": time.Now(),
 		}).Error
 	}()
@@ -379,7 +379,7 @@ func TestResolveDispatchTarget_WaitsCreatingWorkerReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveDispatchTarget should wait creating->running, got err=%v", err)
 	}
-	if target == nil || target.Status != store.WorkerRunning {
+	if target == nil || target.Status != contracts.WorkerRunning {
 		t.Fatalf("expected worker running after wait, got=%v", target)
 	}
 }
@@ -393,7 +393,7 @@ func TestResolveDispatchTarget_TimeoutWhenWorkerKeepsCreating(t *testing.T) {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"status":     store.WorkerCreating,
+		"status":     contracts.WorkerCreating,
 		"updated_at": time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set worker creating failed: %v", err)

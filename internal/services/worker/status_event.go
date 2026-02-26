@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"encoding/json"
 	"strings"
 	"time"
@@ -11,8 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
-func normalizeWorkerStatus(st store.WorkerStatus) store.WorkerStatus {
-	v := store.WorkerStatus(strings.TrimSpace(strings.ToLower(string(st))))
+func normalizeWorkerStatus(st contracts.WorkerStatus) contracts.WorkerStatus {
+	v := contracts.WorkerStatus(strings.TrimSpace(strings.ToLower(string(st))))
 	if v == "" {
 		return st
 	}
@@ -30,7 +31,7 @@ func marshalWorkerStatusPayload(v any) string {
 	return strings.TrimSpace(string(b))
 }
 
-func (s *Service) appendWorkerStatusEventTx(ctx context.Context, tx *gorm.DB, workerID uint, ticketID uint, fromStatus, toStatus store.WorkerStatus, source, reason string, payload any, createdAt time.Time) error {
+func (s *Service) appendWorkerStatusEventTx(ctx context.Context, tx *gorm.DB, workerID uint, ticketID uint, fromStatus, toStatus contracts.WorkerStatus, source, reason string, payload any, createdAt time.Time) error {
 	if tx == nil || workerID == 0 {
 		return nil
 	}

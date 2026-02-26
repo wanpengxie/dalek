@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -65,14 +66,14 @@ func (s *Service) MarkWorkerRunning(ctx context.Context, workerID uint, now time
 			return err
 		}
 		if err := tx.WithContext(ctx).Model(&store.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
-			"status":     store.WorkerRunning,
+			"status":     contracts.WorkerRunning,
 			"started_at": &now,
 			"stopped_at": nil,
 			"last_error": "",
 		}).Error; err != nil {
 			return err
 		}
-		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, store.WorkerRunning, "worker.transition", "worker 标记为 running", map[string]any{
+		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, contracts.WorkerRunning, "worker.transition", "worker 标记为 running", map[string]any{
 			"worker_id": w.ID,
 			"ticket_id": w.TicketID,
 		}, now)
@@ -102,13 +103,13 @@ func (s *Service) MarkWorkerFailed(ctx context.Context, workerID uint, now time.
 	lastError = strings.TrimSpace(lastError)
 	_ = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).Model(&store.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
-			"status":     store.WorkerFailed,
+			"status":     contracts.WorkerFailed,
 			"last_error": lastError,
 			"stopped_at": &now,
 		}).Error; err != nil {
 			return err
 		}
-		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, store.WorkerFailed, "worker.transition", "worker 标记为 failed", map[string]any{
+		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, contracts.WorkerFailed, "worker.transition", "worker 标记为 failed", map[string]any{
 			"worker_id":  w.ID,
 			"ticket_id":  w.TicketID,
 			"last_error": lastError,
@@ -145,9 +146,9 @@ func (s *Service) MarkWorkerSessionNotAlive(ctx context.Context, w store.Worker,
 	// 同步 worker 生命周期状态（避免 manager/autopilot 继续把它计入 running 容量）。
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.WithContext(ctx).Model(&store.Worker{}).
-			Where("id = ? AND status = ?", w.ID, store.WorkerRunning).
+			Where("id = ? AND status = ?", w.ID, contracts.WorkerRunning).
 			Updates(map[string]any{
-				"status":     store.WorkerStopped,
+				"status":     contracts.WorkerStopped,
 				"stopped_at": &now,
 			})
 		if res.Error != nil {
@@ -157,7 +158,7 @@ func (s *Service) MarkWorkerSessionNotAlive(ctx context.Context, w store.Worker,
 			// 已经不是 running，则不再回退 ticket（避免覆盖并发状态变更）。
 			return nil
 		}
-		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, store.WorkerRunning, store.WorkerStopped, "worker.transition", "session 不存活，worker 收口为 stopped", map[string]any{
+		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, contracts.WorkerRunning, contracts.WorkerStopped, "worker.transition", "session 不存活，worker 收口为 stopped", map[string]any{
 			"worker_id": w.ID,
 			"ticket_id": w.TicketID,
 		}, now)
