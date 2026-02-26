@@ -2,7 +2,6 @@ package channel
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,8 +16,6 @@ import (
 
 	"gorm.io/gorm"
 )
-
-const gatewayTurnResultSchemaV1 = "dalek.channel_gateway_turn_result.v1"
 
 var ErrGatewayStopped = errors.New("gateway stopped")
 
@@ -97,28 +94,6 @@ type gatewayPersistState struct {
 	conv    store.ChannelConversation
 	inbound store.ChannelMessage
 	job     store.ChannelTurnJob
-}
-
-type gatewayTurnResult struct {
-	Schema            string              `json:"schema"`
-	BindingID         uint                `json:"binding_id"`
-	ConversationID    uint                `json:"conversation_id"`
-	InboundMessageID  uint                `json:"inbound_message_id"`
-	OutboundMessageID uint                `json:"outbound_message_id"`
-	OutboxID          uint                `json:"outbox_id"`
-	RunID             string              `json:"run_id,omitempty"`
-	AgentReplyText    string              `json:"agent_reply_text,omitempty"`
-	AgentProvider     string              `json:"agent_provider,omitempty"`
-	AgentModel        string              `json:"agent_model,omitempty"`
-	AgentOutputMode   string              `json:"agent_output_mode,omitempty"`
-	AgentCommand      string              `json:"agent_command,omitempty"`
-	AgentStdout       string              `json:"agent_stdout,omitempty"`
-	AgentStderr       string              `json:"agent_stderr,omitempty"`
-	AgentEvents       []AgentEvent        `json:"agent_events,omitempty"`
-	PendingActions    []PendingActionView `json:"pending_actions,omitempty"`
-	JobStatus         string              `json:"job_status,omitempty"`
-	JobError          string              `json:"job_error,omitempty"`
-	JobErrorType      string              `json:"job_error_type,omitempty"`
 }
 
 func NewGateway(db *gorm.DB, resolver ProjectResolver, opt GatewayOptions) (*Gateway, error) {
@@ -512,106 +487,54 @@ func (g *Gateway) persistInboundAccepted(ctx context.Context, item InboundItem) 
 	var state gatewayPersistState
 	var cached *ProcessResult
 	err := g.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		binding, err := ensureGatewayBindingTx(ctx, tx, item.ProjectName, item.PeerProjectKey, item.Envelope)
+		binding, err := EnsureBindingTx(ctx, tx, EnsureBindingParams{
+			ProjectName:    strings.TrimSpace(item.ProjectName),
+			PeerProjectKey: strings.TrimSpace(item.PeerProjectKey),
+			Env:            item.Envelope,
+			AutoUpdate:     true,
+		})
 		if err != nil {
 			return err
 		}
 		state.binding = binding
 
-		conv, err := ensureGatewayConversationTx(ctx, tx, binding.ID, item.Envelope.PeerConversationID)
+		conv, err := EnsureConversationTx(ctx, tx, binding.ID, item.Envelope.PeerConversationID)
 		if err != nil {
 			return err
 		}
 		state.conv = conv
 
-		var inbound store.ChannelMessage
-		err = tx.WithContext(ctx).
-			Where("direction = ? AND conversation_id = ? AND adapter = ? AND peer_message_id = ?",
-				contracts.ChannelMessageIn,
-				conv.ID,
-				strings.TrimSpace(item.Envelope.Adapter),
-				strings.TrimSpace(item.Envelope.PeerMessageID)).
-			First(&inbound).Error
-		if err == nil {
-			state.inbound = inbound
-			var existingJob store.ChannelTurnJob
-			jerr := tx.WithContext(ctx).Where("inbound_message_id = ?", inbound.ID).First(&existingJob).Error
-			if jerr == nil {
-				state.job = existingJob
-				res := decodeGatewayTurnResult(existingJob)
-				res.BindingID = binding.ID
-				res.ConversationID = conv.ID
-				res.InboundMessageID = inbound.ID
-				cached = &res
-				g.slog().Info("gateway dedup hit",
-					"dedup_type", "peer_message_id",
-					"dedup_key", strings.TrimSpace(item.Envelope.PeerMessageID),
-					"inbound_id", inbound.ID,
-					"job_id", existingJob.ID,
-					"status", strings.TrimSpace(string(existingJob.Status)),
-					"action", "skip",
-				)
-				if isTurnTerminal(existingJob.Status) {
-					return nil
-				}
-				return nil
-			}
-			if errors.Is(jerr, gorm.ErrRecordNotFound) {
-				job := store.ChannelTurnJob{
-					ConversationID:   inbound.ConversationID,
-					InboundMessageID: inbound.ID,
-					Status:           contracts.ChannelTurnPending,
-				}
-				if jerr := tx.WithContext(ctx).Create(&job).Error; jerr != nil {
-					return jerr
-				}
-				state.job = job
-				return nil
-			}
-			return jerr
-		}
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-
-		payload := map[string]any{
-			"schema":      item.Envelope.Schema,
-			"attachments": item.Envelope.Attachments,
-			"received_at": item.Envelope.ReceivedAt,
-			"project":     item.ProjectName,
-		}
-		peerID := strings.TrimSpace(item.Envelope.PeerMessageID)
-		inbound = store.ChannelMessage{
-			ConversationID: conv.ID,
-			Direction:      contracts.ChannelMessageIn,
-			Adapter:        strings.TrimSpace(item.Envelope.Adapter),
-			PeerMessageID:  &peerID,
-			SenderID:       strings.TrimSpace(item.Envelope.SenderID),
-			ContentText:    strings.TrimSpace(item.Envelope.Text),
-			PayloadJSON:    mustJSON(payload),
-			Status:         contracts.ChannelMessageAccepted,
-		}
-		if err := tx.WithContext(ctx).Create(&inbound).Error; err != nil {
+		inbound, job, duplicate, err := PersistInboundMessageTx(ctx, tx, PersistInboundParams{
+			Conv:    conv,
+			Env:     item.Envelope,
+			Project: strings.TrimSpace(item.ProjectName),
+		})
+		if err != nil {
 			return err
 		}
 		state.inbound = inbound
-
-		now := time.Now()
-		if err := tx.WithContext(ctx).Model(&store.ChannelConversation{}).
-			Where("id = ?", conv.ID).
-			Updates(map[string]any{"last_message_at": &now, "updated_at": now}).Error; err != nil {
-			return err
-		}
-
-		job := store.ChannelTurnJob{
-			ConversationID:   conv.ID,
-			InboundMessageID: inbound.ID,
-			Status:           contracts.ChannelTurnPending,
-		}
-		if err := tx.WithContext(ctx).Create(&job).Error; err != nil {
-			return err
-		}
 		state.job = job
+		if duplicate {
+			res := decodeTurnResult(job)
+			if res.BindingID == 0 {
+				res.BindingID = binding.ID
+			}
+			if res.ConversationID == 0 {
+				res.ConversationID = conv.ID
+			}
+			if res.InboundMessageID == 0 {
+				res.InboundMessageID = inbound.ID
+			}
+			cached = &res
+			g.slog().Info("gateway dedup hit",
+				"dedup_type", "peer_message_id",
+				"dedup_key", strings.TrimSpace(item.Envelope.PeerMessageID),
+				"inbound_id", inbound.ID,
+				"job_id", job.ID,
+				"status", strings.TrimSpace(string(job.Status)),
+				"action", "skip",
+			)
+		}
 		return nil
 	})
 	if err != nil {
@@ -639,270 +562,29 @@ func (g *Gateway) persistTurnResult(ctx context.Context, state gatewayPersistSta
 	if state.job.ID == 0 || state.inbound.ID == 0 || state.conv.ID == 0 || state.binding.ID == 0 {
 		return ProcessResult{}, fmt.Errorf("gateway 落盘状态不完整")
 	}
-	status := result.JobStatus
-	if status == "" {
-		if runErr != nil {
-			status = contracts.ChannelTurnFailed
-		} else {
-			status = contracts.ChannelTurnSucceeded
-		}
+	adapter := strings.TrimSpace(env.Adapter)
+	if adapter == "" {
+		adapter = strings.TrimSpace(state.binding.Adapter)
 	}
-	if runErr != nil {
-		status = contracts.ChannelTurnFailed
-	}
-	jobErr := strings.TrimSpace(result.JobError)
-	if runErr != nil {
-		jobErr = strings.TrimSpace(runErr.Error())
-	}
-	jobErrType := strings.TrimSpace(result.JobErrorType)
-	if jobErrType == "" {
-		jobErrType = classifyJobErrorType(jobErr)
-	}
-	if status == contracts.ChannelTurnSucceeded {
-		jobErr = ""
-		jobErrType = ""
-	}
-
-	payload := gatewayTurnResult{
-		Schema:           gatewayTurnResultSchemaV1,
-		BindingID:        state.binding.ID,
-		ConversationID:   state.conv.ID,
-		InboundMessageID: state.inbound.ID,
-		RunID:            strings.TrimSpace(result.RunID),
-		AgentReplyText:   strings.TrimSpace(result.ReplyText),
-		AgentProvider:    strings.TrimSpace(result.AgentProvider),
-		AgentModel:       strings.TrimSpace(result.AgentModel),
-		AgentOutputMode:  strings.TrimSpace(result.AgentOutputMode),
-		AgentCommand:     strings.TrimSpace(result.AgentCommand),
-		AgentStdout:      strings.TrimSpace(result.AgentStdout),
-		AgentStderr:      strings.TrimSpace(result.AgentStderr),
-		AgentEvents:      copyAgentEvents(result.AgentEvents),
-		PendingActions:   copyPendingActionViews(result.PendingActions),
-		JobStatus:        strings.TrimSpace(string(status)),
-		JobError:         jobErr,
-		JobErrorType:     jobErrType,
-	}
-
-	persisted := ProcessResult{
-		BindingID:        state.binding.ID,
-		ConversationID:   state.conv.ID,
-		InboundMessageID: state.inbound.ID,
-		JobID:            state.job.ID,
-		RunID:            payload.RunID,
-		JobStatus:        status,
-		JobError:         jobErr,
-		JobErrorType:     jobErrType,
-		ReplyText:        payload.AgentReplyText,
-		AgentProvider:    payload.AgentProvider,
-		AgentModel:       payload.AgentModel,
-		AgentOutputMode:  payload.AgentOutputMode,
-		AgentCommand:     payload.AgentCommand,
-		AgentStdout:      payload.AgentStdout,
-		AgentStderr:      payload.AgentStderr,
-		AgentEvents:      copyAgentEvents(payload.AgentEvents),
-		PendingActions:   copyPendingActionViews(payload.PendingActions),
-	}
-
-	payloadJSON := mustJSON(payload)
-
+	var output TurnResultOutput
 	if err := g.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		now := time.Now()
-		if err := tx.Model(&store.ChannelMessage{}).
-			Where("id = ?", state.inbound.ID).
-			Updates(map[string]any{"status": inboundMessageStatusFromTurn(status), "payload_json": payloadJSON}).Error; err != nil {
-			return err
-		}
-
-		convUpdates := map[string]any{
-			"updated_at": now,
-		}
-		if status == contracts.ChannelTurnSucceeded {
-			convUpdates["last_message_at"] = &now
-		}
-		if err := tx.Model(&store.ChannelConversation{}).
-			Where("id = ?", state.conv.ID).
-			Updates(convUpdates).Error; err != nil {
-			return err
-		}
-
-		if strings.TrimSpace(payload.AgentReplyText) != "" {
-			outPeerID := fmt.Sprintf("gateway_out_job_%d", state.job.ID)
-			outbound := store.ChannelMessage{
-				ConversationID: state.conv.ID,
-				Direction:      contracts.ChannelMessageOut,
-				Adapter:        strings.TrimSpace(env.Adapter),
-				PeerMessageID:  &outPeerID,
-				SenderID:       "pm",
-				ContentText:    strings.TrimSpace(payload.AgentReplyText),
-				PayloadJSON:    payloadJSON,
-				Status:         outboundMessageStatusFromTurn(status),
-			}
-			if err := tx.Create(&outbound).Error; err != nil {
-				return err
-			}
-			persisted.OutboundMessageID = outbound.ID
-
-			outbox := store.ChannelOutbox{
-				MessageID:   outbound.ID,
-				Adapter:     strings.TrimSpace(env.Adapter),
-				PayloadJSON: payloadJSON,
-				Status:      outboxStatusFromTurn(status),
-				RetryCount:  1,
-				LastError:   "",
-			}
-			if status != contracts.ChannelTurnSucceeded {
-				outbox.LastError = jobErr
-			}
-			if err := tx.Create(&outbox).Error; err != nil {
-				return err
-			}
-			persisted.OutboxID = outbox.ID
-		}
-
-		payload.OutboundMessageID = persisted.OutboundMessageID
-		payload.OutboxID = persisted.OutboxID
-		payloadJSON = mustJSON(payload)
-		persisted.ReplyText = strings.TrimSpace(payload.AgentReplyText)
-
-		updates := map[string]any{
-			"status":           status,
-			"result_json":      payloadJSON,
-			"error":            jobErr,
-			"runner_id":        "gateway",
-			"lease_expires_at": nil,
-			"finished_at":      &now,
-			"updated_at":       now,
-		}
-		if status == contracts.ChannelTurnSucceeded {
-			updates["error"] = ""
-		}
-		return tx.Model(&store.ChannelTurnJob{}).
-			Where("id = ?", state.job.ID).
-			Updates(updates).Error
+		var txErr error
+		output, txErr = PersistTurnResultTx(ctx, tx, PersistTurnResultParams{
+			Binding:     state.binding,
+			Conv:        state.conv,
+			Inbound:     state.inbound,
+			Job:         state.job,
+			Adapter:     adapter,
+			Result:      result,
+			RunErr:      runErr,
+			RunnerID:    "gateway",
+			FinalizeJob: true,
+		})
+		return txErr
 	}); err != nil {
 		return ProcessResult{}, err
 	}
-	return persisted, nil
-}
-
-func ensureGatewayBindingTx(ctx context.Context, tx *gorm.DB, projectName, peerProjectKey string, env contracts.InboundEnvelope) (store.ChannelBinding, error) {
-	projectName = strings.TrimSpace(projectName)
-	if projectName == "" {
-		return store.ChannelBinding{}, fmt.Errorf("project name 不能为空")
-	}
-	channelType := toStoreChannelType(env.ChannelType)
-	adapter := strings.TrimSpace(env.Adapter)
-	peerProjectKey = strings.TrimSpace(peerProjectKey)
-
-	var binding store.ChannelBinding
-	err := tx.WithContext(ctx).
-		Where("channel_type = ? AND adapter = ? AND peer_project_key = ?", channelType, adapter, peerProjectKey).
-		First(&binding).Error
-	if err == nil {
-		updates := map[string]any{}
-		if strings.TrimSpace(binding.ProjectName) != projectName {
-			updates["project_name"] = projectName
-		}
-		if !binding.Enabled {
-			updates["enabled"] = true
-		}
-		if len(updates) > 0 {
-			if uErr := tx.WithContext(ctx).Model(&store.ChannelBinding{}).
-				Where("id = ?", binding.ID).
-				Updates(updates).Error; uErr != nil {
-				return store.ChannelBinding{}, uErr
-			}
-			if updates["project_name"] != nil {
-				binding.ProjectName = projectName
-			}
-			if updates["enabled"] != nil {
-				binding.Enabled = true
-			}
-		}
-		return binding, nil
-	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return store.ChannelBinding{}, err
-	}
-
-	binding = store.ChannelBinding{
-		ProjectName:    projectName,
-		ChannelType:    channelType,
-		Adapter:        adapter,
-		PeerProjectKey: peerProjectKey,
-		RolePolicyJSON: "{}",
-		Enabled:        true,
-	}
-	if err := tx.WithContext(ctx).Create(&binding).Error; err != nil {
-		return store.ChannelBinding{}, err
-	}
-	return binding, nil
-}
-
-func ensureGatewayConversationTx(ctx context.Context, tx *gorm.DB, bindingID uint, peerConversationID string) (store.ChannelConversation, error) {
-	var conv store.ChannelConversation
-	err := tx.WithContext(ctx).
-		Where("binding_id = ? AND peer_conversation_id = ?", bindingID, strings.TrimSpace(peerConversationID)).
-		First(&conv).Error
-	if err == nil {
-		return conv, nil
-	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return store.ChannelConversation{}, err
-	}
-	conv = store.ChannelConversation{
-		BindingID:          bindingID,
-		PeerConversationID: strings.TrimSpace(peerConversationID),
-	}
-	if err := tx.WithContext(ctx).Create(&conv).Error; err != nil {
-		return store.ChannelConversation{}, err
-	}
-	return conv, nil
-}
-
-func decodeGatewayTurnResult(job store.ChannelTurnJob) ProcessResult {
-	res := ProcessResult{
-		JobID:        job.ID,
-		JobStatus:    job.Status,
-		JobError:     strings.TrimSpace(job.Error),
-		JobErrorType: classifyJobErrorType(strings.TrimSpace(job.Error)),
-	}
-	raw := strings.TrimSpace(job.ResultJSON)
-	if raw == "" {
-		return res
-	}
-	var payload gatewayTurnResult
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return res
-	}
-	res.BindingID = payload.BindingID
-	res.ConversationID = payload.ConversationID
-	res.InboundMessageID = payload.InboundMessageID
-	res.OutboundMessageID = payload.OutboundMessageID
-	res.OutboxID = payload.OutboxID
-	res.RunID = strings.TrimSpace(payload.RunID)
-	res.ReplyText = strings.TrimSpace(payload.AgentReplyText)
-	res.AgentProvider = strings.TrimSpace(payload.AgentProvider)
-	res.AgentModel = strings.TrimSpace(payload.AgentModel)
-	res.AgentOutputMode = strings.TrimSpace(payload.AgentOutputMode)
-	res.AgentCommand = strings.TrimSpace(payload.AgentCommand)
-	res.AgentStdout = strings.TrimSpace(payload.AgentStdout)
-	res.AgentStderr = strings.TrimSpace(payload.AgentStderr)
-	res.AgentEvents = copyAgentEvents(payload.AgentEvents)
-	res.PendingActions = copyPendingActionViews(payload.PendingActions)
-	if st := strings.TrimSpace(payload.JobStatus); st != "" {
-		res.JobStatus = contracts.ChannelTurnJobStatus(st)
-	}
-	if msg := strings.TrimSpace(payload.JobError); msg != "" {
-		res.JobError = msg
-	}
-	if jt := strings.TrimSpace(payload.JobErrorType); jt != "" {
-		res.JobErrorType = jt
-	}
-	if res.JobErrorType == "" {
-		res.JobErrorType = classifyJobErrorType(res.JobError)
-	}
-	return res
+	return output.Persisted, nil
 }
 
 func (g *Gateway) publishError(projectName, conversationID, peerMessageID string, err error) {

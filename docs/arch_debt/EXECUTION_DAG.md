@@ -13,12 +13,11 @@
 
 - 更新时间：`2026-02-26`
 - 已完成批次：`W01` `W02` `W03`
-- 当前批次：`W04 + W05A`（`in_execution`）
+- 当前批次：`W05A`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
-- W04 已完成票：`T22(29)` `T31(38)` `T29(36)`
-- W04 进行中票：`T14(21)`
+- W04 已完成票：`T22(29)` `T14(21)` `T31(38)` `T29(36)`
 - W05A 分叉进行中票：`T23(30)` `T37(44)`（先行执行，不依赖 `T14(21)`）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
@@ -276,6 +275,21 @@ Tickets: <T.. T.. T..>
   - 运行产物路径与文件保持不变：`prompt.txt`、`stream.log`、`sdk-stream.log`、`result.json`。
 - 测试与回归：
   - 新增 `internal/services/subagent/service_test.go`，覆盖 submit 幂等与 run 成功/失败/取消关键路径。
+
+## W04 回写（T14 Channel 入站持久化单路径化）
+
+- 状态：`T14` 已完成（2026-02-26），Service/Gateway/Gatewaysend 入站持久化已收敛到统一路径。
+- 交付物：
+  - 新增 `internal/services/channel/inbound_persistence.go`，统一 `EnsureBindingTx` / `EnsureConversationTx` / `PersistInboundMessageTx` / `PersistTurnResultTx`。
+  - 新增 `TurnResultRecord`（`dalek.channel_turn_result.v2`）与 `decodeTurnResult`，替换 service/gateway 双 schema 双解码路径。
+  - `internal/services/channel/service.go` 的 `ProcessInbound` 与 `runTurnJob` 已切换到共享持久化组件，删除本地 `ensureBindingTx`/`ensureConversationTx` 与旧 result 写入分支。
+  - `internal/services/channel/gateway_runtime.go` 的 `persistInboundAccepted` / `persistTurnResult` 已切换到共享持久化组件，删除 `ensureGatewayBindingTx`/`ensureGatewayConversationTx` 与 `gatewayTurnResult`。
+  - `internal/services/gatewaysend/send.go` 删除本地 `ensureConversationTx` 副本，改为复用统一入口（通过 `internal/services/channel/inbounddb` 共享实现）。
+  - 新增 `internal/services/channel/inbound_persistence_test.go` 覆盖 binding 超集行为、入站字段统一与 dedup、turn 成功/失败关键分支。
+- 回归结果：
+  - `go test ./internal/services/channel/...` 通过
+  - `go test ./internal/services/gatewaysend/...` 通过
+  - `go test ./...` 全量通过
   - 已通过 `go test ./internal/services/subagent/...`、`go test ./internal/app/...`、`go test ./internal/services/daemon/...` 与 `go test ./...` 全量回归。
 - 下游约束更新：
   - app 层禁止回流 subagent 底层 I/O 编排；后续统一执行入口（AgentExec）应直接复用/包裹 `services/subagent`。
