@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,6 @@ import (
 	"dalek/internal/agent/provider"
 	"dalek/internal/infra"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 )
 
 type TmuxAppendEventFunc func(ctx context.Context, eventType, note string, payload any, createdAt time.Time)
@@ -21,7 +21,7 @@ type TmuxConfig struct {
 	Provider provider.Provider
 	Runtime  core.TaskRuntime
 
-	OwnerType store.TaskOwnerType
+	OwnerType contracts.TaskOwnerType
 	TaskType  string
 
 	ProjectKey  string
@@ -124,7 +124,7 @@ func (e *TmuxExecutor) Execute(ctx context.Context, prompt string) (AgentRunHand
 			SubjectType:        strings.TrimSpace(e.cfg.SubjectType),
 			SubjectID:          strings.TrimSpace(e.cfg.SubjectID),
 			RequestID:          req,
-			OrchestrationState: store.TaskPending,
+			OrchestrationState: contracts.TaskPending,
 			RequestPayloadJSON: marshalJSON(map[string]any{
 				"provider":       e.cfg.Provider.Name(),
 				"tmux_target":    strings.TrimSpace(target),
@@ -145,7 +145,7 @@ func (e *TmuxExecutor) Execute(ctx context.Context, prompt string) (AgentRunHand
 			TaskRunID: runID,
 			EventType: "task_started",
 			ToState: map[string]any{
-				"orchestration_state": store.TaskRunning,
+				"orchestration_state": contracts.TaskRunning,
 				"runner_id":           strings.TrimSpace(target),
 			},
 			Note:      "tmux executor injected",
@@ -278,11 +278,11 @@ func (h *TmuxHandle) Wait() (AgentRunResult, error) {
 		}
 		if run != nil {
 			switch run.OrchestrationState {
-			case store.TaskSucceeded:
+			case contracts.TaskSucceeded:
 				return AgentRunResult{ExitCode: 0}, nil
-			case store.TaskFailed:
+			case contracts.TaskFailed:
 				return AgentRunResult{ExitCode: 1}, fmt.Errorf("%s", strings.TrimSpace(run.ErrorMessage))
-			case store.TaskCanceled:
+			case contracts.TaskCanceled:
 				return AgentRunResult{ExitCode: 1}, fmt.Errorf("%s", strings.TrimSpace(run.ErrorMessage))
 			}
 		}

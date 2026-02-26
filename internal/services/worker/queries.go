@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -60,7 +61,7 @@ func (s *Service) ListRunningWorkers(ctx context.Context) ([]store.Worker, error
 		ctx = context.Background()
 	}
 	var workers []store.Worker
-	if err := db.WithContext(ctx).Where("status = ?", store.WorkerRunning).Order("id asc").Find(&workers).Error; err != nil {
+	if err := db.WithContext(ctx).Where("status = ?", contracts.WorkerRunning).Order("id asc").Find(&workers).Error; err != nil {
 		return nil, err
 	}
 	return workers, nil
@@ -91,7 +92,7 @@ func (s *Service) ReconcileRunningWorkersAfterKillAll(ctx context.Context, socke
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var txWorkers []store.Worker
 		if err := tx.WithContext(ctx).
-			Where("tmux_socket = ? AND status = ?", socket, store.WorkerRunning).
+			Where("tmux_socket = ? AND status = ?", socket, contracts.WorkerRunning).
 			Order("id asc").
 			Find(&txWorkers).Error; err != nil {
 			return err
@@ -109,7 +110,7 @@ func (s *Service) ReconcileRunningWorkersAfterKillAll(ctx context.Context, socke
 		if err := tx.WithContext(ctx).Model(&store.Worker{}).
 			Where("id IN ?", workerIDs).
 			Updates(map[string]any{
-				"status":     store.WorkerStopped,
+				"status":     contracts.WorkerStopped,
 				"stopped_at": &now,
 			}).Error; err != nil {
 			return err
@@ -120,7 +121,7 @@ func (s *Service) ReconcileRunningWorkersAfterKillAll(ctx context.Context, socke
 			return terr
 		}
 		for _, w := range txWorkers {
-			if err := s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, store.WorkerStopped, "worker.stop_all", "kill-all 后批量收口为 stopped", map[string]any{
+			if err := s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, contracts.WorkerStopped, "worker.stop_all", "kill-all 后批量收口为 stopped", map[string]any{
 				"worker_id": w.ID,
 				"ticket_id": w.TicketID,
 				"socket":    socket,

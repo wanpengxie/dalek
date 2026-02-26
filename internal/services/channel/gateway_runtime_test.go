@@ -46,7 +46,7 @@ func (f *fakeProjectRuntime) ProcessInbound(ctx context.Context, env contracts.I
 	runID := "run-fake-1"
 	return ProcessResult{
 		RunID:         runID,
-		JobStatus:     store.ChannelTurnSucceeded,
+		JobStatus:     contracts.ChannelTurnSucceeded,
 		ReplyText:     "reply: " + reply,
 		AgentProvider: "fake",
 		AgentModel:    "test",
@@ -106,7 +106,7 @@ func (r *streamingProjectRuntime) ProcessInbound(ctx context.Context, env contra
 	})
 	return ProcessResult{
 		RunID:         runID,
-		JobStatus:     store.ChannelTurnSucceeded,
+		JobStatus:     contracts.ChannelTurnSucceeded,
 		ReplyText:     "final: " + strings.TrimSpace(env.Text),
 		AgentProvider: "claude",
 		AgentModel:    "stream-test",
@@ -123,7 +123,7 @@ type interruptProjectRuntime struct {
 
 	mu                 sync.Mutex
 	interruptCalls     int
-	lastChannelType    string
+	lastChannelType    contracts.ChannelType
 	lastAdapter        string
 	lastConversationID string
 	resetCalls         int
@@ -135,18 +135,18 @@ func (r *interruptProjectRuntime) ProcessInbound(ctx context.Context, env contra
 	_ = env
 	return ProcessResult{
 		RunID:     "run-interrupt-runtime",
-		JobStatus: store.ChannelTurnSucceeded,
+		JobStatus: contracts.ChannelTurnSucceeded,
 		ReplyText: "ok",
 	}, nil
 }
 
 func (r *interruptProjectRuntime) GatewayTurnTimeout() time.Duration { return 3 * time.Second }
 
-func (r *interruptProjectRuntime) InterruptConversation(ctx context.Context, channelType, adapter, peerConversationID string) (InterruptResult, error) {
+func (r *interruptProjectRuntime) InterruptConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (InterruptResult, error) {
 	_ = ctx
 	r.mu.Lock()
 	r.interruptCalls++
-	r.lastChannelType = strings.TrimSpace(channelType)
+	r.lastChannelType = contracts.ChannelType(strings.TrimSpace(string(channelType)))
 	r.lastAdapter = strings.TrimSpace(adapter)
 	r.lastConversationID = strings.TrimSpace(peerConversationID)
 	r.mu.Unlock()
@@ -162,7 +162,7 @@ func (r *interruptProjectRuntime) InterruptConversation(ctx context.Context, cha
 	return InterruptResult{Status: InterruptStatusMiss}, nil
 }
 
-func (r *interruptProjectRuntime) ResetConversationSession(ctx context.Context, channelType, adapter, peerConversationID string) (bool, error) {
+func (r *interruptProjectRuntime) ResetConversationSession(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error) {
 	_ = ctx
 	r.mu.Lock()
 	r.resetCalls++
@@ -242,7 +242,7 @@ func (r *gatedProjectRuntime) ProcessInbound(ctx context.Context, env contracts.
 	runID := fmt.Sprintf("%s-run-%d", r.name, callNo)
 	return ProcessResult{
 		RunID:         runID,
-		JobStatus:     store.ChannelTurnSucceeded,
+		JobStatus:     contracts.ChannelTurnSucceeded,
 		ReplyText:     fmt.Sprintf("%s-reply-%d:%s", r.name, callNo, strings.TrimSpace(env.Text)),
 		AgentProvider: "fake",
 		AgentModel:    "test",
@@ -316,7 +316,7 @@ func TestGateway_PersistInboundAccepted_DuplicatePendingJobReused(t *testing.T) 
 	if firstState.job.ID == 0 || firstState.inbound.ID == 0 {
 		t.Fatalf("first persist should create inbound+job, inbound=%d job=%d", firstState.inbound.ID, firstState.job.ID)
 	}
-	if firstState.job.Status != store.ChannelTurnPending {
+	if firstState.job.Status != contracts.ChannelTurnPending {
 		t.Fatalf("first job should be pending, got=%s", firstState.job.Status)
 	}
 
@@ -330,7 +330,7 @@ func TestGateway_PersistInboundAccepted_DuplicatePendingJobReused(t *testing.T) 
 	if secondCached.JobID != firstState.job.ID {
 		t.Fatalf("cached job id mismatch: got=%d want=%d", secondCached.JobID, firstState.job.ID)
 	}
-	if secondCached.JobStatus != store.ChannelTurnPending {
+	if secondCached.JobStatus != contracts.ChannelTurnPending {
 		t.Fatalf("cached status should remain pending, got=%s", secondCached.JobStatus)
 	}
 	if secondState.job.ID != firstState.job.ID {
@@ -338,7 +338,7 @@ func TestGateway_PersistInboundAccepted_DuplicatePendingJobReused(t *testing.T) 
 	}
 
 	var inboundCount int64
-	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", store.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
+	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
 		t.Fatalf("count inbound failed: %v", err)
 	}
 	if inboundCount != 1 {
@@ -408,7 +408,7 @@ func TestGateway_SubmitPersistsAndPublishes(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatalf("wait callback timeout")
 	}
-	if got.JobStatus != store.ChannelTurnSucceeded {
+	if got.JobStatus != contracts.ChannelTurnSucceeded {
 		t.Fatalf("expected succeeded, got=%s err=%s", got.JobStatus, got.JobError)
 	}
 	if !strings.Contains(got.ReplyText, "reply:") {
@@ -443,7 +443,7 @@ func TestGateway_SubmitPersistsAndPublishes(t *testing.T) {
 	if err := db.First(&job, got.JobID).Error; err != nil {
 		t.Fatalf("query turn job failed: %v", err)
 	}
-	if job.Status != store.ChannelTurnSucceeded {
+	if job.Status != contracts.ChannelTurnSucceeded {
 		t.Fatalf("job status mismatch: %s", job.Status)
 	}
 }
@@ -511,7 +511,7 @@ func TestGateway_MarkOutboxDelivery(t *testing.T) {
 	if err := db.First(&outbox, got.OutboxID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
-	if outbox.Status != store.ChannelOutboxFailed {
+	if outbox.Status != contracts.ChannelOutboxFailed {
 		t.Fatalf("outbox status should be failed, got=%s", outbox.Status)
 	}
 	if !strings.Contains(outbox.LastError, "feishu send failed") {
@@ -522,7 +522,7 @@ func TestGateway_MarkOutboxDelivery(t *testing.T) {
 	if err := db.First(&outbound, got.OutboundMessageID).Error; err != nil {
 		t.Fatalf("query outbound message failed: %v", err)
 	}
-	if outbound.Status != store.ChannelMessageFailed {
+	if outbound.Status != contracts.ChannelMessageFailed {
 		t.Fatalf("outbound status should be failed, got=%s", outbound.Status)
 	}
 
@@ -532,7 +532,7 @@ func TestGateway_MarkOutboxDelivery(t *testing.T) {
 	if err := db.First(&outbox, got.OutboxID).Error; err != nil {
 		t.Fatalf("query outbox after sent failed: %v", err)
 	}
-	if outbox.Status != store.ChannelOutboxSent {
+	if outbox.Status != contracts.ChannelOutboxSent {
 		t.Fatalf("outbox status should be sent, got=%s", outbox.Status)
 	}
 	if strings.TrimSpace(outbox.LastError) != "" {
@@ -542,7 +542,7 @@ func TestGateway_MarkOutboxDelivery(t *testing.T) {
 	if err := db.First(&outbound, got.OutboundMessageID).Error; err != nil {
 		t.Fatalf("query outbound message after sent failed: %v", err)
 	}
-	if outbound.Status != store.ChannelMessageSent {
+	if outbound.Status != contracts.ChannelMessageSent {
 		t.Fatalf("outbound status should be sent, got=%s", outbound.Status)
 	}
 
@@ -848,7 +848,7 @@ func TestGateway_Submit_ProjectParallelAndSerialOrder(t *testing.T) {
 	alphaSecond := waitResult(alphaRes2, "alpha-2")
 	betaFirst := waitResult(betaRes, "beta-1")
 
-	if alphaFirst.JobStatus != store.ChannelTurnSucceeded || alphaSecond.JobStatus != store.ChannelTurnSucceeded || betaFirst.JobStatus != store.ChannelTurnSucceeded {
+	if alphaFirst.JobStatus != contracts.ChannelTurnSucceeded || alphaSecond.JobStatus != contracts.ChannelTurnSucceeded || betaFirst.JobStatus != contracts.ChannelTurnSucceeded {
 		t.Fatalf("unexpected job status: alpha1=%s alpha2=%s beta=%s", alphaFirst.JobStatus, alphaSecond.JobStatus, betaFirst.JobStatus)
 	}
 	if !strings.Contains(alphaFirst.ReplyText, "alpha-reply-1") {

@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"dalek/internal/contracts"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func newServiceForTest(t *testing.T) (*Service, *core.Project, *fakeTmuxClient, 
 func createTicket(t *testing.T, db *gorm.DB, title string) store.Ticket {
 	t.Helper()
 
-	tk := store.Ticket{Title: strings.TrimSpace(title), Description: "", WorkflowStatus: store.TicketBacklog}
+	tk := store.Ticket{Title: strings.TrimSpace(title), Description: "", WorkflowStatus: contracts.TicketBacklog}
 	if err := db.Create(&tk).Error; err != nil {
 		t.Fatalf("create ticket failed: %v", err)
 	}

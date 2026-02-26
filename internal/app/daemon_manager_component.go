@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -196,7 +197,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 		}
 
 		var active []store.TaskRun
-		activeQuery := db.Where("orchestration_state IN ?", []store.TaskOrchestrationState{store.TaskPending, store.TaskRunning})
+		activeQuery := db.Where("orchestration_state IN ?", []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning})
 		if excluded := sortedRunIDsFromSet(recoveredRunIDs); len(excluded) > 0 {
 			activeQuery = activeQuery.Where("id NOT IN ?", excluded)
 		}
@@ -206,7 +207,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			for _, run := range active {
 				errMsg := "daemon restart recovery: previous run marked failed"
 				if err := db.Model(&store.TaskRun{}).Where("id = ?", run.ID).Updates(map[string]any{
-					"orchestration_state": store.TaskFailed,
+					"orchestration_state": contracts.TaskFailed,
 					"error_code":          "daemon_recovered",
 					"error_message":       errMsg,
 					"finished_at":         now,
@@ -226,9 +227,9 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 				}).Error
 				_ = db.Create(&store.InboxItem{
 					Key:      fmt.Sprintf("daemon_recovery_run_%d", run.ID),
-					Status:   store.InboxOpen,
-					Severity: store.InboxWarn,
-					Reason:   store.InboxIncident,
+					Status:   contracts.InboxOpen,
+					Severity: contracts.InboxWarn,
+					Reason:   contracts.InboxIncident,
 					Title:    fmt.Sprintf("daemon recovery: run %d 已标记失败", run.ID),
 					Body:     fmt.Sprintf("project=%s owner=%s task=%s ticket=%d worker=%d", name, string(run.OwnerType), strings.TrimSpace(run.TaskType), run.TicketID, run.WorkerID),
 					TicketID: run.TicketID,
@@ -309,7 +310,7 @@ func (m *daemonManagerComponent) warmupRunProjectIndex(ctx context.Context) {
 		var runIDs []uint
 		if err := p.core.DB.WithContext(ctx).
 			Model(&store.TaskRun{}).
-			Where("orchestration_state IN ?", []store.TaskOrchestrationState{store.TaskPending, store.TaskRunning}).
+			Where("orchestration_state IN ?", []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 			Pluck("id", &runIDs).Error; err != nil {
 			m.logf("warmup run index query active runs failed: project=%s err=%v", projectName, err)
 			continue
@@ -336,7 +337,7 @@ func (m *daemonManagerComponent) recoverStuckDispatchJobs(ctx context.Context, d
 	}
 	var jobs []store.PMDispatchJob
 	if err := db.
-		Where("status IN ?", []store.PMDispatchJobStatus{store.PMDispatchPending, store.PMDispatchRunning}).
+		Where("status IN ?", []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 		Order("id asc").
 		Find(&jobs).Error; err != nil {
 		return out, recoveredRunIDs, err
@@ -345,11 +346,11 @@ func (m *daemonManagerComponent) recoverStuckDispatchJobs(ctx context.Context, d
 		return out, recoveredRunIDs, nil
 	}
 
-	targetStatus := store.TicketBlocked
+	targetStatus := contracts.TicketBlocked
 	retryAction := "blocked"
 	retryReason := "daemon recovery: dispatch interrupted, ticket moved to blocked"
 	if autopilotEnabled {
-		targetStatus = store.TicketQueued
+		targetStatus = contracts.TicketQueued
 		retryAction = "queued"
 		retryReason = "daemon recovery: dispatch interrupted, ticket queued for redispatch"
 	}
@@ -362,9 +363,9 @@ func (m *daemonManagerComponent) recoverStuckDispatchJobs(ctx context.Context, d
 		blocked := false
 		err := db.Transaction(func(tx *gorm.DB) error {
 			res := tx.Model(&store.PMDispatchJob{}).
-				Where("id = ? AND status IN ?", job.ID, []store.PMDispatchJobStatus{store.PMDispatchPending, store.PMDispatchRunning}).
+				Where("id = ? AND status IN ?", job.ID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 				Updates(map[string]any{
-					"status":            store.PMDispatchFailed,
+					"status":            contracts.PMDispatchFailed,
 					"error":             errMsg,
 					"runner_id":         "",
 					"lease_expires_at":  nil,
@@ -411,18 +412,18 @@ func (m *daemonManagerComponent) recoverStuckDispatchJobs(ctx context.Context, d
 				return err
 			}
 			if changed {
-				if targetStatus == store.TicketQueued {
+				if targetStatus == contracts.TicketQueued {
 					queued = true
-				} else if targetStatus == store.TicketBlocked {
+				} else if targetStatus == contracts.TicketBlocked {
 					blocked = true
 				}
 			}
 
 			_ = tx.Create(&store.InboxItem{
 				Key:      fmt.Sprintf("daemon_recovery_dispatch_%d", job.ID),
-				Status:   store.InboxOpen,
-				Severity: store.InboxWarn,
-				Reason:   store.InboxIncident,
+				Status:   contracts.InboxOpen,
+				Severity: contracts.InboxWarn,
+				Reason:   contracts.InboxIncident,
 				Title:    fmt.Sprintf("daemon recovery: dispatch %d 已标记失败", job.ID),
 				Body:     fmt.Sprintf("project=%s ticket=%d worker=%d request=%s action=%s", projectName, job.TicketID, job.WorkerID, strings.TrimSpace(job.RequestID), retryAction),
 				TicketID: job.TicketID,
@@ -460,9 +461,9 @@ func markTaskRunFailedTx(tx *gorm.DB, runID uint, errorCode, errMsg string, now 
 		errorCode = "daemon_recovered"
 	}
 	res := tx.Model(&store.TaskRun{}).
-		Where("id = ? AND orchestration_state IN ?", runID, []store.TaskOrchestrationState{store.TaskPending, store.TaskRunning}).
+		Where("id = ? AND orchestration_state IN ?", runID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).
 		Updates(map[string]any{
-			"orchestration_state": store.TaskFailed,
+			"orchestration_state": contracts.TaskFailed,
 			"error_code":          errorCode,
 			"error_message":       errMsg,
 			"finished_at":         now,
@@ -492,7 +493,7 @@ func sortedRunIDsFromSet(runIDs map[uint]struct{}) []uint {
 	return ids
 }
 
-func (m *daemonManagerComponent) applyTicketStatusTx(ctx context.Context, tx *gorm.DB, job store.PMDispatchJob, target store.TicketWorkflowStatus, reason, source string, now time.Time) (bool, error) {
+func (m *daemonManagerComponent) applyTicketStatusTx(ctx context.Context, tx *gorm.DB, job store.PMDispatchJob, target contracts.TicketWorkflowStatus, reason, source string, now time.Time) (bool, error) {
 	if tx == nil || job.TicketID == 0 {
 		return false, nil
 	}
@@ -507,8 +508,8 @@ func (m *daemonManagerComponent) applyTicketStatusTx(ctx context.Context, tx *go
 	if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&ticket, job.TicketID).Error; err != nil {
 		return false, err
 	}
-	from := store.CanonicalTicketWorkflowStatus(ticket.WorkflowStatus)
-	if from == store.TicketDone || from == store.TicketArchived || from == target {
+	from := contracts.CanonicalTicketWorkflowStatus(ticket.WorkflowStatus)
+	if from == contracts.TicketDone || from == contracts.TicketArchived || from == target {
 		return false, nil
 	}
 	if err := tx.WithContext(ctx).
@@ -618,9 +619,9 @@ func (m *daemonManagerComponent) reconcileWorkerSessions(ctx context.Context, p 
 		}
 		item := store.InboxItem{
 			Key:      fmt.Sprintf("worker_session_recover_%d", w.ID),
-			Status:   store.InboxOpen,
-			Severity: store.InboxWarn,
-			Reason:   store.InboxIncident,
+			Status:   contracts.InboxOpen,
+			Severity: contracts.InboxWarn,
+			Reason:   contracts.InboxIncident,
 			Title:    fmt.Sprintf("worker session 丢失：w%d", w.ID),
 			Body:     fmt.Sprintf("ticket=t%d worker=w%d 在 recovery 对账中发现 session 不在线（socket=%s session=%s），已自动回收状态。", w.TicketID, w.ID, socketLabel, sessionLabel),
 			TicketID: w.TicketID,
@@ -672,7 +673,7 @@ func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context,
 
 	var jobs []store.PMDispatchJob
 	if err := db.
-		Where("status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at < ?", store.PMDispatchRunning, now).
+		Where("status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at < ?", contracts.PMDispatchRunning, now).
 		Order("id asc").
 		Find(&jobs).Error; err != nil {
 		m.logf("lease check query failed: project=%s err=%v", projectName, err)
@@ -682,11 +683,11 @@ func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context,
 		return
 	}
 
-	targetStatus := store.TicketBlocked
+	targetStatus := contracts.TicketBlocked
 	retryAction := "blocked"
 	retryReason := "dispatch lease expired: ticket moved to blocked"
 	if autopilotEnabled {
-		targetStatus = store.TicketQueued
+		targetStatus = contracts.TicketQueued
 		retryAction = "queued"
 		retryReason = "dispatch lease expired: ticket queued for redispatch"
 	}
@@ -703,9 +704,9 @@ func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context,
 		blocked := false
 		err := db.Transaction(func(tx *gorm.DB) error {
 			res := tx.Model(&store.PMDispatchJob{}).
-				Where("id = ? AND status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at < ?", job.ID, store.PMDispatchRunning, now).
+				Where("id = ? AND status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at < ?", job.ID, contracts.PMDispatchRunning, now).
 				Updates(map[string]any{
-					"status":            store.PMDispatchFailed,
+					"status":            contracts.PMDispatchFailed,
 					"error":             errMsg,
 					"runner_id":         "",
 					"lease_expires_at":  nil,
@@ -752,18 +753,18 @@ func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context,
 				return err
 			}
 			if changed {
-				if targetStatus == store.TicketQueued {
+				if targetStatus == contracts.TicketQueued {
 					queued = true
-				} else if targetStatus == store.TicketBlocked {
+				} else if targetStatus == contracts.TicketBlocked {
 					blocked = true
 				}
 			}
 
 			_ = tx.Create(&store.InboxItem{
 				Key:      fmt.Sprintf("lease_expired_dispatch_%d", job.ID),
-				Status:   store.InboxOpen,
-				Severity: store.InboxWarn,
-				Reason:   store.InboxIncident,
+				Status:   contracts.InboxOpen,
+				Severity: contracts.InboxWarn,
+				Reason:   contracts.InboxIncident,
 				Title:    fmt.Sprintf("lease expired: dispatch %d 已标记失败", job.ID),
 				Body:     fmt.Sprintf("project=%s ticket=%d worker=%d request=%s action=%s", projectName, job.TicketID, job.WorkerID, strings.TrimSpace(job.RequestID), retryAction),
 				TicketID: job.TicketID,

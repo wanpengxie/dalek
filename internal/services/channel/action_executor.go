@@ -292,7 +292,7 @@ func (e *ActionExecutor) executeListMergeItems(ctx context.Context, action contr
 	statusRaw := strings.ToLower(strings.TrimSpace(actionArgString(action.Args, "status")))
 	opt := pmsvc.ListMergeOptions{Limit: limit}
 	if statusRaw != "" {
-		opt.Status = store.MergeStatus(statusRaw)
+		opt.Status = contracts.MergeStatus(statusRaw)
 	}
 	pmSvc := pmsvc.New(e.project, workersvc.New(e.project))
 	items, err := pmSvc.ListMergeItems(ctx, opt)

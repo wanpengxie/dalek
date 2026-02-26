@@ -12,7 +12,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 )
 
 var upgrader = websocket.Upgrader{
@@ -209,7 +208,7 @@ func NewSyncHandler(rawOpt ServerOptions) (string, http.HandlerFunc) {
 					if finalSeq <= 0 {
 						finalSeq = lastSeq + 1
 					}
-					if result.JobStatus != store.ChannelTurnSucceeded {
+					if result.JobStatus != contracts.ChannelTurnSucceeded {
 						finalEventType = "error"
 					}
 					if !send(OutboundFrame{

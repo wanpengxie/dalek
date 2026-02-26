@@ -26,7 +26,7 @@ func TestToolApprovalEventPayload_RoundTrip(t *testing.T) {
 					"command":   "git push origin main",
 				},
 			},
-			Status: store.ChannelPendingActionPending,
+			Status: contracts.ChannelPendingActionPending,
 		},
 	}
 	raw := EncodeToolApprovalEventPayload("请审批", pending)
@@ -147,7 +147,7 @@ func TestApprovePendingAction_SDKToolApprovalNotifiesWaiter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApprovePendingAction failed: %v", err)
 	}
-	if decision.Action.Status != store.ChannelPendingActionApproved {
+	if decision.Action.Status != contracts.ChannelPendingActionApproved {
 		t.Fatalf("sdk tool approval should stay approved, got=%s", decision.Action.Status)
 	}
 	if !strings.Contains(decision.Message, "继续") {
@@ -180,7 +180,7 @@ func TestApprovePendingAction_SDKToolApprovalWithoutWaiterMarksFailed(t *testing
 	if err != nil {
 		t.Fatalf("ApprovePendingAction failed: %v", err)
 	}
-	if decision.Action.Status != store.ChannelPendingActionFailed {
+	if decision.Action.Status != contracts.ChannelPendingActionFailed {
 		t.Fatalf("without waiter should mark failed, got=%s", decision.Action.Status)
 	}
 	if !strings.Contains(decision.Message, "会话已结束") {
@@ -216,7 +216,7 @@ func TestRejectPendingAction_SDKToolApprovalNotifiesWaiter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RejectPendingAction failed: %v", err)
 	}
-	if decision.Action.Status != store.ChannelPendingActionRejected {
+	if decision.Action.Status != contracts.ChannelPendingActionRejected {
 		t.Fatalf("status should be rejected, got=%s", decision.Action.Status)
 	}
 

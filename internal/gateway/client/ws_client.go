@@ -9,8 +9,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"dalek/internal/contracts"
 	gatewayws "dalek/internal/services/channel/ws"
-	"dalek/internal/store"
 )
 
 type ChatRequest struct {
@@ -112,7 +112,7 @@ func NormalizeChatFinalFrame(frame gatewayws.OutboundFrame) gatewayws.OutboundFr
 	frame.JobError = strings.TrimSpace(frame.JobError)
 	if frame.Type == gatewayws.FrameTypeError {
 		if frame.JobStatus == "" {
-			frame.JobStatus = string(store.ChannelTurnFailed)
+			frame.JobStatus = string(contracts.ChannelTurnFailed)
 		}
 		if frame.JobError == "" {
 			frame.JobError = frame.Text
@@ -122,7 +122,7 @@ func NormalizeChatFinalFrame(frame gatewayws.OutboundFrame) gatewayws.OutboundFr
 		}
 	}
 	if frame.JobStatus == "" {
-		frame.JobStatus = string(store.ChannelTurnSucceeded)
+		frame.JobStatus = string(contracts.ChannelTurnSucceeded)
 	}
 	return frame
 }

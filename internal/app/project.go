@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -611,7 +612,7 @@ func (p *Project) CancelTaskRun(ctx context.Context, runID uint) (TaskCancelResu
 	}
 
 	switch strings.ToLower(strings.TrimSpace(st.OrchestrationState)) {
-	case string(store.TaskSucceeded), string(store.TaskFailed), string(store.TaskCanceled):
+	case string(contracts.TaskSucceeded), string(contracts.TaskFailed), string(contracts.TaskCanceled):
 		result.Canceled = false
 		result.Reason = fmt.Sprintf("task run 已结束，当前状态=%s", fromState)
 		return result, nil
@@ -629,7 +630,7 @@ func (p *Project) CancelTaskRun(ctx context.Context, runID uint) (TaskCancelResu
 			"orchestration_state": fromState,
 		},
 		ToState: map[string]any{
-			"orchestration_state": store.TaskCanceled,
+			"orchestration_state": contracts.TaskCanceled,
 		},
 		Note:      reason,
 		Payload:   map[string]any{"source": "dalek task cancel"},
@@ -639,7 +640,7 @@ func (p *Project) CancelTaskRun(ctx context.Context, runID uint) (TaskCancelResu
 	}
 
 	result.Canceled = true
-	result.ToState = string(store.TaskCanceled)
+	result.ToState = string(contracts.TaskCanceled)
 	return result, nil
 }
 

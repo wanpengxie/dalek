@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"dalek/internal/contracts"
 	"strings"
 	"testing"
 
@@ -10,12 +11,12 @@ import (
 
 func TestSummarizeQueueStatus(t *testing.T) {
 	views := []app.TicketView{
-		{Ticket: store.Ticket{ID: 1, Title: "待办"}, DerivedStatus: store.TicketBacklog},
-		{Ticket: store.Ticket{ID: 2, Title: "排队"}, DerivedStatus: store.TicketQueued},
-		{Ticket: store.Ticket{ID: 3, Title: "阻塞"}, DerivedStatus: store.TicketBlocked},
-		{Ticket: store.Ticket{ID: 4, Title: "运行中"}, DerivedStatus: store.TicketActive},
-		{Ticket: store.Ticket{ID: 5, Title: "完成"}, DerivedStatus: store.TicketDone},
-		{Ticket: store.Ticket{ID: 6, Title: "未知状态"}, DerivedStatus: store.TicketWorkflowStatus("other")},
+		{Ticket: store.Ticket{ID: 1, Title: "待办"}, DerivedStatus: contracts.TicketBacklog},
+		{Ticket: store.Ticket{ID: 2, Title: "排队"}, DerivedStatus: contracts.TicketQueued},
+		{Ticket: store.Ticket{ID: 3, Title: "阻塞"}, DerivedStatus: contracts.TicketBlocked},
+		{Ticket: store.Ticket{ID: 4, Title: "运行中"}, DerivedStatus: contracts.TicketActive},
+		{Ticket: store.Ticket{ID: 5, Title: "完成"}, DerivedStatus: contracts.TicketDone},
+		{Ticket: store.Ticket{ID: 6, Title: "未知状态"}, DerivedStatus: contracts.TicketWorkflowStatus("other")},
 	}
 
 	got := summarizeQueueStatus(views)
@@ -43,28 +44,28 @@ func TestCollectPendingIssuesPriorityDedupAndLimit(t *testing.T) {
 	views := []app.TicketView{
 		{
 			Ticket:             store.Ticket{ID: 10, Title: "阻塞中的任务"},
-			DerivedStatus:      store.TicketBlocked,
-			RuntimeHealthState: store.TaskHealthUnknown,
+			DerivedStatus:      contracts.TicketBlocked,
+			RuntimeHealthState: contracts.TaskHealthUnknown,
 			RuntimeNeedsUser:   false,
 		},
 		{
 			Ticket:             store.Ticket{ID: 11, Title: "错误任务"},
-			DerivedStatus:      store.TicketActive,
-			RuntimeHealthState: store.TaskHealthStalled,
+			DerivedStatus:      contracts.TicketActive,
+			RuntimeHealthState: contracts.TaskHealthStalled,
 			RuntimeNeedsUser:   false,
 			RuntimeSummary:     "panic: boom",
 		},
 		{
 			Ticket:             store.Ticket{ID: 12, Title: "等待确认"},
-			DerivedStatus:      store.TicketActive,
-			RuntimeHealthState: store.TaskHealthBusy,
+			DerivedStatus:      contracts.TicketActive,
+			RuntimeHealthState: contracts.TaskHealthBusy,
 			RuntimeNeedsUser:   true,
 			RuntimeSummary:     "需要你确认输入",
 		},
 		{
 			Ticket:             store.Ticket{ID: 13, Title: "多重问题"},
-			DerivedStatus:      store.TicketBlocked,
-			RuntimeHealthState: store.TaskHealthStalled,
+			DerivedStatus:      contracts.TicketBlocked,
+			RuntimeHealthState: contracts.TaskHealthStalled,
 			RuntimeNeedsUser:   true,
 			RuntimeSummary:     "请先确认",
 		},

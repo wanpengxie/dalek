@@ -198,6 +198,21 @@ Tickets: <T.. T.. T..>
   - 新增 `internal/gateway/client/{url_test.go,ws_client_test.go}`。
   - 已通过 `go test ./...` 全量回归，CLI 与 daemon WS 通道行为保持一致。
 
+## W02 回写（T21 类型归位 1/3）
+
+- 状态：`T21` 已完成（2026-02-26），跨层高传播枚举已归位到 `internal/contracts`。
+- 关键产物：
+  - 新增 `contracts` 权威类型文件：`ticket_status.go`、`worker_status.go`、`dispatch_status.go`、`task_status.go`、`inbox_status.go`、`merge_status.go`、`channel_status.go`。
+  - `store/models.go` 不再定义上述枚举，ORM 字段统一改为引用 `contracts` 类型。
+  - `CanonicalTicketWorkflowStatus` 已迁入 `contracts`，并补充兼容回归测试 `contracts/ticket_status_test.go`。
+  - `ChannelType` 双重定义已消除，统一为 `contracts.ChannelType` 强类型。
+- T22 解锁点（`T21 -> T22`）：
+  - 可以在既有 `contracts` 类型边界上继续迁移第二批跨层类型，不再以 `store` 作为类型来源。
+  - 可以继续清理依赖面大的消费方，默认直接引用 `contracts` 枚举/常量。
+- T23 解锁点（`T21 -> T23`）：
+  - 可以沿同一边界完成第三批与收尾迁移（含 facade 进一步收口），无需再引入新的类型落点。
+  - 新增跨层领域类型必须落在 `contracts`，禁止回流到 `store` 或新增重复定义。
+
 ## 每批执行建议
 
 1. 每批结束后，先清单回写：更新 `CRITICAL/HIGH/MEDIUM_SELECTED/LOW_SELECTED` 中对应 ID 状态。

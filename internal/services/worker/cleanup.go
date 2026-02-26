@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"os"
 	"strings"
@@ -45,7 +46,7 @@ func (s *Service) CountPendingWorktreeCleanup(ctx context.Context) (int64, error
 	if err := db.WithContext(ctx).
 		Table("workers AS w").
 		Joins("JOIN tickets AS t ON t.id = w.ticket_id").
-		Where("t.workflow_status = ?", store.TicketArchived).
+		Where("t.workflow_status = ?", contracts.TicketArchived).
 		Where("w.worktree_gc_requested_at IS NOT NULL").
 		Where("w.worktree_gc_cleaned_at IS NULL").
 		Where("TRIM(COALESCE(w.worktree_path, '')) != ''").
@@ -71,7 +72,7 @@ func (s *Service) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt 
 	if err := p.DB.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return CleanupWorktreeResult{}, err
 	}
-	if t.WorkflowStatus != store.TicketArchived && !opt.Force {
+	if t.WorkflowStatus != contracts.TicketArchived && !opt.Force {
 		return CleanupWorktreeResult{}, fmt.Errorf("ticket 不是 archived，拒绝清理（可用 --force）")
 	}
 
@@ -108,14 +109,14 @@ func (s *Service) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt 
 	var activeDispatch int64
 	if err := p.DB.WithContext(ctx).
 		Model(&store.PMDispatchJob{}).
-		Where("ticket_id = ? AND status IN ?", ticketID, []store.PMDispatchJobStatus{store.PMDispatchPending, store.PMDispatchRunning}).
+		Where("ticket_id = ? AND status IN ?", ticketID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
 		Count(&activeDispatch).Error; err != nil {
 		return result, err
 	}
 	if activeDispatch > 0 {
 		return result, fmt.Errorf("ticket 存在进行中的 dispatch，拒绝清理")
 	}
-	if w.Status == store.WorkerRunning {
+	if w.Status == contracts.WorkerRunning {
 		return result, fmt.Errorf("worker 仍在 running，拒绝清理")
 	}
 

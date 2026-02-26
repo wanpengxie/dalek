@@ -1,6 +1,7 @@
 package main
 
 import (
+	"dalek/internal/contracts"
 	"strings"
 	"testing"
 	"time"
@@ -56,15 +57,15 @@ func TestFormatInboxSummary(t *testing.T) {
 	items := []store.InboxItem{
 		{
 			ID:       1,
-			Severity: store.InboxWarn,
-			Reason:   store.InboxQuestion,
+			Severity: contracts.InboxWarn,
+			Reason:   contracts.InboxQuestion,
 			Title:    "first",
 			TicketID: 11,
 		},
 		{
 			ID:       2,
-			Severity: store.InboxBlocker,
-			Reason:   store.InboxIncident,
+			Severity: contracts.InboxBlocker,
+			Reason:   contracts.InboxIncident,
 			Title:    "second",
 			TicketID: 12,
 		},
@@ -79,9 +80,9 @@ func TestBuildInboxUpdateFrame(t *testing.T) {
 	items := []store.InboxItem{
 		{
 			ID:        7,
-			Status:    store.InboxOpen,
-			Severity:  store.InboxWarn,
-			Reason:    store.InboxQuestion,
+			Status:    contracts.InboxOpen,
+			Severity:  contracts.InboxWarn,
+			Reason:    contracts.InboxQuestion,
 			Title:     "need follow up",
 			TicketID:  3,
 			WorkerID:  0,

@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -37,7 +38,7 @@ func (s *Service) taskRuntimeForDB(db *gorm.DB) (core.TaskRuntime, error) {
 	return p.TaskRuntime.ForDB(db), nil
 }
 
-func (s *Service) recordPMTaskSemantic(ctx context.Context, taskRunID uint, phase store.TaskSemanticPhase, milestone, nextAction, summary string, payload any) {
+func (s *Service) recordPMTaskSemantic(ctx context.Context, taskRunID uint, phase contracts.TaskSemanticPhase, milestone, nextAction, summary string, payload any) {
 	if taskRunID == 0 {
 		return
 	}
@@ -56,7 +57,7 @@ func (s *Service) recordPMTaskSemantic(ctx context.Context, taskRunID uint, phas
 	})
 }
 
-func (s *Service) recordPMTaskRuntime(ctx context.Context, taskRunID uint, state store.TaskRuntimeHealthState, needsUser bool, summary string, source string, metrics any) {
+func (s *Service) recordPMTaskRuntime(ctx context.Context, taskRunID uint, state contracts.TaskRuntimeHealthState, needsUser bool, summary string, source string, metrics any) {
 	if taskRunID == 0 {
 		return
 	}
@@ -80,15 +81,15 @@ func (s *Service) recordPMTaskFailure(ctx context.Context, taskRunID uint, err e
 		return
 	}
 	msg := strings.TrimSpace(err.Error())
-	s.recordPMTaskRuntime(ctx, taskRunID, store.TaskHealthStalled, false, msg, "pm_dispatch", map[string]any{
+	s.recordPMTaskRuntime(ctx, taskRunID, contracts.TaskHealthStalled, false, msg, "pm_dispatch", map[string]any{
 		"error": msg,
 	})
-	s.recordPMTaskSemantic(ctx, taskRunID, store.TaskPhaseBlocked, "dispatch_failed", "wait_user", msg, map[string]any{
+	s.recordPMTaskSemantic(ctx, taskRunID, contracts.TaskPhaseBlocked, "dispatch_failed", "wait_user", msg, map[string]any{
 		"error": msg,
 	})
 }
 
-func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job store.PMDispatchJob, t store.Ticket, w store.Worker, taskPath string, health store.TaskRuntimeHealthState, phase store.TaskSemanticPhase, nextAction, summary string, payload any) (store.TaskRun, error) {
+func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job store.PMDispatchJob, t store.Ticket, w store.Worker, taskPath string, health contracts.TaskRuntimeHealthState, phase contracts.TaskSemanticPhase, nextAction, summary string, payload any) (store.TaskRun, error) {
 	if strings.TrimSpace(job.RequestID) == "" {
 		return store.TaskRun{}, fmt.Errorf("dispatch request_id 为空")
 	}
@@ -112,7 +113,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job store
 			return err
 		}
 		created, err := rt.CreateRun(ctx, core.TaskRuntimeCreateRunInput{
-			OwnerType:          store.TaskOwnerWorker,
+			OwnerType:          contracts.TaskOwnerWorker,
 			TaskType:           "deliver_ticket",
 			ProjectKey:         strings.TrimSpace(p.Key),
 			TicketID:           t.ID,
@@ -120,7 +121,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job store
 			SubjectType:        "ticket",
 			SubjectID:          fmt.Sprintf("%d", t.ID),
 			RequestID:          requestID,
-			OrchestrationState: store.TaskRunning,
+			OrchestrationState: contracts.TaskRunning,
 			StartedAt:          &now,
 			RequestPayloadJSON: marshalJSON(map[string]any{
 				"dispatch_request_id":  strings.TrimSpace(job.RequestID),
@@ -135,7 +136,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job store
 			TaskRunID: created.ID,
 			EventType: "task_started",
 			ToState: map[string]any{
-				"orchestration_state": store.TaskRunning,
+				"orchestration_state": contracts.TaskRunning,
 			},
 			Note: "dispatch accepted by worker",
 		}); err != nil {

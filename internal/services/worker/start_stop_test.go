@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"errors"
 	"fmt"
 	"os"
@@ -29,7 +30,7 @@ func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
 	if strings.TrimSpace(w.TmuxSession) == "" {
 		t.Fatalf("expected tmux session")
 	}
-	if w.Status != store.WorkerCreating {
+	if w.Status != contracts.WorkerCreating {
 		t.Fatalf("unexpected worker status: %s", w.Status)
 	}
 
@@ -45,7 +46,7 @@ func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketBacklog {
+	if ticket.WorkflowStatus != contracts.TicketBacklog {
 		t.Fatalf("expected ticket backlog, got %s", ticket.WorkflowStatus)
 	}
 	if fTmux.NewSessionCalls != 1 {
@@ -59,7 +60,7 @@ func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
 	if err := p.DB.Where("worker_id = ?", w.ID).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query worker status event failed: %v", err)
 	}
-	if ev.FromStatus != store.WorkerStopped || ev.ToStatus != store.WorkerCreating {
+	if ev.FromStatus != contracts.WorkerStopped || ev.ToStatus != contracts.WorkerCreating {
 		t.Fatalf("unexpected worker status event transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 }
@@ -237,10 +238,10 @@ func TestStartTicket_RunningSessionDoesNotPromoteTicketStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first StartTicketResources failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Update("status", store.WorkerRunning).Error; err != nil {
+	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Update("status", contracts.WorkerRunning).Error; err != nil {
 		t.Fatalf("set worker running failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketBacklog).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketBacklog).Error; err != nil {
 		t.Fatalf("reset ticket backlog failed: %v", err)
 	}
 
@@ -252,7 +253,7 @@ func TestStartTicket_RunningSessionDoesNotPromoteTicketStatus(t *testing.T) {
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if got.WorkflowStatus != store.TicketBacklog {
+	if got.WorkflowStatus != contracts.TicketBacklog {
 		t.Fatalf("running session restart should not promote ticket workflow status, got=%s", got.WorkflowStatus)
 	}
 }
@@ -268,7 +269,7 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	rt := tasksvc.New(p.DB)
 	now := time.Now().UTC().Truncate(time.Second)
 	run, err := rt.CreateRun(context.Background(), tasksvc.CreateRunInput{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         p.Key,
 		TicketID:           tk.ID,
@@ -276,7 +277,7 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          fmt.Sprintf("%d", tk.ID),
 		RequestID:          "stop-worker-run-1",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &now,
 	})
 	if err != nil {
@@ -284,7 +285,7 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	}
 	if err := rt.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
 		TaskRunID:  run.ID,
-		State:      store.TaskHealthBusy,
+		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
 		Summary:    "running",
 		Source:     "test",
@@ -301,7 +302,7 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	if err := p.DB.First(&got, w.ID).Error; err != nil {
 		t.Fatalf("query worker failed: %v", err)
 	}
-	if got.Status != store.WorkerStopped {
+	if got.Status != contracts.WorkerStopped {
 		t.Fatalf("expected stopped worker, got %s", got.Status)
 	}
 
@@ -309,14 +310,14 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != store.TicketBacklog {
+	if ticket.WorkflowStatus != contracts.TicketBacklog {
 		t.Fatalf("expected ticket workflow backlog, got %s", ticket.WorkflowStatus)
 	}
 	if fTmux.KillSessionCalls != 1 {
 		t.Fatalf("expected one kill-session call, got %d", fTmux.KillSessionCalls)
 	}
 	statusRows, err := rt.ListStatus(context.Background(), tasksvc.ListStatusOptions{
-		OwnerType:       store.TaskOwnerWorker,
+		OwnerType:       contracts.TaskOwnerWorker,
 		WorkerID:        w.ID,
 		IncludeTerminal: true,
 		Limit:           5,
@@ -325,10 +326,10 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 		t.Fatalf("load task status failed: %v", err)
 	}
 	latest := statusRows[0]
-	if latest.OrchestrationState != string(store.TaskCanceled) {
+	if latest.OrchestrationState != string(contracts.TaskCanceled) {
 		t.Fatalf("expected task canceled after stop, got=%s", latest.OrchestrationState)
 	}
-	if latest.RuntimeHealthState != string(store.TaskHealthDead) {
+	if latest.RuntimeHealthState != string(contracts.TaskHealthDead) {
 		t.Fatalf("expected task runtime dead after stop, got=%s", latest.RuntimeHealthState)
 	}
 	if strings.TrimSpace(latest.LastEventType) != "task_canceled" {
@@ -362,7 +363,7 @@ func TestListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
 	tk := createTicket(t, p.DB, "ticket-view")
 	a := store.Worker{
 		TicketID:     tk.ID,
-		Status:       store.WorkerRunning,
+		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w1",
 		Branch:       "ts/demo-ticket-1",
 		TmuxSocket:   "dalek",
@@ -372,7 +373,7 @@ func TestListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
 		t.Fatalf("create worker failed: %v", err)
 	}
 	run := store.TaskRun{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         p.Key,
 		TicketID:           tk.ID,
@@ -380,14 +381,14 @@ func TestListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          fmt.Sprintf("%d", tk.ID),
 		RequestID:          "test-view-run-1",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 	}
 	if err := p.DB.Create(&run).Error; err != nil {
 		t.Fatalf("create task run failed: %v", err)
 	}
 	if err := p.DB.Create(&store.TaskRuntimeSample{
 		TaskRunID:  run.ID,
-		State:      store.TaskHealthBusy,
+		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
 		Summary:    "working",
 		Source:     "test",
@@ -407,13 +408,13 @@ func TestListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
 	if !views[0].SessionAlive {
 		t.Fatalf("expected session alive")
 	}
-	if views[0].RuntimeHealthState != store.TaskHealthBusy {
+	if views[0].RuntimeHealthState != contracts.TaskHealthBusy {
 		t.Fatalf("expected runtime busy, got %s", views[0].RuntimeHealthState)
 	}
 
 	// session 不在 + worker stopped => 运行态派生为 dead
 	delete(fTmux.Sessions, a.TmuxSession)
-	if err := p.DB.Model(&store.Worker{}).Where("id = ?", a.ID).Update("status", store.WorkerStopped).Error; err != nil {
+	if err := p.DB.Model(&store.Worker{}).Where("id = ?", a.ID).Update("status", contracts.WorkerStopped).Error; err != nil {
 		t.Fatalf("update worker failed: %v", err)
 	}
 	views, err = svc.ListTicketViews(context.Background())
@@ -423,7 +424,7 @@ func TestListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
 	if len(views) != 1 {
 		t.Fatalf("expected 1 view, got %d", len(views))
 	}
-	if views[0].RuntimeHealthState != store.TaskHealthDead {
+	if views[0].RuntimeHealthState != contracts.TaskHealthDead {
 		t.Fatalf("expected runtime dead when session gone, got %s", views[0].RuntimeHealthState)
 	}
 }
@@ -435,7 +436,7 @@ func TestListTicketViews_UsesWorkerSocketForSessionAlive(t *testing.T) {
 	tk := createTicket(t, p.DB, "ticket-view-socket")
 	a := store.Worker{
 		TicketID:     tk.ID,
-		Status:       store.WorkerRunning,
+		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w2",
 		Branch:       "ts/demo-ticket-2",
 		TmuxSocket:   "dalek-alt",
@@ -445,7 +446,7 @@ func TestListTicketViews_UsesWorkerSocketForSessionAlive(t *testing.T) {
 		t.Fatalf("create worker failed: %v", err)
 	}
 	run := store.TaskRun{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         p.Key,
 		TicketID:           tk.ID,
@@ -453,14 +454,14 @@ func TestListTicketViews_UsesWorkerSocketForSessionAlive(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          fmt.Sprintf("%d", tk.ID),
 		RequestID:          "test-view-run-2",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 	}
 	if err := p.DB.Create(&run).Error; err != nil {
 		t.Fatalf("create task run failed: %v", err)
 	}
 	if err := p.DB.Create(&store.TaskRuntimeSample{
 		TaskRunID:  run.ID,
-		State:      store.TaskHealthBusy,
+		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
 		Summary:    "working",
 		Source:     "test",
@@ -484,7 +485,7 @@ func TestListTicketViews_UsesWorkerSocketForSessionAlive(t *testing.T) {
 	if !views[0].SessionAlive {
 		t.Fatalf("expected session alive by worker tmux_socket")
 	}
-	if views[0].RuntimeHealthState != store.TaskHealthBusy {
+	if views[0].RuntimeHealthState != contracts.TaskHealthBusy {
 		t.Fatalf("expected runtime busy, got %s", views[0].RuntimeHealthState)
 	}
 }
@@ -495,7 +496,7 @@ func TestListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflowBacklog(t *te
 	tk := createTicket(t, p.DB, "ticket-derived-running")
 	w := store.Worker{
 		TicketID:     tk.ID,
-		Status:       store.WorkerRunning,
+		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w3",
 		Branch:       "ts/demo-ticket-3",
 		TmuxSocket:   "dalek",
@@ -516,7 +517,7 @@ func TestListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflowBacklog(t *te
 	if len(views) != 1 {
 		t.Fatalf("expected 1 view, got %d", len(views))
 	}
-	if views[0].DerivedStatus != store.TicketBacklog {
+	if views[0].DerivedStatus != contracts.TicketBacklog {
 		t.Fatalf("expected workflow backlog, got %s", views[0].DerivedStatus)
 	}
 	if !views[0].SessionAlive {
@@ -530,7 +531,7 @@ func TestListTicketViews_SessionProbeFailureKeepsWorkflow(t *testing.T) {
 	tk := createTicket(t, p.DB, "ticket-probe-failed")
 	w := store.Worker{
 		TicketID:     tk.ID,
-		Status:       store.WorkerRunning,
+		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w4",
 		Branch:       "ts/demo-ticket-4",
 		TmuxSocket:   "dalek",
@@ -549,10 +550,10 @@ func TestListTicketViews_SessionProbeFailureKeepsWorkflow(t *testing.T) {
 	if len(views) != 1 {
 		t.Fatalf("expected 1 view, got %d", len(views))
 	}
-	if views[0].DerivedStatus != store.TicketBacklog {
+	if views[0].DerivedStatus != contracts.TicketBacklog {
 		t.Fatalf("expected workflow backlog when probe failed, got %s", views[0].DerivedStatus)
 	}
-	if views[0].RuntimeHealthState == store.TaskHealthDead {
+	if views[0].RuntimeHealthState == contracts.TaskHealthDead {
 		t.Fatalf("probe failure should not degrade runtime to dead")
 	}
 }
@@ -565,23 +566,23 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 	tkBlocked := createTicket(t, p.DB, "reconcile-blocked")
 	tkBacklog := createTicket(t, p.DB, "reconcile-backlog")
 
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkRunning.ID).Update("workflow_status", store.TicketActive).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkRunning.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set active ticket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkDone.ID).Update("workflow_status", store.TicketDone).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkDone.ID).Update("workflow_status", contracts.TicketDone).Error; err != nil {
 		t.Fatalf("set done ticket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkBlocked.ID).Update("workflow_status", store.TicketBlocked).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkBlocked.ID).Update("workflow_status", contracts.TicketBlocked).Error; err != nil {
 		t.Fatalf("set blocked ticket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkBacklog.ID).Update("workflow_status", store.TicketBacklog).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkBacklog.ID).Update("workflow_status", contracts.TicketBacklog).Error; err != nil {
 		t.Fatalf("set backlog ticket failed: %v", err)
 	}
 
 	workers := []store.Worker{
 		{
 			TicketID:     tkRunning.ID,
-			Status:       store.WorkerRunning,
+			Status:       contracts.WorkerRunning,
 			WorktreePath: "/tmp/w-running",
 			Branch:       "ts/demo-ticket-running",
 			TmuxSocket:   "dalek-test",
@@ -589,7 +590,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 		},
 		{
 			TicketID:     tkDone.ID,
-			Status:       store.WorkerRunning,
+			Status:       contracts.WorkerRunning,
 			WorktreePath: "/tmp/w-done",
 			Branch:       "ts/demo-ticket-done",
 			TmuxSocket:   "dalek-test",
@@ -597,7 +598,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 		},
 		{
 			TicketID:     tkBlocked.ID,
-			Status:       store.WorkerRunning,
+			Status:       contracts.WorkerRunning,
 			WorktreePath: "/tmp/w-blocked",
 			Branch:       "ts/demo-ticket-blocked",
 			TmuxSocket:   "dalek-test",
@@ -605,7 +606,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 		},
 		{
 			TicketID:     tkBacklog.ID,
-			Status:       store.WorkerRunning,
+			Status:       contracts.WorkerRunning,
 			WorktreePath: "/tmp/w-backlog",
 			Branch:       "ts/demo-ticket-backlog",
 			TmuxSocket:   "dalek-test",
@@ -619,7 +620,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 	for i, w := range workers {
 		now := time.Now().UTC().Add(time.Duration(i) * time.Second)
 		run, err := rt.CreateRun(context.Background(), tasksvc.CreateRunInput{
-			OwnerType:          store.TaskOwnerWorker,
+			OwnerType:          contracts.TaskOwnerWorker,
 			TaskType:           "deliver_ticket",
 			ProjectKey:         p.Key,
 			TicketID:           w.TicketID,
@@ -627,7 +628,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 			SubjectType:        "ticket",
 			SubjectID:          fmt.Sprintf("%d", w.TicketID),
 			RequestID:          fmt.Sprintf("reconcile-run-%d", w.ID),
-			OrchestrationState: store.TaskRunning,
+			OrchestrationState: contracts.TaskRunning,
 			StartedAt:          &now,
 		})
 		if err != nil {
@@ -635,7 +636,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 		}
 		if err := rt.AppendRuntimeSample(context.Background(), tasksvc.RuntimeSampleInput{
 			TaskRunID:  run.ID,
-			State:      store.TaskHealthBusy,
+			State:      contracts.TaskHealthBusy,
 			NeedsUser:  false,
 			Summary:    "running",
 			Source:     "test",
@@ -657,26 +658,26 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 	if err := p.DB.Where("id IN ?", []uint{tkRunning.ID, tkDone.ID, tkBlocked.ID, tkBacklog.ID}).Order("id asc").Find(&tickets).Error; err != nil {
 		t.Fatalf("query tickets failed: %v", err)
 	}
-	got := map[uint]store.TicketWorkflowStatus{}
+	got := map[uint]contracts.TicketWorkflowStatus{}
 	for _, tk := range tickets {
 		got[tk.ID] = tk.WorkflowStatus
 	}
 
-	if got[tkRunning.ID] != store.TicketActive {
+	if got[tkRunning.ID] != contracts.TicketActive {
 		t.Fatalf("active ticket should be preserved, got=%s", got[tkRunning.ID])
 	}
-	if got[tkDone.ID] != store.TicketDone {
+	if got[tkDone.ID] != contracts.TicketDone {
 		t.Fatalf("done ticket should be preserved, got=%s", got[tkDone.ID])
 	}
-	if got[tkBlocked.ID] != store.TicketBlocked {
+	if got[tkBlocked.ID] != contracts.TicketBlocked {
 		t.Fatalf("blocked ticket should be preserved, got=%s", got[tkBlocked.ID])
 	}
-	if got[tkBacklog.ID] != store.TicketBacklog {
+	if got[tkBacklog.ID] != contracts.TicketBacklog {
 		t.Fatalf("backlog ticket should stay backlog, got=%s", got[tkBacklog.ID])
 	}
 
 	statusRows, err := rt.ListStatus(context.Background(), tasksvc.ListStatusOptions{
-		OwnerType:       store.TaskOwnerWorker,
+		OwnerType:       contracts.TaskOwnerWorker,
 		IncludeTerminal: true,
 		Limit:           20,
 	})
@@ -698,10 +699,10 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 		if !ok {
 			t.Fatalf("missing task status for worker=%d", w.ID)
 		}
-		if st.OrchestrationState != string(store.TaskCanceled) {
+		if st.OrchestrationState != string(contracts.TaskCanceled) {
 			t.Fatalf("worker=%d expected canceled, got=%s", w.ID, st.OrchestrationState)
 		}
-		if st.RuntimeHealthState != string(store.TaskHealthDead) {
+		if st.RuntimeHealthState != string(contracts.TaskHealthDead) {
 			t.Fatalf("worker=%d expected dead runtime, got=%s", w.ID, st.RuntimeHealthState)
 		}
 	}

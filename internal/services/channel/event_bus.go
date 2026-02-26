@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"dalek/internal/contracts"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +30,7 @@ type GatewayEvent struct {
 
 	AgentProvider string
 	AgentModel    string
-	JobStatus     store.ChannelTurnJobStatus
+	JobStatus     contracts.ChannelTurnJobStatus
 	JobErrorType  string
 	JobError      string
 	At            time.Time

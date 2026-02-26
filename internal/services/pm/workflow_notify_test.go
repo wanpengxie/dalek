@@ -90,7 +90,7 @@ func TestSetTicketWorkflowStatus_Changed_EmitsHook(t *testing.T) {
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
 	svc.SetStatusChangeHook(hook)
 
-	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, store.TicketActive); err != nil {
+	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, contracts.TicketActive); err != nil {
 		t.Fatalf("SetTicketWorkflowStatus failed: %v", err)
 	}
 
@@ -98,7 +98,7 @@ func TestSetTicketWorkflowStatus_Changed_EmitsHook(t *testing.T) {
 	if ev.TicketID != tk.ID {
 		t.Fatalf("unexpected ticket_id: got=%d want=%d", ev.TicketID, tk.ID)
 	}
-	if ev.FromStatus != store.TicketBacklog || ev.ToStatus != store.TicketActive {
+	if ev.FromStatus != contracts.TicketBacklog || ev.ToStatus != contracts.TicketActive {
 		t.Fatalf("unexpected transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 	if ev.Source != "pm.set_workflow" {
@@ -112,7 +112,7 @@ func TestSetTicketWorkflowStatus_NoChange_DoesNotEmitHook(t *testing.T) {
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
 	svc.SetStatusChangeHook(hook)
 
-	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, store.TicketBacklog); err != nil {
+	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, contracts.TicketBacklog); err != nil {
 		t.Fatalf("SetTicketWorkflowStatus failed: %v", err)
 	}
 	assertNoStatusEvent(t, hook.ch)
@@ -143,7 +143,7 @@ func TestApplyWorkerReport_Changed_EmitsHook(t *testing.T) {
 	if ev.TicketID != tk.ID {
 		t.Fatalf("unexpected ticket_id: got=%d want=%d", ev.TicketID, tk.ID)
 	}
-	if ev.FromStatus != store.TicketQueued || ev.ToStatus != store.TicketActive {
+	if ev.FromStatus != contracts.TicketQueued || ev.ToStatus != contracts.TicketActive {
 		t.Fatalf("unexpected transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 	if ev.Source != "pm.apply_worker_report(test-source)" {
@@ -158,7 +158,7 @@ func TestApplyWorkerReport_Done_EmitsHook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, store.TicketActive); err != nil {
+	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, contracts.TicketActive); err != nil {
 		t.Fatalf("SetTicketWorkflowStatus failed: %v", err)
 	}
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
@@ -180,7 +180,7 @@ func TestApplyWorkerReport_Done_EmitsHook(t *testing.T) {
 	if ev.TicketID != tk.ID {
 		t.Fatalf("unexpected ticket_id: got=%d want=%d", ev.TicketID, tk.ID)
 	}
-	if ev.FromStatus != store.TicketActive || ev.ToStatus != store.TicketDone {
+	if ev.FromStatus != contracts.TicketActive || ev.ToStatus != contracts.TicketDone {
 		t.Fatalf("unexpected transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 	if ev.WorkerID != w.ID {
@@ -201,7 +201,7 @@ func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, store.TicketActive); err != nil {
+	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, contracts.TicketActive); err != nil {
 		t.Fatalf("SetTicketWorkflowStatus failed: %v", err)
 	}
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
@@ -224,7 +224,7 @@ func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
 	if ev.TicketID != tk.ID {
 		t.Fatalf("unexpected ticket_id: got=%d want=%d", ev.TicketID, tk.ID)
 	}
-	if ev.FromStatus != store.TicketActive || ev.ToStatus != store.TicketBlocked {
+	if ev.FromStatus != contracts.TicketActive || ev.ToStatus != contracts.TicketBlocked {
 		t.Fatalf("unexpected transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 	if ev.WorkerID != w.ID {
@@ -241,7 +241,7 @@ func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
 func TestClaimPMDispatchJob_Promote_EmitsHook(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-dispatch-claim")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketQueued).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
@@ -262,7 +262,7 @@ func TestClaimPMDispatchJob_Promote_EmitsHook(t *testing.T) {
 	if ev.TicketID != tk.ID {
 		t.Fatalf("unexpected ticket_id: got=%d want=%d", ev.TicketID, tk.ID)
 	}
-	if ev.FromStatus != store.TicketQueued || ev.ToStatus != store.TicketActive {
+	if ev.FromStatus != contracts.TicketQueued || ev.ToStatus != contracts.TicketActive {
 		t.Fatalf("unexpected transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 	if ev.Source != "pm.dispatch.claim" {
@@ -273,7 +273,7 @@ func TestClaimPMDispatchJob_Promote_EmitsHook(t *testing.T) {
 func TestCompletePMDispatchJobFailed_Demote_EmitsHook(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-dispatch-failed")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketActive).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
@@ -297,7 +297,7 @@ func TestCompletePMDispatchJobFailed_Demote_EmitsHook(t *testing.T) {
 	if ev.TicketID != tk.ID {
 		t.Fatalf("unexpected ticket_id: got=%d want=%d", ev.TicketID, tk.ID)
 	}
-	if ev.FromStatus != store.TicketActive || ev.ToStatus != store.TicketBlocked {
+	if ev.FromStatus != contracts.TicketActive || ev.ToStatus != contracts.TicketBlocked {
 		t.Fatalf("unexpected transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 	if ev.Source != "pm.dispatch.fail" {
@@ -316,7 +316,7 @@ func TestGatewayStatusNotifier_OnStatusChange_SendsMessage(t *testing.T) {
 	}
 	if err := gatewayDB.Create(&store.ChannelBinding{
 		ProjectName:    strings.TrimSpace(p.Name),
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        gatewaysendsvc.AdapterFeishu,
 		PeerProjectKey: "chat_demo",
 		Enabled:        true,
@@ -329,8 +329,8 @@ func TestGatewayStatusNotifier_OnStatusChange_SendsMessage(t *testing.T) {
 
 	event := StatusChangeEvent{
 		TicketID:   tk.ID,
-		FromStatus: store.TicketActive,
-		ToStatus:   store.TicketDone,
+		FromStatus: contracts.TicketActive,
+		ToStatus:   contracts.TicketDone,
 		Source:     "pm.apply_worker_report(worker.report)",
 		OccurredAt: time.Date(2026, 2, 25, 22, 30, 0, 0, time.Local),
 	}
@@ -368,7 +368,7 @@ func TestGatewayStatusNotifier_IgnoresNonImportantTransition(t *testing.T) {
 	}
 	if err := gatewayDB.Create(&store.ChannelBinding{
 		ProjectName:    strings.TrimSpace(p.Name),
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        gatewaysendsvc.AdapterFeishu,
 		PeerProjectKey: "chat_demo",
 		Enabled:        true,
@@ -380,8 +380,8 @@ func TestGatewayStatusNotifier_IgnoresNonImportantTransition(t *testing.T) {
 
 	err = notifier.OnStatusChange(context.Background(), StatusChangeEvent{
 		TicketID:   tk.ID,
-		FromStatus: store.TicketQueued,
-		ToStatus:   store.TicketActive,
+		FromStatus: contracts.TicketQueued,
+		ToStatus:   contracts.TicketActive,
 		Source:     "pm.dispatch.claim",
 		OccurredAt: time.Now(),
 	})
@@ -406,8 +406,8 @@ func TestGatewayStatusNotifier_NoBinding_ReturnsNil(t *testing.T) {
 
 	err = notifier.OnStatusChange(context.Background(), StatusChangeEvent{
 		TicketID:   tk.ID,
-		FromStatus: store.TicketBlocked,
-		ToStatus:   store.TicketDone,
+		FromStatus: contracts.TicketBlocked,
+		ToStatus:   contracts.TicketDone,
 		Source:     "pm.set_workflow",
 		OccurredAt: time.Now(),
 	})

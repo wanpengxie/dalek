@@ -14,13 +14,13 @@ func TestApplyWorkerReport_DoesNotChangeTicketWorkflow(t *testing.T) {
 	root := t.TempDir()
 
 	tk := createTicket(t, p.DB, "continue-backflow")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketBlocked).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketBlocked).Error; err != nil {
 		t.Fatalf("set blocked failed: %v", err)
 	}
 
 	w := store.Worker{
 		TicketID:     tk.ID,
-		Status:       store.WorkerRunning,
+		Status:       contracts.WorkerRunning,
 		WorktreePath: root,
 		Branch:       "ts/demo-ticket-1",
 		TmuxSocket:   "dalek",
@@ -45,7 +45,7 @@ func TestApplyWorkerReport_DoesNotChangeTicketWorkflow(t *testing.T) {
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if got.WorkflowStatus != store.TicketBlocked {
+	if got.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("worker report 不应直接修改 workflow_status, got=%s", got.WorkflowStatus)
 	}
 }
@@ -56,13 +56,13 @@ func TestApplyWorkerReport_DoesNotRollbackDoneWorkflow(t *testing.T) {
 	root := t.TempDir()
 
 	tk := createTicket(t, p.DB, "continue-not-rollback-done")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", store.TicketDone).Error; err != nil {
+	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketDone).Error; err != nil {
 		t.Fatalf("set done failed: %v", err)
 	}
 
 	w := store.Worker{
 		TicketID:     tk.ID,
-		Status:       store.WorkerRunning,
+		Status:       contracts.WorkerRunning,
 		WorktreePath: root,
 		Branch:       "ts/demo-ticket-2",
 		TmuxSocket:   "dalek",
@@ -87,7 +87,7 @@ func TestApplyWorkerReport_DoesNotRollbackDoneWorkflow(t *testing.T) {
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if got.WorkflowStatus != store.TicketDone {
+	if got.WorkflowStatus != contracts.TicketDone {
 		t.Fatalf("done ticket should not rollback by report, got=%s", got.WorkflowStatus)
 	}
 }
@@ -99,7 +99,7 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 	tk := createTicket(t, p.DB, "runtime-sync-best-effort")
 	w := store.Worker{
 		TicketID:     tk.ID,
-		Status:       store.WorkerRunning,
+		Status:       contracts.WorkerRunning,
 		WorktreePath: root,
 		Branch:       "ts/demo-ticket-4",
 		TmuxSocket:   "dalek",
@@ -129,7 +129,7 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 	if err := p.DB.First(&gotTicket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if gotTicket.WorkflowStatus != store.TicketBacklog {
+	if gotTicket.WorkflowStatus != contracts.TicketBacklog {
 		t.Fatalf("worker report 不应推进 workflow_status, got=%s", gotTicket.WorkflowStatus)
 	}
 

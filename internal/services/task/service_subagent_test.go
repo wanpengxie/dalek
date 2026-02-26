@@ -2,9 +2,8 @@ package task
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"testing"
-
-	"dalek/internal/store"
 )
 
 func TestService_SubagentRunRoundTrip(t *testing.T) {
@@ -12,15 +11,15 @@ func TestService_SubagentRunRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	taskRun, err := svc.CreateRun(ctx, CreateRunInput{
-		OwnerType:          store.TaskOwnerSubagent,
-		TaskType:           store.TaskTypeSubagentRun,
+		OwnerType:          contracts.TaskOwnerSubagent,
+		TaskType:           contracts.TaskTypeSubagentRun,
 		ProjectKey:         "demo",
 		TicketID:           0,
 		WorkerID:           0,
 		SubjectType:        "project",
 		SubjectID:          "demo",
 		RequestID:          "sub-req-1",
-		OrchestrationState: store.TaskPending,
+		OrchestrationState: contracts.TaskPending,
 	})
 	if err != nil {
 		t.Fatalf("CreateRun failed: %v", err)
@@ -79,13 +78,13 @@ func TestService_CreateSubagentRun_DuplicateReturnsExisting(t *testing.T) {
 	ctx := context.Background()
 
 	taskRun, err := svc.CreateRun(ctx, CreateRunInput{
-		OwnerType:          store.TaskOwnerSubagent,
-		TaskType:           store.TaskTypeSubagentRun,
+		OwnerType:          contracts.TaskOwnerSubagent,
+		TaskType:           contracts.TaskTypeSubagentRun,
 		ProjectKey:         "demo",
 		SubjectType:        "project",
 		SubjectID:          "demo",
 		RequestID:          "sub-req-dup",
-		OrchestrationState: store.TaskPending,
+		OrchestrationState: contracts.TaskPending,
 	})
 	if err != nil {
 		t.Fatalf("CreateRun failed: %v", err)

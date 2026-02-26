@@ -23,7 +23,7 @@ func TestDiscardMerge_FromProposedClosesApprovalInbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProposeMerge failed: %v", err)
 	}
-	if mi.Status != store.MergeProposed {
+	if mi.Status != contracts.MergeProposed {
 		t.Fatalf("unexpected initial status: %s", mi.Status)
 	}
 
@@ -35,7 +35,7 @@ func TestDiscardMerge_FromProposedClosesApprovalInbox(t *testing.T) {
 	if err := p.DB.First(&cur, mi.ID).Error; err != nil {
 		t.Fatalf("query merge item failed: %v", err)
 	}
-	if cur.Status != store.MergeDiscarded {
+	if cur.Status != contracts.MergeDiscarded {
 		t.Fatalf("expected discarded, got=%s", cur.Status)
 	}
 	if cur.MergedAt != nil {
@@ -43,14 +43,14 @@ func TestDiscardMerge_FromProposedClosesApprovalInbox(t *testing.T) {
 	}
 
 	var openInbox store.InboxItem
-	if err := p.DB.Where("merge_item_id = ? AND status = ?", mi.ID, store.InboxOpen).First(&openInbox).Error; err == nil {
+	if err := p.DB.Where("merge_item_id = ? AND status = ?", mi.ID, contracts.InboxOpen).First(&openInbox).Error; err == nil {
 		t.Fatalf("approval inbox should be closed after discard")
 	} else if err != gorm.ErrRecordNotFound {
 		t.Fatalf("query open inbox failed: %v", err)
 	}
 
 	var doneInbox store.InboxItem
-	if err := p.DB.Where("merge_item_id = ? AND status = ?", mi.ID, store.InboxDone).Order("id desc").First(&doneInbox).Error; err != nil {
+	if err := p.DB.Where("merge_item_id = ? AND status = ?", mi.ID, contracts.InboxDone).Order("id desc").First(&doneInbox).Error; err != nil {
 		t.Fatalf("expected done inbox after discard: %v", err)
 	}
 	if doneInbox.ClosedAt == nil {
@@ -80,7 +80,7 @@ func TestDiscardMerge_FromApproved(t *testing.T) {
 	if err := p.DB.First(&cur, mi.ID).Error; err != nil {
 		t.Fatalf("query merge item failed: %v", err)
 	}
-	if cur.Status != store.MergeDiscarded {
+	if cur.Status != contracts.MergeDiscarded {
 		t.Fatalf("expected discarded, got=%s", cur.Status)
 	}
 }
@@ -106,7 +106,7 @@ func TestDiscardMerge_Idempotent(t *testing.T) {
 	if err := p.DB.First(&cur, mi.ID).Error; err != nil {
 		t.Fatalf("query merge item failed: %v", err)
 	}
-	if cur.Status != store.MergeDiscarded {
+	if cur.Status != contracts.MergeDiscarded {
 		t.Fatalf("expected discarded, got=%s", cur.Status)
 	}
 }
@@ -137,7 +137,7 @@ func TestDiscardMerge_MergedCannotDiscard(t *testing.T) {
 	if err := p.DB.First(&cur, mi.ID).Error; err != nil {
 		t.Fatalf("query merge item failed: %v", err)
 	}
-	if cur.Status != store.MergeMerged {
+	if cur.Status != contracts.MergeMerged {
 		t.Fatalf("expected merged unchanged, got=%s", cur.Status)
 	}
 }
@@ -168,7 +168,7 @@ func TestMarkMergeMerged_DiscardedCannotMerge(t *testing.T) {
 	if err := p.DB.First(&cur, mi.ID).Error; err != nil {
 		t.Fatalf("query merge item failed: %v", err)
 	}
-	if cur.Status != store.MergeDiscarded {
+	if cur.Status != contracts.MergeDiscarded {
 		t.Fatalf("expected discarded unchanged, got=%s", cur.Status)
 	}
 }
@@ -195,7 +195,7 @@ func TestProposeMerge_AllowsReproposeAfterDiscarded(t *testing.T) {
 	if second.ID == first.ID {
 		t.Fatalf("re-propose should create a new merge item")
 	}
-	if second.Status != store.MergeProposed {
+	if second.Status != contracts.MergeProposed {
 		t.Fatalf("unexpected second status: %s", second.Status)
 	}
 
@@ -248,7 +248,7 @@ func TestApplyWorkerReport_DoneRecreatesMergeProposalAfterDiscarded(t *testing.T
 	if len(items) < 2 {
 		t.Fatalf("expected second merge proposal after discarded, got=%d", len(items))
 	}
-	if items[0].Status != store.MergeProposed {
+	if items[0].Status != contracts.MergeProposed {
 		t.Fatalf("latest merge item should be proposed, got=%s", items[0].Status)
 	}
 	if items[0].ID == first.ID {
@@ -263,7 +263,7 @@ func TestManagerTick_ProposesWhenOnlyDiscardedMergeExists(t *testing.T) {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketDone,
+		"workflow_status": contracts.TicketDone,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket done failed: %v", err)
@@ -289,7 +289,7 @@ func TestManagerTick_ProposesWhenOnlyDiscardedMergeExists(t *testing.T) {
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&latest).Error; err != nil {
 		t.Fatalf("query latest merge item failed: %v", err)
 	}
-	if latest.Status != store.MergeProposed {
+	if latest.Status != contracts.MergeProposed {
 		t.Fatalf("latest merge status should be proposed, got=%s", latest.Status)
 	}
 	if latest.ID == mi.ID {

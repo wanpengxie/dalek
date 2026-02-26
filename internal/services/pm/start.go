@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -40,10 +41,10 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return nil, err
 	}
-	if t.WorkflowStatus == store.TicketArchived {
+	if t.WorkflowStatus == contracts.TicketArchived {
 		return nil, fmt.Errorf("ticket 已归档，不能启动（start）：t%d", ticketID)
 	}
-	if t.WorkflowStatus == store.TicketDone {
+	if t.WorkflowStatus == contracts.TicketDone {
 		return nil, fmt.Errorf("ticket 已完成，不能启动（start）：t%d", ticketID)
 	}
 
@@ -63,9 +64,9 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	now := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.WithContext(ctx).Model(&store.Ticket{}).
-			Where("id = ? AND (workflow_status = ? OR TRIM(COALESCE(workflow_status, '')) = '')", ticketID, store.TicketBacklog).
+			Where("id = ? AND (workflow_status = ? OR TRIM(COALESCE(workflow_status, '')) = '')", ticketID, contracts.TicketBacklog).
 			Updates(map[string]any{
-				"workflow_status": store.TicketQueued,
+				"workflow_status": contracts.TicketQueued,
 				"updated_at":      now,
 			})
 		if res.Error != nil {
@@ -74,9 +75,9 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		if res.RowsAffected > 0 {
 			from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
 			if from == "" {
-				from = store.TicketBacklog
+				from = contracts.TicketBacklog
 			}
-			if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, store.TicketQueued, "pm.start", "start 推进 backlog->queued", map[string]any{
+			if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketQueued, "pm.start", "start 推进 backlog->queued", map[string]any{
 				"ticket_id": ticketID,
 				"worker_id": w.ID,
 			}, now); err != nil {
@@ -89,7 +90,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	}
 
 	// 已经是 running 则直接返回。
-	if w.Status == store.WorkerRunning && strings.TrimSpace(w.TmuxSession) != "" {
+	if w.Status == contracts.WorkerRunning && strings.TrimSpace(w.TmuxSession) != "" {
 		return w, nil
 	}
 
@@ -110,7 +111,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	if err != nil {
 		return nil, fmt.Errorf("读取 worker 失败（w%d）：%w", w.ID, err)
 	}
-	if out.Status != store.WorkerRunning {
+	if out.Status != contracts.WorkerRunning {
 		retryAt := time.Now()
 		if err := s.worker.MarkWorkerRunning(ctx, w.ID, retryAt); err != nil {
 			return nil, fmt.Errorf("start 后 worker 未进入 running（w%d status=%s），重试失败：%w", out.ID, out.Status, err)
@@ -119,7 +120,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		if err != nil {
 			return nil, fmt.Errorf("读取 worker 失败（w%d）：%w", w.ID, err)
 		}
-		if out.Status != store.WorkerRunning {
+		if out.Status != contracts.WorkerRunning {
 			return nil, fmt.Errorf("start 后 worker 未进入 running（w%d status=%s）", out.ID, out.Status)
 		}
 	}

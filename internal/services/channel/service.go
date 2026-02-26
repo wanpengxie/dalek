@@ -63,7 +63,7 @@ type ProcessResult struct {
 	InboundMessageID uint
 	JobID            uint
 	RunID            string
-	JobStatus        store.ChannelTurnJobStatus
+	JobStatus        contracts.ChannelTurnJobStatus
 	JobError         string
 	JobErrorType     string
 
@@ -154,14 +154,14 @@ func (s *Service) Close() error {
 	return errors.Join(errs...)
 }
 
-func (s *Service) InterruptPeerConversation(ctx context.Context, channelType, adapter, peerConversationID string) (InterruptResult, error) {
-	channelType = strings.ToLower(strings.TrimSpace(channelType))
+func (s *Service) InterruptPeerConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (InterruptResult, error) {
+	channelType = toStoreChannelType(channelType)
 	if channelType == "" {
 		channelType = contracts.ChannelTypeCLI
 	}
 	adapter = strings.TrimSpace(adapter)
 	if adapter == "" {
-		adapter = defaultAdapter(channelType)
+		adapter = defaultAdapter(string(channelType))
 	}
 	peerConversationID = strings.TrimSpace(peerConversationID)
 	s.logInterrupt("locator_start",
@@ -237,7 +237,7 @@ func (s *Service) InterruptPeerConversation(ctx context.Context, channelType, ad
 	return result, nil
 }
 
-func (s *Service) ResetPeerConversationSession(ctx context.Context, channelType, adapter, peerConversationID string) (bool, error) {
+func (s *Service) ResetPeerConversationSession(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return false, err
@@ -270,7 +270,7 @@ func (s *Service) ResetPeerConversationSession(ctx context.Context, channelType,
 	return true, nil
 }
 
-func (s *Service) resolvePeerConversation(ctx context.Context, channelType, adapter, peerConversationID string) (store.ChannelConversation, bool, error) {
+func (s *Service) resolvePeerConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (store.ChannelConversation, bool, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return store.ChannelConversation{}, false, err
@@ -278,13 +278,13 @@ func (s *Service) resolvePeerConversation(ctx context.Context, channelType, adap
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	channelType = strings.ToLower(strings.TrimSpace(channelType))
+	channelType = toStoreChannelType(channelType)
 	if channelType == "" {
 		channelType = contracts.ChannelTypeCLI
 	}
 	adapter = strings.TrimSpace(adapter)
 	if adapter == "" {
-		adapter = defaultAdapter(channelType)
+		adapter = defaultAdapter(string(channelType))
 	}
 	peerConversationID = strings.TrimSpace(peerConversationID)
 	if peerConversationID == "" {
@@ -293,7 +293,7 @@ func (s *Service) resolvePeerConversation(ctx context.Context, channelType, adap
 	var binding store.ChannelBinding
 	if err := db.WithContext(ctx).
 		Where("channel_type = ? AND adapter = ? AND peer_project_key = ?",
-			store.ChannelType(channelType),
+			channelType,
 			adapter,
 			"").
 		First(&binding).Error; err != nil {
@@ -407,15 +407,15 @@ func (s *Service) ProcessInbound(ctx context.Context, env contracts.InboundEnvel
 	}
 
 	env.Normalize()
-	env.ChannelType = strings.ToLower(strings.TrimSpace(env.ChannelType))
+	env.ChannelType = contracts.ChannelType(strings.ToLower(strings.TrimSpace(string(env.ChannelType))))
 	if env.ChannelType == "" {
 		env.ChannelType = contracts.ChannelTypeCLI
 	}
 	if strings.TrimSpace(env.Adapter) == "" {
-		env.Adapter = defaultAdapter(env.ChannelType)
+		env.Adapter = defaultAdapter(string(env.ChannelType))
 	}
 	if strings.TrimSpace(env.PeerConversationID) == "" {
-		env.PeerConversationID = defaultConversationID(env.ChannelType)
+		env.PeerConversationID = defaultConversationID(string(env.ChannelType))
 	}
 	if strings.TrimSpace(env.PeerMessageID) == "" {
 		env.PeerMessageID = newInboundMessageID()
@@ -445,7 +445,7 @@ func (s *Service) ProcessInbound(ctx context.Context, env contracts.InboundEnvel
 
 		if txErr = tx.
 			Where("direction = ? AND conversation_id = ? AND adapter = ? AND peer_message_id = ?",
-				store.ChannelMessageIn, conv.ID, strings.TrimSpace(env.Adapter), strings.TrimSpace(env.PeerMessageID)).
+				contracts.ChannelMessageIn, conv.ID, strings.TrimSpace(env.Adapter), strings.TrimSpace(env.PeerMessageID)).
 			First(&inbound).Error; txErr == nil {
 			txErr = tx.Where("inbound_message_id = ?", inbound.ID).First(&job).Error
 			if txErr == nil {
@@ -457,7 +457,7 @@ func (s *Service) ProcessInbound(ctx context.Context, env contracts.InboundEnvel
 			job = store.ChannelTurnJob{
 				ConversationID:   inbound.ConversationID,
 				InboundMessageID: inbound.ID,
-				Status:           store.ChannelTurnPending,
+				Status:           contracts.ChannelTurnPending,
 			}
 			return tx.Create(&job).Error
 		}
@@ -473,14 +473,14 @@ func (s *Service) ProcessInbound(ctx context.Context, env contracts.InboundEnvel
 		peerID := strings.TrimSpace(env.PeerMessageID)
 		inbound = store.ChannelMessage{
 			ConversationID: conv.ID,
-			Direction:      store.ChannelMessageIn,
+			Direction:      contracts.ChannelMessageIn,
 			Adapter:        strings.TrimSpace(env.Adapter),
 			PeerMessageID:  &peerID,
 			SenderID:       strings.TrimSpace(env.SenderID),
 			SenderName:     strings.TrimSpace(env.SenderName),
 			ContentText:    strings.TrimSpace(env.Text),
 			PayloadJSON:    mustJSON(payload),
-			Status:         store.ChannelMessageAccepted,
+			Status:         contracts.ChannelMessageAccepted,
 		}
 		if txErr := tx.Create(&inbound).Error; txErr != nil {
 			return txErr
@@ -499,7 +499,7 @@ func (s *Service) ProcessInbound(ctx context.Context, env contracts.InboundEnvel
 		job = store.ChannelTurnJob{
 			ConversationID:   conv.ID,
 			InboundMessageID: inbound.ID,
-			Status:           store.ChannelTurnPending,
+			Status:           contracts.ChannelTurnPending,
 		}
 		return tx.Create(&job).Error
 	}); err != nil {
@@ -527,7 +527,7 @@ func (s *Service) ensureBindingTx(ctx context.Context, tx *gorm.DB, p *core.Proj
 		return binding, nil
 	}
 
-	channelType := store.ChannelType(strings.ToLower(strings.TrimSpace(env.ChannelType)))
+	channelType := contracts.ChannelType(strings.ToLower(strings.TrimSpace(string(env.ChannelType))))
 	adapter := strings.TrimSpace(env.Adapter)
 	peerProjectKey := ""
 
@@ -838,13 +838,13 @@ func (s *Service) runTurnJob(ctx context.Context, jobID uint) error {
 		outPeerID := fmt.Sprintf("out_job_%d", job.ID)
 		outMsg = store.ChannelMessage{
 			ConversationID: conv.ID,
-			Direction:      store.ChannelMessageOut,
+			Direction:      contracts.ChannelMessageOut,
 			Adapter:        strings.TrimSpace(binding.Adapter),
 			PeerMessageID:  &outPeerID,
 			SenderID:       "pm",
 			ContentText:    effectiveReply,
 			PayloadJSON:    payloadJSON,
-			Status:         store.ChannelMessageProcessed,
+			Status:         contracts.ChannelMessageProcessed,
 		}
 		if err := tx.Create(&outMsg).Error; err != nil {
 			return err
@@ -866,7 +866,7 @@ func (s *Service) runTurnJob(ctx context.Context, jobID uint) error {
 		if err := tx.Model(&store.ChannelMessage{}).
 			Where("id = ?", inbound.ID).
 			Updates(map[string]any{
-				"status": store.ChannelMessageProcessed,
+				"status": contracts.ChannelMessageProcessed,
 			}).Error; err != nil {
 			return err
 		}
@@ -875,7 +875,7 @@ func (s *Service) runTurnJob(ctx context.Context, jobID uint) error {
 			MessageID:   outMsg.ID,
 			Adapter:     strings.TrimSpace(binding.Adapter),
 			PayloadJSON: payloadJSON,
-			Status:      store.ChannelOutboxPending,
+			Status:      contracts.ChannelOutboxPending,
 			RetryCount:  0,
 			LastError:   "",
 		}
@@ -929,9 +929,9 @@ func (s *Service) claimTurnJob(ctx context.Context, jobID uint, runnerID string,
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&store.ChannelTurnJob{}).
 			Where("id = ? AND (status = ? OR (status = ? AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?))",
-				jobID, store.ChannelTurnPending, store.ChannelTurnRunning, now).
+				jobID, contracts.ChannelTurnPending, contracts.ChannelTurnRunning, now).
 			Updates(map[string]any{
-				"status":           store.ChannelTurnRunning,
+				"status":           contracts.ChannelTurnRunning,
 				"runner_id":        runnerID,
 				"lease_expires_at": &lease,
 				"attempt":          gorm.Expr("attempt + 1"),
@@ -962,9 +962,9 @@ func (s *Service) completeTurnJobSuccess(ctx context.Context, jobID uint, runner
 	}
 	now := time.Now()
 	res := db.WithContext(ctx).Model(&store.ChannelTurnJob{}).
-		Where("id = ? AND status = ? AND runner_id = ?", jobID, store.ChannelTurnRunning, strings.TrimSpace(runnerID)).
+		Where("id = ? AND status = ? AND runner_id = ?", jobID, contracts.ChannelTurnRunning, strings.TrimSpace(runnerID)).
 		Updates(map[string]any{
-			"status":           store.ChannelTurnSucceeded,
+			"status":           contracts.ChannelTurnSucceeded,
 			"result_json":      strings.TrimSpace(resultJSON),
 			"error":            "",
 			"runner_id":        "",
@@ -991,9 +991,9 @@ func (s *Service) completeTurnJobFailed(ctx context.Context, jobID uint, runnerI
 	}
 	now := time.Now()
 	res := db.WithContext(ctx).Model(&store.ChannelTurnJob{}).
-		Where("id = ? AND status = ? AND runner_id = ?", jobID, store.ChannelTurnRunning, strings.TrimSpace(runnerID)).
+		Where("id = ? AND status = ? AND runner_id = ?", jobID, contracts.ChannelTurnRunning, strings.TrimSpace(runnerID)).
 		Updates(map[string]any{
-			"status":           store.ChannelTurnFailed,
+			"status":           contracts.ChannelTurnFailed,
 			"result_json":      strings.TrimSpace(resultJSON),
 			"error":            strings.TrimSpace(errMsg),
 			"runner_id":        "",
@@ -1121,7 +1121,7 @@ func (s *Service) dispatchOutbox(ctx context.Context, outboxID uint) error {
 		if err := db.WithContext(ctx).Model(&store.ChannelOutbox{}).
 			Where("id = ?", outbox.ID).
 			Updates(map[string]any{
-				"status":        store.ChannelOutboxFailed,
+				"status":        contracts.ChannelOutboxFailed,
 				"last_error":    errMsg,
 				"updated_at":    now,
 				"next_retry_at": nil,
@@ -1130,7 +1130,7 @@ func (s *Service) dispatchOutbox(ctx context.Context, outboxID uint) error {
 		}
 		if err := db.WithContext(ctx).Model(&store.ChannelMessage{}).
 			Where("id = ?", outbox.MessageID).
-			Update("status", store.ChannelMessageFailed).Error; err != nil {
+			Update("status", contracts.ChannelMessageFailed).Error; err != nil {
 			return fmt.Errorf("%s: %w", errMsg, err)
 		}
 		return errors.New(errMsg)
@@ -1142,9 +1142,9 @@ func (s *Service) dispatchOutbox(ctx context.Context, outboxID uint) error {
 		}
 		now := time.Now()
 		if err := tx.Model(&store.ChannelOutbox{}).
-			Where("id = ? AND status IN ?", outbox.ID, []store.ChannelOutboxStatus{store.ChannelOutboxPending, store.ChannelOutboxFailed}).
+			Where("id = ? AND status IN ?", outbox.ID, []contracts.ChannelOutboxStatus{contracts.ChannelOutboxPending, contracts.ChannelOutboxFailed}).
 			Updates(map[string]any{
-				"status":      store.ChannelOutboxSending,
+				"status":      contracts.ChannelOutboxSending,
 				"retry_count": gorm.Expr("retry_count + 1"),
 				"updated_at":  now,
 				"last_error":  "",
@@ -1155,7 +1155,7 @@ func (s *Service) dispatchOutbox(ctx context.Context, outboxID uint) error {
 		if err := tx.Model(&store.ChannelOutbox{}).
 			Where("id = ?", outbox.ID).
 			Updates(map[string]any{
-				"status":        store.ChannelOutboxSent,
+				"status":        contracts.ChannelOutboxSent,
 				"updated_at":    time.Now(),
 				"last_error":    "",
 				"next_retry_at": nil,
@@ -1164,7 +1164,7 @@ func (s *Service) dispatchOutbox(ctx context.Context, outboxID uint) error {
 		}
 		if err := tx.Model(&store.ChannelMessage{}).
 			Where("id = ?", outbox.MessageID).
-			Update("status", store.ChannelMessageSent).Error; err != nil {
+			Update("status", contracts.ChannelMessageSent).Error; err != nil {
 			return err
 		}
 		return nil
@@ -1313,13 +1313,13 @@ func copyCLIEvents(in []agentcli.Event) []agentcli.Event {
 
 func defaultAdapter(channelType string) string {
 	switch strings.ToLower(strings.TrimSpace(channelType)) {
-	case contracts.ChannelTypeWeb:
+	case string(contracts.ChannelTypeWeb):
 		return "web.ws"
-	case contracts.ChannelTypeCLI:
+	case string(contracts.ChannelTypeCLI):
 		return "cli.local"
-	case contracts.ChannelTypeAPI:
+	case string(contracts.ChannelTypeAPI):
 		return "api.http"
-	case contracts.ChannelTypeIM:
+	case string(contracts.ChannelTypeIM):
 		return "im.unknown"
 	default:
 		return "cli.local"
@@ -1328,9 +1328,9 @@ func defaultAdapter(channelType string) string {
 
 func defaultConversationID(channelType string) string {
 	switch strings.ToLower(strings.TrimSpace(channelType)) {
-	case contracts.ChannelTypeCLI:
+	case string(contracts.ChannelTypeCLI):
 		return "cli.default"
-	case contracts.ChannelTypeWeb:
+	case string(contracts.ChannelTypeWeb):
 		return "web.default"
 	default:
 		return "default"
@@ -1365,9 +1365,9 @@ func mustJSON(v any) string {
 	return strings.TrimSpace(string(b))
 }
 
-func isTurnTerminal(st store.ChannelTurnJobStatus) bool {
+func isTurnTerminal(st contracts.ChannelTurnJobStatus) bool {
 	switch st {
-	case store.ChannelTurnSucceeded, store.ChannelTurnFailed:
+	case contracts.ChannelTurnSucceeded, contracts.ChannelTurnFailed:
 		return true
 	default:
 		return false

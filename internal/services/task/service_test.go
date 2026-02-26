@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"path/filepath"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ func TestService_TaskRunRoundTrip(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	run, err := svc.CreateRun(ctx, CreateRunInput{
-		OwnerType:          store.TaskOwnerPM,
+		OwnerType:          contracts.TaskOwnerPM,
 		TaskType:           "dispatch_ticket",
 		ProjectKey:         "demo",
 		TicketID:           11,
@@ -33,7 +34,7 @@ func TestService_TaskRunRoundTrip(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          "11",
 		RequestID:          "req-dispatch-1",
-		OrchestrationState: store.TaskPending,
+		OrchestrationState: contracts.TaskPending,
 		RequestPayloadJSON: `{"ticket_id":11}`,
 	})
 	if err != nil {
@@ -49,7 +50,7 @@ func TestService_TaskRunRoundTrip(t *testing.T) {
 	}
 	if err := svc.AppendRuntimeSample(ctx, RuntimeSampleInput{
 		TaskRunID:  run.ID,
-		State:      store.TaskHealthBusy,
+		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
 		Summary:    "dispatch executing",
 		Source:     "pm_dispatch",
@@ -62,7 +63,7 @@ func TestService_TaskRunRoundTrip(t *testing.T) {
 	}
 	if err := svc.AppendSemanticReport(ctx, SemanticReportInput{
 		TaskRunID:  run.ID,
-		Phase:      store.TaskPhasePlanning,
+		Phase:      contracts.TaskPhasePlanning,
 		Milestone:  "task_claimed",
 		NextAction: "continue",
 		Summary:    "claimed by runner",
@@ -90,13 +91,13 @@ func TestService_TaskRunRoundTrip(t *testing.T) {
 	if status == nil {
 		t.Fatalf("expected status exists")
 	}
-	if status.OrchestrationState != string(store.TaskRunning) {
+	if status.OrchestrationState != string(contracts.TaskRunning) {
 		t.Fatalf("unexpected orchestration state: %s", status.OrchestrationState)
 	}
-	if status.RuntimeHealthState != string(store.TaskHealthBusy) {
+	if status.RuntimeHealthState != string(contracts.TaskHealthBusy) {
 		t.Fatalf("unexpected runtime health state: %s", status.RuntimeHealthState)
 	}
-	if status.SemanticPhase != string(store.TaskPhasePlanning) {
+	if status.SemanticPhase != string(contracts.TaskPhasePlanning) {
 		t.Fatalf("unexpected semantic phase: %s", status.SemanticPhase)
 	}
 
@@ -107,7 +108,7 @@ func TestService_TaskRunRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetStatusByRunID after success failed: %v", err)
 	}
-	if status == nil || status.OrchestrationState != string(store.TaskSucceeded) {
+	if status == nil || status.OrchestrationState != string(contracts.TaskSucceeded) {
 		t.Fatalf("expected succeeded after MarkRunSucceeded, got=%v", status)
 	}
 
@@ -126,7 +127,7 @@ func TestService_WorkerActiveRunLifecycle(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	_, err := svc.CreateRun(ctx, CreateRunInput{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
 		TicketID:           7,
@@ -134,7 +135,7 @@ func TestService_WorkerActiveRunLifecycle(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          "7",
 		RequestID:          "wrk-a",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &now,
 	})
 	if err != nil {
@@ -159,14 +160,14 @@ func TestService_WorkerActiveRunLifecycle(t *testing.T) {
 		t.Fatalf("expected no active run after cancel, got=%+v", *latest)
 	}
 
-	list, err := svc.ListStatus(ctx, ListStatusOptions{OwnerType: store.TaskOwnerWorker, IncludeTerminal: true, Limit: 10})
+	list, err := svc.ListStatus(ctx, ListStatusOptions{OwnerType: contracts.TaskOwnerWorker, IncludeTerminal: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("ListStatus failed: %v", err)
 	}
 	if len(list) == 0 {
 		t.Fatalf("expected canceled run visible in list")
 	}
-	if list[0].OrchestrationState != string(store.TaskCanceled) {
+	if list[0].OrchestrationState != string(contracts.TaskCanceled) {
 		t.Fatalf("unexpected orchestration_state=%s", list[0].OrchestrationState)
 	}
 }
@@ -177,7 +178,7 @@ func TestService_MarkRunSucceeded_DoesNotOverrideCanceled(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	run, err := svc.CreateRun(ctx, CreateRunInput{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
 		TicketID:           17,
@@ -185,7 +186,7 @@ func TestService_MarkRunSucceeded_DoesNotOverrideCanceled(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          "17",
 		RequestID:          "req-cancel-guard-succeeded",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &now,
 	})
 	if err != nil {
@@ -201,7 +202,7 @@ func TestService_MarkRunSucceeded_DoesNotOverrideCanceled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetStatusByRunID failed: %v", err)
 	}
-	if status == nil || status.OrchestrationState != string(store.TaskCanceled) {
+	if status == nil || status.OrchestrationState != string(contracts.TaskCanceled) {
 		t.Fatalf("expected canceled state unchanged, got=%+v", status)
 	}
 }
@@ -212,7 +213,7 @@ func TestService_MarkRunFailed_DoesNotOverrideCanceled(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	run, err := svc.CreateRun(ctx, CreateRunInput{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
 		TicketID:           18,
@@ -220,7 +221,7 @@ func TestService_MarkRunFailed_DoesNotOverrideCanceled(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          "18",
 		RequestID:          "req-cancel-guard-failed",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &now,
 	})
 	if err != nil {
@@ -236,7 +237,7 @@ func TestService_MarkRunFailed_DoesNotOverrideCanceled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetStatusByRunID failed: %v", err)
 	}
-	if status == nil || status.OrchestrationState != string(store.TaskCanceled) {
+	if status == nil || status.OrchestrationState != string(contracts.TaskCanceled) {
 		t.Fatalf("expected canceled state unchanged, got=%+v", status)
 	}
 }
@@ -247,7 +248,7 @@ func TestService_MarkRunRunning_DoesNotOverrideCanceled(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	run, err := svc.CreateRun(ctx, CreateRunInput{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
 		TicketID:           20,
@@ -255,7 +256,7 @@ func TestService_MarkRunRunning_DoesNotOverrideCanceled(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          "20",
 		RequestID:          "req-cancel-guard-running",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &now,
 	})
 	if err != nil {
@@ -272,7 +273,7 @@ func TestService_MarkRunRunning_DoesNotOverrideCanceled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetStatusByRunID failed: %v", err)
 	}
-	if status == nil || status.OrchestrationState != string(store.TaskCanceled) {
+	if status == nil || status.OrchestrationState != string(contracts.TaskCanceled) {
 		t.Fatalf("expected canceled state unchanged, got=%+v", status)
 	}
 }
@@ -283,7 +284,7 @@ func TestService_AppendEvent_DropsTerminalEventsAfterCanceled(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	run, err := svc.CreateRun(ctx, CreateRunInput{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
 		TicketID:           19,
@@ -291,7 +292,7 @@ func TestService_AppendEvent_DropsTerminalEventsAfterCanceled(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          "19",
 		RequestID:          "req-cancel-event-guard",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &now,
 	})
 	if err != nil {
@@ -331,7 +332,7 @@ func TestService_StatusViewContainsLatestObservationFields(t *testing.T) {
 	base := time.Now().UTC().Truncate(time.Second)
 
 	run, err := svc.CreateRun(ctx, CreateRunInput{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
 		TicketID:           31,
@@ -339,7 +340,7 @@ func TestService_StatusViewContainsLatestObservationFields(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          "31",
 		RequestID:          "req-updated-at-1",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &base,
 	})
 	if err != nil {
@@ -349,7 +350,7 @@ func TestService_StatusViewContainsLatestObservationFields(t *testing.T) {
 	tRuntime := base.Add(1 * time.Minute)
 	if err := svc.AppendRuntimeSample(ctx, RuntimeSampleInput{
 		TaskRunID:  run.ID,
-		State:      store.TaskHealthBusy,
+		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
 		Summary:    "runtime sample",
 		Source:     "test",
@@ -361,7 +362,7 @@ func TestService_StatusViewContainsLatestObservationFields(t *testing.T) {
 	tSemantic := base.Add(2 * time.Minute)
 	if err := svc.AppendSemanticReport(ctx, SemanticReportInput{
 		TaskRunID:  run.ID,
-		Phase:      store.TaskPhaseImplementing,
+		Phase:      contracts.TaskPhaseImplementing,
 		Milestone:  "m1",
 		NextAction: "continue",
 		Summary:    "semantic report",
@@ -401,7 +402,7 @@ func TestService_CreateRun_DuplicateRequestIDReturnsExisting(t *testing.T) {
 	svc := newTaskServiceForTest(t)
 	ctx := context.Background()
 	in := CreateRunInput{
-		OwnerType:          store.TaskOwnerPM,
+		OwnerType:          contracts.TaskOwnerPM,
 		TaskType:           "dispatch_ticket",
 		ProjectKey:         "demo",
 		TicketID:           11,
@@ -409,7 +410,7 @@ func TestService_CreateRun_DuplicateRequestIDReturnsExisting(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          "11",
 		RequestID:          "dup-request-id-1",
-		OrchestrationState: store.TaskPending,
+		OrchestrationState: contracts.TaskPending,
 	}
 	first, err := svc.CreateRun(ctx, in)
 	if err != nil {
@@ -429,7 +430,7 @@ func TestService_ListEvents_LatestNAscending(t *testing.T) {
 	ctx := context.Background()
 	base := time.Now().UTC().Truncate(time.Second)
 	run, err := svc.CreateRun(ctx, CreateRunInput{
-		OwnerType:          store.TaskOwnerWorker,
+		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",
 		ProjectKey:         "demo",
 		TicketID:           71,
@@ -437,7 +438,7 @@ func TestService_ListEvents_LatestNAscending(t *testing.T) {
 		SubjectType:        "ticket",
 		SubjectID:          "71",
 		RequestID:          "req-list-events-asc",
-		OrchestrationState: store.TaskRunning,
+		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &base,
 	})
 	if err != nil {

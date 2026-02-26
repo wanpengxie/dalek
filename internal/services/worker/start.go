@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"crypto/rand"
+	"dalek/internal/contracts"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -190,7 +191,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 
 	// 语义收敛后：一个 ticket 只绑定一个 worker 记录。
 	// 若已在 running 且 session 存活，start 直接返回，不重复拉起。
-	if w != nil && w.Status == store.WorkerRunning && strings.TrimSpace(w.TmuxSession) != "" {
+	if w != nil && w.Status == contracts.WorkerRunning && strings.TrimSpace(w.TmuxSession) != "" {
 		socket := strings.TrimSpace(w.TmuxSocket)
 		if socket == "" {
 			socket = strings.TrimSpace(p.Config.TmuxSocket)
@@ -264,7 +265,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	if w == nil {
 		fresh := store.Worker{
 			TicketID:     t.ID,
-			Status:       store.WorkerStopped,
+			Status:       contracts.WorkerStopped,
 			WorktreePath: worktreePath,
 			Branch:       branch,
 			TmuxSocket:   strings.TrimSpace(p.Config.TmuxSocket),
@@ -278,7 +279,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 			if err := tx.Create(&fresh).Error; err != nil {
 				return err
 			}
-			return s.appendWorkerStatusEventTx(ctx, tx, fresh.ID, fresh.TicketID, store.WorkerStatus(""), store.WorkerStopped, "worker.start", "创建 worker 初始状态", map[string]any{
+			return s.appendWorkerStatusEventTx(ctx, tx, fresh.ID, fresh.TicketID, contracts.WorkerStatus(""), contracts.WorkerStopped, "worker.start", "创建 worker 初始状态", map[string]any{
 				"ticket_id": fresh.TicketID,
 			}, now)
 		}); err != nil {
@@ -305,7 +306,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	statusNow := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-			"status":        store.WorkerCreating,
+			"status":        contracts.WorkerCreating,
 			"worktree_path": worktreePath,
 			"branch":        branch,
 			"tmux_socket":   socket,
@@ -316,7 +317,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		}).Error; err != nil {
 			return err
 		}
-		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, prevStatus, store.WorkerCreating, "worker.start", "start 进入 creating", map[string]any{
+		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, prevStatus, contracts.WorkerCreating, "worker.start", "start 进入 creating", map[string]any{
 			"ticket_id":    w.TicketID,
 			"tmux_socket":  strings.TrimSpace(socket),
 			"tmux_session": strings.TrimSpace(session),
@@ -324,7 +325,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	}); err != nil {
 		return nil, err
 	}
-	w.Status = store.WorkerCreating
+	w.Status = contracts.WorkerCreating
 
 	if oldSession != "" {
 		if oldSocket == "" {
@@ -386,13 +387,13 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		failedAt := time.Now()
 		_ = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if uerr := tx.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-				"status":     store.WorkerFailed,
+				"status":     contracts.WorkerFailed,
 				"last_error": err.Error(),
 				"stopped_at": &failedAt,
 			}).Error; uerr != nil {
 				return uerr
 			}
-			return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, store.WorkerFailed, "worker.start", "tmux session 启动失败", map[string]any{
+			return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, contracts.WorkerFailed, "worker.start", "tmux session 启动失败", map[string]any{
 				"ticket_id":    w.TicketID,
 				"tmux_socket":  strings.TrimSpace(socket),
 				"tmux_session": strings.TrimSpace(session),

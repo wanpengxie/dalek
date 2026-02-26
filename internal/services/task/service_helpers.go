@@ -1,23 +1,23 @@
 package task
 
 import (
+	"dalek/internal/contracts"
 	"encoding/json"
 	"strings"
 
 	"dalek/internal/fsm"
-	"dalek/internal/store"
 )
 
-func NextActionToSemanticPhase(nextAction string) store.TaskSemanticPhase {
+func NextActionToSemanticPhase(nextAction string) contracts.TaskSemanticPhase {
 	switch strings.TrimSpace(strings.ToLower(nextAction)) {
 	case "done":
-		return store.TaskPhaseDone
+		return contracts.TaskPhaseDone
 	case "wait_user":
-		return store.TaskPhaseBlocked
+		return contracts.TaskPhaseBlocked
 	case "continue":
-		return store.TaskPhaseImplementing
+		return contracts.TaskPhaseImplementing
 	default:
-		return store.TaskPhaseImplementing
+		return contracts.TaskPhaseImplementing
 	}
 }
 
@@ -38,31 +38,31 @@ func toJSON(v any) string {
 	return strings.TrimSpace(string(b))
 }
 
-func validOwnerType(v store.TaskOwnerType) bool {
+func validOwnerType(v contracts.TaskOwnerType) bool {
 	switch v {
-	case store.TaskOwnerWorker, store.TaskOwnerPM, store.TaskOwnerSubagent:
+	case contracts.TaskOwnerWorker, contracts.TaskOwnerPM, contracts.TaskOwnerSubagent:
 		return true
 	default:
 		return false
 	}
 }
 
-func validOrchestrationState(v store.TaskOrchestrationState) bool {
+func validOrchestrationState(v contracts.TaskOrchestrationState) bool {
 	return fsm.TaskRunOrchestrationTable.IsKnownState(v)
 }
 
-func validHealthState(v store.TaskRuntimeHealthState) bool {
+func validHealthState(v contracts.TaskRuntimeHealthState) bool {
 	switch v {
-	case store.TaskHealthUnknown, store.TaskHealthAlive, store.TaskHealthIdle, store.TaskHealthBusy, store.TaskHealthStalled, store.TaskHealthWaitingUser, store.TaskHealthDead:
+	case contracts.TaskHealthUnknown, contracts.TaskHealthAlive, contracts.TaskHealthIdle, contracts.TaskHealthBusy, contracts.TaskHealthStalled, contracts.TaskHealthWaitingUser, contracts.TaskHealthDead:
 		return true
 	default:
 		return false
 	}
 }
 
-func validSemanticPhase(v store.TaskSemanticPhase) bool {
+func validSemanticPhase(v contracts.TaskSemanticPhase) bool {
 	switch v {
-	case store.TaskPhaseInit, store.TaskPhasePlanning, store.TaskPhaseImplementing, store.TaskPhaseTesting, store.TaskPhaseReviewing, store.TaskPhaseDone, store.TaskPhaseBlocked:
+	case contracts.TaskPhaseInit, contracts.TaskPhasePlanning, contracts.TaskPhaseImplementing, contracts.TaskPhaseTesting, contracts.TaskPhaseReviewing, contracts.TaskPhaseDone, contracts.TaskPhaseBlocked:
 		return true
 	default:
 		return false

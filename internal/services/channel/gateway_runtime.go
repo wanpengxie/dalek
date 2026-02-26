@@ -28,11 +28,11 @@ type ProjectRuntime interface {
 }
 
 type ProjectRuntimeInterrupter interface {
-	InterruptConversation(ctx context.Context, channelType, adapter, peerConversationID string) (InterruptResult, error)
+	InterruptConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (InterruptResult, error)
 }
 
 type ProjectRuntimeSessionResetter interface {
-	ResetConversationSession(ctx context.Context, channelType, adapter, peerConversationID string) (bool, error)
+	ResetConversationSession(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error)
 }
 
 type ProjectRuntimePendingActionManager interface {
@@ -251,13 +251,13 @@ func (g *Gateway) MarkOutboxDelivery(ctx context.Context, outboxID uint, deliver
 			"updated_at":    now,
 			"next_retry_at": nil,
 		}
-		msgStatus := store.ChannelMessageFailed
+		msgStatus := contracts.ChannelMessageFailed
 		if delivered {
-			outboxUpdates["status"] = store.ChannelOutboxSent
+			outboxUpdates["status"] = contracts.ChannelOutboxSent
 			outboxUpdates["last_error"] = ""
-			msgStatus = store.ChannelMessageSent
+			msgStatus = contracts.ChannelMessageSent
 		} else {
-			outboxUpdates["status"] = store.ChannelOutboxFailed
+			outboxUpdates["status"] = contracts.ChannelOutboxFailed
 			outboxUpdates["last_error"] = errMsg
 		}
 
@@ -341,15 +341,15 @@ func (g *Gateway) normalizeInboundRequest(req GatewayInboundRequest) (InboundIte
 	}
 	env := req.Envelope
 	env.Normalize()
-	env.ChannelType = strings.ToLower(strings.TrimSpace(env.ChannelType))
+	env.ChannelType = contracts.ChannelType(strings.ToLower(strings.TrimSpace(string(env.ChannelType))))
 	if env.ChannelType == "" {
 		env.ChannelType = contracts.ChannelTypeCLI
 	}
 	if strings.TrimSpace(env.Adapter) == "" {
-		env.Adapter = defaultAdapter(env.ChannelType)
+		env.Adapter = defaultAdapter(string(env.ChannelType))
 	}
 	if strings.TrimSpace(env.PeerConversationID) == "" {
-		env.PeerConversationID = defaultConversationID(env.ChannelType)
+		env.PeerConversationID = defaultConversationID(string(env.ChannelType))
 	}
 	if strings.TrimSpace(env.PeerMessageID) == "" {
 		env.PeerMessageID = fmt.Sprintf("msg_%d", time.Now().UnixNano())
@@ -527,7 +527,7 @@ func (g *Gateway) persistInboundAccepted(ctx context.Context, item InboundItem) 
 		var inbound store.ChannelMessage
 		err = tx.WithContext(ctx).
 			Where("direction = ? AND conversation_id = ? AND adapter = ? AND peer_message_id = ?",
-				store.ChannelMessageIn,
+				contracts.ChannelMessageIn,
 				conv.ID,
 				strings.TrimSpace(item.Envelope.Adapter),
 				strings.TrimSpace(item.Envelope.PeerMessageID)).
@@ -560,7 +560,7 @@ func (g *Gateway) persistInboundAccepted(ctx context.Context, item InboundItem) 
 				job := store.ChannelTurnJob{
 					ConversationID:   inbound.ConversationID,
 					InboundMessageID: inbound.ID,
-					Status:           store.ChannelTurnPending,
+					Status:           contracts.ChannelTurnPending,
 				}
 				if jerr := tx.WithContext(ctx).Create(&job).Error; jerr != nil {
 					return jerr
@@ -583,13 +583,13 @@ func (g *Gateway) persistInboundAccepted(ctx context.Context, item InboundItem) 
 		peerID := strings.TrimSpace(item.Envelope.PeerMessageID)
 		inbound = store.ChannelMessage{
 			ConversationID: conv.ID,
-			Direction:      store.ChannelMessageIn,
+			Direction:      contracts.ChannelMessageIn,
 			Adapter:        strings.TrimSpace(item.Envelope.Adapter),
 			PeerMessageID:  &peerID,
 			SenderID:       strings.TrimSpace(item.Envelope.SenderID),
 			ContentText:    strings.TrimSpace(item.Envelope.Text),
 			PayloadJSON:    mustJSON(payload),
-			Status:         store.ChannelMessageAccepted,
+			Status:         contracts.ChannelMessageAccepted,
 		}
 		if err := tx.WithContext(ctx).Create(&inbound).Error; err != nil {
 			return err
@@ -606,7 +606,7 @@ func (g *Gateway) persistInboundAccepted(ctx context.Context, item InboundItem) 
 		job := store.ChannelTurnJob{
 			ConversationID:   conv.ID,
 			InboundMessageID: inbound.ID,
-			Status:           store.ChannelTurnPending,
+			Status:           contracts.ChannelTurnPending,
 		}
 		if err := tx.WithContext(ctx).Create(&job).Error; err != nil {
 			return err
@@ -642,13 +642,13 @@ func (g *Gateway) persistTurnResult(ctx context.Context, state gatewayPersistSta
 	status := result.JobStatus
 	if status == "" {
 		if runErr != nil {
-			status = store.ChannelTurnFailed
+			status = contracts.ChannelTurnFailed
 		} else {
-			status = store.ChannelTurnSucceeded
+			status = contracts.ChannelTurnSucceeded
 		}
 	}
 	if runErr != nil {
-		status = store.ChannelTurnFailed
+		status = contracts.ChannelTurnFailed
 	}
 	jobErr := strings.TrimSpace(result.JobError)
 	if runErr != nil {
@@ -658,7 +658,7 @@ func (g *Gateway) persistTurnResult(ctx context.Context, state gatewayPersistSta
 	if jobErrType == "" {
 		jobErrType = classifyJobErrorType(jobErr)
 	}
-	if status == store.ChannelTurnSucceeded {
+	if status == contracts.ChannelTurnSucceeded {
 		jobErr = ""
 		jobErrType = ""
 	}
@@ -716,7 +716,7 @@ func (g *Gateway) persistTurnResult(ctx context.Context, state gatewayPersistSta
 		convUpdates := map[string]any{
 			"updated_at": now,
 		}
-		if status == store.ChannelTurnSucceeded {
+		if status == contracts.ChannelTurnSucceeded {
 			convUpdates["last_message_at"] = &now
 		}
 		if err := tx.Model(&store.ChannelConversation{}).
@@ -729,7 +729,7 @@ func (g *Gateway) persistTurnResult(ctx context.Context, state gatewayPersistSta
 			outPeerID := fmt.Sprintf("gateway_out_job_%d", state.job.ID)
 			outbound := store.ChannelMessage{
 				ConversationID: state.conv.ID,
-				Direction:      store.ChannelMessageOut,
+				Direction:      contracts.ChannelMessageOut,
 				Adapter:        strings.TrimSpace(env.Adapter),
 				PeerMessageID:  &outPeerID,
 				SenderID:       "pm",
@@ -750,7 +750,7 @@ func (g *Gateway) persistTurnResult(ctx context.Context, state gatewayPersistSta
 				RetryCount:  1,
 				LastError:   "",
 			}
-			if status != store.ChannelTurnSucceeded {
+			if status != contracts.ChannelTurnSucceeded {
 				outbox.LastError = jobErr
 			}
 			if err := tx.Create(&outbox).Error; err != nil {
@@ -773,7 +773,7 @@ func (g *Gateway) persistTurnResult(ctx context.Context, state gatewayPersistSta
 			"finished_at":      &now,
 			"updated_at":       now,
 		}
-		if status == store.ChannelTurnSucceeded {
+		if status == contracts.ChannelTurnSucceeded {
 			updates["error"] = ""
 		}
 		return tx.Model(&store.ChannelTurnJob{}).
@@ -891,7 +891,7 @@ func decodeGatewayTurnResult(job store.ChannelTurnJob) ProcessResult {
 	res.AgentEvents = copyAgentEvents(payload.AgentEvents)
 	res.PendingActions = copyPendingActionViews(payload.PendingActions)
 	if st := strings.TrimSpace(payload.JobStatus); st != "" {
-		res.JobStatus = store.ChannelTurnJobStatus(st)
+		res.JobStatus = contracts.ChannelTurnJobStatus(st)
 	}
 	if msg := strings.TrimSpace(payload.JobError); msg != "" {
 		res.JobError = msg
@@ -918,7 +918,7 @@ func (g *Gateway) publishError(projectName, conversationID, peerMessageID string
 		Text:           msg,
 		EventType:      "error",
 		Stream:         "lifecycle",
-		JobStatus:      store.ChannelTurnFailed,
+		JobStatus:      contracts.ChannelTurnFailed,
 		JobError:       msg,
 		JobErrorType:   classifyJobErrorType(msg),
 		At:             time.Now(),
@@ -952,7 +952,7 @@ func (g *Gateway) publishStreamAgentEvent(projectName, conversationID, peerMessa
 		Stream:         stream,
 		Text:           text,
 		EventType:      eventType,
-		JobStatus:      store.ChannelTurnRunning,
+		JobStatus:      contracts.ChannelTurnRunning,
 		At:             time.Now(),
 	})
 }
@@ -962,7 +962,7 @@ func (g *Gateway) publishFinalFromResult(projectName, conversationID, peerMessag
 		return
 	}
 	reply := strings.TrimSpace(result.ReplyText)
-	if reply == "" && result.JobStatus != store.ChannelTurnSucceeded {
+	if reply == "" && result.JobStatus != contracts.ChannelTurnSucceeded {
 		reply = strings.TrimSpace(result.JobError)
 	}
 	finalRunID := strings.TrimSpace(result.RunID)
@@ -976,7 +976,7 @@ func (g *Gateway) publishFinalFromResult(projectName, conversationID, peerMessag
 		}
 	}
 	finalEventType := "end"
-	if result.JobStatus != store.ChannelTurnSucceeded {
+	if result.JobStatus != contracts.ChannelTurnSucceeded {
 		finalEventType = "error"
 	}
 	g.bus.Publish(GatewayEvent{
@@ -1006,7 +1006,7 @@ func (g *Gateway) publishFromResult(projectName, conversationID, peerMessageID s
 	conversationID = strings.TrimSpace(conversationID)
 	peerMessageID = strings.TrimSpace(peerMessageID)
 	reply := strings.TrimSpace(result.ReplyText)
-	if reply == "" && result.JobStatus != store.ChannelTurnSucceeded {
+	if reply == "" && result.JobStatus != contracts.ChannelTurnSucceeded {
 		reply = strings.TrimSpace(result.JobError)
 	}
 
@@ -1060,7 +1060,7 @@ func (g *Gateway) publishFromResult(projectName, conversationID, peerMessageID s
 	if finalSeq <= 0 {
 		finalSeq = lastSeq + 1
 	}
-	if result.JobStatus != store.ChannelTurnSucceeded {
+	if result.JobStatus != contracts.ChannelTurnSucceeded {
 		finalEventType = "error"
 	}
 
@@ -1083,23 +1083,23 @@ func (g *Gateway) publishFromResult(projectName, conversationID, peerMessageID s
 	})
 }
 
-func toStoreChannelType(channelType string) store.ChannelType {
-	switch strings.ToLower(strings.TrimSpace(channelType)) {
-	case contracts.ChannelTypeWeb:
-		return store.ChannelWeb
-	case contracts.ChannelTypeIM:
-		return store.ChannelIM
-	case contracts.ChannelTypeAPI:
-		return store.ChannelAPI
-	case contracts.ChannelTypeCLI:
+func toStoreChannelType(channelType contracts.ChannelType) contracts.ChannelType {
+	switch strings.ToLower(strings.TrimSpace(string(channelType))) {
+	case string(contracts.ChannelTypeWeb):
+		return contracts.ChannelTypeWeb
+	case string(contracts.ChannelTypeIM):
+		return contracts.ChannelTypeIM
+	case string(contracts.ChannelTypeAPI):
+		return contracts.ChannelTypeAPI
+	case string(contracts.ChannelTypeCLI):
 		fallthrough
 	default:
-		return store.ChannelCLI
+		return contracts.ChannelTypeCLI
 	}
 }
 
 func defaultPeerProjectKey(projectName string, env contracts.InboundEnvelope) string {
-	if strings.EqualFold(strings.TrimSpace(env.ChannelType), contracts.ChannelTypeIM) {
+	if strings.EqualFold(strings.TrimSpace(string(env.ChannelType)), string(contracts.ChannelTypeIM)) {
 		if strings.TrimSpace(env.PeerConversationID) != "" {
 			return strings.TrimSpace(env.PeerConversationID)
 		}
@@ -1107,25 +1107,25 @@ func defaultPeerProjectKey(projectName string, env contracts.InboundEnvelope) st
 	return strings.TrimSpace(projectName)
 }
 
-func inboundMessageStatusFromTurn(st store.ChannelTurnJobStatus) store.ChannelMessageStatus {
-	if st == store.ChannelTurnSucceeded {
-		return store.ChannelMessageProcessed
+func inboundMessageStatusFromTurn(st contracts.ChannelTurnJobStatus) contracts.ChannelMessageStatus {
+	if st == contracts.ChannelTurnSucceeded {
+		return contracts.ChannelMessageProcessed
 	}
-	return store.ChannelMessageFailed
+	return contracts.ChannelMessageFailed
 }
 
-func outboundMessageStatusFromTurn(st store.ChannelTurnJobStatus) store.ChannelMessageStatus {
-	if st == store.ChannelTurnSucceeded {
-		return store.ChannelMessageSent
+func outboundMessageStatusFromTurn(st contracts.ChannelTurnJobStatus) contracts.ChannelMessageStatus {
+	if st == contracts.ChannelTurnSucceeded {
+		return contracts.ChannelMessageSent
 	}
-	return store.ChannelMessageFailed
+	return contracts.ChannelMessageFailed
 }
 
-func outboxStatusFromTurn(st store.ChannelTurnJobStatus) store.ChannelOutboxStatus {
-	if st == store.ChannelTurnSucceeded {
-		return store.ChannelOutboxSent
+func outboxStatusFromTurn(st contracts.ChannelTurnJobStatus) contracts.ChannelOutboxStatus {
+	if st == contracts.ChannelTurnSucceeded {
+		return contracts.ChannelOutboxSent
 	}
-	return store.ChannelOutboxFailed
+	return contracts.ChannelOutboxFailed
 }
 
 func deriveGatewayRuntimeEventType(stream, phase string) string {
@@ -1149,20 +1149,20 @@ func deriveGatewayRuntimeEventType(stream, phase string) string {
 	return phase
 }
 
-func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType, adapter, peerProjectKey, peerConversationID string) (string, InterruptResult, error) {
+func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey, peerConversationID string) (string, InterruptResult, error) {
 	if g == nil || g.db == nil {
 		return "", InterruptResult{}, fmt.Errorf("gateway db 为空")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	channelType = strings.TrimSpace(strings.ToLower(channelType))
+	channelType = toStoreChannelType(channelType)
 	if channelType == "" {
 		channelType = contracts.ChannelTypeCLI
 	}
 	adapter = strings.TrimSpace(adapter)
 	if adapter == "" {
-		adapter = defaultAdapter(channelType)
+		adapter = defaultAdapter(string(channelType))
 	}
 	peerProjectKey = strings.TrimSpace(peerProjectKey)
 	peerConversationID = strings.TrimSpace(peerConversationID)
@@ -1243,20 +1243,20 @@ func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType, a
 	return projectName, result, nil
 }
 
-func (g *Gateway) ResetBoundConversationSession(ctx context.Context, channelType, adapter, peerProjectKey, peerConversationID string) (string, bool, error) {
+func (g *Gateway) ResetBoundConversationSession(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey, peerConversationID string) (string, bool, error) {
 	if g == nil || g.db == nil {
 		return "", false, fmt.Errorf("gateway db 为空")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	channelType = strings.TrimSpace(strings.ToLower(channelType))
+	channelType = toStoreChannelType(channelType)
 	if channelType == "" {
 		channelType = contracts.ChannelTypeCLI
 	}
 	adapter = strings.TrimSpace(adapter)
 	if adapter == "" {
-		adapter = defaultAdapter(channelType)
+		adapter = defaultAdapter(string(channelType))
 	}
 	peerProjectKey = strings.TrimSpace(peerProjectKey)
 	peerConversationID = strings.TrimSpace(peerConversationID)
@@ -1293,7 +1293,7 @@ func (g *Gateway) ResetBoundConversationSession(ctx context.Context, channelType
 	return projectName, reset, nil
 }
 
-func (g *Gateway) LookupBoundProject(ctx context.Context, channelType, adapter, peerProjectKey string) (string, error) {
+func (g *Gateway) LookupBoundProject(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey string) (string, error) {
 	if g == nil || g.db == nil {
 		return "", fmt.Errorf("gateway db 为空")
 	}
@@ -1313,7 +1313,7 @@ func (g *Gateway) LookupBoundProject(ctx context.Context, channelType, adapter, 
 	return strings.TrimSpace(binding.ProjectName), nil
 }
 
-func (g *Gateway) BindProject(ctx context.Context, channelType, adapter, peerProjectKey, projectName string) (string, error) {
+func (g *Gateway) BindProject(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey, projectName string) (string, error) {
 	if g == nil || g.db == nil {
 		return "", fmt.Errorf("gateway db 为空")
 	}
@@ -1363,7 +1363,7 @@ func (g *Gateway) BindProject(ctx context.Context, channelType, adapter, peerPro
 	return prevProject, nil
 }
 
-func (g *Gateway) UnbindProject(ctx context.Context, channelType, adapter, peerProjectKey string) (bool, error) {
+func (g *Gateway) UnbindProject(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey string) (bool, error) {
 	if g == nil || g.db == nil {
 		return false, fmt.Errorf("gateway db 为空")
 	}

@@ -40,10 +40,10 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 	if !claimed {
 		return nil
 	}
-	s.recordPMTaskRuntime(ctx, job.TaskRunID, store.TaskHealthBusy, false, "dispatch task claimed", "pm_dispatch", map[string]any{
+	s.recordPMTaskRuntime(ctx, job.TaskRunID, contracts.TaskHealthBusy, false, "dispatch task claimed", "pm_dispatch", map[string]any{
 		"runner_id": strings.TrimSpace(runnerID),
 	})
-	s.recordPMTaskSemantic(ctx, job.TaskRunID, store.TaskPhasePlanning, "task_claimed", "continue", "dispatch task claimed by runner", map[string]any{
+	s.recordPMTaskSemantic(ctx, job.TaskRunID, contracts.TaskPhasePlanning, "task_claimed", "continue", "dispatch task claimed by runner", map[string]any{
 		"runner_id": strings.TrimSpace(runnerID),
 	})
 
@@ -77,7 +77,7 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 		return err
 	}
 
-	s.recordPMTaskSemantic(ctx, job.TaskRunID, store.TaskPhaseImplementing, "dispatch_pm_agent", "continue", "开始执行 PM dispatch agent", map[string]any{
+	s.recordPMTaskSemantic(ctx, job.TaskRunID, contracts.TaskPhaseImplementing, "dispatch_pm_agent", "continue", "开始执行 PM dispatch agent", map[string]any{
 		"request_id": strings.TrimSpace(job.RequestID),
 	})
 
@@ -93,10 +93,10 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 		_ = s.completePMDispatchJobFailed(context.Background(), job.ID, runnerID, err.Error())
 		return err
 	}
-	s.recordPMTaskRuntime(ctx, job.TaskRunID, store.TaskHealthIdle, false, "dispatch task completed", "pm_dispatch", map[string]any{
+	s.recordPMTaskRuntime(ctx, job.TaskRunID, contracts.TaskHealthIdle, false, "dispatch task completed", "pm_dispatch", map[string]any{
 		"request_id": strings.TrimSpace(job.RequestID),
 	})
-	s.recordPMTaskSemantic(ctx, job.TaskRunID, store.TaskPhaseDone, "dispatch_done", "done", "dispatch 成功完成", map[string]any{
+	s.recordPMTaskSemantic(ctx, job.TaskRunID, contracts.TaskPhaseDone, "dispatch_done", "done", "dispatch 成功完成", map[string]any{
 		"request_id": strings.TrimSpace(job.RequestID),
 	})
 	if err := s.completePMDispatchJobSuccess(context.Background(), job.ID, runnerID, string(b)); err != nil {

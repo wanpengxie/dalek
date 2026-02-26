@@ -44,7 +44,7 @@ func TestNewSyncHandler_KeyPath(t *testing.T) {
 		result: channelsvc.ProcessResult{
 			RunID:         "run-1",
 			ReplyText:     "hello from ws",
-			JobStatus:     store.ChannelTurnSucceeded,
+			JobStatus:     contracts.ChannelTurnSucceeded,
 			AgentProvider: "codex",
 			AgentModel:    "gpt-5",
 		},
@@ -60,9 +60,9 @@ func TestNewSyncHandler_KeyPath(t *testing.T) {
 		ListInbox: func(_ context.Context, _ int) ([]store.InboxItem, error) {
 			return []store.InboxItem{{
 				ID:       1,
-				Status:   store.InboxOpen,
-				Severity: store.InboxWarn,
-				Reason:   store.InboxQuestion,
+				Status:   contracts.InboxOpen,
+				Severity: contracts.InboxWarn,
+				Reason:   contracts.InboxQuestion,
 				Title:    "need follow up",
 				TicketID: 7,
 			}}, nil

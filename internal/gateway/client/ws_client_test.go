@@ -10,8 +10,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"dalek/internal/contracts"
 	gatewayws "dalek/internal/services/channel/ws"
-	"dalek/internal/store"
 )
 
 var testUpgrader = websocket.Upgrader{CheckOrigin: func(_ *http.Request) bool { return true }}
@@ -81,7 +81,7 @@ func TestRunChat_HappyPath(t *testing.T) {
 	if strings.TrimSpace(result.FinalFrame.Text) != "done" {
 		t.Fatalf("final frame text mismatch: %+v", result.FinalFrame)
 	}
-	if strings.TrimSpace(result.FinalFrame.JobStatus) != string(store.ChannelTurnSucceeded) {
+	if strings.TrimSpace(result.FinalFrame.JobStatus) != string(contracts.ChannelTurnSucceeded) {
 		t.Fatalf("final frame job_status mismatch: %+v", result.FinalFrame)
 	}
 	if len(result.EventFrames) != 1 || strings.TrimSpace(result.EventFrames[0].Type) != gatewayws.FrameTypeAssistantEvent {
@@ -123,7 +123,7 @@ func TestRunChat_HandshakeErrorFrame(t *testing.T) {
 	if strings.TrimSpace(result.FinalFrame.Type) != gatewayws.FrameTypeError {
 		t.Fatalf("expected error frame, got %+v", result.FinalFrame)
 	}
-	if strings.TrimSpace(result.FinalFrame.JobStatus) != string(store.ChannelTurnFailed) {
+	if strings.TrimSpace(result.FinalFrame.JobStatus) != string(contracts.ChannelTurnFailed) {
 		t.Fatalf("expected failed status, got %+v", result.FinalFrame)
 	}
 	if strings.TrimSpace(result.FinalFrame.JobError) != "boom" {

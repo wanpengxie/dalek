@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"errors"
 	"fmt"
 	"strings"
@@ -50,7 +51,7 @@ func (s *Service) AppendEvent(ctx context.Context, in TaskEventInput) error {
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		if err == nil && run.OrchestrationState == store.TaskCanceled {
+		if err == nil && run.OrchestrationState == contracts.TaskCanceled {
 			return nil
 		}
 	}
@@ -68,7 +69,7 @@ func (s *Service) AppendEvent(ctx context.Context, in TaskEventInput) error {
 
 type RuntimeSampleInput struct {
 	TaskRunID  uint
-	State      store.TaskRuntimeHealthState
+	State      contracts.TaskRuntimeHealthState
 	NeedsUser  bool
 	Summary    string
 	Source     string
@@ -88,7 +89,7 @@ func (s *Service) AppendRuntimeSample(ctx context.Context, in RuntimeSampleInput
 		return fmt.Errorf("task_run_id 不能为空")
 	}
 	if !validHealthState(in.State) {
-		in.State = store.TaskHealthUnknown
+		in.State = contracts.TaskHealthUnknown
 	}
 	if in.ObservedAt.IsZero() {
 		in.ObservedAt = time.Now()
@@ -107,7 +108,7 @@ func (s *Service) AppendRuntimeSample(ctx context.Context, in RuntimeSampleInput
 
 type SemanticReportInput struct {
 	TaskRunID  uint
-	Phase      store.TaskSemanticPhase
+	Phase      contracts.TaskSemanticPhase
 	Milestone  string
 	NextAction string
 	Summary    string
@@ -127,7 +128,7 @@ func (s *Service) AppendSemanticReport(ctx context.Context, in SemanticReportInp
 		return fmt.Errorf("task_run_id 不能为空")
 	}
 	if !validSemanticPhase(in.Phase) {
-		in.Phase = store.TaskPhaseImplementing
+		in.Phase = contracts.TaskPhaseImplementing
 	}
 	if in.ReportedAt.IsZero() {
 		in.ReportedAt = time.Now()

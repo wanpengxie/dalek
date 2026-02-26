@@ -1,6 +1,7 @@
 package main
 
 import (
+	"dalek/internal/contracts"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"dalek/internal/app"
-	"dalek/internal/store"
 )
 
 func cmdTicket(args []string) {
@@ -157,7 +157,7 @@ func cmdTicketList(args []string) {
 			continue
 		}
 		v, ok := viewByID[tk.ID]
-		status := string(store.CanonicalTicketWorkflowStatus(tk.WorkflowStatus))
+		status := string(contracts.CanonicalTicketWorkflowStatus(tk.WorkflowStatus))
 		runtime := string(app.TaskHealthUnknown)
 		needsUser := false
 		session := "-"
@@ -380,7 +380,7 @@ func cmdTicketEdit(args []string) {
 			"使用 dalek ticket ls 查看可用 tickets",
 		)
 	}
-	if store.CanonicalTicketWorkflowStatus(tk.WorkflowStatus) == store.TicketArchived {
+	if contracts.CanonicalTicketWorkflowStatus(tk.WorkflowStatus) == contracts.TicketArchived {
 		exitRuntimeError(out,
 			fmt.Sprintf("ticket #%d 已归档，禁止编辑", *ticketID),
 			"归档 ticket 为只读状态",
@@ -406,7 +406,7 @@ func cmdTicketEdit(args []string) {
 
 	finalTitle := trimOneLine(nextTitle)
 	finalDesc := strings.TrimSpace(nextDesc)
-	status := string(store.CanonicalTicketWorkflowStatus(tk.WorkflowStatus))
+	status := string(contracts.CanonicalTicketWorkflowStatus(tk.WorkflowStatus))
 	if out == outputJSON {
 		printJSONOrExit(map[string]any{
 			"schema":      "dalek.ticket.edit.v1",

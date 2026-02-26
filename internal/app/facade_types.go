@@ -36,31 +36,31 @@ type Worker = store.Worker
 type MergeItem = store.MergeItem
 type InboxItem = store.InboxItem
 
-type TicketWorkflowStatus = store.TicketWorkflowStatus
-type WorkerStatus = store.WorkerStatus
+type TicketWorkflowStatus = contracts.TicketWorkflowStatus
+type WorkerStatus = contracts.WorkerStatus
 
 const (
-	TicketBacklog  TicketWorkflowStatus = store.TicketBacklog
-	TicketQueued   TicketWorkflowStatus = store.TicketQueued
-	TicketActive   TicketWorkflowStatus = store.TicketActive
-	TicketBlocked  TicketWorkflowStatus = store.TicketBlocked
-	TicketDone     TicketWorkflowStatus = store.TicketDone
-	TicketArchived TicketWorkflowStatus = store.TicketArchived
+	TicketBacklog  TicketWorkflowStatus = contracts.TicketBacklog
+	TicketQueued   TicketWorkflowStatus = contracts.TicketQueued
+	TicketActive   TicketWorkflowStatus = contracts.TicketActive
+	TicketBlocked  TicketWorkflowStatus = contracts.TicketBlocked
+	TicketDone     TicketWorkflowStatus = contracts.TicketDone
+	TicketArchived TicketWorkflowStatus = contracts.TicketArchived
 )
 
 const (
-	WorkerCreating WorkerStatus = store.WorkerCreating
-	WorkerRunning  WorkerStatus = store.WorkerRunning
-	WorkerStopped  WorkerStatus = store.WorkerStopped
-	WorkerFailed   WorkerStatus = store.WorkerFailed
+	WorkerCreating WorkerStatus = contracts.WorkerCreating
+	WorkerRunning  WorkerStatus = contracts.WorkerRunning
+	WorkerStopped  WorkerStatus = contracts.WorkerStopped
+	WorkerFailed   WorkerStatus = contracts.WorkerFailed
 )
 
-type TaskOwnerType = store.TaskOwnerType
+type TaskOwnerType = contracts.TaskOwnerType
 
 const (
-	TaskOwnerWorker   TaskOwnerType = store.TaskOwnerWorker
-	TaskOwnerPM       TaskOwnerType = store.TaskOwnerPM
-	TaskOwnerSubagent TaskOwnerType = store.TaskOwnerSubagent
+	TaskOwnerWorker   TaskOwnerType = contracts.TaskOwnerWorker
+	TaskOwnerPM       TaskOwnerType = contracts.TaskOwnerPM
+	TaskOwnerSubagent TaskOwnerType = contracts.TaskOwnerSubagent
 )
 
 func ParseTaskOwnerType(raw string) (TaskOwnerType, error) {
@@ -76,12 +76,12 @@ func ParseTaskOwnerType(raw string) (TaskOwnerType, error) {
 	}
 }
 
-type InboxStatus = store.InboxStatus
+type InboxStatus = contracts.InboxStatus
 
 const (
-	InboxOpen    InboxStatus = store.InboxOpen
-	InboxDone    InboxStatus = store.InboxDone
-	InboxSnoozed InboxStatus = store.InboxSnoozed
+	InboxOpen    InboxStatus = contracts.InboxOpen
+	InboxDone    InboxStatus = contracts.InboxDone
+	InboxSnoozed InboxStatus = contracts.InboxSnoozed
 )
 
 func ParseInboxStatus(raw string) (InboxStatus, error) {
@@ -97,16 +97,16 @@ func ParseInboxStatus(raw string) (InboxStatus, error) {
 	}
 }
 
-type MergeStatus = store.MergeStatus
+type MergeStatus = contracts.MergeStatus
 
 const (
-	MergeProposed      MergeStatus = store.MergeProposed
-	MergeChecksRunning MergeStatus = store.MergeChecksRunning
-	MergeReady         MergeStatus = store.MergeReady
-	MergeApproved      MergeStatus = store.MergeApproved
-	MergeMerged        MergeStatus = store.MergeMerged
-	MergeDiscarded     MergeStatus = store.MergeDiscarded
-	MergeBlocked       MergeStatus = store.MergeBlocked
+	MergeProposed      MergeStatus = contracts.MergeProposed
+	MergeChecksRunning MergeStatus = contracts.MergeChecksRunning
+	MergeReady         MergeStatus = contracts.MergeReady
+	MergeApproved      MergeStatus = contracts.MergeApproved
+	MergeMerged        MergeStatus = contracts.MergeMerged
+	MergeDiscarded     MergeStatus = contracts.MergeDiscarded
+	MergeBlocked       MergeStatus = contracts.MergeBlocked
 )
 
 func ParseMergeStatus(raw string) (MergeStatus, error) {
@@ -122,28 +122,28 @@ func ParseMergeStatus(raw string) (MergeStatus, error) {
 	}
 }
 
-type TaskRuntimeHealthState = store.TaskRuntimeHealthState
+type TaskRuntimeHealthState = contracts.TaskRuntimeHealthState
 
 const (
-	TaskHealthUnknown     TaskRuntimeHealthState = store.TaskHealthUnknown
-	TaskHealthAlive       TaskRuntimeHealthState = store.TaskHealthAlive
-	TaskHealthIdle        TaskRuntimeHealthState = store.TaskHealthIdle
-	TaskHealthBusy        TaskRuntimeHealthState = store.TaskHealthBusy
-	TaskHealthStalled     TaskRuntimeHealthState = store.TaskHealthStalled
-	TaskHealthWaitingUser TaskRuntimeHealthState = store.TaskHealthWaitingUser
-	TaskHealthDead        TaskRuntimeHealthState = store.TaskHealthDead
+	TaskHealthUnknown     TaskRuntimeHealthState = contracts.TaskHealthUnknown
+	TaskHealthAlive       TaskRuntimeHealthState = contracts.TaskHealthAlive
+	TaskHealthIdle        TaskRuntimeHealthState = contracts.TaskHealthIdle
+	TaskHealthBusy        TaskRuntimeHealthState = contracts.TaskHealthBusy
+	TaskHealthStalled     TaskRuntimeHealthState = contracts.TaskHealthStalled
+	TaskHealthWaitingUser TaskRuntimeHealthState = contracts.TaskHealthWaitingUser
+	TaskHealthDead        TaskRuntimeHealthState = contracts.TaskHealthDead
 )
 
-type TaskSemanticPhase = store.TaskSemanticPhase
+type TaskSemanticPhase = contracts.TaskSemanticPhase
 
 const (
-	TaskPhaseInit         TaskSemanticPhase = store.TaskPhaseInit
-	TaskPhasePlanning     TaskSemanticPhase = store.TaskPhasePlanning
-	TaskPhaseImplementing TaskSemanticPhase = store.TaskPhaseImplementing
-	TaskPhaseTesting      TaskSemanticPhase = store.TaskPhaseTesting
-	TaskPhaseReviewing    TaskSemanticPhase = store.TaskPhaseReviewing
-	TaskPhaseDone         TaskSemanticPhase = store.TaskPhaseDone
-	TaskPhaseBlocked      TaskSemanticPhase = store.TaskPhaseBlocked
+	TaskPhaseInit         TaskSemanticPhase = contracts.TaskPhaseInit
+	TaskPhasePlanning     TaskSemanticPhase = contracts.TaskPhasePlanning
+	TaskPhaseImplementing TaskSemanticPhase = contracts.TaskPhaseImplementing
+	TaskPhaseTesting      TaskSemanticPhase = contracts.TaskPhaseTesting
+	TaskPhaseReviewing    TaskSemanticPhase = contracts.TaskPhaseReviewing
+	TaskPhaseDone         TaskSemanticPhase = contracts.TaskPhaseDone
+	TaskPhaseBlocked      TaskSemanticPhase = contracts.TaskPhaseBlocked
 )
 
 func TmuxSocketDir(tmpDir string, uid int) string {

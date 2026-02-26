@@ -26,21 +26,21 @@ const (
 )
 
 type PendingActionView struct {
-	ID             uint                             `json:"id"`
-	ConversationID uint                             `json:"conversation_id"`
-	JobID          uint                             `json:"job_id"`
-	Action         contracts.TurnAction             `json:"action"`
-	Status         store.ChannelPendingActionStatus `json:"status"`
-	Decider        string                           `json:"decider"`
-	DecisionNote   string                           `json:"decision_note"`
-	CreatedAt      time.Time                        `json:"created_at"`
-	UpdatedAt      time.Time                        `json:"updated_at"`
-	DecidedAt      *time.Time                       `json:"decided_at,omitempty"`
-	ExecutedAt     *time.Time                       `json:"executed_at,omitempty"`
+	ID             uint                                 `json:"id"`
+	ConversationID uint                                 `json:"conversation_id"`
+	JobID          uint                                 `json:"job_id"`
+	Action         contracts.TurnAction                 `json:"action"`
+	Status         contracts.ChannelPendingActionStatus `json:"status"`
+	Decider        string                               `json:"decider"`
+	DecisionNote   string                               `json:"decision_note"`
+	CreatedAt      time.Time                            `json:"created_at"`
+	UpdatedAt      time.Time                            `json:"updated_at"`
+	DecidedAt      *time.Time                           `json:"decided_at,omitempty"`
+	ExecutedAt     *time.Time                           `json:"executed_at,omitempty"`
 }
 
 type PendingActionDecisionRequest struct {
-	ChannelType        string
+	ChannelType        contracts.ChannelType
 	Adapter            string
 	PeerConversationID string
 	PendingActionID    uint
@@ -124,7 +124,7 @@ func (s *Service) createPendingActionsTx(ctx context.Context, tx *gorm.DB, conve
 			ConversationID: conversationID,
 			JobID:          jobID,
 			ActionJSON:     strings.TrimSpace(string(actionJSON)),
-			Status:         store.ChannelPendingActionPending,
+			Status:         contracts.ChannelPendingActionPending,
 			Decider:        "",
 			DecisionNote:   "",
 		}
@@ -169,13 +169,13 @@ func (s *Service) DecidePendingAction(ctx context.Context, req PendingActionDeci
 		return PendingActionDecisionResult{}, fmt.Errorf("decision 非法: %s", strings.TrimSpace(string(req.Decision)))
 	}
 
-	channelType := strings.ToLower(strings.TrimSpace(req.ChannelType))
+	channelType := toStoreChannelType(contracts.ChannelType(strings.ToLower(strings.TrimSpace(string(req.ChannelType)))))
 	if channelType == "" {
 		channelType = contracts.ChannelTypeIM
 	}
 	adapter := strings.TrimSpace(req.Adapter)
 	if adapter == "" {
-		adapter = defaultAdapter(channelType)
+		adapter = defaultAdapter(string(channelType))
 	}
 	peerConversationID := strings.TrimSpace(req.PeerConversationID)
 	if peerConversationID == "" {
@@ -237,16 +237,16 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 	if err != nil {
 		return PendingActionDecisionResult{}, err
 	}
-	if row.Status != store.ChannelPendingActionPending {
+	if row.Status != contracts.ChannelPendingActionPending {
 		return finalizeAlreadyDecidedResult(row), nil
 	}
 
 	now := time.Now()
 	if row.CreatedAt.Add(channelPendingActionExpireAfter).Before(now) {
 		if err := db.WithContext(ctx).Model(&store.ChannelPendingAction{}).
-			Where("id = ? AND status = ?", row.ID, store.ChannelPendingActionPending).
+			Where("id = ? AND status = ?", row.ID, contracts.ChannelPendingActionPending).
 			Updates(map[string]any{
-				"status":        store.ChannelPendingActionFailed,
+				"status":        contracts.ChannelPendingActionFailed,
 				"decider":       decider,
 				"decision_note": "审批已过期",
 				"decided_at":    &now,
@@ -266,9 +266,9 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 	}
 
 	updateRes := db.WithContext(ctx).Model(&store.ChannelPendingAction{}).
-		Where("id = ? AND status = ?", row.ID, store.ChannelPendingActionPending).
+		Where("id = ? AND status = ?", row.ID, contracts.ChannelPendingActionPending).
 		Updates(map[string]any{
-			"status":        store.ChannelPendingActionApproved,
+			"status":        contracts.ChannelPendingActionApproved,
 			"decider":       decider,
 			"decision_note": "已批准",
 			"decided_at":    &now,
@@ -294,7 +294,7 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 	action, err := decodePendingTurnAction(approvedRow.ActionJSON)
 	if err != nil {
 		failMsg := "action 数据损坏，无法执行"
-		if uerr := s.finishPendingActionExecution(ctx, actionID, store.ChannelPendingActionFailed, failMsg); uerr != nil {
+		if uerr := s.finishPendingActionExecution(ctx, actionID, contracts.ChannelPendingActionFailed, failMsg); uerr != nil {
 			return PendingActionDecisionResult{}, uerr
 		}
 		failedRow, ferr := s.getPendingActionByID(ctx, actionID)
@@ -331,7 +331,7 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 			"decision", PendingActionApprove,
 		)
 		failMsg := "当前会话已结束，该工具审批已失效。"
-		if err := s.finishPendingActionExecution(ctx, actionID, store.ChannelPendingActionFailed, failMsg); err != nil {
+		if err := s.finishPendingActionExecution(ctx, actionID, contracts.ChannelPendingActionFailed, failMsg); err != nil {
 			return PendingActionDecisionResult{}, err
 		}
 		finalRow, err := s.getPendingActionByID(ctx, actionID)
@@ -347,13 +347,13 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 	}
 
 	execResult := s.executeAction(ctx, action)
-	finalStatus := store.ChannelPendingActionExecuted
+	finalStatus := contracts.ChannelPendingActionExecuted
 	finalMsg := strings.TrimSpace(execResult.Message)
 	if !execResult.Success {
-		finalStatus = store.ChannelPendingActionFailed
+		finalStatus = contracts.ChannelPendingActionFailed
 	}
 	if finalMsg == "" {
-		if finalStatus == store.ChannelPendingActionExecuted {
+		if finalStatus == contracts.ChannelPendingActionExecuted {
 			finalMsg = "操作执行成功"
 		} else {
 			finalMsg = "操作执行失败"
@@ -398,7 +398,7 @@ func (s *Service) RejectPendingAction(ctx context.Context, actionID uint, decide
 	if err != nil {
 		return PendingActionDecisionResult{}, err
 	}
-	if row.Status != store.ChannelPendingActionPending {
+	if row.Status != contracts.ChannelPendingActionPending {
 		out := finalizeAlreadyDecidedResult(row)
 		out.Decision = PendingActionReject
 		return out, nil
@@ -406,9 +406,9 @@ func (s *Service) RejectPendingAction(ctx context.Context, actionID uint, decide
 
 	now := time.Now()
 	updateRes := db.WithContext(ctx).Model(&store.ChannelPendingAction{}).
-		Where("id = ? AND status = ?", row.ID, store.ChannelPendingActionPending).
+		Where("id = ? AND status = ?", row.ID, contracts.ChannelPendingActionPending).
 		Updates(map[string]any{
-			"status":        store.ChannelPendingActionRejected,
+			"status":        contracts.ChannelPendingActionRejected,
 			"decider":       decider,
 			"decision_note": rejectDecisionNote(note),
 			"decided_at":    &now,
@@ -446,7 +446,7 @@ func (s *Service) RejectPendingAction(ctx context.Context, actionID uint, decide
 	}, nil
 }
 
-func (s *Service) finishPendingActionExecution(ctx context.Context, actionID uint, status store.ChannelPendingActionStatus, message string) error {
+func (s *Service) finishPendingActionExecution(ctx context.Context, actionID uint, status contracts.ChannelPendingActionStatus, message string) error {
 	_, db, err := s.require()
 	if err != nil {
 		return err
@@ -498,22 +498,22 @@ func finalizeAlreadyDecidedResult(row store.ChannelPendingAction) PendingActionD
 		AlreadyFinalState: true,
 	}
 	switch view.Status {
-	case store.ChannelPendingActionExecuted:
+	case contracts.ChannelPendingActionExecuted:
 		if note == "" {
 			note = "该操作已执行完成。"
 		}
 		out.Message = note
-	case store.ChannelPendingActionRejected:
+	case contracts.ChannelPendingActionRejected:
 		if note == "" {
 			note = "该操作已被拒绝。"
 		}
 		out.Message = note
-	case store.ChannelPendingActionFailed:
+	case contracts.ChannelPendingActionFailed:
 		if note == "" {
 			note = "该操作执行失败。"
 		}
 		out.Message = note
-	case store.ChannelPendingActionApproved:
+	case contracts.ChannelPendingActionApproved:
 		if note == "" {
 			note = "该操作已批准，正在执行。"
 		}

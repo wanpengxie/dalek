@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"dalek/internal/contracts"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -84,7 +85,7 @@ func TestInternalAPISendRoute_AllowsLoopbackWithoutToken(t *testing.T) {
 
 	if err := db.Create(&store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        gatewaysendsvc.AdapterFeishu,
 		PeerProjectKey: "chat-daemon-send-no-token",
 		RolePolicyJSON: "{}",
@@ -130,7 +131,7 @@ func TestInternalAPISendRoute_Success(t *testing.T) {
 
 	if err := db.Create(&store.ChannelBinding{
 		ProjectName:    "demo",
-		ChannelType:    store.ChannelIM,
+		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        gatewaysendsvc.AdapterFeishu,
 		PeerProjectKey: "chat-daemon-send-1",
 		RolePolicyJSON: "{}",

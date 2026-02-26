@@ -1,6 +1,7 @@
 package store
 
 import (
+	"dalek/internal/contracts"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -19,7 +20,7 @@ func TestOpenAndMigrate_AllowsBasicCRUD(t *testing.T) {
 
 	tk := Ticket{
 		Title:          "ticket-1",
-		WorkflowStatus: TicketBacklog,
+		WorkflowStatus: contracts.TicketBacklog,
 	}
 	if err := db.Create(&tk).Error; err != nil {
 		t.Fatalf("create ticket failed: %v", err)
@@ -32,7 +33,7 @@ func TestOpenAndMigrate_AllowsBasicCRUD(t *testing.T) {
 	if err := db.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
-	if got.Title != "ticket-1" || got.WorkflowStatus != TicketBacklog {
+	if got.Title != "ticket-1" || got.WorkflowStatus != contracts.TicketBacklog {
 		t.Fatalf("unexpected ticket: %+v", got)
 	}
 }
@@ -163,7 +164,7 @@ func TestOpenAndMigrate_TicketArchivedTakesPrecedenceOverStatus(t *testing.T) {
 	if err := db2.Order("id asc").First(&got).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
-	if got.WorkflowStatus != TicketArchived {
+	if got.WorkflowStatus != contracts.TicketArchived {
 		t.Fatalf("expected workflow_status=archived, got=%s", got.WorkflowStatus)
 	}
 
@@ -213,7 +214,7 @@ func TestOpenAndMigrate_NormalizesLegacyWorkflowAliases(t *testing.T) {
 	if err := db2.Where("title = ?", "legacy-alias").First(&got).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
-	if got.WorkflowStatus != TicketActive {
+	if got.WorkflowStatus != contracts.TicketActive {
 		t.Fatalf("expected workflow_status=active after normalize, got=%s", got.WorkflowStatus)
 	}
 }
@@ -227,7 +228,7 @@ func TestOpenAndMigrate_ChannelTablesCRUD(t *testing.T) {
 
 	binding := ChannelBinding{
 		ProjectName: "demo",
-		ChannelType: ChannelCLI,
+		ChannelType: contracts.ChannelTypeCLI,
 		Adapter:     "cli.local",
 		Enabled:     true,
 	}
@@ -248,13 +249,13 @@ func TestOpenAndMigrate_ChannelTablesCRUD(t *testing.T) {
 	peerID := "msg-1"
 	inMsg := ChannelMessage{
 		ConversationID: conv.ID,
-		Direction:      ChannelMessageIn,
+		Direction:      contracts.ChannelMessageIn,
 		Adapter:        "cli.local",
 		PeerMessageID:  &peerID,
 		SenderID:       "user-1",
 		ContentText:    "list tickets",
 		PayloadJSON:    "{}",
-		Status:         ChannelMessageAccepted,
+		Status:         contracts.ChannelMessageAccepted,
 	}
 	if err := db.Create(&inMsg).Error; err != nil {
 		t.Fatalf("create inbound message failed: %v", err)
@@ -263,7 +264,7 @@ func TestOpenAndMigrate_ChannelTablesCRUD(t *testing.T) {
 	job := ChannelTurnJob{
 		ConversationID:   conv.ID,
 		InboundMessageID: inMsg.ID,
-		Status:           ChannelTurnPending,
+		Status:           contracts.ChannelTurnPending,
 	}
 	if err := db.Create(&job).Error; err != nil {
 		t.Fatalf("create turn job failed: %v", err)
@@ -271,12 +272,12 @@ func TestOpenAndMigrate_ChannelTablesCRUD(t *testing.T) {
 
 	outMsg := ChannelMessage{
 		ConversationID: conv.ID,
-		Direction:      ChannelMessageOut,
+		Direction:      contracts.ChannelMessageOut,
 		Adapter:        "cli.local",
 		SenderID:       "pm",
 		ContentText:    "ok",
 		PayloadJSON:    "{}",
-		Status:         ChannelMessageProcessed,
+		Status:         contracts.ChannelMessageProcessed,
 	}
 	if err := db.Create(&outMsg).Error; err != nil {
 		t.Fatalf("create outbound message failed: %v", err)
@@ -286,7 +287,7 @@ func TestOpenAndMigrate_ChannelTablesCRUD(t *testing.T) {
 		MessageID:   outMsg.ID,
 		Adapter:     "cli.local",
 		PayloadJSON: "{}",
-		Status:      ChannelOutboxPending,
+		Status:      contracts.ChannelOutboxPending,
 	}
 	if err := db.Create(&outbox).Error; err != nil {
 		t.Fatalf("create outbox failed: %v", err)
@@ -302,7 +303,7 @@ func TestOpenAndMigrate_ChannelMessageDedupScopedByConversation(t *testing.T) {
 
 	binding := ChannelBinding{
 		ProjectName: "demo",
-		ChannelType: ChannelWeb,
+		ChannelType: contracts.ChannelTypeWeb,
 		Adapter:     "web.ws",
 		Enabled:     true,
 	}
@@ -321,26 +322,26 @@ func TestOpenAndMigrate_ChannelMessageDedupScopedByConversation(t *testing.T) {
 	peerID := "dup-msg"
 	in1 := ChannelMessage{
 		ConversationID: conv1.ID,
-		Direction:      ChannelMessageIn,
+		Direction:      contracts.ChannelMessageIn,
 		Adapter:        "web.ws",
 		PeerMessageID:  &peerID,
 		SenderID:       "u1",
 		ContentText:    "hello-1",
 		PayloadJSON:    "{}",
-		Status:         ChannelMessageAccepted,
+		Status:         contracts.ChannelMessageAccepted,
 	}
 	if err := db.Create(&in1).Error; err != nil {
 		t.Fatalf("create inbound message conv1 failed: %v", err)
 	}
 	in2 := ChannelMessage{
 		ConversationID: conv2.ID,
-		Direction:      ChannelMessageIn,
+		Direction:      contracts.ChannelMessageIn,
 		Adapter:        "web.ws",
 		PeerMessageID:  &peerID,
 		SenderID:       "u2",
 		ContentText:    "hello-2",
 		PayloadJSON:    "{}",
-		Status:         ChannelMessageAccepted,
+		Status:         contracts.ChannelMessageAccepted,
 	}
 	if err := db.Create(&in2).Error; err != nil {
 		t.Fatalf("create inbound message conv2 with same peer_message_id should succeed: %v", err)

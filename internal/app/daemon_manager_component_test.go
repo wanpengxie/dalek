@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"sync"
@@ -155,7 +156,7 @@ func TestDaemonManagerComponent_RunTickProject_UsesDispatchHostSubmitter(t *test
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
 	if err := p.core.DB.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": store.TicketQueued,
+		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
@@ -190,7 +191,7 @@ func TestDaemonManagerComponent_WarmupRunProjectIndex_LoadsActiveRuns(t *testing
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, store.PMDispatchRunning)
+	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
 	if job.TaskRunID == 0 {
 		t.Fatalf("expected dispatch submission has task_run_id")
 	}

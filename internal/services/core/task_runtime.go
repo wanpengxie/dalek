@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"strings"
 	"time"
 
@@ -33,7 +34,7 @@ type TaskRuntime interface {
 }
 
 type TaskRuntimeCreateRunInput struct {
-	OwnerType store.TaskOwnerType
+	OwnerType contracts.TaskOwnerType
 	TaskType  string
 
 	ProjectKey  string
@@ -44,7 +45,7 @@ type TaskRuntimeCreateRunInput struct {
 
 	RequestID string
 
-	OrchestrationState store.TaskOrchestrationState
+	OrchestrationState contracts.TaskOrchestrationState
 	RunnerID           string
 	LeaseExpiresAt     *time.Time
 	Attempt            int
@@ -71,7 +72,7 @@ type TaskRuntimeEventInput struct {
 
 type TaskRuntimeRuntimeSampleInput struct {
 	TaskRunID  uint
-	State      store.TaskRuntimeHealthState
+	State      contracts.TaskRuntimeHealthState
 	NeedsUser  bool
 	Summary    string
 	Source     string
@@ -81,7 +82,7 @@ type TaskRuntimeRuntimeSampleInput struct {
 
 type TaskRuntimeSemanticReportInput struct {
 	TaskRunID  uint
-	Phase      store.TaskSemanticPhase
+	Phase      contracts.TaskSemanticPhase
 	Milestone  string
 	NextAction string
 	Summary    string
@@ -90,7 +91,7 @@ type TaskRuntimeSemanticReportInput struct {
 }
 
 type TaskRuntimeListStatusOptions struct {
-	OwnerType       store.TaskOwnerType
+	OwnerType       contracts.TaskOwnerType
 	TaskType        string
 	TicketID        uint
 	WorkerID        uint
@@ -106,15 +107,15 @@ type TaskRuntimeEventScopeRow struct {
 	TaskType  string
 }
 
-func NextActionToSemanticPhase(nextAction string) store.TaskSemanticPhase {
+func NextActionToSemanticPhase(nextAction string) contracts.TaskSemanticPhase {
 	switch strings.TrimSpace(strings.ToLower(nextAction)) {
 	case "done":
-		return store.TaskPhaseDone
+		return contracts.TaskPhaseDone
 	case "wait_user":
-		return store.TaskPhaseBlocked
+		return contracts.TaskPhaseBlocked
 	case "continue":
-		return store.TaskPhaseImplementing
+		return contracts.TaskPhaseImplementing
 	default:
-		return store.TaskPhaseImplementing
+		return contracts.TaskPhaseImplementing
 	}
 }

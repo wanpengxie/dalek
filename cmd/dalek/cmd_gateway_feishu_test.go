@@ -58,7 +58,7 @@ func (r *echoProjectRuntime) ProcessInbound(ctx context.Context, env contracts.I
 	_ = ctx
 	return channelsvc.ProcessResult{
 		RunID:         "run-feishu-e2e-1",
-		JobStatus:     store.ChannelTurnSucceeded,
+		JobStatus:     contracts.ChannelTurnSucceeded,
 		ReplyText:     "echo: " + strings.TrimSpace(env.Text),
 		AgentProvider: "fake",
 		AgentModel:    "test",
@@ -75,7 +75,7 @@ func (r *noEventProjectRuntime) ProcessInbound(ctx context.Context, env contract
 	_ = ctx
 	return channelsvc.ProcessResult{
 		RunID:         "run-feishu-no-event",
-		JobStatus:     store.ChannelTurnSucceeded,
+		JobStatus:     contracts.ChannelTurnSucceeded,
 		ReplyText:     "done: " + strings.TrimSpace(env.Text),
 		AgentProvider: "fake",
 		AgentModel:    "test",
@@ -99,7 +99,7 @@ func (r *countingProjectRuntime) ProcessInbound(ctx context.Context, env contrac
 	r.mu.Unlock()
 	return channelsvc.ProcessResult{
 		RunID:         "run-feishu-counting",
-		JobStatus:     store.ChannelTurnSucceeded,
+		JobStatus:     contracts.ChannelTurnSucceeded,
 		ReplyText:     "ok",
 		AgentProvider: "fake",
 		AgentModel:    "test",
@@ -128,7 +128,7 @@ func (r *captureInboundRuntime) ProcessInbound(ctx context.Context, env contract
 	r.mu.Unlock()
 	return channelsvc.ProcessResult{
 		RunID:         "run-feishu-capture-inbound",
-		JobStatus:     store.ChannelTurnSucceeded,
+		JobStatus:     contracts.ChannelTurnSucceeded,
 		ReplyText:     "ok",
 		AgentProvider: "fake",
 		AgentModel:    "test",
@@ -166,7 +166,7 @@ func (r *feishuScriptedEventRuntime) ProcessInbound(ctx context.Context, env con
 	runID := "run-" + msgID
 	return channelsvc.ProcessResult{
 		RunID:         runID,
-		JobStatus:     store.ChannelTurnSucceeded,
+		JobStatus:     contracts.ChannelTurnSucceeded,
 		ReplyText:     "done " + msgID,
 		AgentProvider: "fake",
 		AgentModel:    "test",
@@ -196,7 +196,7 @@ type interruptableProjectRuntime struct {
 
 	mu                 sync.Mutex
 	interruptCalls     int
-	lastChannelType    string
+	lastChannelType    contracts.ChannelType
 	lastAdapter        string
 	lastConversationID string
 	resetCalls         int
@@ -207,7 +207,7 @@ func (r *interruptableProjectRuntime) ProcessInbound(ctx context.Context, env co
 	_ = ctx
 	return channelsvc.ProcessResult{
 		RunID:         "run-feishu-interrupt",
-		JobStatus:     store.ChannelTurnSucceeded,
+		JobStatus:     contracts.ChannelTurnSucceeded,
 		ReplyText:     "echo: " + strings.TrimSpace(env.Text),
 		AgentProvider: "fake",
 		AgentModel:    "test",
@@ -218,11 +218,11 @@ func (r *interruptableProjectRuntime) GatewayTurnTimeout() time.Duration {
 	return 3 * time.Second
 }
 
-func (r *interruptableProjectRuntime) InterruptConversation(ctx context.Context, channelType, adapter, peerConversationID string) (channelsvc.InterruptResult, error) {
+func (r *interruptableProjectRuntime) InterruptConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (channelsvc.InterruptResult, error) {
 	_ = ctx
 	r.mu.Lock()
 	r.interruptCalls++
-	r.lastChannelType = strings.TrimSpace(channelType)
+	r.lastChannelType = contracts.ChannelType(strings.TrimSpace(string(channelType)))
 	r.lastAdapter = strings.TrimSpace(adapter)
 	r.lastConversationID = strings.TrimSpace(peerConversationID)
 	r.mu.Unlock()
@@ -238,7 +238,7 @@ func (r *interruptableProjectRuntime) InterruptConversation(ctx context.Context,
 	return channelsvc.InterruptResult{Status: channelsvc.InterruptStatusMiss}, nil
 }
 
-func (r *interruptableProjectRuntime) ResetConversationSession(ctx context.Context, channelType, adapter, peerConversationID string) (bool, error) {
+func (r *interruptableProjectRuntime) ResetConversationSession(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error) {
 	_ = ctx
 	r.mu.Lock()
 	r.resetCalls++
@@ -789,7 +789,7 @@ func TestGatewayFeishuWebhook_DedupByEventID(t *testing.T) {
 	}
 
 	var inboundCount int64
-	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", store.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
+	if err := db.Model(&store.ChannelMessage{}).Where("direction = ?", contracts.ChannelMessageIn).Count(&inboundCount).Error; err != nil {
 		t.Fatalf("count inbound message failed: %v", err)
 	}
 	if inboundCount != 1 {
@@ -867,7 +867,7 @@ func TestGatewayFeishuWebhook_FinalReplyRetryAndOutboxSent(t *testing.T) {
 	for time.Now().Before(outDeadline) {
 		var outbox store.ChannelOutbox
 		if qErr := db.Order("id DESC").First(&outbox).Error; qErr == nil {
-			if outbox.Status == store.ChannelOutboxSent {
+			if outbox.Status == contracts.ChannelOutboxSent {
 				if strings.TrimSpace(outbox.LastError) != "" {
 					t.Fatalf("outbox last_error should be empty when sent, got=%q", outbox.LastError)
 				}
@@ -933,7 +933,7 @@ func TestGatewayFeishuWebhook_FinalReplyFailedMarksOutboxFailed(t *testing.T) {
 	for time.Now().Before(outDeadline) {
 		var outbox store.ChannelOutbox
 		if qErr := db.Order("id DESC").First(&outbox).Error; qErr == nil {
-			if outbox.Status == store.ChannelOutboxFailed {
+			if outbox.Status == contracts.ChannelOutboxFailed {
 				if !strings.Contains(outbox.LastError, "mock send failed") {
 					t.Fatalf("outbox last_error should include send error, got=%q", outbox.LastError)
 				}
@@ -1013,7 +1013,7 @@ func TestGatewayFeishuWebhook_FinalReplyCardFailed_FallbackToText(t *testing.T) 
 	for time.Now().Before(outDeadline) {
 		var outbox store.ChannelOutbox
 		if qErr := db.Order("id DESC").First(&outbox).Error; qErr == nil {
-			if outbox.Status == store.ChannelOutboxSent {
+			if outbox.Status == contracts.ChannelOutboxSent {
 				if strings.TrimSpace(outbox.LastError) != "" {
 					t.Fatalf("outbox last_error should be empty when text fallback succeeded, got=%q", outbox.LastError)
 				}

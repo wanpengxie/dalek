@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -83,7 +84,7 @@ func (s *Service) launchWorkerSDKHandle(
 		ReasoningEffort: strings.TrimSpace(agentCfg.ReasoningEffort),
 		Command:         strings.TrimSpace(agentCfg.Command),
 		Runtime:         rt,
-		OwnerType:       store.TaskOwnerWorker,
+		OwnerType:       contracts.TaskOwnerWorker,
 		TaskType:        "deliver_ticket",
 		ProjectKey:      strings.TrimSpace(p.Key),
 		TicketID:        t.ID,

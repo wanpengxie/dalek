@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 	"time"
@@ -36,18 +37,18 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 			return err
 		}
 		from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
-		if from == store.TicketDone || from == store.TicketArchived || from == store.TicketBlocked {
+		if from == contracts.TicketDone || from == contracts.TicketArchived || from == contracts.TicketBlocked {
 			return nil
 		}
 		if err := tx.WithContext(ctx).Model(&store.Ticket{}).
 			Where("id = ?", ticketID).
 			Updates(map[string]any{
-				"workflow_status": store.TicketBlocked,
+				"workflow_status": contracts.TicketBlocked,
 				"updated_at":      now,
 			}).Error; err != nil {
 			return err
 		}
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, store.TicketBlocked, "pm.manager_tick", "worker 未就绪自动降级 blocked", map[string]any{
+		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketBlocked, "pm.manager_tick", "worker 未就绪自动降级 blocked", map[string]any{
 			"ticket_id": ticketID,
 			"worker_id": workerID,
 			"error":     reason,
@@ -63,9 +64,9 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 		}
 		_, err := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
 			Key:      key,
-			Status:   store.InboxOpen,
-			Severity: store.InboxBlocker,
-			Reason:   store.InboxIncident,
+			Status:   contracts.InboxOpen,
+			Severity: contracts.InboxBlocker,
+			Reason:   contracts.InboxIncident,
 			Title:    title,
 			Body:     reason,
 			TicketID: ticketID,

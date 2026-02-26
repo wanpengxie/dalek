@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"fmt"
 	"strings"
 
@@ -11,7 +12,7 @@ import (
 )
 
 type ListStatusOptions struct {
-	OwnerType       store.TaskOwnerType
+	OwnerType       contracts.TaskOwnerType
 	TaskType        string
 	TicketID        uint
 	WorkerID        uint
@@ -53,7 +54,7 @@ func (s *Service) ListStatus(ctx context.Context, opt ListStatusOptions) ([]stor
 		q = q.Where("worker_id = ?", opt.WorkerID)
 	}
 	if !opt.IncludeTerminal {
-		q = q.Where("orchestration_state IN ?", []store.TaskOrchestrationState{store.TaskPending, store.TaskRunning})
+		q = q.Where("orchestration_state IN ?", []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning})
 	}
 	var out []store.TaskStatusView
 	if err := q.Order("run_id desc").Limit(limit).Find(&out).Error; err != nil {

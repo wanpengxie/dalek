@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"dalek/internal/contracts"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,7 @@ func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if w.Status != store.WorkerRunning {
+	if w.Status != contracts.WorkerRunning {
 		t.Fatalf("expected worker status running, got=%s", w.Status)
 	}
 	if strings.TrimSpace(w.TmuxSession) == "" {
@@ -32,7 +33,7 @@ func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if got.WorkflowStatus != store.TicketQueued {
+	if got.WorkflowStatus != contracts.TicketQueued {
 		t.Fatalf("start 应推进 workflow_status backlog->queued，got=%s", got.WorkflowStatus)
 	}
 
@@ -40,7 +41,7 @@ func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query ticket workflow event failed: %v", err)
 	}
-	if ev.FromStatus != store.TicketBacklog || ev.ToStatus != store.TicketQueued {
+	if ev.FromStatus != contracts.TicketBacklog || ev.ToStatus != contracts.TicketQueued {
 		t.Fatalf("unexpected workflow event transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 }

@@ -11,15 +11,15 @@ import (
 	"gorm.io/gorm"
 )
 
-func reportToRuntimeHealth(r contracts.WorkerReport) store.TaskRuntimeHealthState {
+func reportToRuntimeHealth(r contracts.WorkerReport) contracts.TaskRuntimeHealthState {
 	switch strings.TrimSpace(strings.ToLower(r.NextAction)) {
 	case string(contracts.NextWaitUser):
-		return store.TaskHealthWaitingUser
+		return contracts.TaskHealthWaitingUser
 	case string(contracts.NextDone), string(contracts.NextContinue):
-		return store.TaskHealthIdle
+		return contracts.TaskHealthIdle
 	default:
 		// 默认：不瞎猜，保持更保守的 idle
-		return store.TaskHealthIdle
+		return contracts.TaskHealthIdle
 	}
 }
 
@@ -45,7 +45,7 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 
 	now := time.Now()
 	runtimeHealth := reportToRuntimeHealth(r)
-	needs := r.NeedsUser || runtimeHealth == store.TaskHealthWaitingUser
+	needs := r.NeedsUser || runtimeHealth == contracts.TaskHealthWaitingUser
 	summary := strings.TrimSpace(r.Summary)
 	if summary == "" {
 		summary = "-"
