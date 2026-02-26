@@ -117,10 +117,20 @@ func (s *Service) require() (*core.Project, *gorm.DB, error) {
 }
 
 func (s *Service) Close() error {
-	if s == nil || s.chatRunners == nil {
+	if s == nil {
 		return nil
 	}
-	return s.chatRunners.Close()
+	var errs []error
+	if s.chatRunners != nil {
+		if err := s.chatRunners.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if s.toolApprovalBridge != nil {
+		s.toolApprovalBridge.Close()
+		s.toolApprovalBridge = nil
+	}
+	return errors.Join(errs...)
 }
 
 func (s *Service) InterruptPeerConversation(ctx context.Context, channelType, adapter, peerConversationID string) (InterruptResult, error) {

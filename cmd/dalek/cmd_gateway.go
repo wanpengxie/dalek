@@ -127,7 +127,11 @@ func cmdGatewayIngress(args []string) {
 		ReceivedAt:         time.Now().Format(time.RFC3339),
 	}
 
-	result, err := p.ProcessChannelInbound(ctx, env)
+	channelSvc := p.ChannelService()
+	if channelSvc == nil {
+		exitRuntimeError(out, "gateway ingress 失败", "project channel service 不可用", "检查项目初始化状态后重试")
+	}
+	result, err := channelSvc.ProcessInbound(ctx, env)
 	if err != nil {
 		exitRuntimeError(out, "gateway ingress 失败", err.Error(), "检查 gateway 与项目运行状态后重试")
 	}

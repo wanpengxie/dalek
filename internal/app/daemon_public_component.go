@@ -17,9 +17,10 @@ import (
 )
 
 type daemonPublicGatewayComponent struct {
-	home   *Home
-	listen string
-	logger *log.Logger
+	home     *Home
+	resolver channelsvc.ProjectResolver
+	listen   string
+	logger   *log.Logger
 
 	queueDepth     int
 	webhookPath    string
@@ -44,7 +45,14 @@ type daemonPublicGatewayComponent struct {
 	tunnelDone       chan struct{}
 }
 
-func newDaemonPublicGatewayComponent(home *Home, logger *log.Logger) *daemonPublicGatewayComponent {
+func newDaemonPublicGatewayComponent(home *Home, logger *log.Logger, resolvers ...channelsvc.ProjectResolver) *daemonPublicGatewayComponent {
+	var resolver channelsvc.ProjectResolver
+	if len(resolvers) > 0 {
+		resolver = resolvers[0]
+	}
+	if resolver == nil && home != nil {
+		resolver = newDaemonGatewayProjectResolver(home, NewProjectRegistry(home))
+	}
 	cfg := DefaultHomeConfig()
 	if home != nil {
 		cfg = home.Config.WithDefaults()
@@ -57,6 +65,7 @@ func newDaemonPublicGatewayComponent(home *Home, logger *log.Logger) *daemonPubl
 	}
 	return &daemonPublicGatewayComponent{
 		home:           home,
+		resolver:       resolver,
 		listen:         strings.TrimSpace(cfg.Daemon.Public.Listen),
 		logger:         logger,
 		queueDepth:     cfg.Gateway.QueueDepth,
@@ -98,8 +107,10 @@ func (c *daemonPublicGatewayComponent) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("打开 gateway db 失败: %w", err)
 	}
-	resolver := newDaemonGatewayProjectResolver(c.home)
-	gateway, err := channelsvc.NewGateway(gatewayDB, resolver, channelsvc.GatewayOptions{
+	if c.resolver == nil {
+		return fmt.Errorf("public gateway resolver 未初始化")
+	}
+	gateway, err := channelsvc.NewGateway(gatewayDB, c.resolver, channelsvc.GatewayOptions{
 		QueueDepth: c.queueDepth,
 	})
 	if err != nil {
@@ -113,7 +124,7 @@ func (c *daemonPublicGatewayComponent) Start(ctx context.Context) error {
 		webhookPath = "/feishu/webhook"
 	}
 	if c.feishuEnabled {
-		mux.HandleFunc(webhookPath, newDaemonFeishuWebhookHandler(gateway, resolver, c.sender, daemonFeishuWebhookOptions{
+		mux.HandleFunc(webhookPath, newDaemonFeishuWebhookHandler(gateway, c.resolver, c.sender, daemonFeishuWebhookOptions{
 			Adapter:     c.adapter,
 			VerifyToken: c.verifyToken,
 		}, c.logger))
