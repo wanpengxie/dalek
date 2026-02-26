@@ -12,15 +12,19 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-26`
-- 已完成批次：`W01`
-- 当前批次：`W02`（`ready_to_dispatch`）
+- 已完成批次：`W01` `W02`
+- 当前批次：`W03`（`ready_to_dispatch`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
-- W02 启动票：`T19` `T21` `T03` `T10`
+- W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
+- W03 启动票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
   - PM 配置相关改造必须复用 `buildBaseEnv()` + `constants.go` + 外置 prompt 模板。
   - 日志与 daemon handler 必须走 `*slog.Logger` 注入链路 + recover middleware。
+  - Feishu 改造必须复用 `internal/services/channel/feishu/*`（`T04` 禁止维护第二套实现）。
+  - gateway/ws 改造必须复用 `internal/services/channel/ws/*` 与 `internal/gateway/client/*`。
+  - 跨层枚举/状态类型统一引用 `internal/contracts/*`（禁止回流到 `store` 常量）。
 
 ## 关键依赖边（DAG）
 
