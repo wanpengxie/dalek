@@ -13,11 +13,10 @@
 
 - 更新时间：`2026-02-26`
 - 已完成批次：`W01` `W02`
-- 当前批次：`W03`（`in_execution`）
+- 当前批次：`W03`（`completed`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
-- W03 已完成票：`T01(8)` `T02(9)` `T04(11)`
-- W03 待合并票：`T11(18)`
+- W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已完成，等待切换到 W04）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -261,6 +260,22 @@ Tickets: <T.. T.. T..>
   - 已通过 `go test ./internal/services/subagent/...`、`go test ./internal/app/...`、`go test ./internal/services/daemon/...` 与 `go test ./...` 全量回归。
 - 下游约束更新：
   - app 层禁止回流 subagent 底层 I/O 编排；后续统一执行入口（AgentExec）应直接复用/包裹 `services/subagent`。
+
+## W03 回写（T11 cmd_config 归位）
+
+- 状态：`T11` 已完成（2026-02-26），cmd 配置业务与状态推导已按约束下沉。
+- 交付物：
+  - 新增 `internal/config/config.go`，承载配置键元数据、`ResolveValue/SetValue`、effective merge、JSON presence 检测、project config 加载能力。
+  - `cmd/dalek/cmd_config.go` 已移除 `internal/repo` 直接依赖，仅保留参数解析/输出与 `internal/config` 调用；文件体量从 `829` 行降至 `488` 行。
+  - 新增 `internal/app/task_run_status.go`，集中 `DeriveRunStatus` 与 `TaskStatusUpdatedAt`；`cmd/dalek/cmd_task.go` 与 `internal/app/daemon_runtime.go` 已统一复用。
+  - `cmd/dalek/cmd_gateway_log.go` 已改为走 `app.ResolveHomeDir`，不再分散直读 `DALEK_HOME`。
+- 测试与回归：
+  - 新增 `internal/config/config_test.go`（配置路径/写入/presence/merge 覆盖）。
+  - 新增 `internal/app/task_run_status_test.go`（run_status 分支与更新时间聚合覆盖）。
+  - 已通过：`go test ./cmd/dalek -run TestCLI_E2E_ConfigCommands`、`go test ./...`、`go vet ./...`、`go build ./...`。
+- 下游约束更新：
+  - 后续涉及 CLI 配置读写的改动必须通过 `internal/config` 入口，不得回流到 cmd 层承载配置业务。
+  - task run 状态推导必须复用 `app.DeriveRunStatus`，禁止在 cmd/daemon 侧新增并行分支逻辑。
 
 ## 每批执行建议
 
