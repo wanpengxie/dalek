@@ -16,7 +16,7 @@
 - 当前批次：`W03`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
-- W03 执行中：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 active）
+- W03 进度：`T04(11)` 已完成并通过回归，`T01/T02/T11` 仍在推进
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -113,6 +113,23 @@
   - webhook：`feishu.NewWebhookHandler(...)`
   - path：`feishu.BuildWebhookPath(...)` / `feishu.NormalizeWebhookSecretPath(...)`
   - `cmd/dalek/cmd_gateway_feishu.go` 在 T04 中必须直接复用以上入口，禁止再维护独立实现分支。
+
+## W03 回写（T04）
+
+- 状态：`T04` 已完成（2026-02-26）。
+- 交付物：
+  - `cmd/dalek/cmd_gateway_feishu.go` 已重写为 thin facade（`92` 行），cmd 层仅保留参数读取、类型别名与服务转发，不再承载飞书业务实现。
+  - 发送与 webhook 主链路已复用共享服务入口：`feishu.NewSender(feishu.SenderConfig)`、`feishu.NewWebhookHandler(...)`。
+  - webhook 路径能力已复用共享入口：`feishu.BuildWebhookPath(...)` / `feishu.NormalizeWebhookSecretPath(...)`。
+  - 为 cmd/e2e 兼容场景新增服务层导出转发（命令处理/提示文案等），避免 cmd 层回流业务逻辑。
+- 回归结果：
+  - `go build ./cmd/dalek/...` 通过
+  - `go test ./cmd/dalek/... -run Feishu -count=1` 通过
+  - `go test ./cmd/dalek/... -run CLI -count=1` 通过
+- `T05` 前置满足情况（`T04 -> T05`, `T11 -> T05`, `T12 -> T05`）：
+  - `T04`：`done`
+  - `T11`：`pending`
+  - `T12`：`pending`
 
 ## W02 回写（T19 Core.Project 拆分）
 
