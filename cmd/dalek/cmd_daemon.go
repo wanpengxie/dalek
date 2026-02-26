@@ -394,7 +394,15 @@ func stopDaemon(paths app.DaemonPaths, timeout time.Duration) (int, error) {
 		return st.PID, err
 	}
 	if err := app.WaitDaemonExit(st.PID, timeout); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return st.PID, err
+		// 兼容旧版本 daemon：若优雅停止超时，降级为 SIGKILL，避免 CLI 永久无法 stop。
+		killErr := syscall.Kill(st.PID, syscall.SIGKILL)
+		if killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+			return st.PID, fmt.Errorf("%w；尝试 SIGKILL 失败: %v", err, killErr)
+		}
+		forceWaitErr := app.WaitDaemonExit(st.PID, 3*time.Second)
+		if forceWaitErr != nil && !errors.Is(forceWaitErr, syscall.ESRCH) {
+			return st.PID, fmt.Errorf("%w；已发送 SIGKILL 但进程仍未退出: %v", err, forceWaitErr)
+		}
 	}
 	_ = app.RemoveDaemonPID(paths)
 	return st.PID, nil

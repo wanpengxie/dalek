@@ -165,10 +165,26 @@ func stopComponentsWithTimeout(logger *slog.Logger, comps []Component, timeout t
 		}
 		componentCtx, componentCancel := context.WithTimeout(stopCtx, componentTimeout)
 		startedAt := time.Now()
-		err := comp.Stop(componentCtx)
+		stopDone := make(chan error, 1)
+		go func(c Component, cctx context.Context) {
+			stopDone <- c.Stop(cctx)
+		}(comp, componentCtx)
+
+		timedOut := false
+		var stopErr error
+		select {
+		case stopErr = <-stopDone:
+		case <-componentCtx.Done():
+			timedOut = true
+			stopErr = componentCtx.Err()
+		}
 		componentCancel()
-		if err != nil && logger != nil {
-			logger.Warn("component stop failed", "component", name, "error", err)
+		if logger != nil {
+			if timedOut {
+				logger.Warn("component stop timeout", "component", name, "error", stopErr)
+			} else if stopErr != nil {
+				logger.Warn("component stop failed", "component", name, "error", stopErr)
+			}
 		}
 		if logger != nil {
 			logger.Info("component stop done",

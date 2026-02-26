@@ -180,3 +180,92 @@ func TestClaudeChatRunner_ReconnectAfterInactiveConnectionError(t *testing.T) {
 		t.Fatalf("expected client recreation after failure, got created=%d", created)
 	}
 }
+
+func TestClaudeChatRunner_CanUseTool_AutoAllowsLowRiskWithoutApprovalCallback(t *testing.T) {
+	r := &claudeChatRunner{}
+	result, err := r.canUseTool(context.Background(), "Bash", map[string]any{
+		"command": "dalek ticket ls",
+	}, claude.ToolPermissionContext{})
+	if err != nil {
+		t.Fatalf("canUseTool should not return error, got=%v", err)
+	}
+	if _, ok := result.(*claude.PermissionResultAllow); !ok {
+		t.Fatalf("low-risk command should be auto allowed, got=%T", result)
+	}
+}
+
+func TestClaudeChatRunner_CanUseTool_LowRiskBypassesManualApproval(t *testing.T) {
+	r := &claudeChatRunner{}
+	called := false
+	r.setToolApproval(func(ctx context.Context, toolName string, input map[string]any) (bool, error) {
+		called = true
+		return false, nil
+	})
+	defer r.setToolApproval(nil)
+
+	result, err := r.canUseTool(context.Background(), "Bash", map[string]any{
+		"command": "dalek ticket ls && dalek inbox ls",
+	}, claude.ToolPermissionContext{})
+	if err != nil {
+		t.Fatalf("canUseTool should not return error, got=%v", err)
+	}
+	if _, ok := result.(*claude.PermissionResultAllow); !ok {
+		t.Fatalf("low-risk command should be auto allowed, got=%T", result)
+	}
+	if called {
+		t.Fatalf("low-risk command should not invoke manual approval callback")
+	}
+}
+
+func TestClaudeChatRunner_CanUseTool_HighRiskRequiresManualApproval(t *testing.T) {
+	r := &claudeChatRunner{}
+	called := false
+	r.setToolApproval(func(ctx context.Context, toolName string, input map[string]any) (bool, error) {
+		called = true
+		return false, nil
+	})
+	defer r.setToolApproval(nil)
+
+	result, err := r.canUseTool(context.Background(), "Bash", map[string]any{
+		"command": "git push origin main",
+	}, claude.ToolPermissionContext{})
+	if err != nil {
+		t.Fatalf("canUseTool should not return error, got=%v", err)
+	}
+	if _, ok := result.(*claude.PermissionResultDeny); !ok {
+		t.Fatalf("high-risk command should be denied when approval rejects, got=%T", result)
+	}
+	if !called {
+		t.Fatalf("high-risk command should invoke manual approval callback")
+	}
+}
+
+func TestClaudeChatRunner_CanUseTool_AskSuggestionRequiresManualApproval(t *testing.T) {
+	r := &claudeChatRunner{}
+	called := false
+	r.setToolApproval(func(ctx context.Context, toolName string, input map[string]any) (bool, error) {
+		called = true
+		return false, nil
+	})
+	defer r.setToolApproval(nil)
+
+	result, err := r.canUseTool(context.Background(), "Bash", map[string]any{
+		"command": "dalek ticket ls",
+	}, claude.ToolPermissionContext{
+		Suggestions: []claude.PermissionUpdate{
+			{
+				Type:     claude.PermissionUpdateAddRules,
+				Behavior: claude.PermissionBehaviorAsk,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("canUseTool should not return error, got=%v", err)
+	}
+	if _, ok := result.(*claude.PermissionResultDeny); !ok {
+		t.Fatalf("ask suggestion should force callback path, got=%T", result)
+	}
+	if !called {
+		t.Fatalf("ask suggestion should invoke manual approval callback")
+	}
+}

@@ -109,3 +109,60 @@ func TestStopComponentsWithTimeout_AssignsIndependentCaps(t *testing.T) {
 		}
 	}
 }
+
+func TestStopComponentsWithTimeout_UncooperativeComponentDoesNotBlockFollower(t *testing.T) {
+	blockCh := make(chan struct{})
+	slowStarted := make(chan struct{})
+	followerCalled := make(chan struct{}, 1)
+	var slowWG sync.WaitGroup
+	slowWG.Add(1)
+
+	slow := &testStopComponent{
+		name: "slow_blocking",
+		stopFn: func(ctx context.Context) error {
+			_ = ctx
+			defer slowWG.Done()
+			close(slowStarted)
+			<-blockCh
+			return nil
+		},
+	}
+	follower := &testStopComponent{
+		name: "follower",
+		stopFn: func(ctx context.Context) error {
+			_ = ctx
+			followerCalled <- struct{}{}
+			return nil
+		},
+	}
+
+	startedAt := time.Now()
+	stopComponentsWithTimeout(nil, []Component{follower, slow}, 200*time.Millisecond)
+	elapsed := time.Since(startedAt)
+
+	select {
+	case <-slowStarted:
+	default:
+		t.Fatalf("slow component should be invoked")
+	}
+	select {
+	case <-followerCalled:
+	default:
+		t.Fatalf("follower should still be invoked when previous component blocks")
+	}
+	if elapsed > 450*time.Millisecond {
+		t.Fatalf("stopComponentsWithTimeout should not be blocked by uncooperative component, elapsed=%s", elapsed)
+	}
+
+	close(blockCh)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		slowWG.Wait()
+	}()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("slow component goroutine should exit after unblock")
+	}
+}

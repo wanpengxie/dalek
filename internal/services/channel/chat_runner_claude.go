@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,20 @@ type claudeChatRunner struct {
 	// Per-turn tool approval callback, set by RunTurn, read by canUseTool.
 	toolApprovalMu sync.Mutex
 	toolApprovalFn func(ctx context.Context, toolName string, input map[string]any) (bool, error)
+}
+
+var highRiskBashCommandPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(^|[\s;&|()])git\s+push(\s|$)`),
+	regexp.MustCompile(`(^|[\s;&|()])docker(\s|$)`),
+	regexp.MustCompile(`(^|[\s;&|()])rm\s+-rf(\s|$)`),
+	regexp.MustCompile(`(^|[\s;&|()])curl(\s|$)`),
+	regexp.MustCompile(`(^|[\s;&|()])wget(\s|$)`),
+	regexp.MustCompile(`(^|[\s;&|()])kill(\s|$)`),
+	regexp.MustCompile(`(^|[\s;&|()])sudo(\s|$)`),
+	regexp.MustCompile(`(^|[\s;&|()])ssh(\s|$)`),
+	regexp.MustCompile(`(^|[\s;&|()])scp(\s|$)`),
+	regexp.MustCompile(`(^|[\s;&|()])git\s+reset\s+--hard(\s|$)`),
+	regexp.MustCompile(`(^|[\s;&|()])git\s+clean\s+-f[\w-]*(\s|$)`),
 }
 
 func newClaudeChatRunner(ctx context.Context, req ChatRunRequest) (ChatRunner, error) {
@@ -85,10 +100,14 @@ func newClaudeChatRunner(ctx context.Context, req ChatRunRequest) (ChatRunner, e
 // canUseTool is the CanUseToolFunc registered with the Claude SDK.
 // It delegates to the per-turn toolApprovalFn if set.
 // When no per-turn callback is set, it auto-allows all tool uses.
-func (r *claudeChatRunner) canUseTool(ctx context.Context, toolName string, input map[string]any, _ claude.ToolPermissionContext) (claude.PermissionResult, error) {
+func (r *claudeChatRunner) canUseTool(ctx context.Context, toolName string, input map[string]any, permCtx claude.ToolPermissionContext) (claude.PermissionResult, error) {
 	r.toolApprovalMu.Lock()
 	fn := r.toolApprovalFn
 	r.toolApprovalMu.Unlock()
+
+	if !shouldEscalateToManualToolApproval(toolName, input, permCtx) {
+		return &claude.PermissionResultAllow{}, nil
+	}
 
 	if fn == nil {
 		return &claude.PermissionResultAllow{}, nil
@@ -101,6 +120,38 @@ func (r *claudeChatRunner) canUseTool(ctx context.Context, toolName string, inpu
 		return &claude.PermissionResultAllow{}, nil
 	}
 	return &claude.PermissionResultDeny{Message: "用户拒绝了该操作"}, nil
+}
+
+func shouldEscalateToManualToolApproval(toolName string, input map[string]any, permCtx claude.ToolPermissionContext) bool {
+	if hasAskOrDenyPermissionSuggestion(permCtx.Suggestions) {
+		return true
+	}
+
+	if !strings.EqualFold(strings.TrimSpace(toolName), "bash") {
+		return false
+	}
+
+	cmd := strings.TrimSpace(readToolApprovalCommand(input))
+	if cmd == "" {
+		return true
+	}
+
+	normalized := strings.ToLower(cmd)
+	for _, pattern := range highRiskBashCommandPatterns {
+		if pattern.MatchString(normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAskOrDenyPermissionSuggestion(suggestions []claude.PermissionUpdate) bool {
+	for _, s := range suggestions {
+		if s.Behavior == claude.PermissionBehaviorAsk || s.Behavior == claude.PermissionBehaviorDeny {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *claudeChatRunner) setToolApproval(fn func(ctx context.Context, toolName string, input map[string]any) (bool, error)) {
