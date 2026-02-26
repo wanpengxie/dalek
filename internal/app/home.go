@@ -482,7 +482,7 @@ func applyAgentProviderModel(cfg repo.Config, provider, model string) repo.Confi
 
 func assembleProject(cp *core.Project) *Project {
 	ticketSvc := ticket.New(cp.DB)
-	workerSvc := worker.New(cp)
+	workerSvc := worker.New(cp, ticketSvc)
 	logsSvc := logssvc.New(cp, workerSvc)
 	notebookSvc := notebook.New(cp)
 	pmSvc := pm.New(cp, workerSvc)

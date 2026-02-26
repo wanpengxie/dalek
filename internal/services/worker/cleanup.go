@@ -67,9 +67,13 @@ func (s *Service) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt 
 	if ticketID == 0 {
 		return CleanupWorktreeResult{}, fmt.Errorf("ticket_id 不能为空")
 	}
+	ticketSvc, err := s.ticketSvc()
+	if err != nil {
+		return CleanupWorktreeResult{}, err
+	}
 
-	var t contracts.Ticket
-	if err := p.DB.WithContext(ctx).First(&t, ticketID).Error; err != nil {
+	t, err := ticketSvc.GetByID(ctx, ticketID)
+	if err != nil {
 		return CleanupWorktreeResult{}, err
 	}
 	if t.WorkflowStatus != contracts.TicketArchived && !opt.Force {

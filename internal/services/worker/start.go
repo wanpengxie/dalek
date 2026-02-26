@@ -127,6 +127,10 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	if ticketID == 0 {
 		return nil, fmt.Errorf("ticket_id 不能为空")
 	}
+	ticketSvc, err := s.ticketSvc()
+	if err != nil {
+		return nil, err
+	}
 
 	worktreeCreated := false
 	sessionRollbackNeeded := false
@@ -151,8 +155,8 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		}
 	}()
 
-	var t contracts.Ticket
-	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
+	t, err := ticketSvc.GetByID(ctx, ticketID)
+	if err != nil {
 		return nil, err
 	}
 
@@ -172,9 +176,9 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		}
 	}
 	if strings.TrimSpace(branch) == "" || strings.TrimSpace(worktreePath) == "" {
-		runName := s.newTicketRunName(t)
+		runName := s.newTicketRunName(*t)
 		if strings.TrimSpace(branch) == "" {
-			branch, err = s.ticketBranchName(t, runName)
+			branch, err = s.ticketBranchName(*t, runName)
 			if err != nil {
 				return nil, err
 			}
