@@ -229,6 +229,39 @@ func TestChannelServiceDoesNotDirectlyCallAgentCLIRun(t *testing.T) {
 	})
 }
 
+func TestCmdChannelServiceImportAllowlist(t *testing.T) {
+	root := repoRoot(t)
+	cmdDir := filepath.Join(root, "cmd", "dalek")
+	files := listGoFiles(t, cmdDir)
+
+	// 只有 gateway 相关的 cmd 文件允许直接引用 channel service 包。
+	// 新增 cmd 文件不应直接 import channel/子包——应通过 app.Project facade 访问。
+	allow := map[string]bool{
+		"cmd/dalek/cmd_gateway_feishu.go":  true,
+		"cmd/dalek/cmd_gateway_ws.go":      true,
+		"cmd/dalek/cmd_gateway_runtime.go": true,
+		"cmd/dalek/cmd_gateway_bind.go":    true,
+	}
+
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		f := parseFile(t, path)
+		for _, imp := range f.Imports {
+			p := strings.Trim(imp.Path.Value, `"`)
+			if !strings.HasPrefix(p, "dalek/internal/services/channel") {
+				continue
+			}
+			if !allow[rel] {
+				t.Fatalf("cmd 非 gateway 文件不应直接 import channel service（%s import %s）——请通过 app.Project facade", rel, p)
+			}
+		}
+	}
+}
+
 func TestCmdTestsDoNotImportStore(t *testing.T) {
 	root := repoRoot(t)
 	cmdDir := filepath.Join(root, "cmd", "dalek")

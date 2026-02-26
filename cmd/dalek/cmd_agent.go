@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"dalek/internal/app"
+	"dalek/internal/contracts"
 )
 
 type agentRunPublic struct {
@@ -255,7 +256,7 @@ func cmdAgentList(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	statuses, err := p.ListTaskStatus(ctx, app.ListTaskOptions{
-		OwnerType:       app.TaskOwnerSubagent,
+		OwnerType:       contracts.TaskOwnerSubagent,
 		TaskType:        "subagent_run",
 		IncludeTerminal: true,
 		Limit:           *limit,
@@ -678,7 +679,7 @@ func cmdAgentFinish(args []string) {
 }
 
 func isSubagentTask(st app.TaskStatus) bool {
-	return strings.TrimSpace(st.OwnerType) == string(app.TaskOwnerSubagent) && strings.TrimSpace(st.TaskType) == "subagent_run"
+	return strings.TrimSpace(st.OwnerType) == string(contracts.TaskOwnerSubagent) && strings.TrimSpace(st.TaskType) == "subagent_run"
 }
 
 func mapAgentRunPublic(st app.TaskStatus, rec *app.SubagentRun) agentRunPublic {

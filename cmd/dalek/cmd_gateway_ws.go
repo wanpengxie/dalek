@@ -84,7 +84,7 @@ func newGatewayWSServerHandler(p *app.Project, rawOpt gatewayWSServerOptions) (s
 		turnProcessor = p.ChannelService()
 		listInbox = func(ctx context.Context, limit int) ([]contracts.InboxItem, error) {
 			return p.ListInbox(ctx, app.ListInboxOptions{
-				Status: app.InboxOpen,
+				Status: contracts.InboxOpen,
 				Limit:  limit,
 			})
 		}

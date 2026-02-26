@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"dalek/internal/app"
+	"dalek/internal/contracts"
 )
 
 func kvLine(key, value string, width int) string {
@@ -85,17 +86,17 @@ func partitionCell(section string) string {
 	return label
 }
 
-func ticketStatusBadge(s app.TicketWorkflowStatus) string {
+func ticketStatusBadge(s contracts.TicketWorkflowStatus) string {
 	switch s {
-	case app.TicketDone:
+	case contracts.TicketDone:
 		return badge("完成", cOk)
-	case app.TicketBlocked:
+	case contracts.TicketBlocked:
 		return badge("阻塞", cDanger)
-	case app.TicketQueued:
+	case contracts.TicketQueued:
 		return badge("排队", cWarn)
-	case app.TicketActive:
+	case contracts.TicketActive:
 		return badge("进行中", cInfo)
-	case app.TicketArchived:
+	case contracts.TicketArchived:
 		return badge("归档", cFaint)
 	default:
 		return badge("待办", cNeutral)
@@ -256,7 +257,7 @@ func (m model) selectedTicketForAction(action ticketAction) (uint, bool, string)
 		case ticketActionArchive:
 			allowed = cap.CanArchive
 		case ticketActionEdit, ticketActionEvents, ticketActionPriority, ticketActionStatus:
-			allowed = v.Ticket.WorkflowStatus != app.TicketArchived
+			allowed = v.Ticket.WorkflowStatus != contracts.TicketArchived
 		default:
 			allowed = false
 		}
@@ -268,7 +269,7 @@ func (m model) selectedTicketForAction(action ticketAction) (uint, bool, string)
 
 	// 非活跃视图（例如 archive 行）仅允许只读查看，禁止写操作。
 	if t, ok := m.ticketsByID[ref.ticketID]; ok {
-		if t.WorkflowStatus == app.TicketArchived {
+		if t.WorkflowStatus == contracts.TicketArchived {
 			return 0, false, actionDeniedStatus(action, "已归档")
 		}
 	}
@@ -315,30 +316,30 @@ type mergeQueueSummary struct {
 	Blocked       int
 }
 
-func summarizeMergeQueue(items []app.MergeItem) mergeQueueSummary {
+func summarizeMergeQueue(items []contracts.MergeItem) mergeQueueSummary {
 	out := mergeQueueSummary{Total: len(items)}
 	for _, it := range items {
 		switch it.Status {
-		case app.MergeProposed:
+		case contracts.MergeProposed:
 			out.Proposed++
-		case app.MergeChecksRunning:
+		case contracts.MergeChecksRunning:
 			out.ChecksRunning++
-		case app.MergeReady:
+		case contracts.MergeReady:
 			out.Ready++
-		case app.MergeApproved:
+		case contracts.MergeApproved:
 			out.Approved++
-		case app.MergeBlocked:
+		case contracts.MergeBlocked:
 			out.Blocked++
 		}
 	}
 	return out
 }
 
-func (m model) activeMergeItems() []app.MergeItem {
-	out := make([]app.MergeItem, 0, len(m.mergeItems))
+func (m model) activeMergeItems() []contracts.MergeItem {
+	out := make([]contracts.MergeItem, 0, len(m.mergeItems))
 	for _, it := range m.mergeItems {
 		switch it.Status {
-		case app.MergeProposed, app.MergeChecksRunning, app.MergeReady, app.MergeApproved, app.MergeBlocked:
+		case contracts.MergeProposed, contracts.MergeChecksRunning, contracts.MergeReady, contracts.MergeApproved, contracts.MergeBlocked:
 			out = append(out, it)
 		default:
 			// 终态（merged/discarded）及未知状态默认不进入活跃队列，避免 UI 残留。
@@ -428,7 +429,7 @@ func (m model) tailCmd(ref rowRef) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 
-		var pv app.TailPreview
+		var pv contracts.TailPreview
 		var err error
 		switch ref.kind {
 		case rowManager:
@@ -643,17 +644,17 @@ func cutANSI(s string, width int) string {
 	return ansi.Cut(s, 0, width)
 }
 
-func styleTicketStatusCell(s app.TicketWorkflowStatus, label string) string {
+func styleTicketStatusCell(s contracts.TicketWorkflowStatus, label string) string {
 	switch s {
-	case app.TicketDone:
+	case contracts.TicketDone:
 		return lipgloss.NewStyle().Foreground(cOk).Render(label)
-	case app.TicketBlocked:
+	case contracts.TicketBlocked:
 		return lipgloss.NewStyle().Foreground(cDanger).Render(label)
-	case app.TicketQueued:
+	case contracts.TicketQueued:
 		return lipgloss.NewStyle().Foreground(cWarn).Render(label)
-	case app.TicketActive:
+	case contracts.TicketActive:
 		return lipgloss.NewStyle().Foreground(cInfo).Render(label)
-	case app.TicketArchived:
+	case contracts.TicketArchived:
 		return lipgloss.NewStyle().Foreground(cFaint).Render(label)
 	default:
 		return lipgloss.NewStyle().Foreground(cMuted).Render(label)
@@ -684,17 +685,17 @@ func styleRuntimeCell(v app.TicketView, label string) string {
 	}
 }
 
-func formatTicketStatus(s app.TicketWorkflowStatus) string {
+func formatTicketStatus(s contracts.TicketWorkflowStatus) string {
 	switch s {
-	case app.TicketDone:
+	case contracts.TicketDone:
 		return "完成"
-	case app.TicketBlocked:
+	case contracts.TicketBlocked:
 		return "阻塞"
-	case app.TicketQueued:
+	case contracts.TicketQueued:
 		return "排队"
-	case app.TicketActive:
+	case contracts.TicketActive:
 		return "进行中"
-	case app.TicketArchived:
+	case contracts.TicketArchived:
 		return "归档"
 	default:
 		return "待办"
@@ -706,22 +707,22 @@ func formatRuntimeState(v app.TicketView) string {
 }
 
 func formatExecutionState(v app.TicketView) string {
-	if v.RuntimeNeedsUser || v.RuntimeHealthState == app.TaskHealthWaitingUser {
+	if v.RuntimeNeedsUser || v.RuntimeHealthState == contracts.TaskHealthWaitingUser {
 		return "等待输入"
 	}
 	if v.LatestWorker == nil {
 		return "未启动"
 	}
 	switch v.RuntimeHealthState {
-	case app.TaskHealthIdle:
+	case contracts.TaskHealthIdle:
 		return "空闲"
-	case app.TaskHealthBusy:
+	case contracts.TaskHealthBusy:
 		return "运行中"
-	case app.TaskHealthStalled:
+	case contracts.TaskHealthStalled:
 		return "异常"
-	case app.TaskHealthDead:
+	case contracts.TaskHealthDead:
 		return "已停止"
-	case app.TaskHealthAlive:
+	case contracts.TaskHealthAlive:
 		if v.SessionAlive {
 			return "空闲"
 		}
@@ -729,13 +730,13 @@ func formatExecutionState(v app.TicketView) string {
 			return "待观测"
 		}
 		return "已停止"
-	case app.TaskHealthUnknown:
+	case contracts.TaskHealthUnknown:
 		switch v.LatestWorker.Status {
-		case app.WorkerCreating:
+		case contracts.WorkerCreating:
 			return "启动中"
-		case app.WorkerFailed:
+		case contracts.WorkerFailed:
 			return "异常"
-		case app.WorkerStopped:
+		case contracts.WorkerStopped:
 			return "已停止"
 		}
 		if v.SessionProbeFailed {
@@ -791,7 +792,7 @@ func oneLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func (m model) setTicketStatusCmd(ticketID uint, status app.TicketWorkflowStatus) tea.Cmd {
+func (m model) setTicketStatusCmd(ticketID uint, status contracts.TicketWorkflowStatus) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()

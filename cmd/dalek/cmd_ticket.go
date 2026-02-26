@@ -153,12 +153,12 @@ func cmdTicketList(args []string) {
 	}
 	items := make([]ticketItem, 0, len(tickets))
 	for _, tk := range tickets {
-		if !*all && tk.WorkflowStatus == app.TicketArchived {
+		if !*all && tk.WorkflowStatus == contracts.TicketArchived {
 			continue
 		}
 		v, ok := viewByID[tk.ID]
 		status := string(contracts.CanonicalTicketWorkflowStatus(tk.WorkflowStatus))
-		runtime := string(app.TaskHealthUnknown)
+		runtime := string(contracts.TaskHealthUnknown)
 		needsUser := false
 		session := "-"
 		var workerID *uint
@@ -366,7 +366,7 @@ func cmdTicketEdit(args []string) {
 			"稍后重试，或检查项目数据库状态",
 		)
 	}
-	var tk *app.Ticket
+	var tk *contracts.Ticket
 	for i := range tickets {
 		if tickets[i].ID == uint(*ticketID) {
 			tk = &tickets[i]
@@ -475,7 +475,7 @@ func cmdTicketShow(args []string) {
 			"稍后重试，或检查数据库状态",
 		)
 	}
-	var tk *app.Ticket
+	var tk *contracts.Ticket
 	for i := range tickets {
 		if tickets[i].ID == uint(*ticketID) {
 			tk = &tickets[i]
@@ -505,7 +505,7 @@ func cmdTicketShow(args []string) {
 			break
 		}
 	}
-	worker := (*app.Worker)(nil)
+	worker := (*contracts.Worker)(nil)
 	if view != nil && view.LatestWorker != nil {
 		worker = view.LatestWorker
 	} else {
@@ -516,7 +516,7 @@ func cmdTicketShow(args []string) {
 	}
 
 	status := string(tk.WorkflowStatus)
-	runtime := string(app.TaskHealthUnknown)
+	runtime := string(contracts.TaskHealthUnknown)
 	needsUser := false
 	if view != nil {
 		if strings.TrimSpace(string(view.DerivedStatus)) != "" {

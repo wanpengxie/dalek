@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"dalek/internal/app"
+	"dalek/internal/contracts"
 )
 
 type mode int
@@ -64,8 +65,8 @@ type tickMsg struct{}
 
 type refreshedMsg struct {
 	Views           []app.TicketView
-	MergeItems      []app.MergeItem
-	ArchivedTickets []app.Ticket
+	MergeItems      []contracts.MergeItem
+	ArchivedTickets []contracts.Ticket
 	MergeErr        error
 	ArchiveErr      error
 	Err             error
@@ -115,7 +116,7 @@ type interruptedMsg struct {
 
 type tailMsg struct {
 	Ref        rowRef
-	Preview    app.TailPreview
+	Preview    contracts.TailPreview
 	Err        error
 	StartedAt  time.Time
 	FinishedAt time.Time
@@ -123,7 +124,7 @@ type tailMsg struct {
 
 type ticketStatusMsg struct {
 	TicketID uint
-	Status   app.TicketWorkflowStatus
+	Status   contracts.TicketWorkflowStatus
 	Err      error
 }
 
@@ -159,9 +160,9 @@ type model struct {
 	tableLayout     tableLayout
 	rowRefs         []rowRef
 	viewsByID       map[uint]app.TicketView
-	ticketsByID     map[uint]app.Ticket
-	mergeItems      []app.MergeItem
-	archivedTickets []app.Ticket
+	ticketsByID     map[uint]contracts.Ticket
+	mergeItems      []contracts.MergeItem
+	archivedTickets []contracts.Ticket
 	showArchiveRows bool
 	mergeErr        string
 	archiveErr      string
@@ -182,7 +183,7 @@ type model struct {
 	lastSelected rowRef
 
 	tailRef       rowRef
-	tailPreview   app.TailPreview
+	tailPreview   contracts.TailPreview
 	tailErr       string
 	tailInFlight  bool
 	tailStartedAt time.Time
@@ -251,7 +252,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		tableLayout:     layout,
 		rowRefs:         nil,
 		viewsByID:       map[uint]app.TicketView{},
-		ticketsByID:     map[uint]app.Ticket{},
+		ticketsByID:     map[uint]contracts.Ticket{},
 		mergeItems:      nil,
 		archivedTickets: nil,
 		showArchiveRows: false,
@@ -266,7 +267,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 
 		lastSelected:  rowRef{kind: rowNone},
 		tailRef:       rowRef{kind: rowNone},
-		tailPreview:   app.TailPreview{},
+		tailPreview:   contracts.TailPreview{},
 		tailErr:       "",
 		tailInFlight:  false,
 		tailStartedAt: time.Time{},
@@ -325,7 +326,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if sel != m.lastSelected {
 				m.lastSelected = sel
 				m.tailRef = sel
-				m.tailPreview = app.TailPreview{}
+				m.tailPreview = contracts.TailPreview{}
 				m.tailErr = ""
 				m.tailUpdatedAt = time.Time{}
 				// selection 变化时，即使列表还没刷新也先安排一次抓取（失败会显示错误）。
@@ -693,7 +694,7 @@ func (m *model) applyViews(views []app.TicketView) {
 	rows := make([]table.Row, 0, len(views)+extraRows)
 	refs := make([]rowRef, 0, len(rows))
 	viewsByID := make(map[uint]app.TicketView, len(views))
-	ticketsByID := make(map[uint]app.Ticket, len(views)+len(m.archivedTickets))
+	ticketsByID := make(map[uint]contracts.Ticket, len(views)+len(m.archivedTickets))
 	keep := m.selectedRow()
 
 	running := make([]app.TicketView, 0, len(views))
@@ -704,11 +705,11 @@ func (m *model) applyViews(views []app.TicketView) {
 		viewsByID[v.Ticket.ID] = v
 		ticketsByID[v.Ticket.ID] = v.Ticket
 		switch {
-		case v.DerivedStatus == app.TicketDone:
+		case v.DerivedStatus == contracts.TicketDone:
 			done = append(done, v)
-		case v.RuntimeNeedsUser || v.DerivedStatus == app.TicketBlocked || v.DerivedStatus == app.TicketQueued:
+		case v.RuntimeNeedsUser || v.DerivedStatus == contracts.TicketBlocked || v.DerivedStatus == contracts.TicketQueued:
 			waiting = append(waiting, v)
-		case v.DerivedStatus == app.TicketActive:
+		case v.DerivedStatus == contracts.TicketActive:
 			running = append(running, v)
 		default:
 			backlog = append(backlog, v)
@@ -742,13 +743,13 @@ func (m *model) applyViews(views []app.TicketView) {
 
 			status := "待办"
 			switch v.DerivedStatus {
-			case app.TicketDone:
+			case contracts.TicketDone:
 				status = "完成"
-			case app.TicketBlocked:
+			case contracts.TicketBlocked:
 				status = "阻塞"
-			case app.TicketQueued:
+			case contracts.TicketQueued:
 				status = "排队"
-			case app.TicketActive:
+			case contracts.TicketActive:
 				status = "进行中"
 			default:
 				status = "待办"
@@ -795,9 +796,9 @@ func (m *model) applyViews(views []app.TicketView) {
 	addTicketRows("done", done)
 
 	if m.showArchiveRows {
-		archived := make([]app.Ticket, 0, len(m.archivedTickets))
+		archived := make([]contracts.Ticket, 0, len(m.archivedTickets))
 		for _, t := range m.archivedTickets {
-			if t.WorkflowStatus != app.TicketArchived {
+			if t.WorkflowStatus != contracts.TicketArchived {
 				continue
 			}
 			archived = append(archived, t)
@@ -863,13 +864,13 @@ func (m model) managerRowIndex() int {
 	return -1
 }
 
-func (m model) mergeItemByID(id uint) (app.MergeItem, bool) {
+func (m model) mergeItemByID(id uint) (contracts.MergeItem, bool) {
 	for _, mi := range m.mergeItems {
 		if mi.ID == id {
 			return mi, true
 		}
 	}
-	return app.MergeItem{}, false
+	return contracts.MergeItem{}, false
 }
 
 func (m model) mergeInspectorLeftView(panelW int, mergeID uint) string {

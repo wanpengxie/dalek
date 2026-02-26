@@ -1074,7 +1074,7 @@ func TestIntegration_NoteShapingSkillMissingRollsBackToOpen(t *testing.T) {
 	if strings.TrimSpace(note.LastError) == "" {
 		t.Fatalf("expected note last_error populated")
 	}
-	inbox, err := p.ListInbox(context.Background(), ListInboxOptions{Status: InboxOpen, Limit: 50})
+	inbox, err := p.ListInbox(context.Background(), ListInboxOptions{Status: contracts.InboxOpen, Limit: 50})
 	if err != nil {
 		t.Fatalf("ListInbox failed: %v", err)
 	}
