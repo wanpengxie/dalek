@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"dalek/internal/agent/provider"
-	"dalek/internal/agent/run"
 	"dalek/internal/infra"
 	"dalek/internal/repo"
+	"dalek/internal/services/agentexec"
 )
 
 // launchWorkerSDKHandle 创建 SDK executor 并启动 agent，返回 handle 供调用方 Wait()。
@@ -20,7 +20,7 @@ func (s *Service) launchWorkerSDKHandle(
 	t contracts.Ticket,
 	w contracts.Worker,
 	entryPrompt string,
-) (run.AgentRunHandle, error) {
+) (agentexec.AgentRunHandle, error) {
 	p, _, err := s.require()
 	if err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func (s *Service) launchWorkerSDKHandle(
 	env[envTmuxSession] = strings.TrimSpace(session)
 	env[dispatchDepthEnvKey] = nextDispatchDepthEnvValue()
 
-	executor := run.NewSDKExecutor(run.SDKConfig{
+	executor := agentexec.NewSDKExecutor(agentexec.SDKConfig{
 		Provider:        agentCfg.Provider,
 		Model:           agentCfg.Model,
 		ReasoningEffort: agentCfg.ReasoningEffort,
