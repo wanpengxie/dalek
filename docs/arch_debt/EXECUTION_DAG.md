@@ -52,6 +52,7 @@
   - `go test ./...` 通过（65.947s）
   - `go build ./...` 通过
   - `go vet ./...` 通过
+  - 2026-02-27 复验：在派发上下文环境执行 `go test ./...` 时会被 `DALEK_DISPATCH_DEPTH=1` 的二次派发保护拦截；按执行合约覆写 `DALEK_DISPATCH_DEPTH=0 go test ./... -count=1` 后全量通过。
 - 变更统计：9 files changed, 963 insertions(+), 29 deletions(-)。
 - 下游约束更新：
   - 后续涉及续租逻辑改动必须维护 `startLeaseRenewal` 方法的日志/事件可观测性，禁止回退为静默吞错模式。
