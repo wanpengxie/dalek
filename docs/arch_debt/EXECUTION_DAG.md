@@ -9,6 +9,19 @@
 2. 同一批次内不放置“硬依赖”关系，保证可并行。
 3. 同一子域（PM/Channel/Store）尽量连续推进，减少上下文切换成本。
 
+## 当前执行状态（Kernel 回写）
+
+- 更新时间：`2026-02-26`
+- 已完成批次：`W01`
+- 当前批次：`W02`（`ready_to_dispatch`）
+- W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
+- W02 启动票：`T19` `T21` `T03` `T10`
+- 下游强制约束：
+  - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
+  - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
+  - PM 配置相关改造必须复用 `buildBaseEnv()` + `constants.go` + 外置 prompt 模板。
+  - 日志与 daemon handler 必须走 `*slog.Logger` 注入链路 + recover middleware。
+
 ## 关键依赖边（DAG）
 
 - `T03 -> T04`
