@@ -7,12 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
 	"time"
-
-	"log"
 
 	"dalek/internal/agent/eventlog"
 	"dalek/internal/contracts"
@@ -27,6 +26,7 @@ const turnJobResultSchemaV1 = "dalek.channel_turn_result.v1"
 
 type Service struct {
 	p       *core.Project
+	logger  *slog.Logger
 	turnSem chan struct{}
 
 	runningMu sync.Mutex
@@ -37,11 +37,16 @@ type Service struct {
 }
 
 func New(p *core.Project) *Service {
+	logger := core.DiscardLogger()
+	if p != nil {
+		logger = core.EnsureLogger(p.Logger).With("service", "channel")
+	}
 	return &Service{
 		p:                  p,
+		logger:             logger,
 		turnSem:            make(chan struct{}, 1),
 		chatRunners:        newDefaultChatRunnerManager(nil),
-		toolApprovalBridge: NewToolApprovalBridge(),
+		toolApprovalBridge: NewToolApprovalBridge(logger.With("component", "tool_approval")),
 	}
 }
 
@@ -116,6 +121,22 @@ func (s *Service) require() (*core.Project, *gorm.DB, error) {
 	return s.p, s.p.DB, nil
 }
 
+func (s *Service) slog() *slog.Logger {
+	if s == nil || s.logger == nil {
+		return core.DiscardLogger()
+	}
+	return s.logger
+}
+
+func (s *Service) logInterrupt(phase string, attrs ...any) {
+	all := []any{
+		"cmd", "stop",
+		"phase", strings.TrimSpace(phase),
+	}
+	all = append(all, attrs...)
+	s.slog().Info("channel interrupt", all...)
+}
+
 func (s *Service) Close() error {
 	if s == nil {
 		return nil
@@ -143,30 +164,39 @@ func (s *Service) InterruptPeerConversation(ctx context.Context, channelType, ad
 		adapter = defaultAdapter(channelType)
 	}
 	peerConversationID = strings.TrimSpace(peerConversationID)
-	log.Printf(
-		"channel_interrupt cmd=stop phase=locator_start channel_type=%s adapter=%s peer_conversation_id=%s",
-		channelType, adapter, peerConversationID,
+	s.logInterrupt("locator_start",
+		"channel_type", channelType,
+		"adapter", adapter,
+		"peer_conversation_id", peerConversationID,
 	)
 
 	conv, found, err := s.resolvePeerConversation(ctx, channelType, adapter, peerConversationID)
 	if err != nil {
-		log.Printf(
-			"channel_interrupt cmd=stop phase=locator_error channel_type=%s adapter=%s peer_conversation_id=%s err=%v",
-			channelType, adapter, peerConversationID, err,
+		s.logInterrupt("locator_error",
+			"channel_type", channelType,
+			"adapter", adapter,
+			"peer_conversation_id", peerConversationID,
+			"error", err,
 		)
 		return InterruptResult{}, err
 	}
 	if !found {
 		result := InterruptResult{Status: InterruptStatusMiss}
-		log.Printf(
-			"channel_interrupt cmd=stop phase=locator_result channel_type=%s adapter=%s peer_conversation_id=%s locator=miss runner_result=%s",
-			channelType, adapter, peerConversationID, result.Status,
+		s.logInterrupt("locator_result",
+			"channel_type", channelType,
+			"adapter", adapter,
+			"peer_conversation_id", peerConversationID,
+			"locator", "miss",
+			"status", result.Status,
 		)
 		return result, nil
 	}
-	log.Printf(
-		"channel_interrupt cmd=stop phase=locator_result channel_type=%s adapter=%s peer_conversation_id=%s locator=hit conversation_id=%d",
-		channelType, adapter, peerConversationID, conv.ID,
+	s.logInterrupt("locator_result",
+		"channel_type", channelType,
+		"adapter", adapter,
+		"peer_conversation_id", peerConversationID,
+		"locator", "hit",
+		"conversation_id", conv.ID,
 	)
 
 	runnerInterrupted := false
@@ -194,16 +224,15 @@ func (s *Service) InterruptPeerConversation(ctx context.Context, channelType, ad
 	default:
 		result.Status = InterruptStatusMiss
 	}
-	log.Printf(
-		"channel_interrupt cmd=stop phase=runner_result channel_type=%s adapter=%s peer_conversation_id=%s conversation_id=%d status=%s runner_hit=%t ctx_canceled=%t runner_error=%q",
-		channelType,
-		adapter,
-		peerConversationID,
-		conv.ID,
-		result.Status,
-		result.RunnerInterrupted,
-		result.ContextCanceled,
-		result.RunnerErrorMessage(),
+	s.logInterrupt("runner_result",
+		"channel_type", channelType,
+		"adapter", adapter,
+		"peer_conversation_id", peerConversationID,
+		"conversation_id", conv.ID,
+		"status", result.Status,
+		"runner_hit", result.RunnerInterrupted,
+		"context_canceled", result.ContextCanceled,
+		"runner_error", result.RunnerErrorMessage(),
 	)
 	return result, nil
 }
@@ -596,7 +625,11 @@ func (s *Service) runTurnJob(ctx context.Context, jobID uint) error {
 	}
 	evLogger, evLogErr := eventlog.Open(evLogProject, runID)
 	if evLogErr != nil {
-		log.Printf("eventlog: open failed: %v", evLogErr)
+		s.slog().Warn("eventlog open failed",
+			"project", evLogProject,
+			"run_id", runID,
+			"error", evLogErr,
+		)
 	}
 	if evLogger != nil {
 		defer func() { _ = evLogger.Close() }()

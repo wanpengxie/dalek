@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -19,14 +19,14 @@ type Component interface {
 }
 
 type Options struct {
-	Logger          *log.Logger
+	Logger          *slog.Logger
 	Components      []Component
 	ShutdownTimeout time.Duration
 }
 
 type Daemon struct {
 	paths           ProcessPaths
-	logger          *log.Logger
+	logger          *slog.Logger
 	components      []Component
 	shutdownTimeout time.Duration
 }
@@ -41,7 +41,7 @@ func New(paths ProcessPaths, opt Options) (*Daemon, error) {
 
 	logger := opt.Logger
 	if logger == nil {
-		logger = log.New(io.Discard, "", log.LstdFlags)
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
 	shutdownTimeout := opt.ShutdownTimeout
@@ -83,7 +83,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 	defer func() { _ = RemovePID(d.paths.PIDFile) }()
 
-	d.logger.Printf("daemon started pid=%d", os.Getpid())
+	d.logger.Info("daemon started", "pid", os.Getpid())
 
 	started := make([]Component, 0, len(d.components))
 	for _, comp := range d.components {
@@ -94,9 +94,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 		if name == "" {
 			name = "unnamed"
 		}
-		d.logger.Printf("component start: %s", name)
+		d.logger.Info("component start", "component", name)
 		if err := comp.Start(ctx); err != nil {
-			d.logger.Printf("component start failed: %s err=%v", name, err)
+			d.logger.Error("component start failed", "component", name, "error", err)
 			stopComponentsWithTimeout(d.logger, started, d.shutdownTimeout)
 			return fmt.Errorf("组件启动失败（%s）: %w", name, err)
 		}
@@ -104,13 +104,13 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 
 	<-ctx.Done()
-	d.logger.Printf("daemon stopping: %v", ctx.Err())
+	d.logger.Info("daemon stopping", "error", ctx.Err())
 	stopComponentsWithTimeout(d.logger, started, d.shutdownTimeout)
-	d.logger.Printf("daemon stopped")
+	d.logger.Info("daemon stopped")
 	return nil
 }
 
-func stopComponentsWithTimeout(logger *log.Logger, comps []Component, timeout time.Duration) {
+func stopComponentsWithTimeout(logger *slog.Logger, comps []Component, timeout time.Duration) {
 	if timeout <= 0 {
 		timeout = defaultShutdownTimeout
 	}
@@ -157,17 +157,24 @@ func stopComponentsWithTimeout(logger *log.Logger, comps []Component, timeout ti
 			componentTimeout = 50 * time.Millisecond
 		}
 		if logger != nil {
-			logger.Printf("component stop: %s timeout=%s remaining=%s", name, componentTimeout, remaining)
+			logger.Info("component stop",
+				"component", name,
+				"timeout", componentTimeout.String(),
+				"remaining", remaining.String(),
+			)
 		}
 		componentCtx, componentCancel := context.WithTimeout(stopCtx, componentTimeout)
 		startedAt := time.Now()
 		err := comp.Stop(componentCtx)
 		componentCancel()
 		if err != nil && logger != nil {
-			logger.Printf("component stop failed: %s err=%v", name, err)
+			logger.Warn("component stop failed", "component", name, "error", err)
 		}
 		if logger != nil {
-			logger.Printf("component stop done: %s elapsed=%s", name, time.Since(startedAt))
+			logger.Info("component stop done",
+				"component", name,
+				"elapsed", time.Since(startedAt).String(),
+			)
 		}
 	}
 }

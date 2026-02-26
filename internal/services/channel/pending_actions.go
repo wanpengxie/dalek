@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -314,7 +313,10 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 			notified, hasWaiter := s.toolApprovalBridge.NotifyIfWaiting(actionID, PendingActionApprove)
 			if hasWaiter {
 				if !notified {
-					log.Printf("tool_approval approve notify skipped: action=%d", actionID)
+					s.slog().Warn("tool approval approve notify skipped",
+						"action_id", actionID,
+						"decision", PendingActionApprove,
+					)
 				}
 				return PendingActionDecisionResult{
 					Action:           pendingActionRowToView(approvedRow),
@@ -324,7 +326,10 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 				}, nil
 			}
 		}
-		log.Printf("tool_approval approve waiter missing: action=%d", actionID)
+		s.slog().Warn("tool approval approve waiter missing",
+			"action_id", actionID,
+			"decision", PendingActionApprove,
+		)
 		failMsg := "当前会话已结束，该工具审批已失效。"
 		if err := s.finishPendingActionExecution(ctx, actionID, store.ChannelPendingActionFailed, failMsg); err != nil {
 			return PendingActionDecisionResult{}, err
@@ -428,7 +433,10 @@ func (s *Service) RejectPendingAction(ctx context.Context, actionID uint, decide
 	if s.toolApprovalBridge != nil {
 		notified, hasWaiter := s.toolApprovalBridge.NotifyIfWaiting(actionID, PendingActionReject)
 		if hasWaiter && !notified {
-			log.Printf("tool_approval reject notify skipped: action=%d", actionID)
+			s.slog().Warn("tool approval reject notify skipped",
+				"action_id", actionID,
+				"decision", PendingActionReject,
+			)
 		}
 	}
 	return PendingActionDecisionResult{

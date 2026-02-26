@@ -6,7 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -306,7 +306,7 @@ func runDaemonForeground(paths app.DaemonPaths) error {
 	if isInteractiveTTY(os.Stderr) {
 		writer = io.MultiWriter(os.Stderr, logFile)
 	}
-	logger := log.New(writer, "daemon ", log.LstdFlags|log.Lmicroseconds)
+	logger := slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: slog.LevelInfo})).With("proc", "daemon")
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return app.RunDaemon(sigCtx, paths, logger)

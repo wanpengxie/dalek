@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"dalek/internal/contracts"
+	"dalek/internal/services/core"
 	gatewaysendsvc "dalek/internal/services/gatewaysend"
 	"dalek/internal/store"
 
@@ -38,6 +40,7 @@ type GatewayStatusNotifier struct {
 	gatewayDB   *gorm.DB
 	resolver    contracts.ProjectMetaResolver
 	sender      gatewaysendsvc.MessageSender
+	logger      *slog.Logger
 	now         func() time.Time
 }
 
@@ -46,13 +49,19 @@ func NewGatewayStatusNotifier(
 	projectDB, gatewayDB *gorm.DB,
 	resolver contracts.ProjectMetaResolver,
 	sender gatewaysendsvc.MessageSender,
+	loggers ...*slog.Logger,
 ) *GatewayStatusNotifier {
+	logger := core.DiscardLogger()
+	if len(loggers) > 0 && loggers[0] != nil {
+		logger = loggers[0]
+	}
 	return &GatewayStatusNotifier{
 		projectName: strings.TrimSpace(projectName),
 		projectDB:   projectDB,
 		gatewayDB:   gatewayDB,
 		resolver:    resolver,
 		sender:      sender,
+		logger:      logger,
 		now:         time.Now,
 	}
 }
@@ -93,7 +102,7 @@ func (n *GatewayStatusNotifier) OnStatusChange(ctx context.Context, event Status
 		}
 	}
 	text := buildStatusChangeNotifyText(event, title)
-	_, err = gatewaysendsvc.SendProjectText(ctx, n.gatewayDB, n.resolver, n.sender, projectName, text)
+	_, err = gatewaysendsvc.SendProjectTextWithLogger(ctx, n.gatewayDB, n.resolver, n.sender, n.logger, projectName, text)
 	if err != nil {
 		if errors.Is(err, gatewaysendsvc.ErrBindingNotFound) {
 			return nil
@@ -220,19 +229,23 @@ func (s *Service) emitStatusChangeHookAsync(event *StatusChangeEvent) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Printf("pm workflow 状态通知 panic: ticket=%d source=%s panic=%v", ev.TicketID, strings.TrimSpace(ev.Source), r)
+				s.slog().Error("pm workflow status notify panic",
+					"ticket_id", ev.TicketID,
+					"source", strings.TrimSpace(ev.Source),
+					"panic", r,
+					"stack", string(debug.Stack()),
+				)
 			}
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), workflowStatusNotifyTimeout)
 		defer cancel()
 		if err := hook.OnStatusChange(ctx, ev); err != nil {
-			log.Printf(
-				"pm workflow 状态通知失败: ticket=%d from=%s to=%s source=%s err=%v",
-				ev.TicketID,
-				ev.FromStatus,
-				ev.ToStatus,
-				strings.TrimSpace(ev.Source),
-				err,
+			s.slog().Warn("pm workflow status notify failed",
+				"ticket_id", ev.TicketID,
+				"from", ev.FromStatus,
+				"to", ev.ToStatus,
+				"source", strings.TrimSpace(ev.Source),
+				"error", err,
 			)
 		}
 	}()

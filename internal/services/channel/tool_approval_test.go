@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
 	"dalek/internal/store"
+	"dalek/internal/testutil"
 )
 
 func TestToolApprovalEventPayload_RoundTrip(t *testing.T) {
@@ -89,6 +91,27 @@ func TestToolApprovalBridge_NotifyIfWaiting(t *testing.T) {
 	notified, hasWaiter = bridge.NotifyIfWaiting(999, PendingActionReject)
 	if hasWaiter || notified {
 		t.Fatalf("notify on missing waiter should be false,false, got %v,%v", hasWaiter, notified)
+	}
+}
+
+func TestToolApprovalBridge_LogsStructuredFields(t *testing.T) {
+	logger, buf := testutil.NewSlogBufferLogger(slog.LevelDebug)
+	bridge := NewToolApprovalBridge(logger)
+
+	notified, hasWaiter := bridge.NotifyIfWaiting(77, PendingActionApprove)
+	if notified || hasWaiter {
+		t.Fatalf("missing waiter should return false,false, got=%v,%v", notified, hasWaiter)
+	}
+
+	logs := buf.String()
+	if !strings.Contains(logs, `"action_id":77`) {
+		t.Fatalf("expected action_id field in log, got=%s", logs)
+	}
+	if !strings.Contains(logs, `"decision":"approve"`) {
+		t.Fatalf("expected decision field in log, got=%s", logs)
+	}
+	if !strings.Contains(logs, `"result":"miss"`) {
+		t.Fatalf("expected result field in log, got=%s", logs)
 	}
 }
 

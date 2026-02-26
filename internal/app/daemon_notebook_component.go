@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +19,7 @@ const (
 type daemonNotebookComponent struct {
 	home     *Home
 	registry *ProjectRegistry
-	logger   *log.Logger
+	logger   *slog.Logger
 
 	workerCount int
 	pollGap     time.Duration
@@ -32,7 +32,7 @@ type daemonNotebookComponent struct {
 	wg       sync.WaitGroup
 }
 
-func newDaemonNotebookComponent(home *Home, logger *log.Logger, workerCount int, registries ...*ProjectRegistry) *daemonNotebookComponent {
+func newDaemonNotebookComponent(home *Home, logger *slog.Logger, workerCount int, registries ...*ProjectRegistry) *daemonNotebookComponent {
 	var registry *ProjectRegistry
 	if len(registries) > 0 {
 		registry = registries[0]
@@ -196,7 +196,7 @@ func (c *daemonNotebookComponent) logf(format string, args ...any) {
 	if c == nil || c.logger == nil {
 		return
 	}
-	c.logger.Printf(format, args...)
+	c.logger.Info(fmt.Sprintf(format, args...))
 }
 
 func (c *daemonNotebookComponent) shouldShapeProject(project string, gap time.Duration, now time.Time, force bool) bool {

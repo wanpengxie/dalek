@@ -2,11 +2,12 @@ package app
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"dalek/internal/services/core"
 	daemonsvc "dalek/internal/services/daemon"
 	pmsvc "dalek/internal/services/pm"
 	"dalek/internal/store"
@@ -47,7 +48,8 @@ func WaitDaemonExit(pid int, timeout time.Duration) error {
 	return daemonsvc.WaitForExit(pid, timeout)
 }
 
-func RunDaemon(ctx context.Context, paths DaemonPaths, logger *log.Logger) error {
+func RunDaemon(ctx context.Context, paths DaemonPaths, logger *slog.Logger) error {
+	logger = core.EnsureLogger(logger).With("app", "daemon")
 	home, err := OpenHome(paths.HomeDir)
 	if err != nil {
 		return err
@@ -85,7 +87,8 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *log.Logger) error
 		if p == nil || p.core == nil || p.core.DB == nil {
 			return nil
 		}
-		return pmsvc.NewGatewayStatusNotifier(projectName, p.core.DB, internalSendDB, gatewayResolver, gatewaySender)
+		notifierLogger := logger.With("project", strings.TrimSpace(projectName), "service", "pm_status_notifier")
+		return pmsvc.NewGatewayStatusNotifier(projectName, p.core.DB, internalSendDB, gatewayResolver, gatewaySender, notifierLogger)
 	})
 	internalAPI, err := daemonsvc.NewInternalAPI(host, daemonsvc.InternalAPIConfig{
 		ListenAddr: strings.TrimSpace(cfg.Daemon.Internal.Listen),

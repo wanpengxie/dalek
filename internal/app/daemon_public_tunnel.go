@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -47,7 +47,7 @@ type daemonPublicTunnelWaitFunc func(context.Context, time.Duration) bool
 
 type daemonPublicTunnelSupervisor struct {
 	runtimeCfg daemonPublicTunnelRuntimeConfig
-	logger     *log.Logger
+	logger     *slog.Logger
 
 	startFn                daemonPublicTunnelStartFunc
 	waitFn                 daemonPublicTunnelWaitFunc
@@ -219,7 +219,7 @@ func (s *daemonPublicTunnelSupervisor) logf(format string, args ...any) {
 	if s == nil || s.logger == nil {
 		return
 	}
-	s.logger.Printf(format, args...)
+	s.logger.Info(fmt.Sprintf(format, args...))
 }
 
 func (s *daemonPublicTunnelSupervisor) recordFailure() (tripped bool, failures int, maxFailures int) {

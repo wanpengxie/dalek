@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -71,6 +71,7 @@ type HandlerOptions struct {
 	DB        *gorm.DB
 	Resolver  contracts.ProjectMetaResolver
 	Sender    MessageSender
+	Logger    *slog.Logger
 	AuthToken string
 }
 
@@ -86,6 +87,10 @@ func NewHandler(opt HandlerOptions) http.HandlerFunc {
 	sender := opt.Sender
 	if sender == nil {
 		sender = &NoopSender{}
+	}
+	logger := opt.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	authToken := strings.TrimSpace(opt.AuthToken)
 
@@ -125,7 +130,7 @@ func NewHandler(opt HandlerOptions) http.HandlerFunc {
 			return
 		}
 
-		result, err := SendProjectText(r.Context(), opt.DB, opt.Resolver, sender, req.Project, req.Text)
+		result, err := SendProjectTextWithLogger(r.Context(), opt.DB, opt.Resolver, sender, logger, req.Project, req.Text)
 		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, ErrBindingNotFound) {
@@ -143,6 +148,10 @@ func NewHandler(opt HandlerOptions) http.HandlerFunc {
 }
 
 func SendProjectText(ctx context.Context, db *gorm.DB, resolver contracts.ProjectMetaResolver, sender MessageSender, projectName, text string) (Response, error) {
+	return SendProjectTextWithLogger(ctx, db, resolver, sender, nil, projectName, text)
+}
+
+func SendProjectTextWithLogger(ctx context.Context, db *gorm.DB, resolver contracts.ProjectMetaResolver, sender MessageSender, logger *slog.Logger, projectName, text string) (Response, error) {
 	projectName = strings.TrimSpace(projectName)
 	text = strings.TrimSpace(text)
 	if projectName == "" {
@@ -156,6 +165,9 @@ func SendProjectText(ctx context.Context, db *gorm.DB, resolver contracts.Projec
 	}
 	if sender == nil {
 		sender = &NoopSender{}
+	}
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
 	var bindings []store.ChannelBinding
@@ -177,7 +189,7 @@ func SendProjectText(ctx context.Context, db *gorm.DB, resolver contracts.Projec
 	delivered := 0
 	failed := 0
 	for _, binding := range bindings {
-		delivery, err := sendOneBinding(ctx, db, sender, binding, projectName, cardProjectName, text)
+		delivery, err := sendOneBinding(ctx, db, sender, logger, binding, projectName, cardProjectName, text)
 		if err != nil {
 			delivery.Status = string(store.ChannelOutboxFailed)
 			delivery.Error = strings.TrimSpace(err.Error())
@@ -199,11 +211,14 @@ func SendProjectText(ctx context.Context, db *gorm.DB, resolver contracts.Projec
 	}, nil
 }
 
-func sendOneBinding(ctx context.Context, db *gorm.DB, sender MessageSender, binding store.ChannelBinding, projectName, cardProjectName, text string) (Delivery, error) {
+func sendOneBinding(ctx context.Context, db *gorm.DB, sender MessageSender, logger *slog.Logger, binding store.ChannelBinding, projectName, cardProjectName, text string) (Delivery, error) {
 	chatID := strings.TrimSpace(binding.PeerProjectKey)
 	out := Delivery{
 		BindingID: binding.ID,
 		ChatID:    chatID,
+	}
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	if chatID == "" {
 		return out, fmt.Errorf("binding %d 缺少 chat_id", binding.ID)
@@ -211,14 +226,15 @@ func sendOneBinding(ctx context.Context, db *gorm.DB, sender MessageSender, bind
 	if reused, ok, err := findRecentDuplicateDelivery(ctx, db, binding, text); err != nil {
 		return out, err
 	} else if ok {
-		log.Printf(
-			"gateway send dedup: dedup_type=send_content binding_id=%d conversation_id=%d message_id=%d outbox_id=%d action=skip window=%s text_len=%d",
-			reused.BindingID,
-			reused.ConversationID,
-			reused.MessageID,
-			reused.OutboxID,
-			sendDedupWindow.String(),
-			len(strings.TrimSpace(text)),
+		logger.Info("gateway send dedup",
+			"dedup_type", "send_content",
+			"binding_id", reused.BindingID,
+			"conversation_id", reused.ConversationID,
+			"message_id", reused.MessageID,
+			"outbox_id", reused.OutboxID,
+			"action", "skip",
+			"window", sendDedupWindow.String(),
+			"text_len", len(strings.TrimSpace(text)),
 		)
 		return reused, nil
 	}

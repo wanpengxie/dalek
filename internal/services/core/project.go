@@ -3,6 +3,7 @@ package core
 import (
 	"dalek/internal/infra"
 	"dalek/internal/repo"
+	"log/slog"
 
 	"gorm.io/gorm"
 )
@@ -25,6 +26,7 @@ type Project struct {
 
 	Config repo.Config
 	DB     *gorm.DB
+	Logger *slog.Logger
 
 	Tmux        infra.TmuxClient
 	Git         infra.GitClient
