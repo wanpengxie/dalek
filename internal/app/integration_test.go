@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha1"
 	"dalek/internal/contracts"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,6 +78,19 @@ title_rules:
 	if err := os.WriteFile(skillPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile skill failed: %v", err)
 	}
+}
+
+func normalizeNoteTextForTest(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func hashNormalizedTextForTest(s string) string {
+	sum := sha1.Sum([]byte(strings.TrimSpace(s)))
+	return hex.EncodeToString(sum[:])
 }
 
 func TestIntegration_StartAndStopTicket(t *testing.T) {
@@ -1174,14 +1189,14 @@ defaults:
 	if note.Status != string(store.NoteShaped) {
 		t.Fatalf("expected note shaped after fallback, got=%s", note.Status)
 	}
-	if strings.TrimSpace(note.Shaped.ScopeEstimate) != defaultScopeEstimate {
+	if strings.TrimSpace(note.Shaped.ScopeEstimate) != "M" {
 		t.Fatalf("expected default scope estimate fallback, got=%q", note.Shaped.ScopeEstimate)
 	}
 	var acceptance []string
 	if err := json.Unmarshal([]byte(note.Shaped.AcceptanceJSON), &acceptance); err != nil {
 		t.Fatalf("unmarshal acceptance_json failed: %v", err)
 	}
-	if len(acceptance) != len(defaultAcceptanceItems) {
+	if len(acceptance) != 3 {
 		t.Fatalf("expected default acceptance items, got=%d raw=%s", len(acceptance), note.Shaped.AcceptanceJSON)
 	}
 	if !strings.Contains(note.Shaped.PMNotes, "front matter 解析失败") {
@@ -1212,14 +1227,14 @@ func TestIntegration_NoteAdd_DedupByProjectAndHash(t *testing.T) {
 		t.Fatalf("dedup note id mismatch: got=%d want=%d", second.NoteID, first.NoteID)
 	}
 
-	normalized := normalizeNoteText("支持导出 CSV")
+	normalized := normalizeNoteTextForTest("支持导出 CSV")
 	foreign := store.NoteItem{
 		ProjectKey:     "other_project",
 		Status:         store.NoteOpen,
 		Source:         "cli",
 		Text:           "支持导出 CSV",
 		ContextJSON:    "",
-		NormalizedHash: hashNormalizedText(normalized),
+		NormalizedHash: hashNormalizedTextForTest(normalized),
 		ShapedItemID:   0,
 	}
 	if err := p.core.DB.WithContext(ctx).Create(&foreign).Error; err != nil {

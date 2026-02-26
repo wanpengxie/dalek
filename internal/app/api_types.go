@@ -4,11 +4,12 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
+	notebooksvc "dalek/internal/services/notebook"
 )
 
 // 说明：
-// app 层对外暴露的类型尽量是“稳定 API”，不要通过 type alias 伪重构把下层符号搬上来。
-// 这里定义的是 UI/CLI 需要用到的最小数据结构（非业务实现）。
+// app 层对外暴露的类型尽量是“稳定 API”。
+// notebook 域类型已迁移到 services/notebook，app 层保留兼容别名避免上层调用回退。
 
 type DispatchResult struct {
 	TicketID  uint
@@ -151,51 +152,10 @@ type ListMergeOptions struct {
 	Limit  int
 }
 
-type ListNoteOptions struct {
-	StatusOnly string
-	ShapedOnly bool
-	Limit      int
-}
-
-type NoteAddResult struct {
-	NoteID       uint
-	ShapedItemID uint
-	Deduped      bool
-}
-
-type NoteView struct {
-	ProjectKey     string
-	ID             uint
-	Status         string
-	Text           string
-	ContextJSON    string
-	NormalizedHash string
-	ShapedItemID   uint
-	LastError      string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-
-	Shaped *ShapedView
-}
-
-type ShapedView struct {
-	ID             uint
-	ProjectKey     string
-	Status         string
-	Title          string
-	Description    string
-	AcceptanceJSON string
-	PMNotes        string
-	ScopeEstimate  string
-	DedupKey       string
-	SourceNoteIDs  string
-	TicketID       uint
-	ReviewComment  string
-	ReviewedAt     *time.Time
-	ReviewedBy     string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-}
+type ListNoteOptions = notebooksvc.ListNoteOptions
+type NoteAddResult = notebooksvc.NoteAddResult
+type NoteView = notebooksvc.NoteView
+type ShapedView = notebooksvc.ShapedView
 
 type ManagerTickOptions struct {
 	MaxRunningWorkers int

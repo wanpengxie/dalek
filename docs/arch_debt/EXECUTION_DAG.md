@@ -13,10 +13,11 @@
 
 - 更新时间：`2026-02-26`
 - 已完成批次：`W01` `W02`
-- 当前批次：`W03`（`ready_to_dispatch`）
+- 当前批次：`W03`（`in_progress`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
-- W03 启动票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`
+- W03 已完成票：`T01(8)`
+- W03 进行中票：`T02(9)` `T04(11)` `T11(18)`
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -216,6 +217,18 @@ Tickets: <T.. T.. T..>
 - T23 解锁点（`T21 -> T23`）：
   - 可以沿同一边界完成第三批与收尾迁移（含 facade 进一步收口），无需再引入新的类型落点。
   - 新增跨层领域类型必须落在 `contracts`，禁止回流到 `store` 或新增重复定义。
+
+## W03 回写（T01 Notebook 归位）
+
+- 状态：`T01` 已完成（2026-02-26），notebook 业务逻辑已从 `internal/app/note.go` 下沉到 `internal/services/notebook/service.go`，app 层只保留 facade 转调。
+- 交付物：
+  - 新增 `internal/services/notebook/`，统一承载 Add/List/Get/Process/Approve/Reject/Discard 与 shaping/helpers 逻辑。
+  - `app.Project` 已注册 `notebook` service（`assembleProject()` 注入 `notebook.New(cp)`）；`internal/app/note.go` 已去业务化。
+  - notebook 类型迁移到 service 层，`internal/app/api_types.go` 仅保留兼容别名，CLI/daemon 调用链无回退。
+  - 新增 `internal/services/notebook/service_test.go` 覆盖 Add/Process/List/Approve 核心流程，并通过 `go build ./...` + `go test ./...` 全量回归。
+- 对 W04/W05 的影响：
+  - W04（`T22` `T14` `T31` `T29`）推进类型迁移与拆分时，禁止将 notebook 编排逻辑回流到 app/cmd；统一复用 `services/notebook` 入口。
+  - W05（`T23` `T15` `T30` `T37`）继续类型收口时，notebook 跨层契约优先落在 `services/notebook`/`contracts`，禁止新增上层对 `store` 常量的直接依赖。
 
 ## 每批执行建议
 
