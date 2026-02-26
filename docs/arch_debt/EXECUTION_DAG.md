@@ -18,6 +18,7 @@
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
 - W04 已完成票：`T22(29)` `T14(21)` `T31(38)` `T29(36)`
+- W05 已完成票：`T15(22)`（runTurnJob 拆分 + pending_actions 分层完成）
 - W05A 分叉进行中票：`T23(30)` `T37(44)`（先行执行，不依赖 `T14(21)`）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
@@ -343,6 +344,23 @@ Tickets: <T.. T.. T..>
 - 依赖与下游影响：
   - `T30` 可直接在拆分后的 `runner/index/types` 边界上继续推进，不再需要先做文件级切分。
   - daemon recover/logger 与 `contracts/core project` 注入方式保持不变，外部 API 行为无回退。
+
+## W05 回写（T15 Channel turn 执行治理）
+
+- 状态：`T15` 已完成（2026-02-26），`runTurnJob` 与 `pending_actions` 已完成职责拆分，执行链路行为保持等价。
+- 交付物：
+  - 新增 `internal/services/channel/turn_executor.go`，引入 `turnContext` 并拆分 `claimAndLoadTurnContext` / `executeTurnAgent` / `processTurnResponse` / `finalizeTurn`，`runTurnJob` 收敛为编排入口。
+  - `pending_actions.go` 已拆分为 `pending_action_store.go`（CRUD + 类型 + 编解码）与 `pending_action_workflow.go`（审批工作流）。
+  - `renderActionExecutionSummary` 与 `actionExecuteResult` 已迁移到 `action_executor.go`，执行辅助不再与 pending_action 存储逻辑混置。
+  - 入站持久化与 turn 结果落盘继续复用 `internal/services/channel/inbound_persistence.go` 与 `PersistTurnResultTx`，未新增并行持久化路径或重复 schema/decoder。
+- 回归结果：
+  - `go test ./internal/services/channel/...` 通过
+  - `go test ./...` 通过
+  - `go build ./...` 通过
+  - `go vet ./...` 通过
+- 依赖与下游影响：
+  - `T14 -> T15` 依赖闭环已完成，`T16`（channel service 生命周期治理）可直接基于新的 turn 执行边界继续推进。
+  - 后续涉及 pending action 变更，必须分别落在 store/workflow 边界，禁止回退为单文件混合职责实现。
 
 ## 每批执行建议
 
