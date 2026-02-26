@@ -17,7 +17,8 @@
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
-- W04 执行中：`T22(29)` `T14(21)` `T31(38)` `T29(36)`（均已 active）
+- W04 已完成票：`T22(29)`
+- W04 进行中票：`T14(21)` `T31(38)` `T29(36)`
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -234,6 +235,22 @@ Tickets: <T.. T.. T..>
 - T23 解锁点（`T21 -> T23`）：
   - 可以沿同一边界完成第三批与收尾迁移（含 facade 进一步收口），无需再引入新的类型落点。
   - 新增跨层领域类型必须落在 `contracts`，禁止回流到 `store` 或新增重复定义。
+
+## W04 回写（T22 类型归位 2/3）
+
+- 状态：`T22` 已完成（2026-02-26），Ticket 高传播领域类型已迁移到 `internal/contracts`，store 不再作为该批类型的权威定义入口。
+- 关键产物：
+  - 新增 `contracts` 领域模型文件：`ticket.go`、`worker.go`、`inbox.go`、`merge.go`，承接 `Ticket/Worker/MergeItem/InboxItem/TicketWorkflowEvent/WorkerStatusEvent`。
+  - `internal/store/models.go` 删除上述 6 个结构体定义，改为 `type alias` 指向 `contracts`；store 继续承载 ORM 与持久化职责。
+  - `internal/app/facade_types.go` 的四个透明别名改为 `contracts.*`，并移除 `store` import，阻断 store 变更直穿 app facade。
+  - `services/pm`、`services/worker`、`services/ticket`、`services/notebook`、`services/channel/ws`、`app`、`cmd_gateway_ws` 的生产代码已切换到 `contracts` 类型引用。
+- 回归验证：
+  - `go test ./...` 通过
+  - `go build ./...` 通过
+  - `go vet ./...` 通过
+- 对后续票约束：
+  - `T23` 继续迁移剩余高传播结构（`PMState/TaskRun/SubagentRun/Channel*`）时，必须沿用本轮 `contracts` 权威边界，不得回流到 `store`。
+  - `T26` 修复 ticket service 与 worker 读写路径时，新增跨层类型只允许使用 `contracts`，不得新增 facade 透明别名泄露底层实现。
 
 ## W03 回写（T01 Notebook 归位）
 

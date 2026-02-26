@@ -70,7 +70,7 @@ func (s *Service) AppendWorkerTaskEvent(ctx context.Context, workerID uint, even
 	return s.appendWorkerTaskEvent(ctx, workerID, eventType, note, payload, createdAt)
 }
 
-func (s *Service) ensureActiveWorkerTaskRun(ctx context.Context, w store.Worker, reason string, now time.Time) (store.TaskRun, error) {
+func (s *Service) ensureActiveWorkerTaskRun(ctx context.Context, w contracts.Worker, reason string, now time.Time) (store.TaskRun, error) {
 	rt, err := s.taskRuntime()
 	if err != nil {
 		return store.TaskRun{}, err
@@ -78,7 +78,7 @@ func (s *Service) ensureActiveWorkerTaskRun(ctx context.Context, w store.Worker,
 	return s.ensureActiveWorkerTaskRunWithRuntime(ctx, rt, w, reason, now)
 }
 
-func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt core.TaskRuntime, w store.Worker, reason string, now time.Time) (store.TaskRun, error) {
+func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt core.TaskRuntime, w contracts.Worker, reason string, now time.Time) (store.TaskRun, error) {
 	if rt == nil {
 		return store.TaskRun{}, fmt.Errorf("task runtime service 为空")
 	}
@@ -134,7 +134,7 @@ func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt c
 	return created, nil
 }
 
-func (s *Service) syncTaskRuntimeFromReport(ctx context.Context, w store.Worker, r contracts.WorkerReport, runtimeHealth contracts.TaskRuntimeHealthState, needsUser bool, summary string, source string, now time.Time) error {
+func (s *Service) syncTaskRuntimeFromReport(ctx context.Context, w contracts.Worker, r contracts.WorkerReport, runtimeHealth contracts.TaskRuntimeHealthState, needsUser bool, summary string, source string, now time.Time) error {
 	rt, err := s.taskRuntime()
 	if err != nil {
 		return err
@@ -142,7 +142,7 @@ func (s *Service) syncTaskRuntimeFromReport(ctx context.Context, w store.Worker,
 	return s.syncTaskRuntimeFromReportWithRuntime(ctx, rt, w, r, runtimeHealth, needsUser, summary, source, now)
 }
 
-func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt core.TaskRuntime, w store.Worker, r contracts.WorkerReport, runtimeHealth contracts.TaskRuntimeHealthState, needsUser bool, summary string, source string, now time.Time) error {
+func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt core.TaskRuntime, w contracts.Worker, r contracts.WorkerReport, runtimeHealth contracts.TaskRuntimeHealthState, needsUser bool, summary string, source string, now time.Time) error {
 	if rt == nil {
 		return fmt.Errorf("task runtime service 为空")
 	}
@@ -218,7 +218,7 @@ func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt c
 	return nil
 }
 
-func (s *Service) finalizeWorkerTaskRunOnStopWithRuntime(ctx context.Context, rt core.TaskRuntime, w store.Worker, reason string, source string, now time.Time) error {
+func (s *Service) finalizeWorkerTaskRunOnStopWithRuntime(ctx context.Context, rt core.TaskRuntime, w contracts.Worker, reason string, source string, now time.Time) error {
 	if rt == nil {
 		return fmt.Errorf("task runtime service 为空")
 	}

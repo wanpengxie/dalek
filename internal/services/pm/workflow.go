@@ -38,7 +38,7 @@ func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, st
 	}
 	var statusEvent *StatusChangeEvent
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var t store.Ticket
+		var t contracts.Ticket
 		if err := tx.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 			return err
 		}
@@ -50,7 +50,7 @@ func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, st
 			return nil
 		}
 		now := time.Now()
-		if err := tx.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
+		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
 			"workflow_status": status,
 			"updated_at":      now,
 		}).Error; err != nil {
@@ -84,7 +84,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 		return fmt.Errorf("ticket_id 不能为空")
 	}
 
-	var t store.Ticket
+	var t contracts.Ticket
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 
 	var cnt int64
 	if err := db.WithContext(ctx).
-		Model(&store.Worker{}).
+		Model(&contracts.Worker{}).
 		Where("ticket_id = ? AND status = ?", ticketID, contracts.WorkerRunning).
 		Count(&cnt).Error; err != nil {
 		return err
@@ -117,7 +117,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 	now := time.Now()
 	var statusEvent *StatusChangeEvent
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var cur store.Ticket
+		var cur contracts.Ticket
 		if err := tx.WithContext(ctx).First(&cur, ticketID).Error; err != nil {
 			return err
 		}
@@ -125,7 +125,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 		if from == contracts.TicketArchived {
 			return nil
 		}
-		if err := tx.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
+		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
 			"workflow_status": contracts.TicketArchived,
 			"updated_at":      now,
 		}).Error; err != nil {
@@ -134,13 +134,13 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 		cleanupRequested := false
 		cleanupWorkerID := uint(0)
 		cleanupWorktree := ""
-		var w store.Worker
+		var w contracts.Worker
 		werr := tx.WithContext(ctx).Where("ticket_id = ?", ticketID).Order("id DESC").First(&w).Error
 		if werr != nil && werr != gorm.ErrRecordNotFound {
 			return werr
 		}
 		if werr == nil {
-			if err := tx.WithContext(ctx).Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+			if err := tx.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 				"worktree_gc_requested_at": &now,
 				"worktree_gc_cleaned_at":   nil,
 				"worktree_cleanup_error":   "",
@@ -230,7 +230,7 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 	now := time.Now()
 	var statusEvent *StatusChangeEvent
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var t store.Ticket
+		var t contracts.Ticket
 		if err := tx.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 			return err
 		}
@@ -243,7 +243,7 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 		}
 		from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
 		if from != promoteTo {
-			if err := tx.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", t.ID).Updates(map[string]any{
+			if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", t.ID).Updates(map[string]any{
 				"workflow_status": promoteTo,
 				"updated_at":      now,
 			}).Error; err != nil {
@@ -274,7 +274,7 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 
 		switch next {
 		case string(contracts.NextWaitUser):
-			_, err := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
+			_, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
 				Key:      inboxKeyNeedsUser(r.WorkerID),
 				Status:   contracts.InboxOpen,
 				Severity: contracts.InboxBlocker,
@@ -323,12 +323,12 @@ func (s *Service) ensureMergeProposalForDoneTicketTx(ctx context.Context, tx *go
 	}
 
 	// 已有非终态 merge item 时复用并确保审批 inbox 存在。
-	var existing store.MergeItem
+	var existing contracts.MergeItem
 	if err := tx.WithContext(ctx).
 		Where("ticket_id = ? AND status NOT IN ?", ticketID, mergeTerminalStatuses()).
 		Order("id desc").
 		First(&existing).Error; err == nil {
-		_, err := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
+		_, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
 			Key:         inboxKeyMergeApproval(existing.ID),
 			Status:      contracts.InboxOpen,
 			Severity:    contracts.InboxWarn,
@@ -344,7 +344,7 @@ func (s *Service) ensureMergeProposalForDoneTicketTx(ctx context.Context, tx *go
 		return err
 	}
 
-	var w store.Worker
+	var w contracts.Worker
 	foundWorker := false
 	if workerID > 0 {
 		if err := tx.WithContext(ctx).Select("id", "ticket_id", "branch").First(&w, workerID).Error; err == nil && w.TicketID == ticketID {
@@ -368,7 +368,7 @@ func (s *Service) ensureMergeProposalForDoneTicketTx(ctx context.Context, tx *go
 	if branch == "" {
 		return nil
 	}
-	mi := store.MergeItem{
+	mi := contracts.MergeItem{
 		Status:   contracts.MergeProposed,
 		TicketID: ticketID,
 		WorkerID: w.ID,
@@ -377,7 +377,7 @@ func (s *Service) ensureMergeProposalForDoneTicketTx(ctx context.Context, tx *go
 	if err := tx.WithContext(ctx).Create(&mi).Error; err != nil {
 		return err
 	}
-	_, err := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
+	_, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
 		Key:         inboxKeyMergeApproval(mi.ID),
 		Status:      contracts.InboxOpen,
 		Severity:    contracts.InboxWarn,

@@ -12,7 +12,6 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/infra"
 	"dalek/internal/repo"
-	"dalek/internal/store"
 )
 
 // ProjectConfig 是 app 层对外暴露的项目配置类型。
@@ -31,10 +30,10 @@ type WorkerReport = contracts.WorkerReport
 
 const WorkerReportSchemaV1 = contracts.WorkerReportSchemaV1
 
-type Ticket = store.Ticket
-type Worker = store.Worker
-type MergeItem = store.MergeItem
-type InboxItem = store.InboxItem
+type Ticket = contracts.Ticket
+type Worker = contracts.Worker
+type MergeItem = contracts.MergeItem
+type InboxItem = contracts.InboxItem
 
 type TicketWorkflowStatus = contracts.TicketWorkflowStatus
 type WorkerStatus = contracts.WorkerStatus

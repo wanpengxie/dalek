@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -46,7 +44,7 @@ func (s *Service) appendWorkerStatusEventTx(ctx context.Context, tx *gorm.DB, wo
 	if createdAt.IsZero() {
 		createdAt = time.Now()
 	}
-	ev := store.WorkerStatusEvent{
+	ev := contracts.WorkerStatusEvent{
 		CreatedAt:   createdAt,
 		WorkerID:    workerID,
 		TicketID:    ticketID,

@@ -11,8 +11,8 @@ import (
 )
 
 type TicketView struct {
-	Ticket       store.Ticket
-	LatestWorker *store.Worker
+	Ticket       contracts.Ticket
+	LatestWorker *contracts.Worker
 	SessionAlive bool
 	// SessionProbeFailed=true 表示 tmux 探测失败（不是“离线”）。
 	SessionProbeFailed bool
@@ -38,7 +38,7 @@ type TicketView struct {
 	LastEventAt   *time.Time
 }
 
-func computeTicketCapability(workflow contracts.TicketWorkflowStatus, w *store.Worker, sessionAlive bool, sessionProbeFailed bool, hasActiveDispatch bool, runtimeNeedsUser bool, runtimeHealth contracts.TaskRuntimeHealthState) contracts.TicketCapability {
+func computeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contracts.Worker, sessionAlive bool, sessionProbeFailed bool, hasActiveDispatch bool, runtimeNeedsUser bool, runtimeHealth contracts.TaskRuntimeHealthState) contracts.TicketCapability {
 	wf := contracts.TicketWorkflowStatus(strings.TrimSpace(strings.ToLower(string(workflow))))
 	if wf == "" {
 		wf = contracts.TicketBacklog
@@ -121,7 +121,7 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 		ctx = context.Background()
 	}
 
-	var tickets []store.Ticket
+	var tickets []contracts.Ticket
 	if err := db.WithContext(ctx).
 		Where("workflow_status != ?", contracts.TicketArchived).
 		Order("priority desc").
@@ -139,7 +139,7 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 		ticketIDs = append(ticketIDs, t.ID)
 	}
 
-	var workers []store.Worker
+	var workers []contracts.Worker
 	if len(ticketIDs) > 0 {
 		if err := db.WithContext(ctx).
 			Where("ticket_id IN ?", ticketIDs).
@@ -149,7 +149,7 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 			return nil, err
 		}
 	}
-	latest := map[uint]store.Worker{}
+	latest := map[uint]contracts.Worker{}
 	for _, w := range workers {
 		if _, ok := latest[w.TicketID]; ok {
 			continue
@@ -235,7 +235,7 @@ func (s *Service) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 	for _, t := range tickets {
 		d := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
 
-		var lw *store.Worker
+		var lw *contracts.Worker
 		alive := false
 		sessionProbeFailed := false
 		runID := uint(0)

@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -27,11 +25,11 @@ func (s *Service) requireDB() (*gorm.DB, error) {
 	return s.db, nil
 }
 
-func (s *Service) Create(ctx context.Context, title string) (*store.Ticket, error) {
+func (s *Service) Create(ctx context.Context, title string) (*contracts.Ticket, error) {
 	return s.CreateWithDescription(ctx, title, "")
 }
 
-func (s *Service) CreateWithDescription(ctx context.Context, title, description string) (*store.Ticket, error) {
+func (s *Service) CreateWithDescription(ctx context.Context, title, description string) (*contracts.Ticket, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -44,7 +42,7 @@ func (s *Service) CreateWithDescription(ctx context.Context, title, description 
 	if description == "" {
 		return nil, fmt.Errorf("description 不能为空")
 	}
-	t := store.Ticket{
+	t := contracts.Ticket{
 		Title:          title,
 		Description:    description,
 		WorkflowStatus: contracts.TicketBacklog,
@@ -56,16 +54,16 @@ func (s *Service) CreateWithDescription(ctx context.Context, title, description 
 	return &t, nil
 }
 
-func (s *Service) List(ctx context.Context, includeArchived bool) ([]store.Ticket, error) {
+func (s *Service) List(ctx context.Context, includeArchived bool) ([]contracts.Ticket, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
 	}
-	q := db.WithContext(ctx).Model(&store.Ticket{}).Order("priority desc").Order("updated_at desc").Order("id desc")
+	q := db.WithContext(ctx).Model(&contracts.Ticket{}).Order("priority desc").Order("updated_at desc").Order("id desc")
 	if !includeArchived {
 		q = q.Where("workflow_status != ?", contracts.TicketArchived)
 	}
-	var out []store.Ticket
+	var out []contracts.Ticket
 	if err := q.Find(&out).Error; err != nil {
 		return nil, err
 	}
@@ -77,14 +75,14 @@ func (s *Service) BumpPriority(ctx context.Context, ticketID uint, delta int) (i
 	if err != nil {
 		return 0, err
 	}
-	var t store.Ticket
+	var t contracts.Ticket
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return 0, err
 	}
 	np := t.Priority + delta
 	now := time.Now()
 	if err := db.WithContext(ctx).
-		Model(&store.Ticket{}).
+		Model(&contracts.Ticket{}).
 		Where("id = ?", ticketID).
 		Updates(map[string]any{
 			"priority":   np,
@@ -110,7 +108,7 @@ func (s *Service) UpdateText(ctx context.Context, ticketID uint, title, descript
 	}
 	now := time.Now()
 	return db.WithContext(ctx).
-		Model(&store.Ticket{}).
+		Model(&contracts.Ticket{}).
 		Where("id = ?", ticketID).
 		Updates(map[string]any{
 			"title":       title,

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	workersvc "dalek/internal/services/worker"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -21,11 +20,11 @@ type StartOptions struct {
 //
 // 约束：
 // - worker 只负责“资源启动”（worktree + tmux session）。
-func (s *Service) StartTicket(ctx context.Context, ticketID uint) (*store.Worker, error) {
+func (s *Service) StartTicket(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
 	return s.StartTicketWithOptions(ctx, ticketID, StartOptions{})
 }
 
-func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt StartOptions) (*store.Worker, error) {
+func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt StartOptions) (*contracts.Worker, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return nil, err
@@ -37,7 +36,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		return nil, fmt.Errorf("ticket_id 不能为空")
 	}
 
-	var t store.Ticket
+	var t contracts.Ticket
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return nil, err
 	}
@@ -63,7 +62,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	// 注意：不要覆盖 done/blocked/active/archived 等更高阶段。
 	now := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		res := tx.WithContext(ctx).Model(&store.Ticket{}).
+		res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
 			Where("id = ? AND (workflow_status = ? OR TRIM(COALESCE(workflow_status, '')) = '')", ticketID, contracts.TicketBacklog).
 			Updates(map[string]any{
 				"workflow_status": contracts.TicketQueued,

@@ -11,15 +11,14 @@ import (
 	"dalek/internal/agent/run"
 	"dalek/internal/infra"
 	"dalek/internal/repo"
-	"dalek/internal/store"
 )
 
 // launchWorkerSDKHandle 创建 SDK executor 并启动 agent，返回 handle 供调用方 Wait()。
 // 无超时限制（agent 可持续运行数小时）。
 func (s *Service) launchWorkerSDKHandle(
 	ctx context.Context,
-	t store.Ticket,
-	w store.Worker,
+	t contracts.Ticket,
+	w contracts.Worker,
 	entryPrompt string,
 ) (run.AgentRunHandle, error) {
 	p, _, err := s.require()

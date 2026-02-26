@@ -156,11 +156,11 @@ func (p *Project) ApplyAgentProviderModel(provider, model string) error {
 	return nil
 }
 
-func (p *Project) StartTicket(ctx context.Context, ticketID uint) (*store.Worker, error) {
+func (p *Project) StartTicket(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
 	return p.StartTicketWithOptions(ctx, ticketID, StartOptions{})
 }
 
-func (p *Project) StartTicketWithOptions(ctx context.Context, ticketID uint, opt StartOptions) (*store.Worker, error) {
+func (p *Project) StartTicketWithOptions(ctx context.Context, ticketID uint, opt StartOptions) (*contracts.Worker, error) {
 	if p == nil || p.pm == nil {
 		return nil, fmt.Errorf("project pm service 为空")
 	}
@@ -424,7 +424,7 @@ func (p *Project) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 	return out, nil
 }
 
-func (p *Project) ListTickets(ctx context.Context, includeArchived bool) ([]store.Ticket, error) {
+func (p *Project) ListTickets(ctx context.Context, includeArchived bool) ([]contracts.Ticket, error) {
 	if p == nil || p.ticket == nil {
 		return nil, fmt.Errorf("project ticket service 为空")
 	}
@@ -648,11 +648,11 @@ func (p *Project) CancelTaskRun(ctx context.Context, runID uint) (TaskCancelResu
 	return result, nil
 }
 
-func (p *Project) CreateTicket(ctx context.Context, title string) (*store.Ticket, error) {
+func (p *Project) CreateTicket(ctx context.Context, title string) (*contracts.Ticket, error) {
 	return p.CreateTicketWithDescription(ctx, title, "")
 }
 
-func (p *Project) CreateTicketWithDescription(ctx context.Context, title, description string) (*store.Ticket, error) {
+func (p *Project) CreateTicketWithDescription(ctx context.Context, title, description string) (*contracts.Ticket, error) {
 	if p == nil || p.ticket == nil {
 		return nil, fmt.Errorf("project ticket service 为空")
 	}
@@ -799,7 +799,7 @@ func (p *Project) ListTaskEventsByScope(ctx context.Context, ticketID, workerID 
 	return out, nil
 }
 
-func (p *Project) ListRunningWorkers(ctx context.Context) ([]store.Worker, error) {
+func (p *Project) ListRunningWorkers(ctx context.Context) ([]contracts.Worker, error) {
 	if p == nil || p.worker == nil {
 		return nil, fmt.Errorf("project worker service 为空")
 	}
@@ -836,7 +836,7 @@ func (p *Project) SetMaxRunningWorkers(ctx context.Context, n int) (store.PMStat
 	return p.pm.SetMaxRunningWorkers(ctx, n)
 }
 
-func (p *Project) ListInbox(ctx context.Context, opt ListInboxOptions) ([]store.InboxItem, error) {
+func (p *Project) ListInbox(ctx context.Context, opt ListInboxOptions) ([]contracts.InboxItem, error) {
 	if p == nil || p.pm == nil {
 		return nil, fmt.Errorf("project pm service 为空")
 	}
@@ -846,7 +846,7 @@ func (p *Project) ListInbox(ctx context.Context, opt ListInboxOptions) ([]store.
 	})
 }
 
-func (p *Project) GetInboxItem(ctx context.Context, id uint) (*store.InboxItem, error) {
+func (p *Project) GetInboxItem(ctx context.Context, id uint) (*contracts.InboxItem, error) {
 	if p == nil || p.pm == nil {
 		return nil, fmt.Errorf("project pm service 为空")
 	}
@@ -881,7 +881,7 @@ func (p *Project) DeleteInboxItem(ctx context.Context, id uint) error {
 	return p.pm.DeleteInboxItem(ctx, id)
 }
 
-func (p *Project) ListMergeItems(ctx context.Context, opt ListMergeOptions) ([]store.MergeItem, error) {
+func (p *Project) ListMergeItems(ctx context.Context, opt ListMergeOptions) ([]contracts.MergeItem, error) {
 	if p == nil || p.pm == nil {
 		return nil, fmt.Errorf("project pm service 为空")
 	}
@@ -891,7 +891,7 @@ func (p *Project) ListMergeItems(ctx context.Context, opt ListMergeOptions) ([]s
 	})
 }
 
-func (p *Project) ProposeMerge(ctx context.Context, ticketID uint) (*store.MergeItem, error) {
+func (p *Project) ProposeMerge(ctx context.Context, ticketID uint) (*contracts.MergeItem, error) {
 	if p == nil || p.pm == nil {
 		return nil, fmt.Errorf("project pm service 为空")
 	}

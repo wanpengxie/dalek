@@ -470,7 +470,7 @@ func (s *Service) completePMDispatchJobFailed(ctx context.Context, jobID uint, r
 			key = inboxKeyTicketIncident(job.TicketID, "dispatch_failed")
 			title = fmt.Sprintf("派发失败：t%d", job.TicketID)
 		}
-		_, uerr := s.upsertOpenInboxTx(ctx, tx, store.InboxItem{
+		_, uerr := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
 			Key:      key,
 			Status:   contracts.InboxOpen,
 			Severity: contracts.InboxWarn,
@@ -614,7 +614,7 @@ func (s *Service) promoteTicketActiveOnDispatchClaimTx(ctx context.Context, tx *
 	if tx == nil || job.TicketID == 0 {
 		return nil, nil
 	}
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&ticket, job.TicketID).Error; err != nil {
 		return nil, err
 	}
@@ -622,7 +622,7 @@ func (s *Service) promoteTicketActiveOnDispatchClaimTx(ctx context.Context, tx *
 	if from == contracts.TicketDone || from == contracts.TicketArchived || from == contracts.TicketActive {
 		return nil, nil
 	}
-	if err := tx.WithContext(ctx).Model(&store.Ticket{}).
+	if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
 		Where("id = ?", ticket.ID).
 		Updates(map[string]any{
 			"workflow_status": contracts.TicketActive,
@@ -645,7 +645,7 @@ func (s *Service) demoteTicketBlockedOnDispatchFailedTx(ctx context.Context, tx 
 	if tx == nil || job.TicketID == 0 {
 		return nil, nil
 	}
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&ticket, job.TicketID).Error; err != nil {
 		return nil, err
 	}
@@ -653,7 +653,7 @@ func (s *Service) demoteTicketBlockedOnDispatchFailedTx(ctx context.Context, tx 
 	if from == contracts.TicketDone || from == contracts.TicketArchived || from == contracts.TicketBlocked {
 		return nil, nil
 	}
-	if err := tx.WithContext(ctx).Model(&store.Ticket{}).
+	if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
 		Where("id = ?", ticket.ID).
 		Updates(map[string]any{
 			"workflow_status": contracts.TicketBlocked,

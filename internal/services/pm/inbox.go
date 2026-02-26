@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -17,7 +15,7 @@ type ListInboxOptions struct {
 	Limit  int
 }
 
-func (s *Service) ListInbox(ctx context.Context, opt ListInboxOptions) ([]store.InboxItem, error) {
+func (s *Service) ListInbox(ctx context.Context, opt ListInboxOptions) ([]contracts.InboxItem, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return nil, err
@@ -37,7 +35,7 @@ func (s *Service) ListInbox(ctx context.Context, opt ListInboxOptions) ([]store.
 		limit = 2000
 	}
 
-	var items []store.InboxItem
+	var items []contracts.InboxItem
 	if err := db.WithContext(ctx).
 		Where("status = ?", st).
 		// severity 是字符串；这里用 CASE 显式排序，避免 blocker/warn/info 的字典序误排。
@@ -51,7 +49,7 @@ func (s *Service) ListInbox(ctx context.Context, opt ListInboxOptions) ([]store.
 	return items, nil
 }
 
-func (s *Service) GetInboxItem(ctx context.Context, id uint) (*store.InboxItem, error) {
+func (s *Service) GetInboxItem(ctx context.Context, id uint) (*contracts.InboxItem, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return nil, err
@@ -59,7 +57,7 @@ func (s *Service) GetInboxItem(ctx context.Context, id uint) (*store.InboxItem, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var it store.InboxItem
+	var it contracts.InboxItem
 	if err := db.WithContext(ctx).First(&it, id).Error; err != nil {
 		return nil, err
 	}
@@ -74,7 +72,7 @@ func (s *Service) CloseInboxItem(ctx context.Context, id uint) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var it store.InboxItem
+	var it contracts.InboxItem
 	if err := db.WithContext(ctx).First(&it, id).Error; err != nil {
 		return err
 	}
@@ -82,7 +80,7 @@ func (s *Service) CloseInboxItem(ctx context.Context, id uint) error {
 		return nil
 	}
 	now := time.Now()
-	return db.WithContext(ctx).Model(&store.InboxItem{}).Where("id = ?", id).Updates(map[string]any{
+	return db.WithContext(ctx).Model(&contracts.InboxItem{}).Where("id = ?", id).Updates(map[string]any{
 		"status":     contracts.InboxDone,
 		"closed_at":  &now,
 		"updated_at": now,
@@ -100,7 +98,7 @@ func (s *Service) SnoozeInboxItem(ctx context.Context, id uint, until time.Time)
 	if until.IsZero() {
 		return fmt.Errorf("until 不能为空")
 	}
-	var it store.InboxItem
+	var it contracts.InboxItem
 	if err := db.WithContext(ctx).First(&it, id).Error; err != nil {
 		return err
 	}
@@ -108,7 +106,7 @@ func (s *Service) SnoozeInboxItem(ctx context.Context, id uint, until time.Time)
 		return nil
 	}
 	now := time.Now()
-	return db.WithContext(ctx).Model(&store.InboxItem{}).Where("id = ?", id).Updates(map[string]any{
+	return db.WithContext(ctx).Model(&contracts.InboxItem{}).Where("id = ?", id).Updates(map[string]any{
 		"status":        contracts.InboxSnoozed,
 		"snoozed_until": &until,
 		"updated_at":    now,
@@ -123,7 +121,7 @@ func (s *Service) UnsnoozeInboxItem(ctx context.Context, id uint) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var it store.InboxItem
+	var it contracts.InboxItem
 	if err := db.WithContext(ctx).First(&it, id).Error; err != nil {
 		return err
 	}
@@ -131,7 +129,7 @@ func (s *Service) UnsnoozeInboxItem(ctx context.Context, id uint) error {
 		return nil
 	}
 	now := time.Now()
-	return db.WithContext(ctx).Model(&store.InboxItem{}).Where("id = ?", id).Updates(map[string]any{
+	return db.WithContext(ctx).Model(&contracts.InboxItem{}).Where("id = ?", id).Updates(map[string]any{
 		"status":        contracts.InboxOpen,
 		"snoozed_until": nil,
 		"updated_at":    now,
@@ -147,7 +145,7 @@ func (s *Service) DeleteInboxItem(ctx context.Context, id uint) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return db.WithContext(ctx).Delete(&store.InboxItem{}, id).Error
+	return db.WithContext(ctx).Delete(&contracts.InboxItem{}, id).Error
 }
 
 func (s *Service) ensureInboxUniqueOpenKey(ctx context.Context, key string) error {
@@ -164,7 +162,7 @@ func (s *Service) ensureInboxUniqueOpenKey(ctx context.Context, key string) erro
 	if key == "" {
 		return nil
 	}
-	var items []store.InboxItem
+	var items []contracts.InboxItem
 	if err := db.WithContext(ctx).
 		Where("key = ? AND status = ?", key, contracts.InboxOpen).
 		Order("id desc").
@@ -181,9 +179,9 @@ func (s *Service) ensureInboxUniqueOpenKey(ctx context.Context, key string) erro
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now()
-		if err := tx.Model(&store.InboxItem{}).Where("id = ?", keep).Update("updated_at", now).Error; err != nil {
+		if err := tx.Model(&contracts.InboxItem{}).Where("id = ?", keep).Update("updated_at", now).Error; err != nil {
 			return err
 		}
-		return tx.Delete(&store.InboxItem{}, ids).Error
+		return tx.Delete(&contracts.InboxItem{}, ids).Error
 	})
 }

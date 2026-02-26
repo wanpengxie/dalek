@@ -12,7 +12,6 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
 	gatewaysendsvc "dalek/internal/services/gatewaysend"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -114,7 +113,7 @@ func (n *GatewayStatusNotifier) loadTicketTitle(ctx context.Context, ticketID ui
 	if n == nil || n.projectDB == nil || ticketID == 0 {
 		return fmt.Sprintf("t%d", ticketID), nil
 	}
-	var t store.Ticket
+	var t contracts.Ticket
 	if err := n.projectDB.WithContext(ctx).Select("id", "title").First(&t, ticketID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Sprintf("t%d", ticketID), nil
@@ -141,7 +140,7 @@ func (n *GatewayStatusNotifier) loadMergeDetail(ctx context.Context, ticketID ui
 	if n == nil || n.projectDB == nil || ticketID == 0 {
 		return "", nil
 	}
-	var mi store.MergeItem
+	var mi contracts.MergeItem
 	err := n.projectDB.WithContext(ctx).
 		Where("ticket_id = ? AND status != ?", ticketID, contracts.MergeMerged).
 		Order("id desc").

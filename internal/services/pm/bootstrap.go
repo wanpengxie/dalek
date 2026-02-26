@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"dalek/internal/contracts"
 	"dalek/internal/infra"
-	"dalek/internal/store"
 )
 
-func (s *Service) executePMBootstrapEntrypoint(ctx context.Context, t store.Ticket, w store.Worker) error {
+func (s *Service) executePMBootstrapEntrypoint(ctx context.Context, t contracts.Ticket, w contracts.Worker) error {
 	p, _, err := s.require()
 	if err != nil {
 		return err

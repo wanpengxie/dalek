@@ -13,7 +13,6 @@ import (
 	pmsvc "dalek/internal/services/pm"
 	ticketsvc "dalek/internal/services/ticket"
 	workersvc "dalek/internal/services/worker"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -116,7 +115,7 @@ func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contrac
 	if err != nil {
 		return ActionResult{}, err
 	}
-	var tk store.Ticket
+	var tk contracts.Ticket
 	if err := e.project.DB.WithContext(ctx).First(&tk, ticketID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ActionResult{}, fmt.Errorf("ticket 不存在: t%d", ticketID)
