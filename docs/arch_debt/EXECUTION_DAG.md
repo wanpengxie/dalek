@@ -83,6 +83,20 @@
 - 测试补齐：新增 logger 与 recover 行为测试（`core/logger_test.go`、`daemon/middleware_test.go`、`channel/tool_approval_test.go`），支持可控日志输出断言。
 - 下游约束更新：后续票（含 `T32`）必须复用 `*slog.Logger` 注入链路，且 daemon HTTP handler 必须经过 recover middleware。
 
+## W02 回写（T03）
+
+- 状态：`T03` 已完成（2026-02-26）。
+- 交付物：
+  - 新增 `internal/services/channel/feishu/`，承载飞书 sender/webhook/card/command/message 主链路，Feishu 业务逻辑已从 app 层下沉。
+  - `internal/app/daemon_public_feishu.go` 已收敛为 facade，仅保留配置适配与服务转调。
+  - 新服务默认走 `slog` 注入（`core.EnsureLogger`），daemon 的 HTTP 接入仍复用 `RecoverMiddleware`，未新增裸 handler 路径。
+  - 已补齐服务层关键测试（`internal/services/channel/feishu/service_test.go`），并通过 app/cmd 侧回归测试。
+- T04 复用入口（强制）：
+  - sender：`feishu.NewSender(feishu.SenderConfig)`
+  - webhook：`feishu.NewWebhookHandler(...)`
+  - path：`feishu.BuildWebhookPath(...)` / `feishu.NormalizeWebhookSecretPath(...)`
+  - `cmd/dalek/cmd_gateway_feishu.go` 在 T04 中必须直接复用以上入口，禁止再维护独立实现分支。
+
 ## 每轮启动 Dispatch 必带指令（强制）
 
 每次启动 `Wxx` 前，dispatch prompt 必须包含以下 7 项，缺一不可：
