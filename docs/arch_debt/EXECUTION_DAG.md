@@ -13,11 +13,12 @@
 
 - 更新时间：`2026-02-26`
 - 已完成批次：`W01` `W02` `W03`
-- 当前批次：`W04`（`ready_to_dispatch`）
+- 当前批次：`W04`（`in_progress`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
 - W04 启动票：`T22(29)` `T14(21)` `T31(38)` `T29(36)`
+- W04 已完成票：`T29(36)`（待与主线合并）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -277,6 +278,23 @@ Tickets: <T.. T.. T..>
 - 下游约束更新：
   - 后续涉及 CLI 配置读写的改动必须通过 `internal/config` 入口，不得回流到 cmd 层承载配置业务。
   - task run 状态推导必须复用 `app.DeriveRunStatus`，禁止在 cmd/daemon 侧新增并行分支逻辑。
+
+## W04 回写（T29 Daemon ExecutionHost 拆分）
+
+- 状态：`T29` 已完成（2026-02-26），`execution_host.go` 已完成类型独立与并发逻辑分文件。
+- 交付物：
+  - 新增 `internal/services/daemon/execution_host_types.go`，迁移 interfaces/DTO/错误类型/运行时 handle 类型。
+  - 新增 `internal/services/daemon/execution_host_runner.go`，迁移 execute* goroutine、slot 控制、probe 与异步通知链路。
+  - 新增 `internal/services/daemon/execution_host_index.go`，迁移索引系统、请求幂等查询、handle 生命周期管理与扫描回退查询。
+  - 新增 `internal/services/daemon/execution_host_component.go` 与 `execution_host_note.go`，保持组件接口与 Note API 清晰分层。
+  - `internal/services/daemon/execution_host.go` 已瘦身至 `494` 行，仅保留核心结构、生命周期与主提交流程。
+- 回归结果：
+  - `go test ./internal/services/daemon/... -count=1` 通过
+  - `go build ./...` 通过
+  - `go vet ./internal/services/daemon/...` 通过
+- 依赖与下游影响：
+  - `T30` 可直接在拆分后的 `runner/index/types` 边界上继续推进，不再需要先做文件级切分。
+  - daemon recover/logger 与 `contracts/core project` 注入方式保持不变，外部 API 行为无回退。
 
 ## 每批执行建议
 
