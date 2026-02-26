@@ -10,6 +10,8 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
 	"dalek/internal/store"
+
+	"gorm.io/gorm"
 )
 
 type ManagerTickOptions struct {
@@ -36,6 +38,41 @@ type ManagerTickResult struct {
 	MergeProposed     []uint
 
 	Errors []string
+}
+
+type consumeEventsResult struct {
+	EventsConsumed int
+	InboxUpserts   int
+	NewLastEventID uint
+	Errors         []string
+}
+
+type scanWorkersResult struct {
+	Running          int
+	RunningBlocked   int
+	Progressable     int
+	RunningTicketIDs map[uint]bool
+	InboxUpserts     int
+	Errors           []string
+}
+
+type mergeProposalResult struct {
+	MergeProposed []uint
+	Errors        []string
+}
+
+type scheduleOptions struct {
+	Capacity         int
+	RunningTicketIDs map[uint]bool
+	DryRun           bool
+	SyncDispatch     bool
+	DispatchTimeout  time.Duration
+}
+
+type scheduleResult struct {
+	StartedTickets    []uint
+	DispatchedTickets []uint
+	Errors            []string
 }
 
 func (s *Service) managerDispatchTimeout() time.Duration {
@@ -96,109 +133,189 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	maxRunning = clampMaxRunning(maxRunning)
 
 	res := ManagerTickResult{
-		At:                now,
-		AutopilotEnabled:  st.AutopilotEnabled,
-		MaxRunning:        maxRunning,
-		Running:           0,
-		RunningBlocked:    0,
-		Capacity:          0,
-		EventsConsumed:    0,
-		InboxUpserts:      0,
-		StartedTickets:    nil,
-		DispatchedTickets: nil,
-		MergeProposed:     nil,
-		Errors:            nil,
+		At:               now,
+		AutopilotEnabled: st.AutopilotEnabled,
+		MaxRunning:       maxRunning,
 	}
 
-	// 2) 增量消费 task_events（event-driven）
 	taskRuntime, err := s.taskRuntimeForDB(db)
 	if err != nil {
 		return res, err
 	}
-	lastEventID := st.LastEventID
-	if newEvents, err := taskRuntime.ListEventsAfterID(ctx, st.LastEventID, 2000); err == nil {
-		res.EventsConsumed = len(newEvents)
-		for _, ev := range newEvents {
-			if ev.ID > lastEventID {
-				lastEventID = ev.ID
+
+	eventsResult := s.consumeTaskEvents(ctx, taskRuntime, st.LastEventID)
+	lastEventID := res.applyConsumeEventsResult(eventsResult)
+
+	scanResult, err := s.scanRunningWorkers(ctx, db, taskRuntime)
+	if err != nil {
+		return res, err
+	}
+	res.applyScanWorkersResult(scanResult)
+
+	capacity := maxRunning - scanResult.Progressable
+	if capacity < 0 {
+		capacity = 0
+	}
+	res.Capacity = capacity
+
+	if !st.AutopilotEnabled {
+		s.saveManagerTickState(ctx, db, st, now, lastEventID, maxRunning, opt)
+		return res, nil
+	}
+
+	mergeResult := s.proposeMergesForDoneTickets(ctx, db, opt.DryRun)
+	res.applyMergeProposalResult(mergeResult)
+
+	scheduleResult := s.scheduleQueuedTickets(ctx, db, scheduleOptions{
+		Capacity:         capacity,
+		RunningTicketIDs: scanResult.RunningTicketIDs,
+		DryRun:           opt.DryRun,
+		SyncDispatch:     opt.SyncDispatch,
+		DispatchTimeout:  opt.DispatchTimeout,
+	})
+	res.applyScheduleResult(scheduleResult)
+	s.saveManagerTickState(ctx, db, st, now, lastEventID, maxRunning, opt)
+
+	return res, nil
+}
+
+func (res *ManagerTickResult) applyConsumeEventsResult(step consumeEventsResult) uint {
+	res.EventsConsumed = step.EventsConsumed
+	res.InboxUpserts += step.InboxUpserts
+	res.Errors = append(res.Errors, step.Errors...)
+	return step.NewLastEventID
+}
+
+func (res *ManagerTickResult) applyScanWorkersResult(step scanWorkersResult) {
+	res.Running = step.Running
+	res.RunningBlocked = step.RunningBlocked
+	res.InboxUpserts += step.InboxUpserts
+	res.Errors = append(res.Errors, step.Errors...)
+}
+
+func (res *ManagerTickResult) applyMergeProposalResult(step mergeProposalResult) {
+	res.MergeProposed = append(res.MergeProposed, step.MergeProposed...)
+	res.Errors = append(res.Errors, step.Errors...)
+}
+
+func (res *ManagerTickResult) applyScheduleResult(step scheduleResult) {
+	res.StartedTickets = append(res.StartedTickets, step.StartedTickets...)
+	res.DispatchedTickets = append(res.DispatchedTickets, step.DispatchedTickets...)
+	res.Errors = append(res.Errors, step.Errors...)
+}
+
+func (s *Service) saveManagerTickState(ctx context.Context, db *gorm.DB, st *contracts.PMState, now time.Time, lastEventID uint, maxRunning int, opt ManagerTickOptions) {
+	st.LastTickAt = &now
+	st.LastEventID = lastEventID
+	if opt.MaxRunningWorkers > 0 && opt.MaxRunningWorkers != st.MaxRunningWorkers {
+		st.MaxRunningWorkers = maxRunning
+	}
+	_ = db.WithContext(ctx).Save(st).Error
+}
+
+func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRuntime, lastEventID uint) consumeEventsResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	out := consumeEventsResult{
+		NewLastEventID: lastEventID,
+	}
+	if taskRuntime == nil {
+		out.Errors = append(out.Errors, "task runtime 为空")
+		return out
+	}
+
+	newEvents, err := taskRuntime.ListEventsAfterID(ctx, lastEventID, 2000)
+	if err != nil {
+		out.Errors = append(out.Errors, err.Error())
+		return out
+	}
+	out.EventsConsumed = len(newEvents)
+	for _, ev := range newEvents {
+		if ev.ID > out.NewLastEventID {
+			out.NewLastEventID = ev.ID
+		}
+
+		typ := strings.TrimSpace(ev.EventType)
+		switch typ {
+		case "watch_error", "interrupt_error":
+			key := inboxKeyTicketIncident(ev.TicketID, typ)
+			if ev.WorkerID != 0 {
+				key = inboxKeyWorkerIncident(ev.WorkerID, typ)
+			}
+			title := fmt.Sprintf("%s：t%d w%d", typ, ev.TicketID, ev.WorkerID)
+			body := taskEventBody(ev)
+			created, uerr := s.upsertOpenInbox(ctx, contracts.InboxItem{
+				Key:      key,
+				Status:   contracts.InboxOpen,
+				Severity: contracts.InboxWarn,
+				Reason:   contracts.InboxIncident,
+				Title:    title,
+				Body:     body,
+				TicketID: ev.TicketID,
+				WorkerID: ev.WorkerID,
+			})
+			if uerr != nil {
+				out.Errors = append(out.Errors, uerr.Error())
+			} else if created {
+				out.InboxUpserts++
 			}
 
-			typ := strings.TrimSpace(ev.EventType)
-			switch typ {
-			case "watch_error", "interrupt_error":
-				key := inboxKeyTicketIncident(ev.TicketID, typ)
-				if ev.WorkerID != 0 {
-					key = inboxKeyWorkerIncident(ev.WorkerID, typ)
-				}
-				title := fmt.Sprintf("%s：t%d w%d", typ, ev.TicketID, ev.WorkerID)
-				body := taskEventBody(ev)
+		case "runtime_observation", "semantic_reported":
+			needsUser, runtimeHealth, nextAction, summary := parseTaskEventSignals(ev)
+			if summary == "" {
+				summary = taskEventBody(ev)
+			}
+			if needsUser || runtimeHealth == string(contracts.TaskHealthWaitingUser) || nextAction == string(contracts.NextWaitUser) {
+				key := inboxKeyNeedsUser(ev.WorkerID)
+				title := fmt.Sprintf("需要你输入：t%d w%d", ev.TicketID, ev.WorkerID)
 				created, uerr := s.upsertOpenInbox(ctx, contracts.InboxItem{
 					Key:      key,
 					Status:   contracts.InboxOpen,
-					Severity: contracts.InboxWarn,
-					Reason:   contracts.InboxIncident,
+					Severity: contracts.InboxBlocker,
+					Reason:   contracts.InboxNeedsUser,
 					Title:    title,
-					Body:     body,
+					Body:     summary,
 					TicketID: ev.TicketID,
 					WorkerID: ev.WorkerID,
 				})
 				if uerr != nil {
-					res.Errors = append(res.Errors, uerr.Error())
+					out.Errors = append(out.Errors, uerr.Error())
 				} else if created {
-					res.InboxUpserts++
+					out.InboxUpserts++
 				}
-
-			case "runtime_observation", "semantic_reported":
-				needsUser, runtimeHealth, nextAction, summary := parseTaskEventSignals(ev)
-				if summary == "" {
-					summary = taskEventBody(ev)
-				}
-
-				// needs_user 的强信号：直接建 inbox（并避免等到下一轮扫描）
-				if needsUser || runtimeHealth == string(contracts.TaskHealthWaitingUser) || nextAction == string(contracts.NextWaitUser) {
-					key := inboxKeyNeedsUser(ev.WorkerID)
-					title := fmt.Sprintf("需要你输入：t%d w%d", ev.TicketID, ev.WorkerID)
-					created, uerr := s.upsertOpenInbox(ctx, contracts.InboxItem{
-						Key:      key,
-						Status:   contracts.InboxOpen,
-						Severity: contracts.InboxBlocker,
-						Reason:   contracts.InboxNeedsUser,
-						Title:    title,
-						Body:     summary,
-						TicketID: ev.TicketID,
-						WorkerID: ev.WorkerID,
-					})
-					if uerr != nil {
-						res.Errors = append(res.Errors, uerr.Error())
-					} else if created {
-						res.InboxUpserts++
-					}
-					continue
-				}
-
-				// continue 仅用于观测，不再驱动 ManagerTick 自动 redispatch。
 			}
 		}
-	} else {
-		res.Errors = append(res.Errors, err.Error())
+	}
+	return out
+}
+
+func (s *Service) scanRunningWorkers(ctx context.Context, db *gorm.DB, taskRuntime core.TaskRuntime) (scanWorkersResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	out := scanWorkersResult{
+		RunningTicketIDs: map[uint]bool{},
+	}
+	if taskRuntime == nil {
+		return out, fmt.Errorf("task runtime 为空")
 	}
 
-	// 3) 扫描 running workers：补齐 needs_user / stalled 的 inbox，并计算容量
 	var running []contracts.Worker
 	if err := db.WithContext(ctx).
 		Where("status = ?", contracts.WorkerRunning).
 		Order("id asc").
 		Find(&running).Error; err != nil {
-		return res, err
+		return out, err
 	}
-	runningTicketIDs := map[uint]bool{}
+
 	taskViews, err := taskRuntime.ListStatus(ctx, core.TaskRuntimeListStatusOptions{
 		OwnerType:       contracts.TaskOwnerWorker,
 		IncludeTerminal: true,
 		Limit:           5000,
 	})
 	if err != nil {
-		return res, err
+		return out, err
 	}
 	runtimeByWorker := map[uint]store.TaskStatusView{}
 	for _, tv := range taskViews {
@@ -211,18 +328,17 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		runtimeByWorker[tv.WorkerID] = tv
 	}
 
-	progressable := 0
 	for _, w := range running {
-		runningTicketIDs[w.TicketID] = true
-		res.Running++
+		out.RunningTicketIDs[w.TicketID] = true
+		out.Running++
 
 		tv, hasTV := runtimeByWorker[w.ID]
 		if !hasTV {
-			progressable++
+			out.Progressable++
 			continue
 		}
 		if workerBlocksAutopilot(&tv) {
-			res.RunningBlocked++
+			out.RunningBlocked++
 			key := inboxKeyNeedsUser(w.ID)
 			reason := contracts.InboxNeedsUser
 			severity := contracts.InboxBlocker
@@ -254,36 +370,32 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 				WorkerID: w.ID,
 			})
 			if uerr != nil {
-				res.Errors = append(res.Errors, uerr.Error())
+				out.Errors = append(out.Errors, uerr.Error())
 			} else if created {
-				res.InboxUpserts++
+				out.InboxUpserts++
 			}
 			continue
 		}
 
-		progressable++
+		out.Progressable++
 	}
+	return out, nil
+}
 
-	capacity := maxRunning - progressable
-	if capacity < 0 {
-		capacity = 0
+func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, dryRun bool) mergeProposalResult {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	res.Capacity = capacity
+	out := mergeProposalResult{}
 
-	// 若 autopilot 被暂停，仅做观测 + inbox，不做调度/派发。
-	if !st.AutopilotEnabled {
-		st.LastTickAt = &now
-		st.LastEventID = lastEventID
-		_ = db.WithContext(ctx).Save(st).Error
-		return res, nil
-	}
-
-	// 4) merge queue：当 ticket 标成 done 时，自动创建 merge 提案（不自动合并）
 	var doneTickets []contracts.Ticket
-	_ = db.WithContext(ctx).
+	if err := db.WithContext(ctx).
 		Where("workflow_status = ?", contracts.TicketDone).
 		Order("id asc").
-		Find(&doneTickets).Error
+		Find(&doneTickets).Error; err != nil {
+		return out
+	}
+
 	for _, t := range doneTickets {
 		w, werr := s.worker.LatestWorker(ctx, t.ID)
 		if werr != nil || w == nil {
@@ -291,7 +403,6 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		}
 		branch := strings.TrimSpace(w.Branch)
 		if branch == "" {
-			// 没有分支就无法进入 merge 队列（通常意味着还没 start 过）。
 			continue
 		}
 
@@ -306,8 +417,8 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 			continue
 		}
 
-		if opt.DryRun {
-			res.MergeProposed = append(res.MergeProposed, t.ID)
+		if dryRun {
+			out.MergeProposed = append(out.MergeProposed, t.ID)
 			continue
 		}
 
@@ -318,10 +429,10 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 			Branch:   branch,
 		}
 		if err := db.WithContext(ctx).Create(&mi).Error; err != nil {
-			res.Errors = append(res.Errors, err.Error())
+			out.Errors = append(out.Errors, err.Error())
 			continue
 		}
-		res.MergeProposed = append(res.MergeProposed, t.ID)
+		out.MergeProposed = append(out.MergeProposed, t.ID)
 
 		_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
 			Key:         inboxKeyMergeApproval(mi.ID),
@@ -335,156 +446,160 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		})
 	}
 
-	// 5) 调度：从 queued 拉起直到占满并发（start + dispatch）
-	if capacity > 0 && !opt.DryRun {
-		var queued []contracts.Ticket
-		if err := db.WithContext(ctx).
-			Where("workflow_status = ?", contracts.TicketQueued).
-			Order("priority desc").
-			Order("updated_at asc").
-			Order("id asc").
-			Find(&queued).Error; err == nil {
-			for _, t := range queued {
-				if capacity <= 0 {
-					break
-				}
-				if runningTicketIDs[t.ID] {
-					continue
-				}
+	return out
+}
 
-				startCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.managerStartTimeout())
-				w, serr := s.StartTicket(startCtx, t.ID)
-				cancel()
-				if serr != nil {
-					key := inboxKeyTicketIncident(t.ID, "start_failed")
-					title := fmt.Sprintf("启动失败：t%d", t.ID)
-					body := serr.Error()
-					_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-						Key:      key,
-						Status:   contracts.InboxOpen,
-						Severity: contracts.InboxWarn,
-						Reason:   contracts.InboxIncident,
-						Title:    title,
-						Body:     body,
-						TicketID: t.ID,
-					})
-					continue
-				}
-				if w == nil || w.Status != contracts.WorkerRunning {
-					workerID := uint(0)
-					workerStatus := contracts.WorkerStatus("")
-					if w != nil {
-						workerID = w.ID
-						workerStatus = w.Status
-					}
-					msg := fmt.Sprintf("start 返回后 worker 未处于 running（t%d w%d status=%s）", t.ID, workerID, workerStatus)
-					_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-						Key:      inboxKeyTicketIncident(t.ID, "start_not_running"),
-						Status:   contracts.InboxOpen,
-						Severity: contracts.InboxBlocker,
-						Reason:   contracts.InboxIncident,
-						Title:    fmt.Sprintf("启动后 worker 未就绪：t%d", t.ID),
-						Body:     msg,
-						TicketID: t.ID,
-						WorkerID: workerID,
-					})
-					if derr := s.demoteTicketBlockedOnWorkerNotReady(ctx, t.ID, workerID, msg, time.Now()); derr != nil {
-						res.Errors = append(res.Errors, fmt.Sprintf("worker 未就绪降级失败：t%d w%d: %v", t.ID, workerID, derr))
-					}
-					res.Errors = append(res.Errors, msg)
-					continue
-				}
+func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt scheduleOptions) scheduleResult {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	out := scheduleResult{}
+	if opt.Capacity <= 0 || opt.DryRun {
+		return out
+	}
 
-				res.StartedTickets = append(res.StartedTickets, t.ID)
-				runningTicketIDs[t.ID] = true
+	runningTicketIDs := opt.RunningTicketIDs
+	if runningTicketIDs == nil {
+		runningTicketIDs = map[uint]bool{}
+	}
 
-				dispatched := false
-				if opt.SyncDispatch {
-					dispatchCtx := ctx
-					cancelDispatch := func() {}
-					if opt.DispatchTimeout > 0 {
-						dispatchCtx, cancelDispatch = context.WithTimeout(ctx, opt.DispatchTimeout)
-					}
-					_, derr := s.DispatchTicket(dispatchCtx, t.ID)
-					cancelDispatch()
-					if derr != nil {
-						key := inboxKeyWorkerIncident(w.ID, "dispatch_failed")
-						title := fmt.Sprintf("派发失败：t%d w%d", t.ID, w.ID)
-						_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-							Key:      key,
-							Status:   contracts.InboxOpen,
-							Severity: contracts.InboxWarn,
-							Reason:   contracts.InboxIncident,
-							Title:    title,
-							Body:     derr.Error(),
-							TicketID: t.ID,
-							WorkerID: w.ID,
-						})
-						if isWorkerReadyTimeout(derr) {
-							if berr := s.demoteTicketBlockedOnWorkerNotReady(ctx, t.ID, w.ID, derr.Error(), time.Now()); berr != nil {
-								res.Errors = append(res.Errors, fmt.Sprintf("worker 未就绪降级失败：t%d w%d: %v", t.ID, w.ID, berr))
-							}
-						}
-						res.Errors = append(res.Errors, fmt.Sprintf("sync dispatch 失败：t%d w%d: %v", t.ID, w.ID, derr))
-					} else {
-						dispatched = true
-					}
-				} else if submitter := s.getDispatchSubmitter(); submitter != nil {
-					submitCtx := context.WithoutCancel(ctx)
-					derr := submitter.SubmitTicketDispatch(submitCtx, t.ID)
-					if derr != nil {
-						key := inboxKeyWorkerIncident(w.ID, "dispatch_failed")
-						title := fmt.Sprintf("派发失败：t%d w%d", t.ID, w.ID)
-						_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-							Key:      key,
-							Status:   contracts.InboxOpen,
-							Severity: contracts.InboxWarn,
-							Reason:   contracts.InboxIncident,
-							Title:    title,
-							Body:     derr.Error(),
-							TicketID: t.ID,
-							WorkerID: w.ID,
-						})
-						if isWorkerReadyTimeout(derr) {
-							if berr := s.demoteTicketBlockedOnWorkerNotReady(ctx, t.ID, w.ID, derr.Error(), time.Now()); berr != nil {
-								res.Errors = append(res.Errors, fmt.Sprintf("worker 未就绪降级失败：t%d w%d: %v", t.ID, w.ID, berr))
-							}
-						}
-						res.Errors = append(res.Errors, fmt.Sprintf("submit dispatch 失败：t%d w%d: %v", t.ID, w.ID, derr))
-					} else {
-						dispatched = true
-					}
-				} else {
-					errMsg := fmt.Sprintf("dispatch submitter 未配置：t%d w%d", t.ID, w.ID)
-					_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-						Key:      inboxKeyTicketIncident(t.ID, "dispatch_no_submitter"),
-						Status:   contracts.InboxOpen,
-						Severity: contracts.InboxBlocker,
-						Reason:   contracts.InboxIncident,
-						Title:    fmt.Sprintf("派发失败：t%d w%d", t.ID, w.ID),
-						Body:     errMsg,
-						TicketID: t.ID,
-						WorkerID: w.ID,
-					})
-					res.Errors = append(res.Errors, errMsg)
-				}
-				if dispatched {
-					res.DispatchedTickets = append(res.DispatchedTickets, t.ID)
-				}
-				capacity--
+	var queued []contracts.Ticket
+	if err := db.WithContext(ctx).
+		Where("workflow_status = ?", contracts.TicketQueued).
+		Order("priority desc").
+		Order("updated_at asc").
+		Order("id asc").
+		Find(&queued).Error; err != nil {
+		return out
+	}
+
+	capacity := opt.Capacity
+	for _, t := range queued {
+		if capacity <= 0 {
+			break
+		}
+		if runningTicketIDs[t.ID] {
+			continue
+		}
+
+		startCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.managerStartTimeout())
+		w, serr := s.StartTicket(startCtx, t.ID)
+		cancel()
+		if serr != nil {
+			_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
+				Key:      inboxKeyTicketIncident(t.ID, "start_failed"),
+				Status:   contracts.InboxOpen,
+				Severity: contracts.InboxWarn,
+				Reason:   contracts.InboxIncident,
+				Title:    fmt.Sprintf("启动失败：t%d", t.ID),
+				Body:     serr.Error(),
+				TicketID: t.ID,
+			})
+			continue
+		}
+		if w == nil || w.Status != contracts.WorkerRunning {
+			workerID := uint(0)
+			workerStatus := contracts.WorkerStatus("")
+			if w != nil {
+				workerID = w.ID
+				workerStatus = w.Status
 			}
+			msg := fmt.Sprintf("start 返回后 worker 未处于 running（t%d w%d status=%s）", t.ID, workerID, workerStatus)
+			_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
+				Key:      inboxKeyTicketIncident(t.ID, "start_not_running"),
+				Status:   contracts.InboxOpen,
+				Severity: contracts.InboxBlocker,
+				Reason:   contracts.InboxIncident,
+				Title:    fmt.Sprintf("启动后 worker 未就绪：t%d", t.ID),
+				Body:     msg,
+				TicketID: t.ID,
+				WorkerID: workerID,
+			})
+			if derr := s.demoteTicketBlockedOnWorkerNotReady(ctx, t.ID, workerID, msg, time.Now()); derr != nil {
+				out.Errors = append(out.Errors, fmt.Sprintf("worker 未就绪降级失败：t%d w%d: %v", t.ID, workerID, derr))
+			}
+			out.Errors = append(out.Errors, msg)
+			continue
+		}
+
+		out.StartedTickets = append(out.StartedTickets, t.ID)
+		runningTicketIDs[t.ID] = true
+
+		dispatched, errs := s.dispatchScheduledTicket(ctx, t.ID, w.ID, opt)
+		out.Errors = append(out.Errors, errs...)
+		if dispatched {
+			out.DispatchedTickets = append(out.DispatchedTickets, t.ID)
+		}
+		capacity--
+	}
+	return out
+}
+
+func (s *Service) dispatchScheduledTicket(ctx context.Context, ticketID, workerID uint, opt scheduleOptions) (bool, []string) {
+	if opt.SyncDispatch {
+		dispatchCtx := ctx
+		cancelDispatch := func() {}
+		if opt.DispatchTimeout > 0 {
+			dispatchCtx, cancelDispatch = context.WithTimeout(ctx, opt.DispatchTimeout)
+		}
+		_, derr := s.DispatchTicket(dispatchCtx, ticketID)
+		cancelDispatch()
+		if derr != nil {
+			return false, s.handleDispatchFailure(ctx, ticketID, workerID, derr, "sync dispatch 失败")
+		}
+		return true, nil
+	}
+
+	if submitter := s.getDispatchSubmitter(); submitter != nil {
+		derr := submitter.SubmitTicketDispatch(context.WithoutCancel(ctx), ticketID)
+		if derr != nil {
+			return false, s.handleDispatchFailure(ctx, ticketID, workerID, derr, "submit dispatch 失败")
+		}
+		return true, nil
+	}
+
+	errMsg := fmt.Sprintf("dispatch submitter 未配置：t%d w%d", ticketID, workerID)
+	_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
+		Key:      inboxKeyTicketIncident(ticketID, "dispatch_no_submitter"),
+		Status:   contracts.InboxOpen,
+		Severity: contracts.InboxBlocker,
+		Reason:   contracts.InboxIncident,
+		Title:    fmt.Sprintf("派发失败：t%d w%d", ticketID, workerID),
+		Body:     errMsg,
+		TicketID: ticketID,
+		WorkerID: workerID,
+	})
+	return false, []string{errMsg}
+}
+
+func (s *Service) handleDispatchFailure(ctx context.Context, ticketID, workerID uint, dispatchErr error, prefix string) []string {
+	if dispatchErr == nil {
+		return nil
+	}
+	errs := []string{}
+
+	_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
+		Key:      inboxKeyWorkerIncident(workerID, "dispatch_failed"),
+		Status:   contracts.InboxOpen,
+		Severity: contracts.InboxWarn,
+		Reason:   contracts.InboxIncident,
+		Title:    fmt.Sprintf("派发失败：t%d w%d", ticketID, workerID),
+		Body:     dispatchErr.Error(),
+		TicketID: ticketID,
+		WorkerID: workerID,
+	})
+
+	if isWorkerReadyTimeout(dispatchErr) {
+		if berr := s.demoteTicketBlockedOnWorkerNotReady(ctx, ticketID, workerID, dispatchErr.Error(), time.Now()); berr != nil {
+			errs = append(errs, fmt.Sprintf("worker 未就绪降级失败：t%d w%d: %v", ticketID, workerID, berr))
 		}
 	}
-
-	// 6) 落盘 manager state
-	st.LastTickAt = &now
-	st.LastEventID = lastEventID
-	if opt.MaxRunningWorkers > 0 && opt.MaxRunningWorkers != st.MaxRunningWorkers {
-		st.MaxRunningWorkers = maxRunning
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		prefix = "dispatch 失败"
 	}
-	_ = db.WithContext(ctx).Save(st).Error
-
-	return res, nil
+	errs = append(errs, fmt.Sprintf("%s：t%d w%d: %v", prefix, ticketID, workerID, dispatchErr))
+	return errs
 }
 
 func taskEventBody(ev core.TaskRuntimeEventScopeRow) string {
