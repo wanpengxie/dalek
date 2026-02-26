@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-const dispatchDepthEnvKey = "DALEK_DISPATCH_DEPTH"
-
 func nextDispatchDepthEnvValue() string {
 	depth := parseDispatchDepth(os.Getenv(dispatchDepthEnvKey))
 	return strconv.Itoa(depth + 1)

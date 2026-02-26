@@ -53,7 +53,7 @@ func (s *Service) managerDispatchTimeout() time.Duration {
 
 func (s *Service) managerStartTimeout() time.Duration {
 	// StartTicket 包含 PM bootstrap（默认 5 分钟），manager 侧至少要覆盖这段时间。
-	return 5*time.Minute + 30*time.Second
+	return managerStartTimeout
 }
 
 func workerBlocksAutopilot(v *store.TaskStatusView) bool {

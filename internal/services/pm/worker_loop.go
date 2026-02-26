@@ -18,8 +18,6 @@ type WorkerLoopResult struct {
 	LastRunID      uint   // 最后一轮 stage 对应的 task run id
 }
 
-const defaultContinuePrompt = "继续执行任务"
-
 // executeWorkerLoop 是 worker SDK 同步执行的核心循环。
 //
 // 流程：

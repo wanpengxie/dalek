@@ -26,8 +26,8 @@ func New(p *core.Project, workerSvc *worker.Service) *Service {
 	return &Service{
 		p:                       p,
 		worker:                  workerSvc,
-		workerReadyTimeout:      8 * time.Second,
-		workerReadyPollInterval: 200 * time.Millisecond,
+		workerReadyTimeout:      defaultWorkerReadyTimeout,
+		workerReadyPollInterval: defaultWorkerReadyPollInterval,
 	}
 }
 

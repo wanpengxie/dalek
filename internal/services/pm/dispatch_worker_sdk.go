@@ -63,7 +63,7 @@ func (s *Service) launchWorkerSDKHandle(
 	session := strings.TrimSpace(w.TmuxSession)
 	target := ""
 	if p.Tmux != nil && session != "" {
-		tctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		tctx, cancel := context.WithTimeout(context.Background(), tmuxObserveTargetTimeout)
 		picked, _, _ := infra.PickObservationTarget(p.Tmux, tctx, socket, session)
 		cancel()
 		target = strings.TrimSpace(picked)
@@ -72,20 +72,10 @@ func (s *Service) launchWorkerSDKHandle(
 		target = session + ":0.0"
 	}
 
-	env := map[string]string{
-		"DALEK_PROJECT_KEY":        strings.TrimSpace(p.Key),
-		"DALEK_REPO_ROOT":          strings.TrimSpace(p.RepoRoot),
-		"DALEK_DB_PATH":            strings.TrimSpace(p.DBPath),
-		"DALEK_WORKTREE_PATH":      strings.TrimSpace(w.WorktreePath),
-		"DALEK_BRANCH":             strings.TrimSpace(w.Branch),
-		"DALEK_TMUX_SOCKET":        strings.TrimSpace(socket),
-		"DALEK_TMUX_SESSION":       strings.TrimSpace(session),
-		"DALEK_TICKET_ID":          fmt.Sprintf("%d", t.ID),
-		"DALEK_WORKER_ID":          fmt.Sprintf("%d", w.ID),
-		"DALEK_TICKET_TITLE":       strings.TrimSpace(t.Title),
-		"DALEK_TICKET_DESCRIPTION": strings.TrimSpace(t.Description),
-		"DALEK_DISPATCH_DEPTH":     nextDispatchDepthEnvValue(),
-	}
+	env := buildBaseEnv(p, t, w)
+	env[envTmuxSocket] = strings.TrimSpace(socket)
+	env[envTmuxSession] = strings.TrimSpace(session)
+	env[dispatchDepthEnvKey] = nextDispatchDepthEnvValue()
 
 	executor := run.NewSDKExecutor(run.SDKConfig{
 		Provider:        strings.TrimSpace(agentCfg.Provider),

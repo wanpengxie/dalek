@@ -15,8 +15,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const workflowStatusNotifyTimeout = 10 * time.Second
-
 // WorkflowStatusChangeHook 是 ticket workflow 状态变更后的可选回调。
 type WorkflowStatusChangeHook interface {
 	OnStatusChange(ctx context.Context, event StatusChangeEvent) error

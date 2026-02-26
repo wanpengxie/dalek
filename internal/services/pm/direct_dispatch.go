@@ -100,7 +100,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		}
 		session := strings.TrimSpace(w.TmuxSession)
 		if p.Tmux != nil && socket != "" && session != "" {
-			listCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			listCtx, cancel := context.WithTimeout(ctx, tmuxListSessionsTimeout)
 			sessions, lerr := p.Tmux.ListSessions(listCtx, socket)
 			cancel()
 			if lerr == nil && !sessions[session] {

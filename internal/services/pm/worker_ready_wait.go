@@ -10,11 +10,6 @@ import (
 	"dalek/internal/store"
 )
 
-const (
-	defaultWorkerReadyTimeout      = 8 * time.Second
-	defaultWorkerReadyPollInterval = 200 * time.Millisecond
-)
-
 type workerReadyTimeoutError struct {
 	TicketID   uint
 	WorkerID   uint
