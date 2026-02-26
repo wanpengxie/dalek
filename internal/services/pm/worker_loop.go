@@ -6,13 +6,13 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/agent/run"
 	"dalek/internal/contracts"
+	"dalek/internal/services/agentexec"
 	"dalek/internal/store"
 )
 
 // launchWorkerSDK 委托到测试 mock 或真实的 launchWorkerSDKHandle。
-func (s *Service) launchWorkerSDK(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (run.AgentRunHandle, error) {
+func (s *Service) launchWorkerSDK(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (agentexec.AgentRunHandle, error) {
 	if s.sdkHandleLauncher != nil {
 		return s.sdkHandleLauncher(ctx, t, w, entryPrompt)
 	}

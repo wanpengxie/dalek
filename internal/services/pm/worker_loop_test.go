@@ -8,21 +8,21 @@ import (
 	"testing"
 	"time"
 
-	"dalek/internal/agent/run"
 	"dalek/internal/contracts"
+	"dalek/internal/services/agentexec"
 	"dalek/internal/store"
 )
 
-// fakeAgentRunHandle implements run.AgentRunHandle for testing.
+// fakeAgentRunHandle implements agentexec.AgentRunHandle for testing.
 type fakeAgentRunHandle struct {
 	runID  uint
-	result run.AgentRunResult
+	result agentexec.AgentRunResult
 	err    error
 }
 
-func (h *fakeAgentRunHandle) RunID() uint                        { return h.runID }
-func (h *fakeAgentRunHandle) Wait() (run.AgentRunResult, error)  { return h.result, h.err }
-func (h *fakeAgentRunHandle) Cancel() error                      { return nil }
+func (h *fakeAgentRunHandle) RunID() uint                             { return h.runID }
+func (h *fakeAgentRunHandle) Wait() (agentexec.AgentRunResult, error) { return h.result, h.err }
+func (h *fakeAgentRunHandle) Cancel() error                           { return nil }
 
 // makeSemanticReport inserts a TaskSemanticReport row so that
 // readWorkerNextActionFromRun can pick up the next_action.
@@ -90,8 +90,8 @@ func TestExecuteWorkerLoop_StopsOnDone(t *testing.T) {
 	svc, _, _, _ := newServiceForTest(t)
 	tk, w, runID := createWorkerLoopTestFixture(t, svc, "done")
 
-	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (run.AgentRunHandle, error) {
-		return &fakeAgentRunHandle{runID: runID, result: run.AgentRunResult{ExitCode: 0}}, nil
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return &fakeAgentRunHandle{runID: runID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
 	}
 
 	result, err := svc.executeWorkerLoop(context.Background(), tk, w, "test prompt")
@@ -110,8 +110,8 @@ func TestExecuteWorkerLoop_StopsOnWaitUser(t *testing.T) {
 	svc, _, _, _ := newServiceForTest(t)
 	tk, w, runID := createWorkerLoopTestFixture(t, svc, "wait_user")
 
-	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (run.AgentRunHandle, error) {
-		return &fakeAgentRunHandle{runID: runID, result: run.AgentRunResult{ExitCode: 0}}, nil
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return &fakeAgentRunHandle{runID: runID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
 	}
 
 	result, err := svc.executeWorkerLoop(context.Background(), tk, w, "test prompt")
@@ -130,8 +130,8 @@ func TestExecuteWorkerLoop_StopsOnEmptyNextAction(t *testing.T) {
 	svc, _, _, _ := newServiceForTest(t)
 	tk, w, runID := createWorkerLoopTestFixture(t, svc, "")
 
-	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (run.AgentRunHandle, error) {
-		return &fakeAgentRunHandle{runID: runID, result: run.AgentRunResult{ExitCode: 0}}, nil
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return &fakeAgentRunHandle{runID: runID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
 	}
 
 	result, err := svc.executeWorkerLoop(context.Background(), tk, w, "test prompt")
@@ -190,12 +190,12 @@ func TestExecuteWorkerLoop_ContinuesThenStops(t *testing.T) {
 	makeSemanticReport(t, svc, run2.ID, "done")
 
 	var callCount atomic.Int32
-	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (run.AgentRunHandle, error) {
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
 		n := callCount.Add(1)
 		if n == 1 {
-			return &fakeAgentRunHandle{runID: run1.ID, result: run.AgentRunResult{ExitCode: 0}}, nil
+			return &fakeAgentRunHandle{runID: run1.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
 		}
-		return &fakeAgentRunHandle{runID: run2.ID, result: run.AgentRunResult{ExitCode: 0}}, nil
+		return &fakeAgentRunHandle{runID: run2.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
 	}
 
 	result, err := svc.executeWorkerLoop(context.Background(), tk, w, "initial prompt")
@@ -217,7 +217,7 @@ func TestExecuteWorkerLoop_LaunchError(t *testing.T) {
 	svc, _, _, _ := newServiceForTest(t)
 	tk, w, _ := createWorkerLoopTestFixture(t, svc, "done")
 
-	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (run.AgentRunHandle, error) {
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
 		return nil, fmt.Errorf("sdk provider unavailable")
 	}
 
@@ -237,10 +237,10 @@ func TestExecuteWorkerLoop_WaitError(t *testing.T) {
 	svc, _, _, _ := newServiceForTest(t)
 	tk, w, runID := createWorkerLoopTestFixture(t, svc, "done")
 
-	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (run.AgentRunHandle, error) {
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
 		return &fakeAgentRunHandle{
 			runID:  runID,
-			result: run.AgentRunResult{},
+			result: agentexec.AgentRunResult{},
 			err:    fmt.Errorf("agent process crashed"),
 		}, nil
 	}
@@ -262,9 +262,9 @@ func TestExecuteWorkerLoop_DefaultPromptOnEmpty(t *testing.T) {
 	tk, w, runID := createWorkerLoopTestFixture(t, svc, "done")
 
 	var receivedPrompt string
-	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (run.AgentRunHandle, error) {
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
 		receivedPrompt = prompt
-		return &fakeAgentRunHandle{runID: runID, result: run.AgentRunResult{ExitCode: 0}}, nil
+		return &fakeAgentRunHandle{runID: runID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
 	}
 
 	_, err := svc.executeWorkerLoop(context.Background(), tk, w, "")
@@ -281,7 +281,7 @@ func TestExecuteWorkerLoop_ContextCancellation(t *testing.T) {
 	tk, w, _ := createWorkerLoopTestFixture(t, svc, "continue")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	svc.sdkHandleLauncher = func(launchCtx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (run.AgentRunHandle, error) {
+	svc.sdkHandleLauncher = func(launchCtx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
 		cancel() // cancel parent context
 		// AfterFunc propagation is async; wait briefly for it to take effect.
 		time.Sleep(10 * time.Millisecond)

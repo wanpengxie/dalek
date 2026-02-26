@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"dalek/internal/agent/eventlog"
@@ -61,10 +60,11 @@ func (t *turnContext) failTurn(s *Service, cause error, resultJSON string) error
 	if t == nil {
 		return cause
 	}
-	msg := strings.TrimSpace(fmt.Sprint(cause))
+	msg := fmt.Sprint(cause)
 	if cause == nil || msg == "" || msg == "<nil>" {
 		msg = "turn job failed"
 	}
+	// 终态落盘必须独立于上层取消，避免 turn 记录卡在 running。
 	if failErr := s.completeTurnJobFailed(context.Background(), t.job.ID, t.runnerID, msg, resultJSON); failErr != nil {
 		if cause == nil {
 			return failErr
@@ -75,24 +75,24 @@ func (t *turnContext) failTurn(s *Service, cause error, resultJSON string) error
 }
 
 func (t *turnContext) failureProcessResult() ProcessResult {
-	agentProvider := strings.TrimSpace(t.agentResp.Provider)
+	agentProvider := t.agentResp.Provider
 	if agentProvider == "" {
-		agentProvider = strings.TrimSpace(t.provider)
+		agentProvider = t.provider
 	}
-	agentModel := strings.TrimSpace(t.agentResp.Model)
+	agentModel := t.agentResp.Model
 	if agentModel == "" {
-		agentModel = strings.TrimSpace(t.model)
+		agentModel = t.model
 	}
 	return ProcessResult{
 		RunID:           t.runID,
 		JobStatus:       contracts.ChannelTurnFailed,
 		AgentProvider:   agentProvider,
 		AgentModel:      agentModel,
-		AgentSessionID:  strings.TrimSpace(t.agentResp.SessionID),
-		AgentOutputMode: strings.TrimSpace(string(t.agentResp.OutputMode)),
-		AgentCommand:    strings.TrimSpace(t.agentResp.Command),
-		AgentStdout:     strings.TrimSpace(t.agentResp.Stdout),
-		AgentStderr:     strings.TrimSpace(t.agentResp.Stderr),
+		AgentSessionID:  t.agentResp.SessionID,
+		AgentOutputMode: string(t.agentResp.OutputMode),
+		AgentCommand:    t.agentResp.Command,
+		AgentStdout:     t.agentResp.Stdout,
+		AgentStderr:     t.agentResp.Stderr,
 		AgentEvents:     t.collector.Snapshot(),
 	}
 }
@@ -127,19 +127,19 @@ func (s *Service) claimAndLoadTurnContext(ctx context.Context, jobID uint) (*tur
 
 	gaCfg := s.p.Config.WithDefaults().GatewayAgent
 	tctx.gaCfg = agentcli.ConfigOverride{
-		Provider:     strings.TrimSpace(gaCfg.Provider),
-		Model:        strings.TrimSpace(gaCfg.Model),
-		Command:      strings.TrimSpace(gaCfg.Command),
-		Output:       strings.TrimSpace(gaCfg.Output),
-		ResumeOutput: strings.TrimSpace(gaCfg.ResumeOutput),
+		Provider:     gaCfg.Provider,
+		Model:        gaCfg.Model,
+		Command:      gaCfg.Command,
+		Output:       gaCfg.Output,
+		ResumeOutput: gaCfg.ResumeOutput,
 	}
 	tctx.provider, tctx.model = resolveGatewayAgentHints(tctx.gaCfg)
 	tctx.collector = newTurnEventCollector(ctx, tctx.runID, tctx.startedAt, tctx.provider)
 	tctx.collector.AppendLifecycleStart()
 
-	tctx.evLogProject = strings.TrimSpace(s.p.Name)
+	tctx.evLogProject = s.p.Name
 	if tctx.evLogProject == "" {
-		tctx.evLogProject = strings.TrimSpace(s.p.Key)
+		tctx.evLogProject = s.p.Key
 	}
 	if tctx.evLogProject == "" {
 		tctx.evLogProject = "unknown"
@@ -200,7 +200,7 @@ func (s *Service) executeTurnAgent(ctx context.Context, tctx *turnContext) (pmAg
 			ConversationID: fmt.Sprintf("%d", tctx.conv.ID),
 			Provider:       tctx.provider,
 			Model:          tctx.model,
-			WorkDir:        strings.TrimSpace(s.p.RepoRoot),
+			WorkDir:        s.p.RepoRoot,
 			Layer:          "chat_runner",
 		})
 	}
@@ -215,17 +215,17 @@ func (s *Service) executeTurnAgent(ctx context.Context, tctx *turnContext) (pmAg
 	tctx.agentResp = agentResp
 
 	if tctx.evLogger != nil {
-		replyForLog := strings.TrimSpace(agentResp.Text)
+		replyForLog := agentResp.Text
 		errForLog := ""
 		if err != nil {
-			errForLog = strings.TrimSpace(err.Error())
+			errForLog = err.Error()
 		}
 		_ = tctx.evLogger.WriteFooter(eventlog.RunFooter{
 			RunID:      tctx.runID,
 			DurationMS: time.Since(tctx.startedAt).Milliseconds(),
 			ReplyText:  replyForLog,
 			Error:      errForLog,
-			SessionID:  strings.TrimSpace(agentResp.SessionID),
+			SessionID:  agentResp.SessionID,
 		})
 	}
 	return agentResp, err
@@ -241,17 +241,17 @@ func (s *Service) processTurnResponse(ctx context.Context, tctx *turnContext, ag
 		}
 	}
 
-	replyText := strings.TrimSpace(agentResp.Text)
+	replyText := agentResp.Text
 	effectiveReply := replyText
 	pendingActionsToCreate := []contracts.TurnAction{}
 	if turnResp, ok := parseTurnResponseFromAgent(agentResp); ok {
-		if text := strings.TrimSpace(turnResp.ReplyText); text != "" {
+		if text := turnResp.ReplyText; text != "" {
 			effectiveReply = text
 		}
 		if len(turnResp.Actions) > 0 {
 			if turnResp.RequiresConfirmation {
 				pendingActionsToCreate = append(pendingActionsToCreate, turnResp.Actions...)
-				if strings.TrimSpace(effectiveReply) == "" {
+				if effectiveReply == "" {
 					effectiveReply = "检测到待审批操作，请点击审批卡片确认。"
 				}
 			} else {
@@ -260,16 +260,16 @@ func (s *Service) processTurnResponse(ctx context.Context, tctx *turnContext, ag
 					results = append(results, s.executeAction(ctx, action))
 				}
 				if summary := renderActionExecutionSummary(results); summary != "" {
-					if strings.TrimSpace(effectiveReply) == "" {
+					if effectiveReply == "" {
 						effectiveReply = summary
 					} else {
-						effectiveReply = strings.TrimSpace(effectiveReply + "\n\n" + summary)
+						effectiveReply = effectiveReply + "\n\n" + summary
 					}
 				}
 			}
 		}
 	}
-	if strings.TrimSpace(effectiveReply) == "" {
+	if effectiveReply == "" {
 		return "", nil, fmt.Errorf("project manager agent 无响应（reply_text 为空）")
 	}
 	return effectiveReply, pendingActionsToCreate, nil
@@ -279,6 +279,9 @@ func (s *Service) finalizeTurn(ctx context.Context, tctx *turnContext, effective
 	if tctx == nil {
 		return fmt.Errorf("turn context 不能为空")
 	}
+	if ctx == nil {
+		ctx = tctx.executionCtx(nil)
+	}
 	tctx.collector.AppendAssistantText(effectiveReply)
 	tctx.collector.AppendLifecycleEnd(nil)
 	events := tctx.collector.Snapshot()
@@ -287,13 +290,13 @@ func (s *Service) finalizeTurn(ctx context.Context, tctx *turnContext, effective
 		RunID:           tctx.runID,
 		JobStatus:       contracts.ChannelTurnSucceeded,
 		ReplyText:       effectiveReply,
-		AgentProvider:   strings.TrimSpace(tctx.agentResp.Provider),
-		AgentModel:      strings.TrimSpace(tctx.agentResp.Model),
-		AgentSessionID:  strings.TrimSpace(tctx.agentResp.SessionID),
-		AgentOutputMode: strings.TrimSpace(string(tctx.agentResp.OutputMode)),
-		AgentCommand:    strings.TrimSpace(tctx.agentResp.Command),
-		AgentStdout:     strings.TrimSpace(tctx.agentResp.Stdout),
-		AgentStderr:     strings.TrimSpace(tctx.agentResp.Stderr),
+		AgentProvider:   tctx.agentResp.Provider,
+		AgentModel:      tctx.agentResp.Model,
+		AgentSessionID:  tctx.agentResp.SessionID,
+		AgentOutputMode: string(tctx.agentResp.OutputMode),
+		AgentCommand:    tctx.agentResp.Command,
+		AgentStdout:     tctx.agentResp.Stdout,
+		AgentStderr:     tctx.agentResp.Stderr,
 		AgentEvents:     copyAgentEvents(events),
 	}, pendingActions)
 	if err != nil {
@@ -312,10 +315,10 @@ func (s *Service) finalizeTurn(ctx context.Context, tctx *turnContext, effective
 				}
 				payloadJSON = mustJSON(payload)
 			}
-			return s.completeTurnJobFailed(context.Background(), tctx.job.ID, tctx.runnerID, err.Error(), payloadJSON)
+			return s.completeTurnJobFailed(ctx, tctx.job.ID, tctx.runnerID, err.Error(), payloadJSON)
 		}
 	}
-	return s.completeTurnJobSuccess(context.Background(), tctx.job.ID, tctx.runnerID, payloadJSON)
+	return s.completeTurnJobSuccess(ctx, tctx.job.ID, tctx.runnerID, payloadJSON)
 }
 
 func (s *Service) persistTurnJobResult(ctx context.Context, tctx *turnContext, runErr error, result ProcessResult, pendingActions []contracts.TurnAction) (TurnResultOutput, error) {
@@ -345,7 +348,7 @@ func (s *Service) persistTurnJobResult(ctx context.Context, tctx *turnContext, r
 			Conv:        tctx.conv,
 			Inbound:     tctx.inbound,
 			Job:         tctx.job,
-			Adapter:     strings.TrimSpace(tctx.binding.Adapter),
+			Adapter:     tctx.binding.Adapter,
 			Result:      result,
 			RunErr:      runErr,
 			FinalizeJob: false,

@@ -28,9 +28,9 @@ type turnEventCollector struct {
 func newTurnEventCollector(ctx context.Context, runID string, startedAt time.Time, provider string) *turnEventCollector {
 	return &turnEventCollector{
 		ctx:       ctx,
-		runID:     strings.TrimSpace(runID),
+		runID:     runID,
 		startedAt: startedAt,
-		provider:  strings.TrimSpace(strings.ToLower(provider)),
+		provider:  strings.ToLower(provider),
 		events:    make([]AgentEvent, 0, 16),
 	}
 }
@@ -130,7 +130,7 @@ func (c *turnEventCollector) AppendLifecycleEnd(runErr error) {
 		},
 	}
 	if runErr != nil {
-		msg := strings.TrimSpace(runErr.Error())
+		msg := runErr.Error()
 		ev.Data.Phase = "error"
 		ev.Data.Error = msg
 		ev.Data.ErrorType = classifyJobErrorType(msg)
@@ -160,7 +160,7 @@ func (c *turnEventCollector) nextSeqLocked() int {
 }
 
 func (c *turnEventCollector) appendLocked(ev AgentEvent) {
-	if strings.TrimSpace(ev.RunID) == "" {
+	if ev.RunID == "" {
 		ev.RunID = c.runID
 	}
 	if ev.Seq <= 0 {
@@ -169,7 +169,7 @@ func (c *turnEventCollector) appendLocked(ev AgentEvent) {
 	if ev.Ts <= 0 {
 		ev.Ts = time.Now().UnixMilli()
 	}
-	c.lastEventText = strings.TrimSpace(ev.Data.Text)
+	c.lastEventText = ev.Data.Text
 	c.events = append(c.events, ev)
 	emitStreamAgentEvent(c.ctx, ev)
 }

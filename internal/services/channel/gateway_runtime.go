@@ -133,7 +133,7 @@ func (g *Gateway) slog() *slog.Logger {
 func (g *Gateway) logInterrupt(phase string, attrs ...any) {
 	all := []any{
 		"cmd", "stop",
-		"phase", strings.TrimSpace(phase),
+		"phase", phase,
 	}
 	all = append(all, attrs...)
 	g.slog().Info("channel interrupt", all...)
@@ -202,7 +202,7 @@ func (g *Gateway) MarkOutboxDelivery(ctx context.Context, outboxID uint, deliver
 		ctx = context.Background()
 	}
 
-	errMsg := strings.TrimSpace(fmt.Sprint(cause))
+	errMsg := fmt.Sprint(cause)
 	if delivered {
 		errMsg = ""
 	} else if errMsg == "" || errMsg == "<nil>" {
@@ -315,20 +315,20 @@ func (g *Gateway) normalizeInboundRequest(req GatewayInboundRequest) (InboundIte
 	}
 	env := req.Envelope
 	env.Normalize()
-	env.ChannelType = contracts.ChannelType(strings.ToLower(strings.TrimSpace(string(env.ChannelType))))
+	env.ChannelType = contracts.ChannelType(strings.ToLower(string(env.ChannelType)))
 	if env.ChannelType == "" {
 		env.ChannelType = contracts.ChannelTypeCLI
 	}
-	if strings.TrimSpace(env.Adapter) == "" {
+	if env.Adapter == "" {
 		env.Adapter = defaultAdapter(string(env.ChannelType))
 	}
-	if strings.TrimSpace(env.PeerConversationID) == "" {
+	if env.PeerConversationID == "" {
 		env.PeerConversationID = defaultConversationID(string(env.ChannelType))
 	}
-	if strings.TrimSpace(env.PeerMessageID) == "" {
+	if env.PeerMessageID == "" {
 		env.PeerMessageID = fmt.Sprintf("msg_%d", time.Now().UnixNano())
 	}
-	if strings.TrimSpace(env.SenderID) == "" {
+	if env.SenderID == "" {
 		env.SenderID = "anonymous"
 	}
 	env.Normalize()
@@ -350,7 +350,6 @@ func (g *Gateway) normalizeInboundRequest(req GatewayInboundRequest) (InboundIte
 }
 
 func (g *Gateway) startProjectWorker(projectName string, ch chan InboundItem) {
-	projectName = strings.TrimSpace(projectName)
 	if projectName == "" || ch == nil {
 		return
 	}
@@ -378,6 +377,7 @@ func (g *Gateway) startProjectWorker(projectName string, ch chan InboundItem) {
 }
 
 func (g *Gateway) processInboundItem(item InboundItem) {
+	// worker 为独立生命周期 goroutine，无上层请求上下文可继承。
 	ctx := context.Background()
 	state, cached, err := g.persistInboundAccepted(ctx, item)
 	if err != nil {
@@ -391,12 +391,12 @@ func (g *Gateway) processInboundItem(item InboundItem) {
 			g.publishFromResult(item.ProjectName, item.Envelope.PeerConversationID, item.Envelope.PeerMessageID, *cached)
 		} else {
 			g.slog().Info("gateway dedup skip runtime",
-				"project", strings.TrimSpace(item.ProjectName),
-				"conversation", strings.TrimSpace(item.Envelope.PeerConversationID),
-				"peer_msg", strings.TrimSpace(item.Envelope.PeerMessageID),
+				"project", item.ProjectName,
+				"conversation", item.Envelope.PeerConversationID,
+				"peer_msg", item.Envelope.PeerMessageID,
 				"dedup_type", "peer_message_id",
 				"job_id", cached.JobID,
-				"status", strings.TrimSpace(string(cached.JobStatus)),
+				"status", string(cached.JobStatus),
 			)
 		}
 		return
@@ -431,12 +431,12 @@ func (g *Gateway) processInboundItem(item InboundItem) {
 	if timeout <= 0 {
 		timeout = g.defaultTurnTimeout
 	}
-	turnCtx := context.Background()
+	turnCtx := ctx
 	cancel := func() {}
 	if timeout > 0 {
-		turnCtx, cancel = context.WithTimeout(context.Background(), timeout)
+		turnCtx, cancel = context.WithTimeout(ctx, timeout)
 	} else {
-		turnCtx, cancel = context.WithCancel(context.Background())
+		turnCtx, cancel = context.WithCancel(ctx)
 	}
 	streamedAny := false
 	turnCtx = withStreamEventEmitter(turnCtx, func(ev AgentEvent) {
@@ -487,8 +487,8 @@ func (g *Gateway) persistInboundAccepted(ctx context.Context, item InboundItem) 
 	var cached *ProcessResult
 	err := g.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		binding, err := EnsureBindingTx(ctx, tx, EnsureBindingParams{
-			ProjectName:    strings.TrimSpace(item.ProjectName),
-			PeerProjectKey: strings.TrimSpace(item.PeerProjectKey),
+			ProjectName:    item.ProjectName,
+			PeerProjectKey: item.PeerProjectKey,
 			Env:            item.Envelope,
 			AutoUpdate:     true,
 		})
@@ -506,7 +506,7 @@ func (g *Gateway) persistInboundAccepted(ctx context.Context, item InboundItem) 
 		inbound, job, duplicate, err := PersistInboundMessageTx(ctx, tx, PersistInboundParams{
 			Conv:    conv,
 			Env:     item.Envelope,
-			Project: strings.TrimSpace(item.ProjectName),
+			Project: item.ProjectName,
 		})
 		if err != nil {
 			return err
@@ -527,10 +527,10 @@ func (g *Gateway) persistInboundAccepted(ctx context.Context, item InboundItem) 
 			cached = &res
 			g.slog().Info("gateway dedup hit",
 				"dedup_type", "peer_message_id",
-				"dedup_key", strings.TrimSpace(item.Envelope.PeerMessageID),
+				"dedup_key", item.Envelope.PeerMessageID,
 				"inbound_id", inbound.ID,
 				"job_id", job.ID,
-				"status", strings.TrimSpace(string(job.Status)),
+				"status", string(job.Status),
 				"action", "skip",
 			)
 		}
@@ -561,9 +561,9 @@ func (g *Gateway) persistTurnResult(ctx context.Context, state gatewayPersistSta
 	if state.job.ID == 0 || state.inbound.ID == 0 || state.conv.ID == 0 || state.binding.ID == 0 {
 		return ProcessResult{}, fmt.Errorf("gateway 落盘状态不完整")
 	}
-	adapter := strings.TrimSpace(env.Adapter)
+	adapter := env.Adapter
 	if adapter == "" {
-		adapter = strings.TrimSpace(state.binding.Adapter)
+		adapter = state.binding.Adapter
 	}
 	var output TurnResultOutput
 	if err := g.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -590,11 +590,11 @@ func (g *Gateway) publishError(projectName, conversationID, peerMessageID string
 	if g == nil || g.bus == nil || err == nil {
 		return
 	}
-	msg := strings.TrimSpace(err.Error())
+	msg := err.Error()
 	g.bus.Publish(GatewayEvent{
-		ProjectName:    strings.TrimSpace(projectName),
-		ConversationID: strings.TrimSpace(conversationID),
-		PeerMessageID:  strings.TrimSpace(peerMessageID),
+		ProjectName:    projectName,
+		ConversationID: conversationID,
+		PeerMessageID:  peerMessageID,
 		Type:           "error",
 		Text:           msg,
 		EventType:      "error",
@@ -610,15 +610,12 @@ func (g *Gateway) publishStreamAgentEvent(projectName, conversationID, peerMessa
 	if g == nil || g.bus == nil {
 		return
 	}
-	projectName = strings.TrimSpace(projectName)
-	conversationID = strings.TrimSpace(conversationID)
-	peerMessageID = strings.TrimSpace(peerMessageID)
-	runID := strings.TrimSpace(ev.RunID)
-	stream := strings.TrimSpace(string(ev.Stream))
-	eventType := deriveGatewayRuntimeEventType(stream, strings.TrimSpace(ev.Data.Phase))
-	text := strings.TrimSpace(ev.Data.Text)
+	runID := ev.RunID
+	stream := string(ev.Stream)
+	eventType := deriveGatewayRuntimeEventType(stream, ev.Data.Phase)
+	text := ev.Data.Text
 	if text == "" {
-		text = strings.TrimSpace(ev.Data.Error)
+		text = ev.Data.Error
 	}
 	if stream == "" && eventType == "" && text == "" {
 		return
@@ -642,18 +639,18 @@ func (g *Gateway) publishFinalFromResult(projectName, conversationID, peerMessag
 	if g == nil || g.bus == nil {
 		return
 	}
-	reply := strings.TrimSpace(result.ReplyText)
+	reply := result.ReplyText
 	if reply == "" && result.JobStatus != contracts.ChannelTurnSucceeded {
-		reply = strings.TrimSpace(result.JobError)
+		reply = result.JobError
 	}
-	finalRunID := strings.TrimSpace(result.RunID)
+	finalRunID := result.RunID
 	finalSeq := 1
 	for _, ev := range result.AgentEvents {
 		if ev.Seq >= finalSeq {
 			finalSeq = ev.Seq + 1
 		}
-		if finalRunID == "" && strings.TrimSpace(ev.RunID) != "" {
-			finalRunID = strings.TrimSpace(ev.RunID)
+		if finalRunID == "" && ev.RunID != "" {
+			finalRunID = ev.RunID
 		}
 	}
 	finalEventType := "end"
@@ -661,20 +658,20 @@ func (g *Gateway) publishFinalFromResult(projectName, conversationID, peerMessag
 		finalEventType = "error"
 	}
 	g.bus.Publish(GatewayEvent{
-		ProjectName:    strings.TrimSpace(projectName),
-		ConversationID: strings.TrimSpace(conversationID),
-		PeerMessageID:  strings.TrimSpace(peerMessageID),
+		ProjectName:    projectName,
+		ConversationID: conversationID,
+		PeerMessageID:  peerMessageID,
 		Type:           "assistant_message",
 		RunID:          finalRunID,
 		Seq:            finalSeq,
 		Stream:         "lifecycle",
 		Text:           reply,
 		EventType:      finalEventType,
-		AgentProvider:  strings.TrimSpace(result.AgentProvider),
-		AgentModel:     strings.TrimSpace(result.AgentModel),
+		AgentProvider:  result.AgentProvider,
+		AgentModel:     result.AgentModel,
 		JobStatus:      result.JobStatus,
-		JobErrorType:   strings.TrimSpace(result.JobErrorType),
-		JobError:       strings.TrimSpace(result.JobError),
+		JobErrorType:   result.JobErrorType,
+		JobError:       result.JobError,
 		At:             time.Now(),
 	})
 }
@@ -683,29 +680,26 @@ func (g *Gateway) publishFromResult(projectName, conversationID, peerMessageID s
 	if g == nil || g.bus == nil {
 		return
 	}
-	projectName = strings.TrimSpace(projectName)
-	conversationID = strings.TrimSpace(conversationID)
-	peerMessageID = strings.TrimSpace(peerMessageID)
-	reply := strings.TrimSpace(result.ReplyText)
+	reply := result.ReplyText
 	if reply == "" && result.JobStatus != contracts.ChannelTurnSucceeded {
-		reply = strings.TrimSpace(result.JobError)
+		reply = result.JobError
 	}
 
-	finalRunID := strings.TrimSpace(result.RunID)
+	finalRunID := result.RunID
 	lastSeq := 0
 	finalSeq := 0
 	finalEventType := "end"
 	for _, ev := range result.AgentEvents {
-		runID := strings.TrimSpace(ev.RunID)
+		runID := ev.RunID
 		if runID == "" {
 			runID = finalRunID
 		}
 		if finalRunID == "" && runID != "" {
 			finalRunID = runID
 		}
-		stream := strings.TrimSpace(string(ev.Stream))
-		eventType := deriveGatewayRuntimeEventType(stream, strings.TrimSpace(ev.Data.Phase))
-		text := strings.TrimSpace(ev.Data.Text)
+		stream := string(ev.Stream)
+		eventType := deriveGatewayRuntimeEventType(stream, ev.Data.Phase)
+		text := ev.Data.Text
 		if ev.Seq > lastSeq {
 			lastSeq = ev.Seq
 		}
@@ -730,11 +724,11 @@ func (g *Gateway) publishFromResult(projectName, conversationID, peerMessageID s
 			Stream:         stream,
 			Text:           text,
 			EventType:      eventType,
-			AgentProvider:  strings.TrimSpace(result.AgentProvider),
-			AgentModel:     strings.TrimSpace(result.AgentModel),
+			AgentProvider:  result.AgentProvider,
+			AgentModel:     result.AgentModel,
 			JobStatus:      result.JobStatus,
-			JobErrorType:   strings.TrimSpace(result.JobErrorType),
-			JobError:       strings.TrimSpace(result.JobError),
+			JobErrorType:   result.JobErrorType,
+			JobError:       result.JobError,
 			At:             time.Now(),
 		})
 	}
@@ -755,17 +749,17 @@ func (g *Gateway) publishFromResult(projectName, conversationID, peerMessageID s
 		Stream:         "lifecycle",
 		Text:           reply,
 		EventType:      finalEventType,
-		AgentProvider:  strings.TrimSpace(result.AgentProvider),
-		AgentModel:     strings.TrimSpace(result.AgentModel),
+		AgentProvider:  result.AgentProvider,
+		AgentModel:     result.AgentModel,
 		JobStatus:      result.JobStatus,
-		JobErrorType:   strings.TrimSpace(result.JobErrorType),
-		JobError:       strings.TrimSpace(result.JobError),
+		JobErrorType:   result.JobErrorType,
+		JobError:       result.JobError,
 		At:             time.Now(),
 	})
 }
 
 func toStoreChannelType(channelType contracts.ChannelType) contracts.ChannelType {
-	switch strings.ToLower(strings.TrimSpace(string(channelType))) {
+	switch strings.ToLower(string(channelType)) {
 	case string(contracts.ChannelTypeWeb):
 		return contracts.ChannelTypeWeb
 	case string(contracts.ChannelTypeIM):
@@ -780,12 +774,12 @@ func toStoreChannelType(channelType contracts.ChannelType) contracts.ChannelType
 }
 
 func defaultPeerProjectKey(projectName string, env contracts.InboundEnvelope) string {
-	if strings.EqualFold(strings.TrimSpace(string(env.ChannelType)), string(contracts.ChannelTypeIM)) {
-		if strings.TrimSpace(env.PeerConversationID) != "" {
-			return strings.TrimSpace(env.PeerConversationID)
+	if strings.EqualFold(string(env.ChannelType), string(contracts.ChannelTypeIM)) {
+		if env.PeerConversationID != "" {
+			return env.PeerConversationID
 		}
 	}
-	return strings.TrimSpace(projectName)
+	return projectName
 }
 
 func inboundMessageStatusFromTurn(st contracts.ChannelTurnJobStatus) contracts.ChannelMessageStatus {
@@ -810,8 +804,6 @@ func outboxStatusFromTurn(st contracts.ChannelTurnJobStatus) contracts.ChannelOu
 }
 
 func deriveGatewayRuntimeEventType(stream, phase string) string {
-	stream = strings.TrimSpace(stream)
-	phase = strings.TrimSpace(phase)
 	if stream == "lifecycle" {
 		if phase != "" {
 			return phase
@@ -870,7 +862,6 @@ func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType co
 		)
 		return "", InterruptResult{}, err
 	}
-	projectName = strings.TrimSpace(projectName)
 	if projectName == "" {
 		g.logInterrupt("locator_result",
 			"channel_type", channelType,
@@ -952,7 +943,6 @@ func (g *Gateway) ResetBoundConversationSession(ctx context.Context, channelType
 	if err != nil {
 		return "", false, err
 	}
-	projectName = strings.TrimSpace(projectName)
 	if projectName == "" {
 		return "", false, nil
 	}
@@ -978,12 +968,17 @@ func (g *Gateway) LookupBoundProject(ctx context.Context, channelType contracts.
 	if g == nil || g.db == nil {
 		return "", fmt.Errorf("gateway db 为空")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	adapter = strings.TrimSpace(adapter)
+	peerProjectKey = strings.TrimSpace(peerProjectKey)
 	var binding contracts.ChannelBinding
 	err := g.db.WithContext(ctx).
 		Where("channel_type = ? AND adapter = ? AND peer_project_key = ? AND enabled = 1",
 			toStoreChannelType(channelType),
-			strings.TrimSpace(adapter),
-			strings.TrimSpace(peerProjectKey)).
+			adapter,
+			peerProjectKey).
 		First(&binding).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -991,12 +986,15 @@ func (g *Gateway) LookupBoundProject(ctx context.Context, channelType contracts.
 		}
 		return "", err
 	}
-	return strings.TrimSpace(binding.ProjectName), nil
+	return binding.ProjectName, nil
 }
 
 func (g *Gateway) BindProject(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey, projectName string) (string, error) {
 	if g == nil || g.db == nil {
 		return "", fmt.Errorf("gateway db 为空")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	projectName = strings.TrimSpace(projectName)
 	if projectName == "" {
@@ -1017,7 +1015,7 @@ func (g *Gateway) BindProject(ctx context.Context, channelType contracts.Channel
 				peerProjectKey).
 			First(&binding).Error
 		if err == nil {
-			prevProject = strings.TrimSpace(binding.ProjectName)
+			prevProject = binding.ProjectName
 			return tx.WithContext(ctx).Model(&contracts.ChannelBinding{}).
 				Where("id = ?", binding.ID).
 				Updates(map[string]any{
@@ -1048,11 +1046,16 @@ func (g *Gateway) UnbindProject(ctx context.Context, channelType contracts.Chann
 	if g == nil || g.db == nil {
 		return false, fmt.Errorf("gateway db 为空")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	adapter = strings.TrimSpace(adapter)
+	peerProjectKey = strings.TrimSpace(peerProjectKey)
 	res := g.db.WithContext(ctx).
 		Where("channel_type = ? AND adapter = ? AND peer_project_key = ?",
 			toStoreChannelType(channelType),
-			strings.TrimSpace(adapter),
-			strings.TrimSpace(peerProjectKey)).
+			adapter,
+			peerProjectKey).
 		Delete(&contracts.ChannelBinding{})
 	if res.Error != nil {
 		return false, res.Error

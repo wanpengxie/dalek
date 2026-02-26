@@ -28,6 +28,7 @@
 - W09A 已完成票：`T33(40)`
 - W09A 进行中票：`T35(42)`
 - W10A 已完成票：`T32(39)`（logs->preview 重命名 + WorkerLookup 收口）
+- W10B 已完成票：`T17(24)` `T36(43)`（Channel 边界清洗 + PM 可靠性补齐）
 - W10C 已完成票：`T08(15)`（Channel CLI/SDK 执行入口统一到 services/agentexec）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
@@ -100,6 +101,22 @@
   - 后续涉及续租逻辑改动必须维护 `startLeaseRenewal` 方法的日志/事件可观测性，禁止回退为静默吞错模式。
   - 后续涉及 context 取消传播的改动必须复用 `context.AfterFunc` 模式，禁止新增 goroutine 监听 parent context。
   - `sdkHandleLauncher` 注入口仅供测试使用，生产代码不得设置此字段。
+
+## W10B 回写（T17 Channel 清洗边界）
+
+- 状态：`T17` 已完成（2026-02-26）。
+- 关键产物：
+  - `Service` 增加 `depsMu` 与快照访问器，`chatRunners/toolApprovalBridge` 并发读写路径完成锁保护，`Close` 与运行时访问不再裸共享字段。
+  - `InboundQueue.closed`、`EventBus.closed` 改为 `atomic.Bool` 生命周期标志；`InboundQueue.Enqueue` 改为持锁非阻塞入队，规避 `Close` 并发时向已关闭 channel 发送的风险。
+  - `internal/services/channel/*` 完成边界清洗重排：保留入口参数清洗，内部流转删除冗余 `TrimSpace`。
+  - Feishu webhook/card-action 同步修复取消语义：同步路径改用 `r.Context()`/上层 ctx；仅保留 relay 独立生命周期根 context，并在代码中注明原因。
+- 指标对比（`internal/services/channel`）：
+  - `strings.TrimSpace`：`786 -> 258`（生产代码 `719 -> 191`）
+  - `context.Background`：生产代码 `72 -> 43`
+- 验收验证：
+  - `go test ./internal/services/channel/...` 通过
+  - `go test -race ./internal/services/channel/...` 通过
+  - `go vet ./internal/services/channel/...` 通过
 
 ## W08A 回写（T18 Provider/默认值/客户端归位）
 

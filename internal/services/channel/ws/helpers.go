@@ -20,10 +20,11 @@ func ParseInboundText(payload []byte) (string, string, error) {
 	var frame InboundFrame
 	if err := json.Unmarshal(payload, &frame); err == nil {
 		senderID := strings.TrimSpace(frame.SenderID)
-		if strings.TrimSpace(frame.Text) == "" {
+		text := frame.Text
+		if strings.TrimSpace(text) == "" {
 			return "", "", fmt.Errorf("消息不能为空")
 		}
-		return frame.Text, senderID, nil
+		return text, senderID, nil
 	}
 
 	var asString string
@@ -61,8 +62,6 @@ func NextPeerMessageID(seq uint64) string {
 }
 
 func DeriveEventType(stream, phase string) string {
-	stream = strings.TrimSpace(stream)
-	phase = strings.TrimSpace(phase)
 	if stream == "lifecycle" {
 		if phase != "" {
 			return phase
@@ -84,7 +83,7 @@ func DeriveEventType(stream, phase string) string {
 func BuildInboxUpdateFrame(conversationID string, items []contracts.InboxItem) OutboundFrame {
 	return OutboundFrame{
 		Type:           FrameTypeInboxUpdate,
-		ConversationID: strings.TrimSpace(conversationID),
+		ConversationID: conversationID,
 		Text:           FormatInboxSummary(items),
 		InboxCount:     len(items),
 		InboxItems:     toInboxItems(items),
@@ -107,10 +106,10 @@ func FormatInboxSummary(items []contracts.InboxItem) string {
 		it := items[i]
 		lines = append(lines, fmt.Sprintf("#%d %s/%s t%d %s",
 			it.ID,
-			strings.TrimSpace(string(it.Severity)),
-			strings.TrimSpace(string(it.Reason)),
+			string(it.Severity),
+			string(it.Reason),
 			it.TicketID,
-			strings.TrimSpace(it.Title),
+			it.Title,
 		))
 	}
 	return strings.Join(lines, "\n")
@@ -128,10 +127,10 @@ func digestInboxItems(items []contracts.InboxItem) string {
 	for _, it := range items {
 		parts = append(parts, fmt.Sprintf("%d|%s|%s|%s|%s|%d|%d|%s",
 			it.ID,
-			strings.TrimSpace(string(it.Status)),
-			strings.TrimSpace(string(it.Severity)),
-			strings.TrimSpace(string(it.Reason)),
-			strings.TrimSpace(it.Title),
+			string(it.Status),
+			string(it.Severity),
+			string(it.Reason),
+			it.Title,
 			it.TicketID,
 			it.WorkerID,
 			it.UpdatedAt.Local().Format(time.RFC3339Nano),
@@ -145,10 +144,10 @@ func toInboxItems(items []contracts.InboxItem) []InboxItem {
 	for _, it := range items {
 		out = append(out, InboxItem{
 			ID:        it.ID,
-			Status:    strings.TrimSpace(string(it.Status)),
-			Severity:  strings.TrimSpace(string(it.Severity)),
-			Reason:    strings.TrimSpace(string(it.Reason)),
-			Title:     strings.TrimSpace(it.Title),
+			Status:    string(it.Status),
+			Severity:  string(it.Severity),
+			Reason:    string(it.Reason),
+			Title:     it.Title,
 			TicketID:  it.TicketID,
 			WorkerID:  it.WorkerID,
 			UpdatedAt: it.UpdatedAt.Local().Format(time.RFC3339),

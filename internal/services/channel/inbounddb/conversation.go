@@ -3,7 +3,6 @@ package inbounddb
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"dalek/internal/store"
 
@@ -13,7 +12,7 @@ import (
 func EnsureConversationTx(ctx context.Context, tx *gorm.DB, bindingID uint, peerConversationID string) (store.ChannelConversation, error) {
 	var conv store.ChannelConversation
 	err := tx.WithContext(ctx).
-		Where("binding_id = ? AND peer_conversation_id = ?", bindingID, strings.TrimSpace(peerConversationID)).
+		Where("binding_id = ? AND peer_conversation_id = ?", bindingID, peerConversationID).
 		First(&conv).Error
 	if err == nil {
 		return conv, nil
@@ -23,7 +22,7 @@ func EnsureConversationTx(ctx context.Context, tx *gorm.DB, bindingID uint, peer
 	}
 	conv = store.ChannelConversation{
 		BindingID:          bindingID,
-		PeerConversationID: strings.TrimSpace(peerConversationID),
+		PeerConversationID: peerConversationID,
 	}
 	if err := tx.WithContext(ctx).Create(&conv).Error; err != nil {
 		return store.ChannelConversation{}, err

@@ -6,7 +6,7 @@ import (
 )
 
 func parseOutput(raw string, mode OutputMode, backend Backend) (text string, sessionID string, events []Event) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := raw
 	if trimmed == "" {
 		return "", "", nil
 	}
@@ -40,13 +40,13 @@ func parseJSONFromMixedLines(raw string, sessionFields []string) (text string, s
 	}
 
 	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
+		line := lines[i]
 		if line == "" {
 			continue
 		}
 		candidates := []string{line}
 		if idx := strings.Index(line, "{"); idx > 0 {
-			candidates = append(candidates, strings.TrimSpace(line[idx:]))
+			candidates = append(candidates, line[idx:])
 		}
 		for _, cand := range candidates {
 			cand = strings.TrimSpace(cand)
@@ -75,13 +75,13 @@ func parseJSON(raw string, sessionFields []string) (text string, sessionID strin
 	}
 
 	sessionID = pickSessionID(obj, sessionFields)
-	text = strings.TrimSpace(
+	text =
 		collectText(obj["message"]) +
 			collectText(obj["content"]) +
-			collectText(obj["result"]),
-	)
+			collectText(obj["result"])
+
 	if text == "" {
-		text = strings.TrimSpace(collectText(obj))
+		text = collectText(obj)
 	}
 	return text, sessionID, true
 }
@@ -119,32 +119,32 @@ func parseJSONL(raw string, sessionFields []string) (text string, sessionID stri
 		eventText := extractJSONLEventText(obj)
 		if eventType != "" || eventText != "" {
 			events = append(events, Event{
-				Type: strings.TrimSpace(eventType),
-				Text: strings.TrimSpace(eventText),
+				Type: eventType,
+				Text: eventText,
 			})
 		}
 		if eventText != "" {
-			texts = append(texts, strings.TrimSpace(eventText))
+			texts = append(texts, eventText)
 		}
 	}
 	if !parsedAny {
 		return "", "", nil, false
 	}
-	return strings.TrimSpace(strings.Join(texts, "\n")), strings.TrimSpace(sessionID), events, true
+	return strings.Join(texts, "\n"), sessionID, events, true
 }
 
 func extractJSONLEventText(obj map[string]any) string {
 	if item, ok := obj["item"].(map[string]any); ok {
-		itemText := strings.TrimSpace(collectText(item))
+		itemText := collectText(item)
 		if itemText != "" {
 			return itemText
 		}
 	}
-	text := strings.TrimSpace(collectText(obj["text"]))
+	text := collectText(obj["text"])
 	if text != "" {
 		return text
 	}
-	return strings.TrimSpace(collectText(obj["content"]))
+	return collectText(obj["content"])
 }
 
 func pickSessionID(obj map[string]any, sessionFields []string) string {
@@ -154,8 +154,8 @@ func pickSessionID(obj map[string]any, sessionFields []string) string {
 	}
 	for _, field := range fields {
 		v := readString(obj[field])
-		if strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
+		if v != "" {
+			return v
 		}
 	}
 	return ""
@@ -170,30 +170,30 @@ func collectText(v any) string {
 	case []any:
 		parts := make([]string, 0, len(x))
 		for _, it := range x {
-			if text := strings.TrimSpace(collectText(it)); text != "" {
+			if text := collectText(it); text != "" {
 				parts = append(parts, text)
 			}
 		}
 		return strings.Join(parts, "\n")
 	case map[string]any:
-		if s := strings.TrimSpace(readString(x["text"])); s != "" {
+		if s := readString(x["text"]); s != "" {
 			return s
 		}
-		if s := strings.TrimSpace(readString(x["content"])); s != "" {
+		if s := readString(x["content"]); s != "" {
 			return s
 		}
 		if msg, ok := x["message"]; ok {
-			if s := strings.TrimSpace(collectText(msg)); s != "" {
+			if s := collectText(msg); s != "" {
 				return s
 			}
 		}
 		if content, ok := x["content"]; ok {
-			if s := strings.TrimSpace(collectText(content)); s != "" {
+			if s := collectText(content); s != "" {
 				return s
 			}
 		}
 		if result, ok := x["result"]; ok {
-			if s := strings.TrimSpace(collectText(result)); s != "" {
+			if s := collectText(result); s != "" {
 				return s
 			}
 		}

@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"dalek/internal/agent/run"
 	"dalek/internal/contracts"
+	"dalek/internal/services/agentexec"
 	"dalek/internal/services/core"
 	"dalek/internal/services/worker"
 
@@ -16,7 +16,7 @@ import (
 )
 
 // workerSDKHandleLauncherFunc 是 launchWorkerSDKHandle 的函数签名，用于测试注入。
-type workerSDKHandleLauncherFunc func(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (run.AgentRunHandle, error)
+type workerSDKHandleLauncherFunc func(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (agentexec.AgentRunHandle, error)
 
 type Service struct {
 	p                 *core.Project

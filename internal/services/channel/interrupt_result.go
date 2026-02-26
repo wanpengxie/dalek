@@ -1,7 +1,5 @@
 package channel
 
-import "strings"
-
 type InterruptStatus string
 
 const (
@@ -23,5 +21,5 @@ func (r InterruptResult) Interrupted() bool {
 }
 
 func (r InterruptResult) RunnerErrorMessage() string {
-	return strings.TrimSpace(r.RunnerError)
+	return r.RunnerError
 }

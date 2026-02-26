@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	claude "github.com/wanpengxie/go-claude-agent-sdk"
 	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/services/channel/agentcli"
+	claude "github.com/wanpengxie/go-claude-agent-sdk"
 )
 
 type claudeClient interface {
@@ -95,7 +95,7 @@ func (r *claudeChatRunner) canUseTool(ctx context.Context, toolName string, inpu
 	}
 	allow, err := fn(ctx, toolName, input)
 	if err != nil {
-		return &claude.PermissionResultDeny{Message: strings.TrimSpace(err.Error())}, nil
+		return &claude.PermissionResultDeny{Message: err.Error()}, nil
 	}
 	if allow {
 		return &claude.PermissionResultAllow{}, nil
@@ -122,11 +122,11 @@ func (r *claudeChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 		return ChatRunResult{}, err
 	}
 
-	sessionID := strings.TrimSpace(req.SessionID)
+	sessionID := req.SessionID
 	if sessionID == "" {
 		sessionID = "chat-" + randomSessionToken(8)
 	}
-	if err := client.QueryWithSession(ctx, strings.TrimSpace(req.Prompt), sessionID); err != nil {
+	if err := client.QueryWithSession(ctx, req.Prompt, sessionID); err != nil {
 		r.resetClientIfSame(client)
 		return ChatRunResult{}, err
 	}
@@ -136,7 +136,7 @@ func (r *claudeChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 	texts := make([]string, 0, 16)
 	events := make([]agentcli.Event, 0, 64)
 	out := ChatRunResult{
-		Command:    strings.TrimSpace(req.Command),
+		Command:    req.Command,
 		OutputMode: agentcli.OutputJSON,
 	}
 	if out.Command == "" {
@@ -152,8 +152,8 @@ func (r *claudeChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 			texts = append(texts, text)
 		}
 		events = append(events, ev)
-		if strings.TrimSpace(ev.RawJSON) != "" {
-			lines = append(lines, strings.TrimSpace(ev.RawJSON))
+		if ev.RawJSON != "" {
+			lines = append(lines, ev.RawJSON)
 		}
 		if onEvent != nil {
 			onEvent(ev)
@@ -186,7 +186,7 @@ func (r *claudeChatRunner) Interrupt(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	if err := client.Interrupt(ctx); err != nil {
-		msg := strings.ToLower(strings.TrimSpace(err.Error()))
+		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "not connected") {
 			return false, nil
 		}
@@ -252,11 +252,11 @@ func convertClaudeMessageToAgentCLIEvent(msg claude.Message) (agentcli.Event, st
 			RawJSON: mustJSONForChat(m),
 		}, "", text
 	case *claude.ResultMessage:
-		text := strings.TrimSpace(m.Result)
+		text := m.Result
 		if text == "" {
-			text = strings.TrimSpace(collectAnyTextForChat(m.StructuredOutput))
+			text = collectAnyTextForChat(m.StructuredOutput)
 		}
-		sid := strings.TrimSpace(m.SessionID)
+		sid := m.SessionID
 		return agentcli.Event{
 			Type:      "result",
 			Text:      text,
@@ -264,8 +264,8 @@ func convertClaudeMessageToAgentCLIEvent(msg claude.Message) (agentcli.Event, st
 			SessionID: sid,
 		}, sid, text
 	case *claude.StreamEvent:
-		text := strings.TrimSpace(collectAnyTextForChat(m.Event))
-		sid := strings.TrimSpace(m.SessionID)
+		text := collectAnyTextForChat(m.Event)
+		sid := m.SessionID
 		return agentcli.Event{
 			Type:      "stream_event",
 			Text:      text,
@@ -273,9 +273,9 @@ func convertClaudeMessageToAgentCLIEvent(msg claude.Message) (agentcli.Event, st
 			SessionID: sid,
 		}, sid, text
 	case *claude.SystemMessage:
-		text := strings.TrimSpace(collectAnyTextForChat(m.Data))
+		text := collectAnyTextForChat(m.Data)
 		if text == "" {
-			text = strings.TrimSpace(m.Subtype)
+			text = m.Subtype
 		}
 		return agentcli.Event{
 			Type:    "system",
@@ -283,21 +283,21 @@ func convertClaudeMessageToAgentCLIEvent(msg claude.Message) (agentcli.Event, st
 			RawJSON: mustJSONForChat(m),
 		}, "", text
 	case *claude.UserMessage:
-		text := strings.TrimSpace(collectAnyTextForChat(m.Content))
+		text := collectAnyTextForChat(m.Content)
 		return agentcli.Event{
 			Type:    "user",
 			Text:    text,
 			RawJSON: mustJSONForChat(m),
 		}, "", text
 	case *claude.RateLimitEvent:
-		text := strings.TrimSpace(collectAnyTextForChat(m.Data))
+		text := collectAnyTextForChat(m.Data)
 		return agentcli.Event{
 			Type:    "rate_limit_event",
 			Text:    text,
 			RawJSON: mustJSONForChat(m),
 		}, "", text
 	default:
-		text := strings.TrimSpace(collectAnyTextForChat(msg))
+		text := collectAnyTextForChat(msg)
 		return agentcli.Event{
 			Type:    "message",
 			Text:    text,
@@ -314,28 +314,28 @@ func extractClaudeAssistantTextForChat(m *claude.AssistantMessage) string {
 	for _, block := range m.Content {
 		switch b := block.(type) {
 		case *claude.TextBlock:
-			if s := strings.TrimSpace(b.Text); s != "" {
+			if s := b.Text; s != "" {
 				parts = append(parts, s)
 			}
 		case *claude.ThinkingBlock:
-			if s := strings.TrimSpace(b.Thinking); s != "" {
+			if s := b.Thinking; s != "" {
 				parts = append(parts, s)
 			}
 		case *claude.ToolUseBlock:
-			if s := strings.TrimSpace(b.Name); s != "" {
+			if s := b.Name; s != "" {
 				parts = append(parts, "tool_use:"+s)
 			}
 		case *claude.ToolResultBlock:
-			if s := strings.TrimSpace(collectAnyTextForChat(b.Content)); s != "" {
+			if s := collectAnyTextForChat(b.Content); s != "" {
 				parts = append(parts, s)
 			}
 		default:
-			if s := strings.TrimSpace(collectAnyTextForChat(block)); s != "" {
+			if s := collectAnyTextForChat(block); s != "" {
 				parts = append(parts, s)
 			}
 		}
 	}
-	return strings.TrimSpace(strings.Join(parts, "\n"))
+	return strings.Join(parts, "\n")
 }
 
 func mustJSONForChat(v any) string {
@@ -343,7 +343,7 @@ func mustJSONForChat(v any) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(b))
+	return string(b)
 }
 
 func collectAnyTextForChat(v any) string {
@@ -355,7 +355,7 @@ func collectAnyTextForChat(v any) string {
 	case []string:
 		parts := make([]string, 0, len(x))
 		for _, item := range x {
-			if s := strings.TrimSpace(item); s != "" {
+			if s := item; s != "" {
 				parts = append(parts, s)
 			}
 		}
@@ -363,21 +363,21 @@ func collectAnyTextForChat(v any) string {
 	case []any:
 		parts := make([]string, 0, len(x))
 		for _, item := range x {
-			if s := strings.TrimSpace(collectAnyTextForChat(item)); s != "" {
+			if s := collectAnyTextForChat(item); s != "" {
 				parts = append(parts, s)
 			}
 		}
 		return strings.Join(parts, "\n")
 	case map[string]any:
 		for _, key := range []string{"text", "content", "result", "message", "thinking", "delta", "summary"} {
-			if s := strings.TrimSpace(collectAnyTextForChat(x[key])); s != "" {
+			if s := collectAnyTextForChat(x[key]); s != "" {
 				return s
 			}
 		}
 		return ""
 	default:
 		if b, err := json.Marshal(x); err == nil {
-			return strings.TrimSpace(string(b))
+			return string(b)
 		}
 		return ""
 	}
@@ -385,7 +385,7 @@ func collectAnyTextForChat(v any) string {
 
 func lastNonEmptyText(items []string) string {
 	for i := len(items) - 1; i >= 0; i-- {
-		if s := strings.TrimSpace(items[i]); s != "" {
+		if s := items[i]; s != "" {
 			return s
 		}
 	}
@@ -394,7 +394,7 @@ func lastNonEmptyText(items []string) string {
 
 func lastAgentCLIEventText(events []agentcli.Event) string {
 	for i := len(events) - 1; i >= 0; i-- {
-		if s := strings.TrimSpace(events[i].Text); s != "" {
+		if s := events[i].Text; s != "" {
 			return s
 		}
 	}

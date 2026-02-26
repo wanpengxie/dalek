@@ -34,6 +34,8 @@ type Service struct {
 	actionExecMu sync.Mutex
 	actionExec   *ActionExecutor
 
+	depsMu sync.RWMutex
+
 	chatRunners        ChatRunnerManager
 	toolApprovalBridge *ToolApprovalBridge
 }
@@ -130,10 +132,40 @@ func (s *Service) slog() *slog.Logger {
 	return s.logger
 }
 
+func (s *Service) chatRunnerManagerSnapshot() ChatRunnerManager {
+	if s == nil {
+		return nil
+	}
+	s.depsMu.RLock()
+	defer s.depsMu.RUnlock()
+	return s.chatRunners
+}
+
+func (s *Service) ensureChatRunnerManager() ChatRunnerManager {
+	if s == nil {
+		return nil
+	}
+	s.depsMu.Lock()
+	defer s.depsMu.Unlock()
+	if s.chatRunners == nil {
+		s.chatRunners = newDefaultChatRunnerManager(nil)
+	}
+	return s.chatRunners
+}
+
+func (s *Service) toolApprovalBridgeSnapshot() *ToolApprovalBridge {
+	if s == nil {
+		return nil
+	}
+	s.depsMu.RLock()
+	defer s.depsMu.RUnlock()
+	return s.toolApprovalBridge
+}
+
 func (s *Service) logInterrupt(phase string, attrs ...any) {
 	all := []any{
 		"cmd", "stop",
-		"phase", strings.TrimSpace(phase),
+		"phase", phase,
 	}
 	all = append(all, attrs...)
 	s.slog().Info("channel interrupt", all...)
@@ -143,15 +175,21 @@ func (s *Service) Close() error {
 	if s == nil {
 		return nil
 	}
+	s.depsMu.Lock()
+	chatRunners := s.chatRunners
+	toolApprovalBridge := s.toolApprovalBridge
+	s.chatRunners = nil
+	s.toolApprovalBridge = nil
+	s.depsMu.Unlock()
+
 	var errs []error
-	if s.chatRunners != nil {
-		if err := s.chatRunners.Close(); err != nil {
+	if chatRunners != nil {
+		if err := chatRunners.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	if s.toolApprovalBridge != nil {
-		s.toolApprovalBridge.Close()
-		s.toolApprovalBridge = nil
+	if toolApprovalBridge != nil {
+		toolApprovalBridge.Close()
 	}
 	return errors.Join(errs...)
 }
@@ -203,8 +241,8 @@ func (s *Service) InterruptPeerConversation(ctx context.Context, channelType con
 
 	runnerInterrupted := false
 	var runnerErr error
-	if s.chatRunners != nil {
-		runnerInterrupted, runnerErr = s.chatRunners.InterruptConversation(ctx, fmt.Sprintf("%d", conv.ID))
+	if manager := s.chatRunnerManagerSnapshot(); manager != nil {
+		runnerInterrupted, runnerErr = manager.InterruptConversation(ctx, fmt.Sprintf("%d", conv.ID))
 	}
 	ctxCanceled := false
 	if !runnerInterrupted {
@@ -216,7 +254,7 @@ func (s *Service) InterruptPeerConversation(ctx context.Context, channelType con
 		ContextCanceled:   ctxCanceled,
 	}
 	if runnerErr != nil {
-		result.RunnerError = strings.TrimSpace(runnerErr.Error())
+		result.RunnerError = runnerErr.Error()
 	}
 	switch {
 	case runnerErr != nil && !ctxCanceled:
@@ -266,8 +304,8 @@ func (s *Service) ResetPeerConversationSession(ctx context.Context, channelType 
 		return false, err
 	}
 	s.cancelRunningTurnByConversation(conv.ID)
-	if s.chatRunners != nil {
-		s.chatRunners.CloseConversation(fmt.Sprintf("%d", conv.ID))
+	if manager := s.chatRunnerManagerSnapshot(); manager != nil {
+		manager.CloseConversation(fmt.Sprintf("%d", conv.ID))
 	}
 	return true, nil
 }
@@ -353,7 +391,7 @@ func (s *Service) setRunningTurn(jobID uint, conversationID uint, sessionID stri
 	s.running = &runningTurn{
 		jobID:          jobID,
 		conversationID: conversationID,
-		sessionID:      strings.TrimSpace(sessionID),
+		sessionID:      sessionID,
 		cancel:         cancel,
 	}
 }
@@ -373,7 +411,7 @@ func (s *Service) cancelConflictingTurn(sessionID string, currentJobID uint) {
 	}
 	var cancel context.CancelFunc
 	s.runningMu.Lock()
-	if s.running != nil && s.running.jobID != currentJobID && strings.TrimSpace(s.running.sessionID) == sessionID {
+	if s.running != nil && s.running.jobID != currentJobID && s.running.sessionID == sessionID {
 		cancel = s.running.cancel
 	}
 	s.runningMu.Unlock()
@@ -409,20 +447,20 @@ func (s *Service) ProcessInbound(ctx context.Context, env contracts.InboundEnvel
 	}
 
 	env.Normalize()
-	env.ChannelType = contracts.ChannelType(strings.ToLower(strings.TrimSpace(string(env.ChannelType))))
+	env.ChannelType = contracts.ChannelType(strings.ToLower(string(env.ChannelType)))
 	if env.ChannelType == "" {
 		env.ChannelType = contracts.ChannelTypeCLI
 	}
-	if strings.TrimSpace(env.Adapter) == "" {
+	if env.Adapter == "" {
 		env.Adapter = defaultAdapter(string(env.ChannelType))
 	}
-	if strings.TrimSpace(env.PeerConversationID) == "" {
+	if env.PeerConversationID == "" {
 		env.PeerConversationID = defaultConversationID(string(env.ChannelType))
 	}
-	if strings.TrimSpace(env.PeerMessageID) == "" {
+	if env.PeerMessageID == "" {
 		env.PeerMessageID = newInboundMessageID()
 	}
-	if strings.TrimSpace(env.SenderID) == "" {
+	if env.SenderID == "" {
 		env.SenderID = "anonymous"
 	}
 	env.Normalize()
@@ -437,7 +475,7 @@ func (s *Service) ProcessInbound(ctx context.Context, env contracts.InboundEnvel
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var txErr error
 		binding, txErr = EnsureBindingTx(ctx, tx, EnsureBindingParams{
-			ProjectName:    strings.TrimSpace(p.Name),
+			ProjectName:    p.Name,
 			PeerProjectKey: "",
 			Env:            env,
 			AutoUpdate:     false,
@@ -452,7 +490,7 @@ func (s *Service) ProcessInbound(ctx context.Context, env contracts.InboundEnvel
 		inbound, job, _, txErr = PersistInboundMessageTx(ctx, tx, PersistInboundParams{
 			Conv:    conv,
 			Env:     env,
-			Project: strings.TrimSpace(p.Name),
+			Project: p.Name,
 		})
 		return txErr
 	}); err != nil {
@@ -500,7 +538,7 @@ func (s *Service) runTurnJob(ctx context.Context, jobID uint) error {
 
 func resolveGatewayAgentHints(cfg agentcli.ConfigOverride) (provider, model string) {
 	resolved := agentcli.ResolveBackend(cfg)
-	return strings.TrimSpace(strings.ToLower(resolved.Provider)), strings.TrimSpace(resolved.Model)
+	return strings.ToLower(resolved.Provider), resolved.Model
 }
 
 func (s *Service) claimTurnJob(ctx context.Context, jobID uint, runnerID string, leaseTTL time.Duration) (contracts.ChannelTurnJob, bool, error) {
@@ -555,10 +593,10 @@ func (s *Service) completeTurnJobSuccess(ctx context.Context, jobID uint, runner
 	}
 	now := time.Now()
 	res := db.WithContext(ctx).Model(&contracts.ChannelTurnJob{}).
-		Where("id = ? AND status = ? AND runner_id = ?", jobID, contracts.ChannelTurnRunning, strings.TrimSpace(runnerID)).
+		Where("id = ? AND status = ? AND runner_id = ?", jobID, contracts.ChannelTurnRunning, runnerID).
 		Updates(map[string]any{
 			"status":           contracts.ChannelTurnSucceeded,
-			"result_json":      strings.TrimSpace(resultJSON),
+			"result_json":      resultJSON,
 			"error":            "",
 			"runner_id":        "",
 			"lease_expires_at": nil,
@@ -584,11 +622,11 @@ func (s *Service) completeTurnJobFailed(ctx context.Context, jobID uint, runnerI
 	}
 	now := time.Now()
 	res := db.WithContext(ctx).Model(&contracts.ChannelTurnJob{}).
-		Where("id = ? AND status = ? AND runner_id = ?", jobID, contracts.ChannelTurnRunning, strings.TrimSpace(runnerID)).
+		Where("id = ? AND status = ? AND runner_id = ?", jobID, contracts.ChannelTurnRunning, runnerID).
 		Updates(map[string]any{
 			"status":           contracts.ChannelTurnFailed,
-			"result_json":      strings.TrimSpace(resultJSON),
-			"error":            strings.TrimSpace(errMsg),
+			"result_json":      resultJSON,
+			"error":            errMsg,
 			"runner_id":        "",
 			"lease_expires_at": nil,
 			"finished_at":      &now,
@@ -634,11 +672,15 @@ func (s *Service) waitTurnJob(ctx context.Context, jobID uint, pollInterval time
 }
 
 func (s *Service) collectTurnResultWithTimeout(ctx context.Context, bindingID, conversationID, inboundMessageID, jobID uint) (ProcessResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	job, err := s.waitTurnJob(ctx, jobID, 80*time.Millisecond)
 	if err == nil {
 		return s.buildProcessResult(ctx, bindingID, conversationID, inboundMessageID, job)
 	}
 
+	// Best-effort 兜底查询用于读取已落盘的终态，独立于上层请求取消语义。
 	fallbackCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var latest contracts.ChannelTurnJob
@@ -673,17 +715,17 @@ func (s *Service) buildProcessResult(ctx context.Context, bindingID, conversatio
 	if res.JobStatus == "" {
 		res.JobStatus = job.Status
 	}
-	if strings.TrimSpace(res.JobError) == "" {
-		res.JobError = strings.TrimSpace(job.Error)
+	if res.JobError == "" {
+		res.JobError = job.Error
 	}
-	if strings.TrimSpace(res.JobErrorType) == "" {
+	if res.JobErrorType == "" {
 		res.JobErrorType = classifyJobErrorType(res.JobError)
 	}
 
 	if res.OutboundMessageID > 0 {
 		var outMsg contracts.ChannelMessage
 		if err := db.WithContext(ctx).First(&outMsg, res.OutboundMessageID).Error; err == nil {
-			res.ReplyText = strings.TrimSpace(outMsg.ContentText)
+			res.ReplyText = outMsg.ContentText
 		}
 	}
 	return res, nil
@@ -701,7 +743,7 @@ func (s *Service) dispatchOutbox(ctx context.Context, outboxID uint) error {
 	if err := db.WithContext(ctx).First(&outbox, outboxID).Error; err != nil {
 		return err
 	}
-	if strings.TrimSpace(outbox.Adapter) == "" {
+	if outbox.Adapter == "" {
 		errMsg := "adapter 为空，无法发送"
 		now := time.Now()
 		if err := db.WithContext(ctx).Model(&contracts.ChannelOutbox{}).
@@ -766,9 +808,9 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound contracts.Chann
 		ctx = context.Background()
 	}
 
-	repoRoot := strings.TrimSpace(p.RepoRoot)
+	repoRoot := p.RepoRoot
 	if repoRoot == "" {
-		repoRoot = strings.TrimSpace(p.Layout.RepoRoot)
+		repoRoot = p.Layout.RepoRoot
 	}
 	if repoRoot == "" {
 		return pmAgentTurnResponse{}, fmt.Errorf("repo_root 为空，无法调用 project manager agent")
@@ -781,14 +823,14 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound contracts.Chann
 	}
 	gaCfg := p.Config.WithDefaults().GatewayAgent
 	resolved := agentcli.ResolveBackend(agentcli.ConfigOverride{
-		Provider:     strings.TrimSpace(gaCfg.Provider),
-		Model:        strings.TrimSpace(gaCfg.Model),
-		Command:      strings.TrimSpace(gaCfg.Command),
-		Output:       strings.TrimSpace(gaCfg.Output),
-		ResumeOutput: strings.TrimSpace(gaCfg.ResumeOutput),
+		Provider:     gaCfg.Provider,
+		Model:        gaCfg.Model,
+		Command:      gaCfg.Command,
+		Output:       gaCfg.Output,
+		ResumeOutput: gaCfg.ResumeOutput,
 	})
-	mode := strings.TrimSpace(strings.ToLower(gaCfg.Mode))
-	if envMode := strings.TrimSpace(strings.ToLower(os.Getenv("DALEK_GATEWAY_AGENT_MODE"))); envMode != "" {
+	mode := strings.ToLower(gaCfg.Mode)
+	if envMode := strings.ToLower(os.Getenv("DALEK_GATEWAY_AGENT_MODE")); envMode != "" {
 		mode = envMode
 	}
 	if mode == "" {
@@ -799,12 +841,12 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound contracts.Chann
 		approvalHandler := s.buildSDKToolApprovalHandler(ctx, conv.ID, job.ID)
 		runResult, err = s.runAgentSDK(ctx, runAgentSDKRequest{
 			ConversationID: fmt.Sprintf("%d", conv.ID),
-			Provider:       strings.TrimSpace(resolved.Provider),
-			Model:          strings.TrimSpace(resolved.Model),
-			Command:        strings.TrimSpace(resolved.Backend.Command),
+			Provider:       resolved.Provider,
+			Model:          resolved.Model,
+			Command:        resolved.Backend.Command,
 			WorkDir:        repoRoot,
 			Prompt:         prompt,
-			SessionID:      strings.TrimSpace(conv.AgentSessionID),
+			SessionID:      conv.AgentSessionID,
 			OnToolApproval: approvalHandler,
 			OnEvent:        onEvent,
 		})
@@ -812,62 +854,62 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound contracts.Chann
 		runResult, err = s.runAgentCLI(ctx, fmt.Sprintf("%d", conv.ID), resolved.Backend, agentcli.RunRequest{
 			WorkDir:   repoRoot,
 			Prompt:    prompt,
-			Model:     strings.TrimSpace(resolved.Model),
-			SessionID: strings.TrimSpace(conv.AgentSessionID),
+			Model:     resolved.Model,
+			SessionID: conv.AgentSessionID,
 		})
 	}
 	if err != nil {
 		return pmAgentTurnResponse{
-			Provider:   strings.TrimSpace(resolved.Provider),
-			Model:      strings.TrimSpace(resolved.Model),
-			Text:       strings.TrimSpace(runResult.Text),
-			SessionID:  strings.TrimSpace(runResult.SessionID),
+			Provider:   resolved.Provider,
+			Model:      resolved.Model,
+			Text:       runResult.Text,
+			SessionID:  runResult.SessionID,
 			OutputMode: runResult.OutputMode,
-			Command:    strings.TrimSpace(runResult.Command),
-			Stdout:     strings.TrimSpace(runResult.Stdout),
-			Stderr:     strings.TrimSpace(runResult.Stderr),
+			Command:    runResult.Command,
+			Stdout:     runResult.Stdout,
+			Stderr:     runResult.Stderr,
 			Events:     copyCLIEvents(runResult.Events),
 		}, err
 	}
-	replyText := strings.TrimSpace(runResult.Text)
+	replyText := runResult.Text
 	if replyText == "" {
 		return pmAgentTurnResponse{
-			Provider:   strings.TrimSpace(resolved.Provider),
-			Model:      strings.TrimSpace(resolved.Model),
+			Provider:   resolved.Provider,
+			Model:      resolved.Model,
 			Text:       "",
-			SessionID:  strings.TrimSpace(runResult.SessionID),
+			SessionID:  runResult.SessionID,
 			OutputMode: runResult.OutputMode,
-			Command:    strings.TrimSpace(runResult.Command),
-			Stdout:     strings.TrimSpace(runResult.Stdout),
-			Stderr:     strings.TrimSpace(runResult.Stderr),
+			Command:    runResult.Command,
+			Stdout:     runResult.Stdout,
+			Stderr:     runResult.Stderr,
 			Events:     copyCLIEvents(runResult.Events),
 		}, fmt.Errorf("project manager agent 无响应（stdout 为空）")
 	}
 	return pmAgentTurnResponse{
-		Provider:   strings.TrimSpace(resolved.Provider),
-		Model:      strings.TrimSpace(resolved.Model),
+		Provider:   resolved.Provider,
+		Model:      resolved.Model,
 		Text:       replyText,
-		SessionID:  strings.TrimSpace(runResult.SessionID),
+		SessionID:  runResult.SessionID,
 		OutputMode: runResult.OutputMode,
-		Command:    strings.TrimSpace(runResult.Command),
-		Stdout:     strings.TrimSpace(runResult.Stdout),
-		Stderr:     strings.TrimSpace(runResult.Stderr),
+		Command:    runResult.Command,
+		Stdout:     runResult.Stdout,
+		Stderr:     runResult.Stderr,
 		Events:     copyCLIEvents(runResult.Events),
 	}, nil
 }
 
 func buildPMAgentPrompt(inbound contracts.ChannelMessage) string {
-	content := strings.TrimSpace(inbound.ContentText)
+	content := inbound.ContentText
 	if content == "" {
 		return ""
 	}
 
-	senderID := strings.TrimSpace(inbound.SenderID)
+	senderID := inbound.SenderID
 	if senderID == "" || strings.EqualFold(senderID, "anonymous") {
 		return content
 	}
 
-	senderName := strings.TrimSpace(inbound.SenderName)
+	senderName := inbound.SenderName
 	if senderName == "" {
 		return fmt.Sprintf("[sender: %s]\n%s", senderID, content)
 	}
@@ -880,10 +922,10 @@ func copyCLIEvents(in []agentcli.Event) []agentcli.Event {
 	}
 	out := make([]agentcli.Event, 0, len(in))
 	for _, ev := range in {
-		typ := strings.TrimSpace(ev.Type)
-		text := strings.TrimSpace(ev.Text)
-		raw := strings.TrimSpace(ev.RawJSON)
-		sid := strings.TrimSpace(ev.SessionID)
+		typ := ev.Type
+		text := ev.Text
+		raw := ev.RawJSON
+		sid := ev.SessionID
 		if typ == "" && text == "" && raw == "" && sid == "" {
 			continue
 		}
@@ -898,7 +940,7 @@ func copyCLIEvents(in []agentcli.Event) []agentcli.Event {
 }
 
 func defaultAdapter(channelType string) string {
-	switch strings.ToLower(strings.TrimSpace(channelType)) {
+	switch strings.ToLower(channelType) {
 	case string(contracts.ChannelTypeWeb):
 		return "web.ws"
 	case string(contracts.ChannelTypeCLI):
@@ -913,7 +955,7 @@ func defaultAdapter(channelType string) string {
 }
 
 func defaultConversationID(channelType string) string {
-	switch strings.ToLower(strings.TrimSpace(channelType)) {
+	switch strings.ToLower(channelType) {
 	case string(contracts.ChannelTypeCLI):
 		return "cli.default"
 	case string(contracts.ChannelTypeWeb):
@@ -948,7 +990,7 @@ func mustJSON(v any) string {
 	if err != nil {
 		return "{}"
 	}
-	return strings.TrimSpace(string(b))
+	return string(b)
 }
 
 func isTurnTerminal(st contracts.ChannelTurnJobStatus) bool {
@@ -961,7 +1003,7 @@ func isTurnTerminal(st contracts.ChannelTurnJobStatus) bool {
 }
 
 func classifyJobErrorType(msg string) string {
-	raw := strings.TrimSpace(msg)
+	raw := msg
 	if raw == "" {
 		return ""
 	}
@@ -1038,7 +1080,7 @@ func classifyJobErrorType(msg string) string {
 
 func containsAny(s string, tokens []string) bool {
 	for _, t := range tokens {
-		if strings.Contains(s, strings.ToLower(strings.TrimSpace(t))) {
+		if strings.Contains(s, strings.ToLower(t)) {
 			return true
 		}
 	}

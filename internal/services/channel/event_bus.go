@@ -46,7 +46,7 @@ type EventBus struct {
 	mu     sync.RWMutex
 	nextID atomic.Uint64
 	subs   map[uint64]busSubscriber
-	closed bool
+	closed atomic.Bool
 
 	db          *gorm.DB
 	auditErrOut io.Writer
@@ -87,7 +87,7 @@ func (eb *EventBus) Subscribe(projectName, conversationID string, buffer int) (<
 	id := eb.nextID.Add(1)
 
 	eb.mu.Lock()
-	if eb.closed {
+	if eb.closed.Load() {
 		eb.mu.Unlock()
 		close(ch)
 		return ch, func() {}
@@ -118,26 +118,17 @@ func (eb *EventBus) Publish(ev GatewayEvent) {
 	if eb == nil {
 		return
 	}
-	ev.ProjectName = strings.TrimSpace(ev.ProjectName)
-	ev.ConversationID = strings.TrimSpace(ev.ConversationID)
-	ev.PeerMessageID = strings.TrimSpace(ev.PeerMessageID)
-	ev.Type = strings.TrimSpace(ev.Type)
-	ev.RunID = strings.TrimSpace(ev.RunID)
-	ev.Stream = strings.TrimSpace(ev.Stream)
-	ev.Text = strings.TrimSpace(ev.Text)
-	ev.EventType = strings.TrimSpace(ev.EventType)
-	ev.AgentProvider = strings.TrimSpace(ev.AgentProvider)
-	ev.AgentModel = strings.TrimSpace(ev.AgentModel)
-	ev.JobErrorType = strings.TrimSpace(ev.JobErrorType)
-	ev.JobError = strings.TrimSpace(ev.JobError)
 	if ev.At.IsZero() {
 		ev.At = time.Now()
 	}
 
 	eb.writeAudit(ev)
+	if eb.closed.Load() {
+		return
+	}
 
 	eb.mu.RLock()
-	if eb.closed {
+	if eb.closed.Load() {
 		eb.mu.RUnlock()
 		return
 	}
@@ -161,12 +152,10 @@ func (eb *EventBus) Close() {
 	if eb == nil {
 		return
 	}
-	eb.mu.Lock()
-	if eb.closed {
-		eb.mu.Unlock()
+	if eb.closed.Swap(true) {
 		return
 	}
-	eb.closed = true
+	eb.mu.Lock()
 	subs := eb.subs
 	eb.subs = map[uint64]busSubscriber{}
 	eb.mu.Unlock()
@@ -216,10 +205,10 @@ func (eb *EventBus) reportAuditWriteError(ev GatewayEvent, err error) {
 	}
 	_, _ = fmt.Fprintf(out,
 		"event bus audit write failed: project=%s conversation=%s peer_message_id=%s type=%s err=%v\n",
-		strings.TrimSpace(ev.ProjectName),
-		strings.TrimSpace(ev.ConversationID),
-		strings.TrimSpace(ev.PeerMessageID),
-		strings.TrimSpace(ev.Type),
+		ev.ProjectName,
+		ev.ConversationID,
+		ev.PeerMessageID,
+		ev.Type,
 		err,
 	)
 }
@@ -233,8 +222,8 @@ func normalizeBusFilter(in string) string {
 }
 
 func busMatch(filter, value string) bool {
-	if strings.TrimSpace(filter) == "*" {
+	if filter == "*" {
 		return true
 	}
-	return strings.TrimSpace(filter) == strings.TrimSpace(value)
+	return filter == value
 }

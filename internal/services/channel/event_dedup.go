@@ -2,7 +2,6 @@ package channel
 
 import (
 	"container/list"
-	"strings"
 	"sync"
 	"time"
 )
@@ -52,7 +51,7 @@ func (d *EventDeduplicator) IsDuplicate(eventID string) bool {
 	if d == nil {
 		return false
 	}
-	key := strings.TrimSpace(eventID)
+	key := eventID
 	if key == "" {
 		return false
 	}
