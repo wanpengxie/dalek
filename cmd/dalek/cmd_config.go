@@ -1,103 +1,41 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 
 	"dalek/internal/app"
-	"dalek/internal/repo"
+	"dalek/internal/config"
 )
 
-type configScope string
+type configScope = config.Scope
 
 const (
-	configScopeDefault configScope = "default"
-	configScopeGlobal  configScope = "global"
-	configScopeLocal   configScope = "local"
-	configScopeDB      configScope = "db"
+	configScopeDefault configScope = config.ScopeDefault
+	configScopeGlobal  configScope = config.ScopeGlobal
+	configScopeLocal   configScope = config.ScopeLocal
+	configScopeDB      configScope = config.ScopeDB
 )
 
 const (
-	configKeyDaemonInternalListen     = "daemon.internal.listen"
-	configKeyDaemonPublicListen       = "daemon.public.listen"
-	configKeyDaemonMaxConcurrent      = "daemon.max_concurrent"
-	configKeyProjectMaxRunningWorkers = "project.max_running_workers"
-	configKeyAgentProvider            = "agent.provider"
-	configKeyAgentModel               = "agent.model"
+	configKeyDaemonInternalListen     = config.ConfigKeyDaemonInternalListen
+	configKeyDaemonPublicListen       = config.ConfigKeyDaemonPublicListen
+	configKeyDaemonMaxConcurrent      = config.ConfigKeyDaemonMaxConcurrent
+	configKeyProjectMaxRunningWorkers = config.ConfigKeyProjectMaxRunningWorkers
+	configKeyAgentProvider            = config.ConfigKeyAgentProvider
+	configKeyAgentModel               = config.ConfigKeyAgentModel
 )
 
-type configKeyMeta struct {
-	Key           string
-	DefaultScope  configScope
-	AllowedScopes []configScope
-}
+type configKeyMeta = config.KeyMeta
 
-var configKeyOrder = []configKeyMeta{
-	{
-		Key:           configKeyDaemonInternalListen,
-		DefaultScope:  configScopeGlobal,
-		AllowedScopes: []configScope{configScopeGlobal},
-	},
-	{
-		Key:           configKeyDaemonPublicListen,
-		DefaultScope:  configScopeGlobal,
-		AllowedScopes: []configScope{configScopeGlobal},
-	},
-	{
-		Key:           configKeyDaemonMaxConcurrent,
-		DefaultScope:  configScopeGlobal,
-		AllowedScopes: []configScope{configScopeGlobal},
-	},
-	{
-		Key:           configKeyProjectMaxRunningWorkers,
-		DefaultScope:  configScopeDB,
-		AllowedScopes: []configScope{configScopeDB},
-	},
-	{
-		Key:           configKeyAgentProvider,
-		DefaultScope:  configScopeLocal,
-		AllowedScopes: []configScope{configScopeGlobal, configScopeLocal},
-	},
-	{
-		Key:           configKeyAgentModel,
-		DefaultScope:  configScopeLocal,
-		AllowedScopes: []configScope{configScopeGlobal, configScopeLocal},
-	},
-}
+var configKeyOrder = config.KeyOrder
 
-type configHomePresence struct {
-	DaemonInternalListen bool
-	DaemonPublicListen   bool
-	DaemonMaxConcurrent  bool
-	AgentProvider        bool
-	AgentModel           bool
-}
+type configEvalContext = config.EvalContext
 
-type configLocalPresence struct {
-	AgentProvider bool
-	AgentModel    bool
-}
-
-type configEvalContext struct {
-	homeCfg       app.HomeConfig
-	homePresence  configHomePresence
-	project       *app.Project
-	localCfg      repo.Config
-	localPresence configLocalPresence
-}
-
-type configSetContext struct {
-	home     *app.Home
-	homeCfg  app.HomeConfig
-	project  *app.Project
-	localCfg repo.Config
-}
+type configSetContext = config.SetContext
 
 type configItem struct {
 	Key    string      `json:"key"`
@@ -340,13 +278,13 @@ func cmdConfigSet(args []string) {
 
 	homeHandle := mustOpenHomeForConfig(out, *home)
 	setCtx := &configSetContext{
-		home:    homeHandle,
-		homeCfg: homeHandle.Config.WithDefaults(),
+		Home:    homeHandle,
+		HomeCfg: homeHandle.Config.WithDefaults(),
 	}
 	if scope == configScopeLocal || scope == configScopeDB {
 		p := mustOpenProjectForConfig(out, homeHandle, *proj)
-		setCtx.project = p
-		localCfg, err := loadProjectConfigFromProject(p)
+		setCtx.Project = p
+		localCfg, err := config.LoadProjectConfigFromProject(p)
 		if err != nil {
 			exitRuntimeError(out,
 				"读取项目配置失败",
@@ -354,7 +292,7 @@ func cmdConfigSet(args []string) {
 				"检查项目 .dalek/config.json 后重试",
 			)
 		}
-		setCtx.localCfg = localCfg
+		setCtx.LocalCfg = localCfg
 	}
 
 	normalizedValue, err := setConfigValue(setCtx, key, scope, rawValue)
@@ -379,186 +317,16 @@ func cmdConfigSet(args []string) {
 }
 
 func resolveConfigValue(key string, eval *configEvalContext) (string, configScope, error) {
-	if eval == nil {
-		return "", configScopeDefault, fmt.Errorf("config eval context 为空")
-	}
-	switch normalizeConfigKey(key) {
-	case configKeyDaemonInternalListen:
-		value := strings.TrimSpace(eval.homeCfg.WithDefaults().Daemon.Internal.Listen)
-		if eval.homePresence.DaemonInternalListen {
-			return value, configScopeGlobal, nil
-		}
-		return value, configScopeDefault, nil
-	case configKeyDaemonPublicListen:
-		value := strings.TrimSpace(eval.homeCfg.WithDefaults().Daemon.Public.Listen)
-		if eval.homePresence.DaemonPublicListen {
-			return value, configScopeGlobal, nil
-		}
-		return value, configScopeDefault, nil
-	case configKeyDaemonMaxConcurrent:
-		value := strconv.Itoa(eval.homeCfg.WithDefaults().Daemon.MaxConcurrent)
-		if eval.homePresence.DaemonMaxConcurrent {
-			return value, configScopeGlobal, nil
-		}
-		return value, configScopeDefault, nil
-	case configKeyProjectMaxRunningWorkers:
-		if eval.project == nil {
-			return "", configScopeDB, fmt.Errorf("project 为空")
-		}
-		st, err := eval.project.GetPMState(context.Background())
-		if err != nil {
-			return "", configScopeDB, err
-		}
-		return strconv.Itoa(st.MaxRunningWorkers), configScopeDB, nil
-	case configKeyAgentProvider:
-		effective := buildEffectiveProjectConfig(eval.homeCfg, eval.localCfg)
-		value := strings.TrimSpace(strings.ToLower(effective.WorkerAgent.Provider))
-		if eval.localPresence.AgentProvider {
-			return value, configScopeLocal, nil
-		}
-		if eval.homePresence.AgentProvider {
-			return value, configScopeGlobal, nil
-		}
-		return value, configScopeDefault, nil
-	case configKeyAgentModel:
-		effective := buildEffectiveProjectConfig(eval.homeCfg, eval.localCfg)
-		value := strings.TrimSpace(effective.WorkerAgent.Model)
-		if eval.localPresence.AgentModel {
-			return value, configScopeLocal, nil
-		}
-		if eval.homePresence.AgentModel {
-			return value, configScopeGlobal, nil
-		}
-		return value, configScopeDefault, nil
-	default:
-		return "", configScopeDefault, fmt.Errorf("未知配置键: %s", key)
-	}
+	return config.ResolveValue(key, eval)
 }
 
 func setConfigValue(ctx *configSetContext, key string, scope configScope, rawValue string) (string, error) {
-	if ctx == nil {
-		return "", fmt.Errorf("config set context 为空")
-	}
-	switch normalizeConfigKey(key) {
-	case configKeyDaemonInternalListen:
-		if scope != configScopeGlobal {
-			return "", fmt.Errorf("%s 仅支持 global 层", key)
-		}
-		ctx.homeCfg.Daemon.Internal.Listen = strings.TrimSpace(rawValue)
-		if strings.TrimSpace(ctx.homeCfg.Daemon.Internal.Listen) == "" {
-			return "", fmt.Errorf("daemon.internal.listen 不能为空")
-		}
-		if err := app.WriteHomeConfigAtomic(ctx.home.ConfigPath, ctx.homeCfg); err != nil {
-			return "", err
-		}
-		return ctx.homeCfg.WithDefaults().Daemon.Internal.Listen, nil
-	case configKeyDaemonPublicListen:
-		if scope != configScopeGlobal {
-			return "", fmt.Errorf("%s 仅支持 global 层", key)
-		}
-		ctx.homeCfg.Daemon.Public.Listen = strings.TrimSpace(rawValue)
-		if strings.TrimSpace(ctx.homeCfg.Daemon.Public.Listen) == "" {
-			return "", fmt.Errorf("daemon.public.listen 不能为空")
-		}
-		if err := app.WriteHomeConfigAtomic(ctx.home.ConfigPath, ctx.homeCfg); err != nil {
-			return "", err
-		}
-		return ctx.homeCfg.WithDefaults().Daemon.Public.Listen, nil
-	case configKeyDaemonMaxConcurrent:
-		if scope != configScopeGlobal {
-			return "", fmt.Errorf("%s 仅支持 global 层", key)
-		}
-		n, err := strconv.Atoi(strings.TrimSpace(rawValue))
-		if err != nil {
-			return "", fmt.Errorf("daemon.max_concurrent 必须是正整数: %w", err)
-		}
-		if n <= 0 {
-			return "", fmt.Errorf("daemon.max_concurrent 必须大于 0")
-		}
-		ctx.homeCfg.Daemon.MaxConcurrent = n
-		if err := app.WriteHomeConfigAtomic(ctx.home.ConfigPath, ctx.homeCfg); err != nil {
-			return "", err
-		}
-		return strconv.Itoa(ctx.homeCfg.WithDefaults().Daemon.MaxConcurrent), nil
-	case configKeyProjectMaxRunningWorkers:
-		if scope != configScopeDB {
-			return "", fmt.Errorf("%s 仅支持 db 层", key)
-		}
-		if ctx.project == nil {
-			return "", fmt.Errorf("project 为空")
-		}
-		n, err := strconv.Atoi(strings.TrimSpace(rawValue))
-		if err != nil {
-			return "", fmt.Errorf("project.max_running_workers 必须是整数: %w", err)
-		}
-		if n < 1 || n > 32 {
-			return "", fmt.Errorf("project.max_running_workers 取值范围为 1-32")
-		}
-		st, err := ctx.project.SetMaxRunningWorkers(context.Background(), n)
-		if err != nil {
-			return "", err
-		}
-		return strconv.Itoa(st.MaxRunningWorkers), nil
-	case configKeyAgentProvider:
-		provider := strings.TrimSpace(strings.ToLower(rawValue))
-		if provider != "codex" && provider != "claude" {
-			return "", fmt.Errorf("agent.provider 仅支持 codex 或 claude")
-		}
-		switch scope {
-		case configScopeGlobal:
-			ctx.homeCfg.Agent.Provider = provider
-			if err := app.WriteHomeConfigAtomic(ctx.home.ConfigPath, ctx.homeCfg); err != nil {
-				return "", err
-			}
-			return strings.TrimSpace(strings.ToLower(ctx.homeCfg.WithDefaults().Agent.Provider)), nil
-		case configScopeLocal:
-			if ctx.project == nil {
-				return "", fmt.Errorf("project 为空")
-			}
-			pc := app.ProjectConfig(ctx.localCfg)
-			app.ApplyAgentProviderModelOverride(&pc, provider, "")
-			next := repo.Config(pc).WithDefaults()
-			if err := repo.WriteConfigAtomic(repo.NewLayout(ctx.project.RepoRoot()).ConfigPath, next); err != nil {
-				return "", err
-			}
-			return strings.TrimSpace(strings.ToLower(next.WorkerAgent.Provider)), nil
-		default:
-			return "", fmt.Errorf("agent.provider 不支持 scope=%s", scope)
-		}
-	case configKeyAgentModel:
-		model := strings.TrimSpace(rawValue)
-		if model == "" {
-			return "", fmt.Errorf("agent.model 不能为空")
-		}
-		switch scope {
-		case configScopeGlobal:
-			ctx.homeCfg.Agent.Model = model
-			if err := app.WriteHomeConfigAtomic(ctx.home.ConfigPath, ctx.homeCfg); err != nil {
-				return "", err
-			}
-			return strings.TrimSpace(ctx.homeCfg.WithDefaults().Agent.Model), nil
-		case configScopeLocal:
-			if ctx.project == nil {
-				return "", fmt.Errorf("project 为空")
-			}
-			next := ctx.localCfg.WithDefaults()
-			next.WorkerAgent.Model = model
-			next.PMAgent.Model = model
-			if err := repo.WriteConfigAtomic(repo.NewLayout(ctx.project.RepoRoot()).ConfigPath, next); err != nil {
-				return "", err
-			}
-			return strings.TrimSpace(next.WorkerAgent.Model), nil
-		default:
-			return "", fmt.Errorf("agent.model 不支持 scope=%s", scope)
-		}
-	default:
-		return "", fmt.Errorf("未知配置键: %s", key)
-	}
+	return config.SetValue(ctx, key, scope, rawValue)
 }
 
 func mustBuildConfigEvalContext(out cliOutputFormat, homeFlag, projectFlag string, requireProject bool) *configEvalContext {
 	home := mustOpenHomeForConfig(out, homeFlag)
-	homePresence, err := loadHomeConfigPresence(home.ConfigPath)
+	homePresence, err := config.LoadHomeConfigPresence(home.ConfigPath)
 	if err != nil {
 		exitRuntimeError(out,
 			"读取 Home 配置来源层失败",
@@ -567,15 +335,15 @@ func mustBuildConfigEvalContext(out cliOutputFormat, homeFlag, projectFlag strin
 		)
 	}
 	eval := &configEvalContext{
-		homeCfg:      home.Config.WithDefaults(),
-		homePresence: homePresence,
+		HomeCfg:      home.Config.WithDefaults(),
+		HomePresence: homePresence,
 	}
 	if !requireProject {
 		return eval
 	}
 
 	project := mustOpenProjectForConfig(out, home, projectFlag)
-	localCfg, err := loadProjectConfigFromProject(project)
+	localCfg, err := config.LoadProjectConfigFromProject(project)
 	if err != nil {
 		exitRuntimeError(out,
 			"读取项目配置失败",
@@ -583,7 +351,7 @@ func mustBuildConfigEvalContext(out cliOutputFormat, homeFlag, projectFlag strin
 			"检查项目 .dalek/config.json 后重试",
 		)
 	}
-	localPresence, err := loadLocalConfigPresence(repo.NewLayout(project.RepoRoot()).ConfigPath)
+	localPresence, err := config.LoadLocalConfigPresenceFromProject(project)
 	if err != nil {
 		exitRuntimeError(out,
 			"读取项目配置来源层失败",
@@ -591,9 +359,9 @@ func mustBuildConfigEvalContext(out cliOutputFormat, homeFlag, projectFlag strin
 			"检查项目配置文件格式后重试",
 		)
 	}
-	eval.project = project
-	eval.localCfg = localCfg
-	eval.localPresence = localPresence
+	eval.Project = project
+	eval.LocalCfg = localCfg
+	eval.LocalPresence = localPresence
 	return eval
 }
 
@@ -650,108 +418,12 @@ func mustOpenProjectForConfig(out cliOutputFormat, home *app.Home, projectFlag s
 	return p
 }
 
-func loadProjectConfigFromProject(p *app.Project) (repo.Config, error) {
-	if p == nil {
-		return repo.Config{}, fmt.Errorf("project 为空")
-	}
-	cfgPath := repo.NewLayout(p.RepoRoot()).ConfigPath
-	cfg, _, err := repo.LoadConfig(cfgPath)
-	if err != nil {
-		return repo.Config{}, err
-	}
-	return cfg.WithDefaults(), nil
-}
-
-func loadHomeConfigPresence(path string) (configHomePresence, error) {
-	root, err := loadJSONRoot(path)
-	if err != nil {
-		return configHomePresence{}, err
-	}
-	return configHomePresence{
-		DaemonInternalListen: jsonPathExists(root, "daemon", "internal", "listen"),
-		DaemonPublicListen:   jsonPathExists(root, "daemon", "public", "listen"),
-		DaemonMaxConcurrent:  jsonPathExists(root, "daemon", "max_concurrent"),
-		AgentProvider:        jsonPathExists(root, "agent", "provider"),
-		AgentModel:           jsonPathExists(root, "agent", "model"),
-	}, nil
-}
-
-func loadLocalConfigPresence(path string) (configLocalPresence, error) {
-	root, err := loadJSONRoot(path)
-	if err != nil {
-		return configLocalPresence{}, err
-	}
-	return configLocalPresence{
-		AgentProvider: jsonPathExists(root, "worker_agent", "provider") || jsonPathExists(root, "pm_agent", "provider"),
-		AgentModel:    jsonPathExists(root, "worker_agent", "model") || jsonPathExists(root, "pm_agent", "model"),
-	}, nil
-}
-
-func loadJSONRoot(path string) (map[string]any, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return map[string]any{}, nil
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]any{}, nil
-		}
-		return nil, err
-	}
-	var root map[string]any
-	if len(strings.TrimSpace(string(b))) == 0 {
-		return map[string]any{}, nil
-	}
-	if err := json.Unmarshal(b, &root); err != nil {
-		return nil, err
-	}
-	if root == nil {
-		return map[string]any{}, nil
-	}
-	return root, nil
-}
-
-func jsonPathExists(root map[string]any, path ...string) bool {
-	if len(path) == 0 {
-		return false
-	}
-	var cur any = root
-	for _, seg := range path {
-		obj, ok := cur.(map[string]any)
-		if !ok {
-			return false
-		}
-		next, ok := obj[strings.TrimSpace(seg)]
-		if !ok {
-			return false
-		}
-		cur = next
-	}
-	return true
-}
-
-func buildEffectiveProjectConfig(homeCfg app.HomeConfig, localCfg repo.Config) repo.Config {
-	merged := repo.Config{}.WithDefaults()
-	pc := app.ProjectConfig(merged)
-	app.ApplyAgentProviderModelOverride(&pc, homeCfg.Agent.Provider, homeCfg.Agent.Model)
-	merged = repo.Config(pc)
-	merged = repo.MergeConfig(merged, localCfg)
-	return merged.WithDefaults()
-}
-
 func normalizeConfigKey(raw string) string {
-	return strings.ToLower(strings.TrimSpace(raw))
+	return config.NormalizeKey(raw)
 }
 
 func findConfigKeyMeta(key string) (configKeyMeta, bool) {
-	key = normalizeConfigKey(key)
-	for _, meta := range configKeyOrder {
-		if meta.Key == key {
-			return meta, true
-		}
-	}
-	return configKeyMeta{}, false
+	return config.FindKeyMeta(key)
 }
 
 func resolveConfigSetScopeOrExit(out cliOutputFormat, meta configKeyMeta, forceGlobal, forceLocal bool) configScope {
@@ -781,23 +453,11 @@ func resolveConfigSetScopeOrExit(out cliOutputFormat, meta configKeyMeta, forceG
 }
 
 func containsConfigScope(scopes []configScope, target configScope) bool {
-	for _, s := range scopes {
-		if s == target {
-			return true
-		}
-	}
-	return false
+	return config.ContainsScope(scopes, target)
 }
 
 func joinConfigScopes(scopes []configScope) string {
-	if len(scopes) == 0 {
-		return "-"
-	}
-	out := make([]string, 0, len(scopes))
-	for _, s := range scopes {
-		out = append(out, string(s))
-	}
-	return strings.Join(out, ", ")
+	return config.JoinScopes(scopes)
 }
 
 func splitConfigArgs(args []string, valueFlags map[string]bool, boolFlags map[string]bool) ([]string, []string, error) {

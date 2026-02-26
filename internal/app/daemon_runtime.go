@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	daemonsvc "dalek/internal/services/daemon"
 )
@@ -174,7 +173,7 @@ func (p *daemonProjectAdapter) FindLatestWorkerRun(ctx context.Context, ticketID
 		ErrorMessage:       strings.TrimSpace(status.ErrorMessage),
 		StartedAt:          status.StartedAt,
 		FinishedAt:         status.FinishedAt,
-		UpdatedAt:          daemonTaskStatusUpdatedAt(*status),
+		UpdatedAt:          TaskStatusUpdatedAt(*status),
 	}, nil
 }
 
@@ -221,7 +220,7 @@ func (p *daemonProjectAdapter) GetTaskStatus(ctx context.Context, runID uint) (*
 		ErrorMessage:       strings.TrimSpace(status.ErrorMessage),
 		StartedAt:          status.StartedAt,
 		FinishedAt:         status.FinishedAt,
-		UpdatedAt:          daemonTaskStatusUpdatedAt(*status),
+		UpdatedAt:          TaskStatusUpdatedAt(*status),
 	}, nil
 }
 
@@ -247,14 +246,4 @@ func (p *daemonProjectAdapter) ListTaskEvents(ctx context.Context, runID uint, l
 		})
 	}
 	return out, nil
-}
-
-func daemonTaskStatusUpdatedAt(status TaskStatus) time.Time {
-	latest := status.UpdatedAt
-	for _, v := range []*time.Time{status.RuntimeObservedAt, status.SemanticReportedAt, status.LastEventAt} {
-		if v != nil && v.After(latest) {
-			latest = *v
-		}
-	}
-	return latest
 }

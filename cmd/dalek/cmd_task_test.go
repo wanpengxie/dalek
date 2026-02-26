@@ -39,7 +39,7 @@ func TestStatusUpdatedAtPrefersLatestObservationTime(t *testing.T) {
 	semanticAt := base.Add(2 * time.Minute)
 	eventAt := base.Add(3 * time.Minute)
 
-	got := statusUpdatedAt(app.TaskStatus{
+	got := app.TaskStatusUpdatedAt(app.TaskStatus{
 		UpdatedAt:          base,
 		RuntimeObservedAt:  &runtimeAt,
 		SemanticReportedAt: &semanticAt,

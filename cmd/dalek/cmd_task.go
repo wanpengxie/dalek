@@ -464,16 +464,6 @@ func trimField(s string, max int) string {
 	return string(runes[:max-3]) + "..."
 }
 
-func statusUpdatedAt(it app.TaskStatus) time.Time {
-	latest := it.UpdatedAt
-	for _, t := range []*time.Time{it.RuntimeObservedAt, it.SemanticReportedAt, it.LastEventAt} {
-		if t != nil && t.After(latest) {
-			latest = *t
-		}
-	}
-	return latest
-}
-
 func mapTaskStatusPublic(it app.TaskStatus) taskStatusPublic {
 	subject := strings.TrimSpace(it.SubjectType)
 	if sid := strings.TrimSpace(it.SubjectID); sid != "" {
@@ -490,7 +480,7 @@ func mapTaskStatusPublic(it app.TaskStatus) taskStatusPublic {
 	if summary == "" {
 		summary = strings.TrimSpace(it.RuntimeSummary)
 	}
-	runStatus := deriveRunStatus(strings.TrimSpace(it.OrchestrationState), strings.TrimSpace(it.RuntimeHealthState), it.RuntimeNeedsUser)
+	runStatus := app.DeriveRunStatus(it.OrchestrationState, it.RuntimeHealthState, it.RuntimeNeedsUser)
 	startedAt := formatPtrRFC3339(it.StartedAt)
 	finishedAt := formatPtrRFC3339(it.FinishedAt)
 	return taskStatusPublic{
@@ -509,7 +499,7 @@ func mapTaskStatusPublic(it app.TaskStatus) taskStatusPublic {
 		ErrorMsg:   strings.TrimSpace(it.ErrorMessage),
 		StartedAt:  startedAt,
 		FinishedAt: finishedAt,
-		UpdatedAt:  statusUpdatedAt(it).Local().Format(time.RFC3339),
+		UpdatedAt:  app.TaskStatusUpdatedAt(it).Local().Format(time.RFC3339),
 	}
 }
 
@@ -519,49 +509,6 @@ func formatPtrRFC3339(v *time.Time) *string {
 	}
 	s := v.Local().Format(time.RFC3339)
 	return &s
-}
-
-func deriveRunStatus(orchestration, health string, needsUser bool) string {
-	orch := strings.TrimSpace(strings.ToLower(orchestration))
-	runtime := strings.TrimSpace(strings.ToLower(health))
-	switch orch {
-	case "pending":
-		return "pending"
-	case "succeeded":
-		return "done"
-	case "failed":
-		return "failed"
-	case "canceled":
-		return "canceled"
-	case "running":
-		if needsUser || runtime == "waiting_user" {
-			return "waiting_user"
-		}
-		switch runtime {
-		case "stalled":
-			return "stalled"
-		case "dead":
-			return "dead"
-		case "alive", "idle", "busy", "unknown", "":
-			return "running"
-		default:
-			return "running"
-		}
-	default:
-		if needsUser || runtime == "waiting_user" {
-			return "waiting_user"
-		}
-		switch runtime {
-		case "stalled":
-			return "stalled"
-		case "dead":
-			return "dead"
-		case "alive", "idle", "busy":
-			return "running"
-		default:
-			return "unknown"
-		}
-	}
 }
 
 func normalizeTaskRunIDArgs(args []string) []string {

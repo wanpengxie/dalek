@@ -5,9 +5,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
+
+	"dalek/internal/app"
 )
 
 // gatewayDailyLogger 写入 ~/.dalek/logs/gateway/YYYY-MM-DD.log，同时 tee 到 stderr。
@@ -20,13 +21,8 @@ type gatewayDailyLogger struct {
 }
 
 func newGatewayDailyLogger() *gatewayDailyLogger {
-	home := strings.TrimSpace(os.Getenv("DALEK_HOME"))
-	if home == "" {
-		if userHome, err := os.UserHomeDir(); err == nil {
-			home = filepath.Join(userHome, ".dalek")
-		}
-	}
-	if home == "" {
+	home, err := app.ResolveHomeDir("")
+	if err != nil || home == "" {
 		home = ".dalek"
 	}
 	dir := filepath.Join(home, "logs", "gateway")
