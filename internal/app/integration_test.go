@@ -647,7 +647,7 @@ func TestIntegration_DaemonRecovery_PMDispatchTerminalJobs_Unaffected(t *testing
 		WorkerID:        w.ID,
 		Status:          contracts.PMDispatchSucceeded,
 		ActiveTicketKey: nil,
-		ResultJSON:      `{"ok":true}`,
+		ResultJSON:      contracts.PMDispatchJobResult{Schema: contracts.PMDispatchJobResultSchemaV1},
 		FinishedAt:      &doneFinished,
 	}
 	failJob := contracts.PMDispatchJob{
@@ -1232,7 +1232,7 @@ func TestIntegration_NoteAdd_DedupByProjectAndHash(t *testing.T) {
 		Status:         store.NoteOpen,
 		Source:         "cli",
 		Text:           "支持导出 CSV",
-		ContextJSON:    "",
+		ContextJSON:    contracts.JSONMap{},
 		NormalizedHash: hashNormalizedTextForTest(normalized),
 		ShapedItemID:   0,
 	}

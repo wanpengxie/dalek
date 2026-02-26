@@ -12,9 +12,9 @@ type ChannelBinding struct {
 	ChannelType ChannelType `gorm:"type:text;not null;index;uniqueIndex:idx_channel_binding_identity,priority:1"`
 	Adapter     string      `gorm:"type:text;not null;index;uniqueIndex:idx_channel_binding_identity,priority:2"`
 
-	PeerProjectKey string `gorm:"type:text;not null;default:'';uniqueIndex:idx_channel_binding_identity,priority:3"`
-	RolePolicyJSON string `gorm:"type:text;not null;default:'{}'"`
-	Enabled        bool   `gorm:"not null;default:true;index"`
+	PeerProjectKey string  `gorm:"type:text;not null;default:'';uniqueIndex:idx_channel_binding_identity,priority:3"`
+	RolePolicyJSON JSONMap `gorm:"type:text;not null;default:'{}'"`
+	Enabled        bool    `gorm:"not null;default:true;index"`
 }
 
 // ChannelConversation 是通道会话映射。
@@ -46,7 +46,7 @@ type ChannelMessage struct {
 	SenderID    string               `gorm:"type:text;not null;default:''"`
 	SenderName  string               `gorm:"type:text;not null;default:''"`
 	ContentText string               `gorm:"type:text;not null;default:''"`
-	PayloadJSON string               `gorm:"type:text;not null;default:'{}'"`
+	PayloadJSON JSONMap              `gorm:"type:text;not null;default:'{}'"`
 	Status      ChannelMessageStatus `gorm:"type:text;not null;index"`
 }
 
@@ -64,7 +64,7 @@ type ChannelTurnJob struct {
 	LeaseExpiresAt *time.Time           `gorm:""`
 	Attempt        int                  `gorm:"not null;default:0"`
 	Error          string               `gorm:"type:text;not null;default:''"`
-	ResultJSON     string               `gorm:"type:text;not null;default:''"`
+	ResultJSON     JSONMap              `gorm:"type:text;not null;default:'{}'"`
 
 	StartedAt  *time.Time `gorm:""`
 	FinishedAt *time.Time `gorm:""`
@@ -120,9 +120,9 @@ type ChannelOutbox struct {
 	MessageID uint   `gorm:"not null;uniqueIndex"`
 	Adapter   string `gorm:"type:text;not null;default:'';index"`
 
-	PayloadJSON string             `gorm:"type:text;not null;default:'{}'"`
+	PayloadJSON JSONMap             `gorm:"type:text;not null;default:'{}'"`
 	Status      ChannelOutboxStatus `gorm:"type:text;not null;index"`
-	RetryCount  int                `gorm:"not null;default:0"`
-	NextRetryAt *time.Time         `gorm:""`
-	LastError   string             `gorm:"type:text;not null;default:''"`
+	RetryCount  int                 `gorm:"not null;default:0"`
+	NextRetryAt *time.Time          `gorm:""`
+	LastError   string              `gorm:"type:text;not null;default:''"`
 }

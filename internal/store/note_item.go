@@ -1,6 +1,10 @@
 package store
 
-import "time"
+import (
+	"time"
+
+	"dalek/internal/contracts"
+)
 
 type NoteStatus string
 
@@ -19,12 +23,12 @@ type NoteItem struct {
 	CreatedAt time.Time `gorm:"not null"`
 	UpdatedAt time.Time `gorm:"not null"`
 
-	ProjectKey     string     `gorm:"type:text;not null;default:'';index"`
-	Status         NoteStatus `gorm:"type:text;not null;index"`
-	Source         string     `gorm:"type:text;not null;default:'cli'"`
-	Text           string     `gorm:"column:text;type:text;not null;default:''"`
-	ContextJSON    string     `gorm:"type:text;not null;default:''"`
-	NormalizedHash string     `gorm:"type:text;not null;index"`
+	ProjectKey     string            `gorm:"type:text;not null;default:'';index"`
+	Status         NoteStatus        `gorm:"type:text;not null;index"`
+	Source         string            `gorm:"type:text;not null;default:'cli'"`
+	Text           string            `gorm:"column:text;type:text;not null;default:''"`
+	ContextJSON    contracts.JSONMap `gorm:"type:text;not null;default:'{}'"`
+	NormalizedHash string            `gorm:"type:text;not null;index"`
 
 	ShapedItemID uint   `gorm:"not null;default:0;index"`
 	LastError    string `gorm:"type:text;not null;default:''"`

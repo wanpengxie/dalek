@@ -805,7 +805,7 @@ func TestInterruptPeerConversation_CancelsRunningTurnWhenRunnerNotInterrupted(t 
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
 		PeerProjectKey: "",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {
@@ -868,7 +868,7 @@ func TestInterruptPeerConversation_UsesRunnerInterruptWithoutCancel(t *testing.T
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
 		PeerProjectKey: "",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {
@@ -925,7 +925,7 @@ func TestResetPeerConversationSession_ClearsSessionAndClosesRunner(t *testing.T)
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
 		PeerProjectKey: "",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {
@@ -988,7 +988,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 		ChannelType:    contracts.ChannelTypeWeb,
 		Adapter:        "web.ws",
 		PeerProjectKey: "",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {
@@ -1007,7 +1007,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 		Adapter:        "",
 		SenderID:       "pm",
 		ContentText:    "reply",
-		PayloadJSON:    "{}",
+		PayloadJSON:    contracts.JSONMap{},
 		Status:         contracts.ChannelMessageProcessed,
 	}
 	if err := db.Create(&outMsg).Error; err != nil {
@@ -1016,7 +1016,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 	outbox := contracts.ChannelOutbox{
 		MessageID:   outMsg.ID,
 		Adapter:     "",
-		PayloadJSON: "{}",
+		PayloadJSON: contracts.JSONMap{},
 		Status:      contracts.ChannelOutboxPending,
 	}
 	if err := db.Create(&outbox).Error; err != nil {

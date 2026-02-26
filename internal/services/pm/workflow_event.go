@@ -3,7 +3,6 @@ package pm
 import (
 	"context"
 	"dalek/internal/contracts"
-	"encoding/json"
 	"strings"
 	"time"
 
@@ -14,15 +13,8 @@ func normalizeTicketWorkflowStatus(st contracts.TicketWorkflowStatus) contracts.
 	return contracts.CanonicalTicketWorkflowStatus(st)
 }
 
-func marshalWorkflowEventPayload(v any) string {
-	if v == nil {
-		return ""
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
+func marshalWorkflowEventPayload(v any) contracts.JSONMap {
+	return contracts.JSONMapFromAny(v)
 }
 
 func (s *Service) appendTicketWorkflowEventTx(ctx context.Context, tx *gorm.DB, ticketID uint, fromStatus, toStatus contracts.TicketWorkflowStatus, source, reason string, payload any, createdAt time.Time) error {

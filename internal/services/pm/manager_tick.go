@@ -2,7 +2,6 @@ package pm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -611,12 +610,12 @@ func taskEventBody(ev contracts.TaskEventScopeRow) string {
 	if summary != "" {
 		return summary
 	}
-	return strings.TrimSpace(ev.PayloadJSON)
+	return strings.TrimSpace(ev.PayloadJSON.String())
 }
 
 func parseTaskEventSignals(ev contracts.TaskEventScopeRow) (needsUser bool, runtimeHealth string, nextAction string, summary string) {
-	toState := parseJSONMap(ev.ToStateJSON)
-	payload := parseJSONMap(ev.PayloadJSON)
+	toState := map[string]any(ev.ToStateJSON)
+	payload := map[string]any(ev.PayloadJSON)
 
 	if v, ok := mapBool(toState, "runtime_needs_user"); ok {
 		needsUser = v
@@ -650,18 +649,6 @@ func parseTaskEventSignals(ev contracts.TaskEventScopeRow) (needsUser bool, runt
 		summary = strings.TrimSpace(mapString(payload, "summary"))
 	}
 	return needsUser, runtimeHealth, nextAction, summary
-}
-
-func parseJSONMap(raw string) map[string]any {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return map[string]any{}
-	}
-	out := map[string]any{}
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return map[string]any{}
-	}
-	return out
 }
 
 func mapString(m map[string]any, key string) string {

@@ -52,9 +52,9 @@ type WorkerStatusEvent struct {
 	FromStatus WorkerStatus `gorm:"column:from_worker_status;type:text;not null;default:'';index"`
 	ToStatus   WorkerStatus `gorm:"column:to_worker_status;type:text;not null;default:'';index"`
 
-	Source      string `gorm:"type:text;not null;default:'';index"`
-	Reason      string `gorm:"type:text;not null;default:''"`
-	PayloadJSON string `gorm:"type:text;not null;default:''"`
+	Source      string  `gorm:"type:text;not null;default:'';index"`
+	Reason      string  `gorm:"type:text;not null;default:''"`
+	PayloadJSON JSONMap `gorm:"type:text;not null;default:'{}'"`
 }
 
 func (WorkerStatusEvent) TableName() string {

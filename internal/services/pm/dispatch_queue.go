@@ -115,7 +115,7 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 			RunnerID:        "",
 			LeaseExpiresAt:  nil,
 			Attempt:         0,
-			ResultJSON:      "",
+			ResultJSON:      contracts.PMDispatchJobResult{},
 			Error:           "",
 			StartedAt:       nil,
 			FinishedAt:      nil,

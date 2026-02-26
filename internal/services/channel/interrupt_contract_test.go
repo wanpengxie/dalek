@@ -82,7 +82,7 @@ func TestInterruptPeerConversation_ReturnsMissWhenNoRunningTurn(t *testing.T) {
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
 		PeerProjectKey: "",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {
@@ -136,7 +136,7 @@ func TestInterruptPeerConversation_ReturnsExecutionFailure(t *testing.T) {
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        "im.feishu",
 		PeerProjectKey: "",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {

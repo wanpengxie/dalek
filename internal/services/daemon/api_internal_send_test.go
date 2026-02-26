@@ -88,7 +88,7 @@ func TestInternalAPISendRoute_AllowsLoopbackWithoutToken(t *testing.T) {
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        gatewaysendsvc.AdapterFeishu,
 		PeerProjectKey: "chat-daemon-send-no-token",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}).Error; err != nil {
 		t.Fatalf("create binding failed: %v", err)
@@ -134,7 +134,7 @@ func TestInternalAPISendRoute_Success(t *testing.T) {
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        gatewaysendsvc.AdapterFeishu,
 		PeerProjectKey: "chat-daemon-send-1",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}).Error; err != nil {
 		t.Fatalf("create binding failed: %v", err)

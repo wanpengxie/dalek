@@ -239,20 +239,20 @@ func (s *Service) ForceFailActiveDispatchesForTicket(ctx context.Context, ticket
 			if err := tx.WithContext(ctx).Create(&contracts.TaskEvent{
 				TaskRunID:     job.TaskRunID,
 				EventType:     "dispatch_force_failed_on_stop",
-				FromStateJSON: marshalJSON(map[string]any{"orchestration_state": fromTaskState}),
-				ToStateJSON: marshalJSON(map[string]any{
+				FromStateJSON: contracts.JSONMap{"orchestration_state": fromTaskState},
+				ToStateJSON: contracts.JSONMap{
 					"orchestration_state": contracts.TaskFailed,
 					"error_code":          "dispatch_force_failed_on_stop",
 					"error_message":       reason,
-				}),
+				},
 				Note: strings.TrimSpace(reason),
-				PayloadJSON: marshalJSON(map[string]any{
+				PayloadJSON: contracts.JSONMap{
 					"source":          "ticket_stop",
 					"ticket_id":       job.TicketID,
 					"worker_id":       job.WorkerID,
 					"dispatch_job_id": job.ID,
 					"request_id":      strings.TrimSpace(job.RequestID),
-				}),
+				},
 				CreatedAt: now,
 			}).Error; err != nil {
 				return err

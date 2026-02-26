@@ -493,10 +493,10 @@ func (p *Project) ListTaskEvents(ctx context.Context, runID uint, limit int) ([]
 			ID:            ev.ID,
 			TaskRunID:     ev.TaskRunID,
 			EventType:     strings.TrimSpace(ev.EventType),
-			FromStateJSON: strings.TrimSpace(ev.FromStateJSON),
-			ToStateJSON:   strings.TrimSpace(ev.ToStateJSON),
+			FromStateJSON: strings.TrimSpace(ev.FromStateJSON.String()),
+			ToStateJSON:   strings.TrimSpace(ev.ToStateJSON.String()),
 			Note:          strings.TrimSpace(ev.Note),
-			PayloadJSON:   strings.TrimSpace(ev.PayloadJSON),
+			PayloadJSON:   strings.TrimSpace(ev.PayloadJSON.String()),
 			CreatedAt:     ev.CreatedAt,
 		})
 	}
@@ -800,10 +800,10 @@ func (p *Project) ListTaskEventsByScope(ctx context.Context, ticketID, workerID 
 			ID:            ev.ID,
 			TaskRunID:     ev.TaskRunID,
 			EventType:     strings.TrimSpace(ev.EventType),
-			FromStateJSON: strings.TrimSpace(ev.FromStateJSON),
-			ToStateJSON:   strings.TrimSpace(ev.ToStateJSON),
+			FromStateJSON: strings.TrimSpace(ev.FromStateJSON.String()),
+			ToStateJSON:   strings.TrimSpace(ev.ToStateJSON.String()),
 			Note:          strings.TrimSpace(ev.Note),
-			PayloadJSON:   strings.TrimSpace(ev.PayloadJSON),
+			PayloadJSON:   strings.TrimSpace(ev.PayloadJSON.String()),
 			CreatedAt:     ev.CreatedAt,
 		})
 	}

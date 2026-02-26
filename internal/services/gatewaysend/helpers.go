@@ -3,7 +3,6 @@ package gatewaysend
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -47,12 +46,8 @@ func buildCardTitle(projectName string) string {
 	return projectName
 }
 
-func marshalPayload(payload map[string]any) string {
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return "{}"
-	}
-	return string(b)
+func marshalPayload(payload map[string]any) contracts.JSONMap {
+	return contracts.JSONMapFromAny(payload)
 }
 
 func randomHex(nbytes int) string {

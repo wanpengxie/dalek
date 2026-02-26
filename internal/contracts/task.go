@@ -51,7 +51,7 @@ type TaskRuntimeSample struct {
 	Source    string                 `gorm:"type:text;not null;default:''"`
 
 	ObservedAt  time.Time `gorm:"not null;index"`
-	MetricsJSON string    `gorm:"type:text;not null;default:''"`
+	MetricsJSON JSONMap   `gorm:"type:text;not null;default:'{}'"`
 }
 
 func (TaskRuntimeSample) TableName() string {
@@ -69,7 +69,7 @@ type TaskSemanticReport struct {
 	NextAction string            `gorm:"type:text;not null;default:''"`
 	Summary    string            `gorm:"type:text;not null;default:''"`
 
-	ReportPayloadJSON string    `gorm:"type:text;not null;default:''"`
+	ReportPayloadJSON JSONMap   `gorm:"type:text;not null;default:'{}'"`
 	ReportedAt        time.Time `gorm:"not null;index"`
 }
 
@@ -85,10 +85,10 @@ type TaskEvent struct {
 	TaskRunID uint   `gorm:"not null;index"`
 	EventType string `gorm:"type:text;not null;index"`
 
-	FromStateJSON string `gorm:"type:text;not null;default:''"`
-	ToStateJSON   string `gorm:"type:text;not null;default:''"`
-	Note          string `gorm:"type:text;not null;default:''"`
-	PayloadJSON   string `gorm:"type:text;not null;default:''"`
+	FromStateJSON JSONMap `gorm:"type:text;not null;default:'{}'"`
+	ToStateJSON   JSONMap `gorm:"type:text;not null;default:'{}'"`
+	Note          string  `gorm:"type:text;not null;default:''"`
+	PayloadJSON   JSONMap `gorm:"type:text;not null;default:'{}'"`
 }
 
 func (TaskEvent) TableName() string {

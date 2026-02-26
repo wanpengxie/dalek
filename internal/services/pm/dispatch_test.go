@@ -2,7 +2,6 @@ package pm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,12 +37,8 @@ func TestDispatchTicket_SingleModeRunsPMAgent(t *testing.T) {
 	if job.Status != contracts.PMDispatchSucceeded {
 		t.Fatalf("unexpected job status: %s", job.Status)
 	}
-	var payload contracts.PMDispatchJobResult
-	if err := json.Unmarshal([]byte(job.ResultJSON), &payload); err != nil {
-		t.Fatalf("result json invalid: %v", err)
-	}
-	if strings.TrimSpace(payload.Schema) != contracts.PMDispatchJobResultSchemaV1 {
-		t.Fatalf("unexpected schema: %q", payload.Schema)
+	if strings.TrimSpace(job.ResultJSON.Schema) != contracts.PMDispatchJobResultSchemaV1 {
+		t.Fatalf("unexpected schema: %q", job.ResultJSON.Schema)
 	}
 }
 
