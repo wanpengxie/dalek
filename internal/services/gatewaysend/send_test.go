@@ -82,11 +82,10 @@ func TestHandler_RequiresAuth(t *testing.T) {
 		t.Fatalf("OpenGatewayDB failed: %v", err)
 	}
 
-	handler := NewHandler(HandlerOptions{
-		DB:        db,
-		Sender:    &captureSender{},
-		AuthToken: "send-token",
-	})
+	handler := NewHandler(
+		NewServiceWithDB(db, nil, &captureSender{}, nil),
+		HandlerConfig{AuthToken: "send-token"},
+	)
 	req := httptest.NewRequest(http.MethodPost, Path, strings.NewReader(`{"project":"demo","text":"hello"}`))
 	rec := httptest.NewRecorder()
 	handler(rec, req)
@@ -115,11 +114,10 @@ func TestHandler_Success(t *testing.T) {
 	}
 
 	sender := &captureSender{}
-	handler := NewHandler(HandlerOptions{
-		DB:        db,
-		Sender:    sender,
-		AuthToken: "send-token",
-	})
+	handler := NewHandler(
+		NewServiceWithDB(db, nil, sender, nil),
+		HandlerConfig{AuthToken: "send-token"},
+	)
 
 	body := map[string]string{"project": "demo", "text": "deploy done"}
 	raw, _ := json.Marshal(body)
@@ -272,12 +270,10 @@ func TestHandler_UsesRepoBaseNameInCardTitle(t *testing.T) {
 		},
 	}
 	sender := &captureSender{}
-	handler := NewHandler(HandlerOptions{
-		DB:        db,
-		Resolver:  resolver,
-		Sender:    sender,
-		AuthToken: "send-token",
-	})
+	handler := NewHandler(
+		NewServiceWithDB(db, resolver, sender, nil),
+		HandlerConfig{AuthToken: "send-token"},
+	)
 
 	body := map[string]string{"project": projectName, "text": "deploy done"}
 	raw, _ := json.Marshal(body)
@@ -307,11 +303,10 @@ func TestHandler_ProjectNotBound(t *testing.T) {
 		t.Fatalf("OpenGatewayDB failed: %v", err)
 	}
 
-	handler := NewHandler(HandlerOptions{
-		DB:        db,
-		Sender:    &captureSender{},
-		AuthToken: "send-token",
-	})
+	handler := NewHandler(
+		NewServiceWithDB(db, nil, &captureSender{}, nil),
+		HandlerConfig{AuthToken: "send-token"},
+	)
 	req := httptest.NewRequest(http.MethodPost, Path, strings.NewReader(`{"project":"demo","text":"hello"}`))
 	req.Header.Set("Authorization", "Bearer send-token")
 	rec := httptest.NewRecorder()
@@ -341,11 +336,10 @@ func TestHandler_SenderFailed_MarksOutboxFailed(t *testing.T) {
 		t.Fatalf("create binding failed: %v", err)
 	}
 
-	handler := NewHandler(HandlerOptions{
-		DB:        db,
-		Sender:    &failingSender{err: fmt.Errorf("mock send failed")},
-		AuthToken: "send-token",
-	})
+	handler := NewHandler(
+		NewServiceWithDB(db, nil, &failingSender{err: fmt.Errorf("mock send failed")}, nil),
+		HandlerConfig{AuthToken: "send-token"},
+	)
 	req := httptest.NewRequest(http.MethodPost, Path, strings.NewReader(`{"project":"demo","text":"hello"}`))
 	req.Header.Set("Authorization", "Bearer send-token")
 	rec := httptest.NewRecorder()

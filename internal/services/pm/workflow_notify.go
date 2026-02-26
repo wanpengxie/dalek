@@ -36,8 +36,7 @@ type GatewayStatusNotifier struct {
 	projectName string
 	projectDB   *gorm.DB
 	gatewayDB   *gorm.DB
-	resolver    contracts.ProjectMetaResolver
-	sender      gatewaysendsvc.MessageSender
+	sendService *gatewaysendsvc.Service
 	logger      *slog.Logger
 	now         func() time.Time
 }
@@ -57,8 +56,7 @@ func NewGatewayStatusNotifier(
 		projectName: strings.TrimSpace(projectName),
 		projectDB:   projectDB,
 		gatewayDB:   gatewayDB,
-		resolver:    resolver,
-		sender:      sender,
+		sendService: gatewaysendsvc.NewServiceWithDB(gatewayDB, resolver, sender, logger),
 		logger:      logger,
 		now:         time.Now,
 	}
@@ -86,6 +84,9 @@ func (n *GatewayStatusNotifier) OnStatusChange(ctx context.Context, event Status
 	if n.gatewayDB == nil {
 		return fmt.Errorf("gateway status notifier 缺少 gateway db")
 	}
+	if n.sendService == nil {
+		return fmt.Errorf("gateway status notifier 缺少 gateway send service")
+	}
 	title, err := n.loadTicketTitle(ctx, event.TicketID)
 	if err != nil {
 		return err
@@ -100,7 +101,7 @@ func (n *GatewayStatusNotifier) OnStatusChange(ctx context.Context, event Status
 		}
 	}
 	text := buildStatusChangeNotifyText(event, title)
-	_, err = gatewaysendsvc.SendProjectTextWithLogger(ctx, n.gatewayDB, n.resolver, n.sender, n.logger, projectName, text)
+	_, err = n.sendService.Send(ctx, projectName, text)
 	if err != nil {
 		if errors.Is(err, gatewaysendsvc.ErrBindingNotFound) {
 			return nil

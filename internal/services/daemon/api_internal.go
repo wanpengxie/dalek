@@ -76,18 +76,14 @@ func NewInternalAPI(host *ExecutionHost, cfg InternalAPIConfig, opt InternalAPIO
 			return nil, fmt.Errorf("创建 internal gateway runtime 失败: %w", gatewayErr)
 		}
 	}
+	sendService := gatewaysendsvc.NewServiceWithDB(opt.GatewaySendDB, opt.GatewaySendResolver, opt.GatewaySendSender, logger)
 	return &InternalAPI{
 		cfg: InternalAPIConfig{
 			ListenAddr: listen,
 		},
-		host:   host,
-		logger: logger,
-		sendHandler: gatewaysendsvc.NewHandler(gatewaysendsvc.HandlerOptions{
-			DB:       opt.GatewaySendDB,
-			Resolver: opt.GatewaySendResolver,
-			Sender:   opt.GatewaySendSender,
-			Logger:   logger,
-		}),
+		host:        host,
+		logger:      logger,
+		sendHandler: gatewaysendsvc.NewHandler(sendService, gatewaysendsvc.HandlerConfig{}),
 		gateway:     gateway,
 		wsPath:      "/ws",
 		sendDB:      opt.GatewaySendDB,
