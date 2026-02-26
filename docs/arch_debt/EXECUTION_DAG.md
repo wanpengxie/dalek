@@ -25,6 +25,7 @@
 - W08B 已完成票：`T13(20)`（DaemonManager recovery/对账逻辑下沉 service + ActionExecutor 构造注入）
 - W09A 已完成票：`T33(40)`
 - W09A 进行中票：`T35(42)`
+- W10A 已完成票：`T32(39)`（logs->preview 重命名 + WorkerLookup 收口）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。

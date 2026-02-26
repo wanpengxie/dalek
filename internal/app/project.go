@@ -13,9 +13,9 @@ import (
 
 	channelsvc "dalek/internal/services/channel"
 	"dalek/internal/services/core"
-	logssvc "dalek/internal/services/logs"
 	notebooksvc "dalek/internal/services/notebook"
 	pmsvc "dalek/internal/services/pm"
+	previewsvc "dalek/internal/services/preview"
 	subagentsvc "dalek/internal/services/subagent"
 	tasksvc "dalek/internal/services/task"
 	ticketsvc "dalek/internal/services/ticket"
@@ -34,7 +34,7 @@ type Project struct {
 	ticket      *ticketsvc.Service
 	ticketQuery *ticketsvc.QueryService
 	worker      *workersvc.Service
-	logs        *logssvc.Service
+	preview     *previewsvc.Service
 	notebook    *notebooksvc.Service
 	pm          *pmsvc.Service
 	subagent    *subagentsvc.Service
@@ -771,10 +771,10 @@ func (p *Project) WorkerByID(ctx context.Context, workerID uint) (*Worker, error
 }
 
 func (p *Project) CaptureTicketTail(ctx context.Context, ticketID uint, lastLines int) (TailPreview, error) {
-	if p == nil || p.logs == nil {
-		return TailPreview{}, fmt.Errorf("project logs service 为空")
+	if p == nil || p.preview == nil {
+		return TailPreview{}, fmt.Errorf("project preview service 为空")
 	}
-	return p.logs.CaptureTicketTail(ctx, ticketID, lastLines)
+	return p.preview.CaptureTicketTail(ctx, ticketID, lastLines)
 }
 
 func (p *Project) ListTaskEventsByScope(ctx context.Context, ticketID, workerID uint, limit int) ([]TaskEvent, error) {

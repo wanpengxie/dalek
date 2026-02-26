@@ -14,9 +14,9 @@ import (
 	"dalek/internal/repo"
 	channelsvc "dalek/internal/services/channel"
 	"dalek/internal/services/core"
-	logssvc "dalek/internal/services/logs"
 	"dalek/internal/services/notebook"
 	"dalek/internal/services/pm"
+	previewsvc "dalek/internal/services/preview"
 	subagentsvc "dalek/internal/services/subagent"
 	"dalek/internal/services/task"
 	"dalek/internal/services/ticket"
@@ -486,7 +486,7 @@ func assembleProject(cp *core.Project) *Project {
 	ticketSvc := ticket.New(cp.DB)
 	ticketQuerySvc := ticket.NewQueryService(cp)
 	workerSvc := worker.New(cp, ticketSvc)
-	logsSvc := logssvc.New(cp, workerSvc)
+	previewSvc := previewsvc.New(cp, workerSvc)
 	notebookSvc := notebook.New(cp)
 	pmSvc := pm.New(cp, workerSvc)
 	taskSvc := task.New(cp.DB)
@@ -497,7 +497,7 @@ func assembleProject(cp *core.Project) *Project {
 		ticket:      ticketSvc,
 		ticketQuery: ticketQuerySvc,
 		worker:      workerSvc,
-		logs:        logsSvc,
+		preview:     previewSvc,
 		notebook:    notebookSvc,
 		pm:          pmSvc,
 		subagent:    subagentSvc,
