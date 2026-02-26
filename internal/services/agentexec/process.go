@@ -30,6 +30,7 @@ type ProcessConfig struct {
 
 	WorkDir string
 	Env     map[string]string
+	Stdin   string
 	Timeout time.Duration
 }
 
@@ -95,6 +96,9 @@ func (e *ProcessExecutor) Execute(ctx context.Context, prompt string) (AgentRunH
 	cmd := exec.CommandContext(execCtx, bin, args...)
 	if strings.TrimSpace(e.cfg.WorkDir) != "" {
 		cmd.Dir = strings.TrimSpace(e.cfg.WorkDir)
+	}
+	if e.cfg.Stdin != "" {
+		cmd.Stdin = strings.NewReader(e.cfg.Stdin)
 	}
 	cmd.Env = mergeEnv(e.cfg.Env)
 	var stdout bytes.Buffer

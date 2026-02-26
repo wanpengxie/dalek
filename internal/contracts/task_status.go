@@ -6,6 +6,7 @@ const (
 	TaskOwnerWorker   TaskOwnerType = "worker"
 	TaskOwnerPM       TaskOwnerType = "pm"
 	TaskOwnerSubagent TaskOwnerType = "subagent"
+	TaskOwnerChannel  TaskOwnerType = "channel"
 )
 
 const (
@@ -13,6 +14,7 @@ const (
 	TaskTypeDeliverTicket   = "deliver_ticket"
 	TaskTypePMDispatchAgent = "pm_dispatch_agent"
 	TaskTypeSubagentRun     = "subagent_run"
+	TaskTypeChannelTurn     = "channel_turn"
 )
 
 type TaskOrchestrationState string

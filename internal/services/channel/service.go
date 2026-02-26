@@ -809,7 +809,7 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound contracts.Chann
 			OnEvent:        onEvent,
 		})
 	} else {
-		runResult, err = s.runAgentCLI(ctx, resolved.Backend, agentcli.RunRequest{
+		runResult, err = s.runAgentCLI(ctx, fmt.Sprintf("%d", conv.ID), resolved.Backend, agentcli.RunRequest{
 			WorkDir:   repoRoot,
 			Prompt:    prompt,
 			Model:     strings.TrimSpace(resolved.Model),

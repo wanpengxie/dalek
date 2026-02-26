@@ -12,8 +12,8 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-27`
-- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B`
-- 当前批次：`W09A`（`in_execution`）
+- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W06B` `W07A` `W07B` `W08A` `W08B` `W10A` `W10C`
+- 当前批次：`W10C`（`done`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
@@ -28,6 +28,7 @@
 - W09A 已完成票：`T33(40)`
 - W09A 进行中票：`T35(42)`
 - W10A 已完成票：`T32(39)`（logs->preview 重命名 + WorkerLookup 收口）
+- W10C 已完成票：`T08(15)`（Channel CLI/SDK 执行入口统一到 services/agentexec）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -53,6 +54,29 @@
   - 以上命令全部通过。
 - 依赖推进：
   - `T07 -> T08 -> T09` 前置已满足，T08 可基于 `services/agentexec` 继续统一多路径执行入口。
+
+## W10C 回写（T08 AgentExec（2/3）：Channel/App 统一执行入口）
+
+- 状态：`T08` 已完成（2026-02-27）。
+- 关键产物：
+  - `internal/services/channel/agent_exec.go` 的 CLI/SDK 两条入口均已改为复用 `agentexec`：
+    - CLI：`runAgentCLI` -> `agentexec.NewProcessExecutor`
+    - SDK：`runAgentSDK` -> `agentexec.NewSDKExecutor`
+  - Channel 执行链路已注入 TaskRuntime 元数据：`OwnerType=channel`、`TaskType=channel_turn`、`SubjectType=channel_conversation`。
+  - `internal/contracts/task_status.go` 新增权威枚举：`TaskOwnerChannel`、`TaskTypeChannelTurn`；并同步 `internal/services/task/service_helpers.go`、`internal/app/facade_types.go` 的 owner 校验。
+  - `internal/services/channel/agentcli/runner.go` 已移除 `os/exec` 直接依赖，统一走 `agentexec.ProcessExecutor`；`internal/services/agentexec/process.go` 增加 `Stdin` 支持兼容 `InputStdin` 场景。
+  - `internal/arch/constraints_test.go` 已移除 `channel/agentcli/runner.go` 的 `os/exec` 白名单，防止绕过回归。
+- 回归验证：
+  - `go test ./internal/services/channel/...`
+  - `go test ./internal/services/agentexec/...`
+  - `go test ./internal/services/task/...`
+  - `go test ./internal/arch/...`
+  - `DALEK_DISPATCH_DEPTH=0 go test ./...`
+  - `go build ./...`
+  - `DALEK_DISPATCH_DEPTH=0 go vet ./...`
+  - 以上命令全部通过。
+- 依赖推进：
+  - `T07 -> T08` 已闭环，`T09` 可在统一执行入口之上继续推进会话/收口改造。
 
 ## W08A 回写（T18 Provider/默认值/客户端归位）
 

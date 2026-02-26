@@ -60,6 +60,7 @@ const (
 	TaskOwnerWorker   TaskOwnerType = contracts.TaskOwnerWorker
 	TaskOwnerPM       TaskOwnerType = contracts.TaskOwnerPM
 	TaskOwnerSubagent TaskOwnerType = contracts.TaskOwnerSubagent
+	TaskOwnerChannel  TaskOwnerType = contracts.TaskOwnerChannel
 )
 
 func ParseTaskOwnerType(raw string) (TaskOwnerType, error) {
@@ -68,10 +69,10 @@ func ParseTaskOwnerType(raw string) (TaskOwnerType, error) {
 		return "", nil
 	}
 	switch TaskOwnerType(raw) {
-	case TaskOwnerWorker, TaskOwnerPM, TaskOwnerSubagent:
+	case TaskOwnerWorker, TaskOwnerPM, TaskOwnerSubagent, TaskOwnerChannel:
 		return TaskOwnerType(raw), nil
 	default:
-		return "", fmt.Errorf("owner 仅支持 worker|pm|subagent")
+		return "", fmt.Errorf("owner 仅支持 worker|pm|subagent|channel")
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"dalek/internal/repo"
 	"dalek/internal/services/channel/agentcli"
 	"dalek/internal/services/core"
+	"dalek/internal/services/task"
 	"dalek/internal/store"
 
 	"gorm.io/gorm"
@@ -1107,6 +1108,7 @@ func TestProcessInbound_ResolveBackendFromProjectConfig(t *testing.T) {
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
 		Name:     "demo",
+		Key:      "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
@@ -1116,7 +1118,8 @@ func TestProcessInbound_ResolveBackendFromProjectConfig(t *testing.T) {
 				Model:    "gpt-5-codex-config",
 			},
 		},
-		DB: db,
+		DB:          db,
+		TaskRuntime: task.NewRuntimeFactory(),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1143,6 +1146,7 @@ func TestProcessInbound_ResolveBackendFromProjectConfig(t *testing.T) {
 	if result.AgentModel != "gpt-5-codex-config" {
 		t.Fatalf("unexpected model: %q", result.AgentModel)
 	}
+	assertChannelTaskRunCreated(t, db, result.ConversationID)
 }
 
 func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
@@ -1155,6 +1159,7 @@ func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
 	repoRoot := t.TempDir()
 	svc := New(&core.Project{
 		Name:     "demo",
+		Key:      "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
@@ -1164,7 +1169,8 @@ func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
 				Model:    "gpt-5-codex-sdk",
 			},
 		},
-		DB: db,
+		DB:          db,
+		TaskRuntime: task.NewRuntimeFactory(),
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1208,6 +1214,7 @@ func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
 	if strings.TrimSpace(conv.AgentSessionID) != "thread-sdk-chan-1" {
 		t.Fatalf("unexpected session id: %q", conv.AgentSessionID)
 	}
+	assertChannelTaskRunCreated(t, db, result.ConversationID)
 }
 
 func TestBuildPMAgentPrompt_WithSenderName(t *testing.T) {
@@ -1283,6 +1290,7 @@ func newChannelServiceWithFakeAgent(t *testing.T, db *gorm.DB) *Service {
 	repoRoot := t.TempDir()
 	return New(&core.Project{
 		Name:     "demo",
+		Key:      "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
@@ -1290,8 +1298,34 @@ func newChannelServiceWithFakeAgent(t *testing.T, db *gorm.DB) *Service {
 				Mode: "cli",
 			},
 		},
-		DB: db,
+		DB:          db,
+		TaskRuntime: task.NewRuntimeFactory(),
 	})
+}
+
+func assertChannelTaskRunCreated(t *testing.T, db *gorm.DB, conversationID uint) {
+	t.Helper()
+	var run contracts.TaskRun
+	if err := db.Where("owner_type = ? AND task_type = ? AND subject_type = ? AND subject_id = ?",
+		contracts.TaskOwnerChannel,
+		contracts.TaskTypeChannelTurn,
+		"channel_conversation",
+		fmt.Sprintf("%d", conversationID),
+	).Order("id DESC").First(&run).Error; err != nil {
+		t.Fatalf("query channel task run failed: %v", err)
+	}
+	if run.OwnerType != contracts.TaskOwnerChannel {
+		t.Fatalf("unexpected owner_type: %s", run.OwnerType)
+	}
+	if strings.TrimSpace(run.TaskType) != contracts.TaskTypeChannelTurn {
+		t.Fatalf("unexpected task_type: %s", run.TaskType)
+	}
+	if strings.TrimSpace(run.SubjectType) != "channel_conversation" {
+		t.Fatalf("unexpected subject_type: %s", run.SubjectType)
+	}
+	if strings.TrimSpace(run.SubjectID) != fmt.Sprintf("%d", conversationID) {
+		t.Fatalf("unexpected subject_id: %s", run.SubjectID)
+	}
 }
 
 func installFakeClaudeBinary(t *testing.T, emptyOutput bool) {
