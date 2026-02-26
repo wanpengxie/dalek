@@ -147,7 +147,7 @@ func (h *ExecutionHost) SubmitDispatch(ctx context.Context, req DispatchSubmitRe
 	}
 
 	runID := submission.TaskRunID
-	requestID = strings.TrimSpace(submission.RequestID)
+	requestID = submission.RequestID
 	if requestID == "" {
 		requestID = NewRequestID("dsp")
 	}
@@ -162,11 +162,11 @@ func (h *ExecutionHost) SubmitDispatch(ctx context.Context, req DispatchSubmitRe
 			requestID:   requestID,
 			runID:       runID,
 			jobID:       submission.JobID,
-			jobStatus:   strings.TrimSpace(submission.JobStatus),
+			jobStatus:   submission.JobStatus,
 			ticketID:    req.TicketID,
 			workerID:    submission.WorkerID,
 			runnerID:    "daemon_" + NewRequestID("runner"),
-			entryPrompt: strings.TrimSpace(req.Prompt),
+			entryPrompt: req.Prompt,
 			ctx:         runCtx,
 			cancel:      cancel,
 			ready:       make(chan struct{}),
@@ -195,10 +195,10 @@ func (h *ExecutionHost) SubmitDispatch(ctx context.Context, req DispatchSubmitRe
 			existing.jobID = submission.JobID
 		}
 		if existing.jobStatus == "" {
-			existing.jobStatus = strings.TrimSpace(submission.JobStatus)
+			existing.jobStatus = submission.JobStatus
 		}
 		if existing.entryPrompt == "" {
-			existing.entryPrompt = strings.TrimSpace(req.Prompt)
+			existing.entryPrompt = req.Prompt
 		}
 		h.requests[requestID] = existing
 		h.addRunProjectIndexLocked(runID, projectName)
@@ -213,7 +213,7 @@ func (h *ExecutionHost) SubmitDispatch(ctx context.Context, req DispatchSubmitRe
 		JobID:     submission.JobID,
 		TicketID:  submission.TicketID,
 		WorkerID:  submission.WorkerID,
-		JobStatus: strings.TrimSpace(submission.JobStatus),
+		JobStatus: submission.JobStatus,
 	}, nil
 }
 
@@ -246,7 +246,7 @@ func (h *ExecutionHost) SubmitWorkerRun(ctx context.Context, req WorkerRunSubmit
 		project:     projectName,
 		requestID:   requestID,
 		ticketID:    req.TicketID,
-		entryPrompt: strings.TrimSpace(req.Prompt),
+		entryPrompt: req.Prompt,
 		ctx:         runCtx,
 		cancel:      cancel,
 		ready:       make(chan struct{}),
@@ -267,7 +267,7 @@ func (h *ExecutionHost) SubmitWorkerRun(ctx context.Context, req WorkerRunSubmit
 
 	select {
 	case <-handle.ready:
-	case <-time.After(workerRunIDProbeTimeout):
+	case <-time.After(workerRunReadyTimeout):
 	}
 	return h.workerReceiptFromHandle(handle), nil
 }
@@ -298,10 +298,12 @@ func (h *ExecutionHost) SubmitSubagentRun(ctx context.Context, req SubagentSubmi
 	if err != nil {
 		return SubagentSubmitReceipt{}, err
 	}
+	provider := strings.TrimSpace(req.Provider)
+	model := strings.TrimSpace(req.Model)
 	submission, err := project.SubmitSubagentRun(ctx, SubagentSubmitOptions{
 		RequestID: requestID,
-		Provider:  strings.TrimSpace(req.Provider),
-		Model:     strings.TrimSpace(req.Model),
+		Provider:  provider,
+		Model:     model,
 		Prompt:    prompt,
 	})
 	if err != nil {
@@ -310,8 +312,8 @@ func (h *ExecutionHost) SubmitSubagentRun(ctx context.Context, req SubagentSubmi
 	if submission.TaskRunID == 0 {
 		return SubagentSubmitReceipt{}, fmt.Errorf("subagent submit 未返回 task_run_id")
 	}
-	if strings.TrimSpace(submission.RequestID) != "" {
-		requestID = strings.TrimSpace(submission.RequestID)
+	if submission.RequestID != "" {
+		requestID = submission.RequestID
 	}
 
 	runID := submission.TaskRunID
@@ -326,8 +328,8 @@ func (h *ExecutionHost) SubmitSubagentRun(ctx context.Context, req SubagentSubmi
 			runID:       runID,
 			entryPrompt: prompt,
 			runnerID:    "daemon_" + NewRequestID("runner"),
-			provider:    strings.TrimSpace(submission.Provider),
-			model:       strings.TrimSpace(submission.Model),
+			provider:    submission.Provider,
+			model:       submission.Model,
 			ctx:         runCtx,
 			cancel:      cancel,
 			ready:       make(chan struct{}),
@@ -350,10 +352,10 @@ func (h *ExecutionHost) SubmitSubagentRun(ctx context.Context, req SubagentSubmi
 			existing.entryPrompt = prompt
 		}
 		if existing.provider == "" {
-			existing.provider = strings.TrimSpace(submission.Provider)
+			existing.provider = submission.Provider
 		}
 		if existing.model == "" {
-			existing.model = strings.TrimSpace(submission.Model)
+			existing.model = submission.Model
 		}
 		if existing.runnerID == "" {
 			existing.runnerID = "daemon_" + NewRequestID("runner")
@@ -368,9 +370,9 @@ func (h *ExecutionHost) SubmitSubagentRun(ctx context.Context, req SubagentSubmi
 		Project:    projectName,
 		TaskRunID:  submission.TaskRunID,
 		RequestID:  requestID,
-		Provider:   strings.TrimSpace(submission.Provider),
-		Model:      strings.TrimSpace(submission.Model),
-		RuntimeDir: strings.TrimSpace(submission.RuntimeDir),
+		Provider:   submission.Provider,
+		Model:      submission.Model,
+		RuntimeDir: submission.RuntimeDir,
 	}, nil
 }
 
@@ -389,8 +391,8 @@ func (h *ExecutionHost) GetRunStatus(ctx context.Context, runID uint) (*RunStatu
 		if err == nil {
 			status, serr := project.GetTaskStatus(ctx, runID)
 			if serr == nil && status != nil {
-				if strings.TrimSpace(status.Project) == "" {
-					status.Project = strings.TrimSpace(handle.project)
+				if status.Project == "" {
+					status.Project = handle.project
 				}
 				return status, nil
 			}
@@ -423,21 +425,21 @@ func (h *ExecutionHost) ListRunEvents(ctx context.Context, runID uint, limit int
 
 	projectName := ""
 	if handle, ok := h.getRunHandle(runID); ok {
-		projectName = strings.TrimSpace(handle.project)
+		projectName = handle.project
 	}
 	if projectName == "" {
 		_, foundProject, err := h.findRunStatusByIndex(ctx, runID)
 		if err != nil {
 			return nil, err
 		}
-		projectName = strings.TrimSpace(foundProject)
+		projectName = foundProject
 	}
 	if projectName == "" {
 		_, foundProject, err := h.findRunStatusByScan(ctx, runID)
 		if err != nil {
 			return nil, err
 		}
-		projectName = strings.TrimSpace(foundProject)
+		projectName = foundProject
 	}
 	if projectName == "" {
 		return nil, nil
@@ -466,8 +468,8 @@ func (h *ExecutionHost) CancelRun(runID uint) (CancelResult, error) {
 		return CancelResult{
 			Found:     true,
 			Canceled:  true,
-			Project:   strings.TrimSpace(handle.project),
-			RequestID: strings.TrimSpace(handle.requestID),
+			Project:   handle.project,
+			RequestID: handle.requestID,
 			Reason:    "cancel signal sent",
 		}, nil
 	}
@@ -487,7 +489,7 @@ func (h *ExecutionHost) CancelRun(runID uint) (CancelResult, error) {
 	return CancelResult{
 		Found:     true,
 		Canceled:  false,
-		Project:   strings.TrimSpace(projectName),
+		Project:   projectName,
 		RequestID: "",
 		Reason:    "run 不在当前 daemon 执行上下文中（可能已结束或由旧实例启动）",
 	}, nil

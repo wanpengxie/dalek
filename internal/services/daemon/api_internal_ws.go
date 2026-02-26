@@ -107,19 +107,19 @@ func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGat
 						return
 					}
 					frame := gatewayws.OutboundFrame{
-						Type:           strings.TrimSpace(ev.Type),
+						Type:           ev.Type,
 						ConversationID: conversationID,
-						PeerMessageID:  strings.TrimSpace(ev.PeerMessageID),
-						RunID:          strings.TrimSpace(ev.RunID),
+						PeerMessageID:  ev.PeerMessageID,
+						RunID:          ev.RunID,
 						Seq:            ev.Seq,
-						Stream:         strings.TrimSpace(ev.Stream),
-						Text:           strings.TrimSpace(ev.Text),
-						EventType:      strings.TrimSpace(ev.EventType),
-						AgentProvider:  strings.TrimSpace(ev.AgentProvider),
-						AgentModel:     strings.TrimSpace(ev.AgentModel),
-						JobStatus:      strings.TrimSpace(string(ev.JobStatus)),
-						JobErrorType:   strings.TrimSpace(ev.JobErrorType),
-						JobError:       strings.TrimSpace(ev.JobError),
+						Stream:         ev.Stream,
+						Text:           ev.Text,
+						EventType:      ev.EventType,
+						AgentProvider:  ev.AgentProvider,
+						AgentModel:     ev.AgentModel,
+						JobStatus:      string(ev.JobStatus),
+						JobErrorType:   ev.JobErrorType,
+						JobError:       ev.JobError,
 						At:             gatewayws.FormatTimestamp(time.Now()),
 					}
 					if !send(frame) {
@@ -163,8 +163,8 @@ func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGat
 				})
 				continue
 			}
-			if strings.TrimSpace(parsedSenderID) != "" {
-				senderID = strings.TrimSpace(parsedSenderID)
+			if parsedSenderID != "" {
+				senderID = parsedSenderID
 			}
 
 			seq++

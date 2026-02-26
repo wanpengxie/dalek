@@ -12,13 +12,15 @@
 ## 当前执行状态（Kernel 回写）
 
 - 更新时间：`2026-02-26`
-- 已完成批次：`W01` `W02` `W03`
-- 当前批次：`W05A`（`in_execution`）
+- 已完成批次：`W01` `W02` `W03` `W04`
+- 当前批次：`W05`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
 - W04 已完成票：`T22(29)` `T14(21)` `T31(38)` `T29(36)`
+- W05 已完成票：`T30(37)`
 - W05A 分叉进行中票：`T23(30)` `T37(44)`（先行执行，不依赖 `T14(21)`）
+- W05 待完成票：`T15`（待调度）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -343,6 +345,23 @@ Tickets: <T.. T.. T..>
 - 依赖与下游影响：
   - `T30` 可直接在拆分后的 `runner/index/types` 边界上继续推进，不再需要先做文件级切分。
   - daemon recover/logger 与 `contracts/core project` 注入方式保持不变，外部 API 行为无回退。
+
+## W05 回写（T30 Daemon 清洗边界）
+
+- 状态：`T30` 已完成（2026-02-26）。
+- 交付物：
+  - 在 `execution_host_{types,runner,index,component,note}.go` 既有边界内完成改造，未回退为巨文件耦合实现。
+  - `execution_host_types.go` 新增 `WorkerRunResult.RunID`；`internal/app/daemon_runtime.go` 已透传 `DirectDispatchResult.LastRunID`。
+  - `execution_host_runner.go` 删除 `probeWorkerRunID` 忙等轮询与 `80ms sleep` 轮询链路，worker run 改为直接消费 `DirectDispatchWorker` 返回的 `RunID/WorkerID`。
+  - `api_internal_ws.go` 的 WS 出站帧改为保留内容字段原文（`Text/Stream/JobError` 不再 `TrimSpace`）；`channel/ws/helpers.go::ParseInboundText` 改为仅用 `TrimSpace` 判空并返回原始文本。
+  - `execution_host.go`、`execution_host_index.go`、`api_internal.go` 清理中下游冗余 `TrimSpace`，保留入口层清洗边界。
+- 测试与验证：
+  - `go test ./internal/services/daemon/...` 通过
+  - `go test ./...` 通过
+  - `go build ./...` 通过
+  - `go vet ./...` 通过
+- 依赖变化：
+  - `T29 -> T30` 依赖已闭环，`T30` 不再阻塞 W05 其他票推进。
 
 ## 每批执行建议
 

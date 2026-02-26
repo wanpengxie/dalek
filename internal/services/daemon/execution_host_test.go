@@ -80,8 +80,9 @@ type testExecutionHostProject struct {
 	runSubagentCalls      int
 	lastDispatchAutoStart *bool
 
-	nextJobID uint
-	nextRunID uint
+	nextJobID   uint
+	nextRunID   uint
+	workerRunID uint
 
 	dispatchByRequest map[string]DispatchSubmission
 	subagentByRequest map[string]SubagentSubmission
@@ -173,14 +174,19 @@ func (p *testExecutionHostProject) DirectDispatchWorker(ctx context.Context, tic
 	started := p.directDispatchStarted
 	release := p.directDispatchRelease
 	ignoreCancel := p.directDispatchIgnoreCancel
+	runID := p.workerRunID
 	p.mu.Unlock()
 	notifyExecutionStarted(started)
 	if err := waitExecutionRelease(ctx, delay, release, ignoreCancel); err != nil {
 		return WorkerRunResult{}, err
 	}
+	if runID == 0 {
+		runID = 501
+	}
 	return WorkerRunResult{
 		TicketID: ticketID,
 		WorkerID: 401,
+		RunID:    runID,
 	}, nil
 }
 
@@ -278,8 +284,17 @@ func waitExecutionRelease(ctx context.Context, delay time.Duration, release chan
 }
 
 func (p *testExecutionHostProject) FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*RunStatus, error) {
+	p.mu.Lock()
+	runID := p.workerRunID
+	p.mu.Unlock()
+	if runID == 0 {
+		runID = 501
+	}
+	if afterRunID >= runID {
+		return nil, nil
+	}
 	return &RunStatus{
-		RunID:     501,
+		RunID:     runID,
 		TicketID:  ticketID,
 		WorkerID:  401,
 		Project:   "demo",
@@ -432,6 +447,30 @@ func TestExecutionHost_OnRunSettled_WorkerRun(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("expected OnRunSettled callback for worker run")
+	}
+}
+
+func TestExecutionHost_SubmitWorkerRun_UsesRunIDFromDirectResult(t *testing.T) {
+	project := &testExecutionHostProject{workerRunID: 8801}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	receipt, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "worker-runid-from-result",
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("SubmitWorkerRun failed: %v", err)
+	}
+	if receipt.TaskRunID != 8801 {
+		t.Fatalf("expected task_run_id from direct result, got=%d", receipt.TaskRunID)
+	}
+	if receipt.WorkerID != 401 {
+		t.Fatalf("expected worker_id=401, got=%d", receipt.WorkerID)
 	}
 }
 

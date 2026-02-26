@@ -12,28 +12,26 @@ import (
 )
 
 func ParseInboundText(payload []byte) (string, string, error) {
-	raw := strings.TrimSpace(string(payload))
-	if raw == "" {
+	raw := string(payload)
+	if strings.TrimSpace(raw) == "" {
 		return "", "", fmt.Errorf("消息不能为空")
 	}
 
 	var frame InboundFrame
 	if err := json.Unmarshal(payload, &frame); err == nil {
-		text := strings.TrimSpace(frame.Text)
 		senderID := strings.TrimSpace(frame.SenderID)
-		if text == "" {
+		if strings.TrimSpace(frame.Text) == "" {
 			return "", "", fmt.Errorf("消息不能为空")
 		}
-		return text, senderID, nil
+		return frame.Text, senderID, nil
 	}
 
 	var asString string
 	if err := json.Unmarshal(payload, &asString); err == nil {
-		text := strings.TrimSpace(asString)
-		if text == "" {
+		if strings.TrimSpace(asString) == "" {
 			return "", "", fmt.Errorf("消息不能为空")
 		}
-		return text, "", nil
+		return asString, "", nil
 	}
 
 	return raw, "", nil
