@@ -12,7 +12,7 @@ const (
 
 func ResolveBackend(cfg ConfigOverride) ResolvedBackend {
 	provider := normalizeProvider(cfg.Provider)
-	if envProvider := strings.TrimSpace(os.Getenv("DALEK_GATEWAY_AGENT_PROVIDER")); envProvider != "" {
+	if envProvider := os.Getenv("DALEK_GATEWAY_AGENT_PROVIDER"); envProvider != "" {
 		provider = normalizeProvider(envProvider)
 	}
 
@@ -25,7 +25,7 @@ func ResolveBackend(cfg ConfigOverride) ResolvedBackend {
 		provider = ProviderClaude
 	}
 
-	if cmd := strings.TrimSpace(cfg.Command); cmd != "" {
+	if cmd := cfg.Command; cmd != "" {
 		backend.Command = cmd
 	}
 	if output := parseOutputMode(cfg.Output); output != "" {
@@ -36,8 +36,8 @@ func ResolveBackend(cfg ConfigOverride) ResolvedBackend {
 	}
 	backend = applyEnvOverrides(backend)
 
-	model := strings.TrimSpace(cfg.Model)
-	if envModel := strings.TrimSpace(os.Getenv("DALEK_GATEWAY_AGENT_MODEL")); envModel != "" {
+	model := cfg.Model
+	if envModel := os.Getenv("DALEK_GATEWAY_AGENT_MODEL"); envModel != "" {
 		model = envModel
 	}
 
@@ -114,20 +114,20 @@ func defaultSessionFields() []string {
 
 func applyEnvOverrides(in Backend) Backend {
 	out := in
-	if cmd := strings.TrimSpace(os.Getenv("DALEK_GATEWAY_AGENT_COMMAND")); cmd != "" {
+	if cmd := os.Getenv("DALEK_GATEWAY_AGENT_COMMAND"); cmd != "" {
 		out.Command = cmd
 	}
-	if output := parseOutputMode(strings.TrimSpace(os.Getenv("DALEK_GATEWAY_AGENT_OUTPUT"))); output != "" {
+	if output := parseOutputMode(os.Getenv("DALEK_GATEWAY_AGENT_OUTPUT")); output != "" {
 		out.Output = output
 	}
-	if resumeOutput := parseOutputMode(strings.TrimSpace(os.Getenv("DALEK_GATEWAY_AGENT_RESUME_OUTPUT"))); resumeOutput != "" {
+	if resumeOutput := parseOutputMode(os.Getenv("DALEK_GATEWAY_AGENT_RESUME_OUTPUT")); resumeOutput != "" {
 		out.ResumeOutput = resumeOutput
 	}
 	return out
 }
 
 func normalizeProvider(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
+	switch strings.ToLower(raw) {
 	case "claude", "claude-cli":
 		return ProviderClaude
 	case "codex", "codex-cli":
@@ -138,7 +138,7 @@ func normalizeProvider(raw string) string {
 }
 
 func parseOutputMode(raw string) OutputMode {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
+	switch strings.ToLower(raw) {
 	case string(OutputText):
 		return OutputText
 	case string(OutputJSON):

@@ -156,25 +156,25 @@ func NewSyncHandler(rawOpt ServerOptions) (string, http.HandlerFunc) {
 						continue
 					}
 
-					reply := strings.TrimSpace(result.ReplyText)
-					if reply == "" {
-						reply = "(empty reply)"
-					}
-					finalRunID := strings.TrimSpace(result.RunID)
-					lastSeq := 0
-					finalSeq := 0
-					finalEventType := "end"
-					for _, ev := range result.AgentEvents {
-						runID := strings.TrimSpace(ev.RunID)
-						if runID == "" {
-							runID = finalRunID
+						reply := result.ReplyText
+						if reply == "" {
+							reply = "(empty reply)"
 						}
-						if finalRunID == "" && runID != "" {
-							finalRunID = runID
-						}
-						stream := strings.TrimSpace(string(ev.Stream))
-						evType := DeriveEventType(stream, ev.Data.Phase)
-						evText := strings.TrimSpace(ev.Data.Text)
+						finalRunID := result.RunID
+						lastSeq := 0
+						finalSeq := 0
+						finalEventType := "end"
+						for _, ev := range result.AgentEvents {
+							runID := ev.RunID
+							if runID == "" {
+								runID = finalRunID
+							}
+							if finalRunID == "" && runID != "" {
+								finalRunID = runID
+							}
+							stream := string(ev.Stream)
+							evType := DeriveEventType(stream, ev.Data.Phase)
+							evText := ev.Data.Text
 						if ev.Seq > lastSeq {
 							lastSeq = ev.Seq
 						}
@@ -189,18 +189,18 @@ func NewSyncHandler(rawOpt ServerOptions) (string, http.HandlerFunc) {
 						if evText != "" && evText == reply {
 							continue
 						}
-						if !send(OutboundFrame{
-							Type:           FrameTypeAssistantEvent,
-							ConversationID: conversationID,
-							RunID:          runID,
-							Seq:            ev.Seq,
-							Stream:         stream,
-							Text:           evText,
-							EventType:      evType,
-							AgentProvider:  strings.TrimSpace(result.AgentProvider),
-							AgentModel:     strings.TrimSpace(result.AgentModel),
-							At:             FormatTimestamp(time.Now()),
-						}) {
+							if !send(OutboundFrame{
+								Type:           FrameTypeAssistantEvent,
+								ConversationID: conversationID,
+								RunID:          runID,
+								Seq:            ev.Seq,
+								Stream:         stream,
+								Text:           evText,
+								EventType:      evType,
+								AgentProvider:  result.AgentProvider,
+								AgentModel:     result.AgentModel,
+								At:             FormatTimestamp(time.Now()),
+							}) {
 							closeConn()
 							return
 						}
@@ -211,21 +211,21 @@ func NewSyncHandler(rawOpt ServerOptions) (string, http.HandlerFunc) {
 					if result.JobStatus != contracts.ChannelTurnSucceeded {
 						finalEventType = "error"
 					}
-					if !send(OutboundFrame{
-						Type:           FrameTypeAssistantMessage,
-						ConversationID: conversationID,
-						RunID:          finalRunID,
-						Seq:            finalSeq,
-						Stream:         "lifecycle",
-						Text:           reply,
-						EventType:      finalEventType,
-						AgentProvider:  strings.TrimSpace(result.AgentProvider),
-						AgentModel:     strings.TrimSpace(result.AgentModel),
-						JobStatus:      strings.TrimSpace(string(result.JobStatus)),
-						JobErrorType:   strings.TrimSpace(result.JobErrorType),
-						JobError:       strings.TrimSpace(result.JobError),
-						At:             FormatTimestamp(time.Now()),
-					}) {
+						if !send(OutboundFrame{
+							Type:           FrameTypeAssistantMessage,
+							ConversationID: conversationID,
+							RunID:          finalRunID,
+							Seq:            finalSeq,
+							Stream:         "lifecycle",
+							Text:           reply,
+							EventType:      finalEventType,
+							AgentProvider:  result.AgentProvider,
+							AgentModel:     result.AgentModel,
+							JobStatus:      string(result.JobStatus),
+							JobErrorType:   result.JobErrorType,
+							JobError:       result.JobError,
+							At:             FormatTimestamp(time.Now()),
+						}) {
 						closeConn()
 						return
 					}

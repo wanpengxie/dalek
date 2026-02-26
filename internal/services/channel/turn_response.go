@@ -10,8 +10,8 @@ import (
 
 func parseTurnResponseFromAgent(resp pmAgentTurnResponse) (contracts.TurnResponse, bool) {
 	candidates := []string{
-		strings.TrimSpace(resp.Text),
-		strings.TrimSpace(resp.Stdout),
+		resp.Text,
+		resp.Stdout,
 	}
 	for _, candidate := range candidates {
 		if tr, ok := parseTurnResponseCandidate(candidate); ok {
@@ -32,7 +32,7 @@ func parseTurnResponseCandidate(raw string) (contracts.TurnResponse, bool) {
 
 	lines := strings.Split(raw, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
+		line := lines[i]
 		if line == "" {
 			continue
 		}
@@ -86,7 +86,7 @@ func looksLikeTurnResponseMap(m map[string]any) bool {
 	if len(m) == 0 {
 		return false
 	}
-	if schema := strings.TrimSpace(fmt.Sprint(m["schema"])); schema == contracts.TurnResponseSchemaV1 {
+	if schema := fmt.Sprint(m["schema"]); schema == contracts.TurnResponseSchemaV1 {
 		return true
 	}
 	if _, ok := m["reply_text"]; ok {
@@ -119,11 +119,11 @@ func extractMarkdownCodeBlocks(raw string) []string {
 			break
 		}
 		end += start + 3
-		block := strings.TrimSpace(raw[start+3 : end])
+		block := raw[start+3 : end]
 		if nl := strings.Index(block, "\n"); nl >= 0 {
-			firstLine := strings.ToLower(strings.TrimSpace(block[:nl]))
+			firstLine := strings.ToLower(block[:nl])
 			if firstLine == "json" || firstLine == "javascript" || firstLine == "js" {
-				block = strings.TrimSpace(block[nl+1:])
+				block = block[nl+1:]
 			}
 		}
 		if block != "" {

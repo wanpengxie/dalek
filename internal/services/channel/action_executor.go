@@ -52,7 +52,7 @@ func (e *ActionExecutor) Execute(ctx context.Context, action contracts.TurnActio
 	}
 
 	action.Normalize()
-	name := strings.ToLower(strings.TrimSpace(action.Name))
+	name := strings.ToLower(action.Name)
 	if name == "" {
 		return ActionResult{}, fmt.Errorf("action.name 不能为空")
 	}
@@ -130,7 +130,7 @@ func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contrac
 		}
 		return ActionResult{}, err
 	}
-	msg := fmt.Sprintf("t%d %s（状态=%s，优先级=%d）", tk.ID, strings.TrimSpace(tk.Title), tk.WorkflowStatus, tk.Priority)
+	msg := fmt.Sprintf("t%d %s（状态=%s，优先级=%d）", tk.ID, tk.Title, tk.WorkflowStatus, tk.Priority)
 	return ActionResult{
 		ActionName: contracts.ActionTicketDetail,
 		Success:    true,
@@ -161,7 +161,7 @@ func (e *ActionExecutor) executeCreateTicket(ctx context.Context, action contrac
 	if err != nil {
 		return ActionResult{}, err
 	}
-	msg := fmt.Sprintf("已创建 t%d：%s", tk.ID, strings.TrimSpace(tk.Title))
+	msg := fmt.Sprintf("已创建 t%d：%s", tk.ID, tk.Title)
 	return ActionResult{
 		ActionName: contracts.ActionCreateTicket,
 		Success:    true,
@@ -184,7 +184,7 @@ func (e *ActionExecutor) executeStartTicket(ctx context.Context, action contract
 	}
 	baseBranch := actionArgString(action.Args, "base_branch", "baseBranch", "base")
 	worker, err := e.pmSvc.StartTicketWithOptions(ctx, ticketID, pmsvc.StartOptions{
-		BaseBranch: strings.TrimSpace(baseBranch),
+		BaseBranch: baseBranch,
 	})
 	if err != nil {
 		return ActionResult{}, err
@@ -293,7 +293,7 @@ func (e *ActionExecutor) executeArchiveTicket(ctx context.Context, action contra
 
 func (e *ActionExecutor) executeListMergeItems(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
 	limit := actionArgInt(action.Args, 20, 1, 200, "limit")
-	statusRaw := strings.ToLower(strings.TrimSpace(actionArgString(action.Args, "status")))
+	statusRaw := strings.ToLower(actionArgString(action.Args, "status"))
 	opt := pmsvc.ListMergeOptions{Limit: limit}
 	if statusRaw != "" {
 		opt.Status = contracts.MergeStatus(statusRaw)
@@ -367,11 +367,11 @@ func actionArgString(args map[string]any, keys ...string) string {
 		if v, ok := args[key]; ok {
 			switch x := v.(type) {
 			case string:
-				if s := strings.TrimSpace(x); s != "" {
+				if s := x; s != "" {
 					return s
 				}
 			default:
-				raw := strings.TrimSpace(fmt.Sprint(v))
+				raw := fmt.Sprint(v)
 				if raw != "" && raw != "<nil>" {
 					return raw
 				}
@@ -398,7 +398,7 @@ func actionArgBool(args map[string]any, defaultValue bool, keys ...string) bool 
 		case bool:
 			return x
 		case string:
-			s := strings.TrimSpace(strings.ToLower(x))
+			s := strings.ToLower(x)
 			if s == "1" || s == "true" || s == "yes" || s == "y" {
 				return true
 			}
@@ -435,7 +435,7 @@ func actionArgInt(args map[string]any, defaultValue, minValue, maxValue int, key
 		case float64:
 			return clampInt(int(x), minValue, maxValue)
 		case string:
-			if n, err := strconv.Atoi(strings.TrimSpace(x)); err == nil {
+			if n, err := strconv.Atoi(x); err == nil {
 				return clampInt(n, minValue, maxValue)
 			}
 		}
@@ -487,7 +487,7 @@ func anyToUint(v any) (uint, bool) {
 		}
 		return 0, false
 	case string:
-		s := strings.TrimSpace(strings.ToLower(x))
+		s := strings.ToLower(x)
 		if s == "" {
 			return 0, false
 		}
@@ -538,11 +538,11 @@ func (s *Service) executeAction(ctx context.Context, action contracts.TurnAction
 	execRes, err := executor.Execute(ctx, action)
 	if err != nil {
 		result.Success = false
-		result.Message = strings.TrimSpace(err.Error())
+		result.Message = err.Error()
 		return result
 	}
 	result.Success = execRes.Success
-	result.Message = strings.TrimSpace(execRes.Message)
+	result.Message = execRes.Message
 	if result.Message == "" {
 		if result.Success {
 			result.Message = "操作执行成功"
@@ -564,7 +564,7 @@ func renderActionExecutionSummary(results []actionExecuteResult) string {
 		if !res.Success {
 			prefix = "[FAIL]"
 		}
-		msg := strings.TrimSpace(res.Message)
+		msg := res.Message
 		desc := describePendingAction(res.Action)
 		if msg == "" {
 			lines = append(lines, fmt.Sprintf("- %s %s", prefix, desc))
@@ -577,7 +577,7 @@ func renderActionExecutionSummary(results []actionExecuteResult) string {
 
 func describePendingAction(action contracts.TurnAction) string {
 	action.Normalize()
-	name := strings.TrimSpace(action.Name)
+	name := action.Name
 	if name == "" {
 		name = "unknown_action"
 	}
@@ -586,7 +586,7 @@ func describePendingAction(action contracts.TurnAction) string {
 	}
 	parts := make([]string, 0, len(action.Args))
 	for k, v := range action.Args {
-		key := strings.TrimSpace(k)
+		key := k
 		if key == "" {
 			continue
 		}

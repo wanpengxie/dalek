@@ -29,20 +29,16 @@ func (s *Service) runAgentSDK(ctx context.Context, req runAgentSDKRequest) (agen
 	if s == nil {
 		return agentcli.Result{}, context.Canceled
 	}
-	manager := s.chatRunners
-	if manager == nil {
-		manager = newDefaultChatRunnerManager(nil)
-		s.chatRunners = manager
-	}
+	manager := s.ensureChatRunnerManager()
 	r, err := manager.RunTurn(ctx, ChatRunRequest{
-		ConversationID: strings.TrimSpace(req.ConversationID),
-		Provider:       strings.TrimSpace(strings.ToLower(req.Provider)),
-		Model:          strings.TrimSpace(req.Model),
-		Reasoning:      strings.TrimSpace(strings.ToLower(req.Reasoning)),
-		Command:        strings.TrimSpace(req.Command),
-		Prompt:         strings.TrimSpace(req.Prompt),
-		SessionID:      strings.TrimSpace(req.SessionID),
-		WorkDir:        strings.TrimSpace(req.WorkDir),
+		ConversationID: req.ConversationID,
+		Provider:       strings.ToLower(req.Provider),
+		Model:          req.Model,
+		Reasoning:      strings.ToLower(req.Reasoning),
+		Command:        req.Command,
+		Prompt:         req.Prompt,
+		SessionID:      req.SessionID,
+		WorkDir:        req.WorkDir,
 		Env:            req.Env,
 		OnToolApproval: req.OnToolApproval,
 	}, func(ev agentcli.Event) {
@@ -51,18 +47,18 @@ func (s *Service) runAgentSDK(ctx context.Context, req runAgentSDKRequest) (agen
 		}
 	})
 	out := agentcli.Result{
-		Command:    strings.TrimSpace(r.Command),
-		Stdout:     strings.TrimSpace(r.Stdout),
-		Stderr:     strings.TrimSpace(r.Stderr),
-		Text:       strings.TrimSpace(r.Text),
-		SessionID:  strings.TrimSpace(r.SessionID),
+		Command:    r.Command,
+		Stdout:     r.Stdout,
+		Stderr:     r.Stderr,
+		Text:       r.Text,
+		SessionID:  r.SessionID,
 		Events:     make([]agentcli.Event, 0, len(r.Events)),
 		OutputMode: agentcli.OutputText,
 	}
 	if out.Command == "" {
-		out.Command = strings.TrimSpace(strings.ToLower(req.Provider)) + "(sdk)"
+		out.Command = strings.ToLower(req.Provider) + "(sdk)"
 	}
-	switch strings.TrimSpace(strings.ToLower(string(r.OutputMode))) {
+	switch strings.ToLower(string(r.OutputMode)) {
 	case string(agentcli.OutputJSONL):
 		out.OutputMode = agentcli.OutputJSONL
 	case string(agentcli.OutputJSON):
@@ -72,10 +68,10 @@ func (s *Service) runAgentSDK(ctx context.Context, req runAgentSDKRequest) (agen
 	}
 	for _, ev := range r.Events {
 		out.Events = append(out.Events, agentcli.Event{
-			Type:      strings.TrimSpace(ev.Type),
-			Text:      strings.TrimSpace(ev.Text),
-			RawJSON:   strings.TrimSpace(ev.RawJSON),
-			SessionID: strings.TrimSpace(ev.SessionID),
+			Type:      ev.Type,
+			Text:      ev.Text,
+			RawJSON:   ev.RawJSON,
+			SessionID: ev.SessionID,
 		})
 	}
 	return out, err

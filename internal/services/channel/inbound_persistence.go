@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"dalek/internal/contracts"
@@ -84,8 +83,8 @@ func EnsureBindingTx(ctx context.Context, tx *gorm.DB, p EnsureBindingParams) (s
 		}
 		updates := map[string]any{}
 		if p.AutoUpdate {
-			projectName := strings.TrimSpace(p.ProjectName)
-			if projectName != "" && strings.TrimSpace(binding.ProjectName) != projectName {
+			projectName := p.ProjectName
+			if projectName != "" && binding.ProjectName != projectName {
 				updates["project_name"] = projectName
 			}
 			if !binding.Enabled {
@@ -101,7 +100,7 @@ func EnsureBindingTx(ctx context.Context, tx *gorm.DB, p EnsureBindingParams) (s
 				return store.ChannelBinding{}, err
 			}
 			if v, ok := updates["project_name"]; ok {
-				binding.ProjectName = strings.TrimSpace(fmt.Sprint(v))
+				binding.ProjectName = fmt.Sprint(v)
 			}
 			if _, ok := updates["enabled"]; ok {
 				binding.Enabled = true
@@ -111,8 +110,8 @@ func EnsureBindingTx(ctx context.Context, tx *gorm.DB, p EnsureBindingParams) (s
 	}
 
 	channelType := toStoreChannelType(env.ChannelType)
-	adapter := strings.TrimSpace(env.Adapter)
-	peerProjectKey := strings.TrimSpace(p.PeerProjectKey)
+	adapter := env.Adapter
+	peerProjectKey := p.PeerProjectKey
 
 	var binding store.ChannelBinding
 	err := tx.WithContext(ctx).
@@ -121,8 +120,8 @@ func EnsureBindingTx(ctx context.Context, tx *gorm.DB, p EnsureBindingParams) (s
 	if err == nil {
 		updates := map[string]any{}
 		if p.AutoUpdate {
-			projectName := strings.TrimSpace(p.ProjectName)
-			if projectName != "" && strings.TrimSpace(binding.ProjectName) != projectName {
+			projectName := p.ProjectName
+			if projectName != "" && binding.ProjectName != projectName {
 				updates["project_name"] = projectName
 			}
 			if !binding.Enabled {
@@ -138,7 +137,7 @@ func EnsureBindingTx(ctx context.Context, tx *gorm.DB, p EnsureBindingParams) (s
 				return store.ChannelBinding{}, err
 			}
 			if v, ok := updates["project_name"]; ok {
-				binding.ProjectName = strings.TrimSpace(fmt.Sprint(v))
+				binding.ProjectName = fmt.Sprint(v)
 			}
 			if _, ok := updates["enabled"]; ok {
 				binding.Enabled = true
@@ -151,7 +150,7 @@ func EnsureBindingTx(ctx context.Context, tx *gorm.DB, p EnsureBindingParams) (s
 	}
 
 	binding = store.ChannelBinding{
-		ProjectName:    strings.TrimSpace(p.ProjectName),
+		ProjectName:    p.ProjectName,
 		ChannelType:    channelType,
 		Adapter:        adapter,
 		PeerProjectKey: peerProjectKey,
@@ -177,10 +176,10 @@ func PersistInboundMessageTx(ctx context.Context, tx *gorm.DB, p PersistInboundP
 	}
 	env := p.Env
 	env.Normalize()
-	adapter := strings.TrimSpace(env.Adapter)
-	peerMessageID := strings.TrimSpace(env.PeerMessageID)
-	senderID := strings.TrimSpace(env.SenderID)
-	senderName := strings.TrimSpace(env.SenderName)
+	adapter := env.Adapter
+	peerMessageID := env.PeerMessageID
+	senderID := env.SenderID
+	senderName := env.SenderName
 
 	var inbound store.ChannelMessage
 	err := tx.WithContext(ctx).
@@ -214,7 +213,7 @@ func PersistInboundMessageTx(ctx context.Context, tx *gorm.DB, p PersistInboundP
 		"schema":      env.Schema,
 		"attachments": env.Attachments,
 		"received_at": env.ReceivedAt,
-		"project":     strings.TrimSpace(p.Project),
+		"project":     p.Project,
 	}
 	inbound = store.ChannelMessage{
 		ConversationID: p.Conv.ID,
@@ -223,7 +222,7 @@ func PersistInboundMessageTx(ctx context.Context, tx *gorm.DB, p PersistInboundP
 		PeerMessageID:  &peerMessageID,
 		SenderID:       senderID,
 		SenderName:     senderName,
-		ContentText:    strings.TrimSpace(env.Text),
+		ContentText:    env.Text,
 		PayloadJSON:    mustJSON(payload),
 		Status:         contracts.ChannelMessageAccepted,
 	}
@@ -272,11 +271,11 @@ func PersistTurnResultTx(ctx context.Context, tx *gorm.DB, p PersistTurnResultPa
 		status = contracts.ChannelTurnFailed
 	}
 
-	jobErr := strings.TrimSpace(p.Result.JobError)
+	jobErr := p.Result.JobError
 	if p.RunErr != nil {
-		jobErr = strings.TrimSpace(p.RunErr.Error())
+		jobErr = p.RunErr.Error()
 	}
-	jobErrType := strings.TrimSpace(p.Result.JobErrorType)
+	jobErrType := p.Result.JobErrorType
 	if jobErrType == "" {
 		jobErrType = classifyJobErrorType(jobErr)
 	}
@@ -285,9 +284,9 @@ func PersistTurnResultTx(ctx context.Context, tx *gorm.DB, p PersistTurnResultPa
 		jobErrType = ""
 	}
 
-	adapter := strings.TrimSpace(p.Adapter)
+	adapter := p.Adapter
 	if adapter == "" {
-		adapter = strings.TrimSpace(p.Binding.Adapter)
+		adapter = p.Binding.Adapter
 	}
 
 	payload := TurnResultRecord{
@@ -295,18 +294,18 @@ func PersistTurnResultTx(ctx context.Context, tx *gorm.DB, p PersistTurnResultPa
 		BindingID:        p.Binding.ID,
 		ConversationID:   p.Conv.ID,
 		InboundMessageID: p.Inbound.ID,
-		RunID:            strings.TrimSpace(p.Result.RunID),
-		AgentReplyText:   strings.TrimSpace(p.Result.ReplyText),
-		AgentProvider:    strings.TrimSpace(p.Result.AgentProvider),
-		AgentModel:       strings.TrimSpace(p.Result.AgentModel),
-		AgentSessionID:   strings.TrimSpace(p.Result.AgentSessionID),
-		AgentOutputMode:  strings.TrimSpace(p.Result.AgentOutputMode),
-		AgentCommand:     strings.TrimSpace(p.Result.AgentCommand),
-		AgentStdout:      strings.TrimSpace(p.Result.AgentStdout),
-		AgentStderr:      strings.TrimSpace(p.Result.AgentStderr),
+		RunID:            p.Result.RunID,
+		AgentReplyText:   p.Result.ReplyText,
+		AgentProvider:    p.Result.AgentProvider,
+		AgentModel:       p.Result.AgentModel,
+		AgentSessionID:   p.Result.AgentSessionID,
+		AgentOutputMode:  p.Result.AgentOutputMode,
+		AgentCommand:     p.Result.AgentCommand,
+		AgentStdout:      p.Result.AgentStdout,
+		AgentStderr:      p.Result.AgentStderr,
 		AgentEvents:      copyAgentEvents(p.Result.AgentEvents),
 		PendingActions:   copyPendingActionViews(p.Result.PendingActions),
-		JobStatus:        strings.TrimSpace(string(status)),
+		JobStatus:        string(status),
 		JobError:         jobErr,
 		JobErrorType:     jobErrType,
 	}
@@ -334,7 +333,7 @@ func PersistTurnResultTx(ctx context.Context, tx *gorm.DB, p PersistTurnResultPa
 
 	payloadJSON := mustJSON(payload)
 
-	if strings.TrimSpace(payload.AgentReplyText) != "" {
+	if payload.AgentReplyText != "" {
 		outPeerID := fmt.Sprintf("out_job_%d", p.Job.ID)
 		outboundStatus := contracts.ChannelMessageProcessed
 		if status != contracts.ChannelTurnSucceeded {
@@ -346,7 +345,7 @@ func PersistTurnResultTx(ctx context.Context, tx *gorm.DB, p PersistTurnResultPa
 			Adapter:        adapter,
 			PeerMessageID:  &outPeerID,
 			SenderID:       "pm",
-			ContentText:    strings.TrimSpace(payload.AgentReplyText),
+			ContentText:    payload.AgentReplyText,
 			PayloadJSON:    payloadJSON,
 			Status:         outboundStatus,
 		}
@@ -404,10 +403,10 @@ func PersistTurnResultTx(ctx context.Context, tx *gorm.DB, p PersistTurnResultPa
 	convUpdates := map[string]any{
 		"updated_at": now,
 	}
-	if strings.TrimSpace(payload.AgentSessionID) != "" {
-		convUpdates["agent_session_id"] = strings.TrimSpace(payload.AgentSessionID)
+	if payload.AgentSessionID != "" {
+		convUpdates["agent_session_id"] = payload.AgentSessionID
 	}
-	if strings.TrimSpace(payload.AgentReplyText) != "" {
+	if payload.AgentReplyText != "" {
 		convUpdates["last_message_at"] = &now
 	}
 	if err := tx.WithContext(ctx).Model(&store.ChannelConversation{}).
@@ -431,7 +430,7 @@ func PersistTurnResultTx(ctx context.Context, tx *gorm.DB, p PersistTurnResultPa
 		}
 		query := tx.WithContext(ctx).Model(&store.ChannelTurnJob{}).Where("id = ?", p.Job.ID)
 		if p.RequireRunnerMatch {
-			query = query.Where("status = ? AND runner_id = ?", contracts.ChannelTurnRunning, strings.TrimSpace(p.RunnerID))
+			query = query.Where("status = ? AND runner_id = ?", contracts.ChannelTurnRunning, p.RunnerID)
 		}
 		res := query.Updates(jobUpdates)
 		if res.Error != nil {
@@ -452,10 +451,10 @@ func decodeTurnResult(job store.ChannelTurnJob) ProcessResult {
 	res := ProcessResult{
 		JobID:        job.ID,
 		JobStatus:    job.Status,
-		JobError:     strings.TrimSpace(job.Error),
-		JobErrorType: classifyJobErrorType(strings.TrimSpace(job.Error)),
+		JobError:     job.Error,
+		JobErrorType: classifyJobErrorType(job.Error),
 	}
-	raw := strings.TrimSpace(job.ResultJSON)
+	raw := job.ResultJSON
 	if raw == "" {
 		return res
 	}
@@ -470,24 +469,24 @@ func decodeTurnResult(job store.ChannelTurnJob) ProcessResult {
 	res.InboundMessageID = payload.InboundMessageID
 	res.OutboundMessageID = payload.OutboundMessageID
 	res.OutboxID = payload.OutboxID
-	res.RunID = strings.TrimSpace(payload.RunID)
-	res.ReplyText = strings.TrimSpace(payload.AgentReplyText)
-	res.AgentProvider = strings.TrimSpace(payload.AgentProvider)
-	res.AgentModel = strings.TrimSpace(payload.AgentModel)
-	res.AgentSessionID = strings.TrimSpace(payload.AgentSessionID)
-	res.AgentOutputMode = strings.TrimSpace(payload.AgentOutputMode)
-	res.AgentCommand = strings.TrimSpace(payload.AgentCommand)
-	res.AgentStdout = strings.TrimSpace(payload.AgentStdout)
-	res.AgentStderr = strings.TrimSpace(payload.AgentStderr)
+	res.RunID = payload.RunID
+	res.ReplyText = payload.AgentReplyText
+	res.AgentProvider = payload.AgentProvider
+	res.AgentModel = payload.AgentModel
+	res.AgentSessionID = payload.AgentSessionID
+	res.AgentOutputMode = payload.AgentOutputMode
+	res.AgentCommand = payload.AgentCommand
+	res.AgentStdout = payload.AgentStdout
+	res.AgentStderr = payload.AgentStderr
 	res.AgentEvents = copyAgentEvents(payload.AgentEvents)
 	res.PendingActions = copyPendingActionViews(payload.PendingActions)
-	if st := strings.TrimSpace(payload.JobStatus); st != "" {
+	if st := payload.JobStatus; st != "" {
 		res.JobStatus = contracts.ChannelTurnJobStatus(st)
 	}
-	if msg := strings.TrimSpace(payload.JobError); msg != "" {
+	if msg := payload.JobError; msg != "" {
 		res.JobError = msg
 	}
-	if jt := strings.TrimSpace(payload.JobErrorType); jt != "" {
+	if jt := payload.JobErrorType; jt != "" {
 		res.JobErrorType = jt
 	}
 	if res.JobErrorType == "" {

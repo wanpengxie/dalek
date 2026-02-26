@@ -141,12 +141,12 @@ func appendChatRunnerResponseAudit(req ChatRunRequest, startedAt time.Time, out 
 		"reasoning_effort": req.Reasoning,
 		"command":          req.Command,
 		"work_dir":         req.WorkDir,
-		"session_id":       strings.TrimSpace(out.SessionID),
+		"session_id":       out.SessionID,
 		"duration_ms":      time.Since(startedAt).Milliseconds(),
 		"output_mode":      string(out.OutputMode),
-		"text":             strings.TrimSpace(out.Text),
-		"stdout":           strings.TrimSpace(out.Stdout),
-		"stderr":           strings.TrimSpace(out.Stderr),
+		"text":             out.Text,
+		"stdout":           out.Stdout,
+		"stderr":           out.Stderr,
 		"events":           out.Events,
 		"error":            chatErrString(runErr),
 	})
@@ -156,11 +156,11 @@ func chatErrString(err error) string {
 	if err == nil {
 		return ""
 	}
-	return strings.TrimSpace(err.Error())
+	return err.Error()
 }
 
 func (m *defaultChatRunnerManager) InterruptConversation(ctx context.Context, conversationID string) (bool, error) {
-	conv := strings.TrimSpace(conversationID)
+	conv := conversationID
 	if conv == "" {
 		return false, nil
 	}
@@ -190,7 +190,7 @@ func (m *defaultChatRunnerManager) InterruptConversation(ctx context.Context, co
 		}
 		okInterrupt, err := interruptible.Interrupt(ctx)
 		if err != nil {
-			errs = append(errs, strings.TrimSpace(err.Error()))
+			errs = append(errs, err.Error())
 			continue
 		}
 		if okInterrupt {
@@ -200,7 +200,6 @@ func (m *defaultChatRunnerManager) InterruptConversation(ctx context.Context, co
 	if len(errs) > 0 {
 		clean := make([]string, 0, len(errs))
 		for _, item := range errs {
-			item = strings.TrimSpace(item)
 			if item == "" {
 				continue
 			}
@@ -214,7 +213,7 @@ func (m *defaultChatRunnerManager) InterruptConversation(ctx context.Context, co
 }
 
 func (m *defaultChatRunnerManager) CloseConversation(conversationID string) {
-	conv := strings.TrimSpace(conversationID)
+	conv := conversationID
 	if conv == "" {
 		return
 	}
@@ -255,7 +254,7 @@ func (m *defaultChatRunnerManager) Close() error {
 func (m *defaultChatRunnerManager) getOrCreateStatefulRunner(ctx context.Context, key, signature string, req ChatRunRequest) (ChatRunner, error) {
 	m.mu.Lock()
 	existing := m.stateful[key]
-	if existing != nil && existing.runner != nil && strings.TrimSpace(existing.signature) == strings.TrimSpace(signature) {
+	if existing != nil && existing.runner != nil && existing.signature == signature {
 		runner := existing.runner
 		m.mu.Unlock()
 		return runner, nil
@@ -286,7 +285,7 @@ func (m *defaultChatRunnerManager) getOrCreateStatefulRunner(ctx context.Context
 
 	m.mu.Lock()
 	existing = m.stateful[key]
-	if existing != nil && existing.runner != nil && strings.TrimSpace(existing.signature) == strings.TrimSpace(signature) {
+	if existing != nil && existing.runner != nil && existing.signature == signature {
 		m.mu.Unlock()
 		_ = runner.Close()
 		return existing.runner, nil
@@ -313,11 +312,11 @@ func (m *defaultChatRunnerManager) evictStatefulRunner(key string, candidate Cha
 }
 
 func providerUsesStatefulChatRunner(provider string) bool {
-	return strings.TrimSpace(strings.ToLower(provider)) == "claude"
+	return strings.ToLower(provider) == "claude"
 }
 
 func shouldEvictStatefulRunner(err error) bool {
-	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	msg := strings.ToLower(err.Error())
 	if msg == "" {
 		return false
 	}
@@ -335,8 +334,8 @@ func shouldEvictStatefulRunner(err error) bool {
 }
 
 func buildStatefulRunnerKey(provider, conversationID string) string {
-	p := strings.TrimSpace(strings.ToLower(provider))
-	conv := strings.TrimSpace(conversationID)
+	p := strings.ToLower(provider)
+	conv := conversationID
 	if conv == "" {
 		conv = "conv-default"
 	}
@@ -345,11 +344,11 @@ func buildStatefulRunnerKey(provider, conversationID string) string {
 
 func buildStatefulRunnerSignature(req ChatRunRequest) string {
 	parts := []string{
-		"provider=" + strings.TrimSpace(strings.ToLower(req.Provider)),
-		"model=" + strings.TrimSpace(req.Model),
-		"command=" + strings.TrimSpace(req.Command),
-		"workdir=" + strings.TrimSpace(req.WorkDir),
-		"reasoning=" + strings.TrimSpace(strings.ToLower(req.Reasoning)),
+		"provider=" + strings.ToLower(req.Provider),
+		"model=" + req.Model,
+		"command=" + req.Command,
+		"workdir=" + req.WorkDir,
+		"reasoning=" + strings.ToLower(req.Reasoning),
 		"env=" + encodeChatEnv(req.Env),
 	}
 	return strings.Join(parts, "|")
@@ -361,11 +360,10 @@ func encodeChatEnv(env map[string]string) string {
 	}
 	keys := make([]string, 0, len(env))
 	for key := range env {
-		k := strings.TrimSpace(key)
-		if k == "" {
+		if key == "" {
 			continue
 		}
-		keys = append(keys, k)
+		keys = append(keys, key)
 	}
 	if len(keys) == 0 {
 		return ""
@@ -384,9 +382,9 @@ func encodeChatEnv(env map[string]string) string {
 
 func normalizeChatRunRequest(req ChatRunRequest) ChatRunRequest {
 	req.ConversationID = strings.TrimSpace(req.ConversationID)
-	req.Provider = strings.TrimSpace(strings.ToLower(req.Provider))
+	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
 	req.Model = strings.TrimSpace(req.Model)
-	req.Reasoning = strings.TrimSpace(strings.ToLower(req.Reasoning))
+	req.Reasoning = strings.ToLower(strings.TrimSpace(req.Reasoning))
 	req.Command = strings.TrimSpace(req.Command)
 	req.WorkDir = strings.TrimSpace(req.WorkDir)
 	req.Prompt = strings.TrimSpace(req.Prompt)
@@ -434,10 +432,10 @@ func (r *sdkTaskBackedChatRunner) RunTurn(ctx context.Context, req ChatRunReques
 		Env:             req.Env,
 	}, func(ev sdkrunner.Event) {
 		item := agentcli.Event{
-			Type:      strings.TrimSpace(ev.Type),
-			Text:      strings.TrimSpace(ev.Text),
-			RawJSON:   strings.TrimSpace(ev.RawJSON),
-			SessionID: strings.TrimSpace(ev.SessionID),
+			Type:      ev.Type,
+			Text:      ev.Text,
+			RawJSON:   ev.RawJSON,
+			SessionID: ev.SessionID,
 		}
 		internalEvents = append(internalEvents, item)
 		if onEvent != nil {
@@ -446,18 +444,18 @@ func (r *sdkTaskBackedChatRunner) RunTurn(ctx context.Context, req ChatRunReques
 	})
 
 	out := ChatRunResult{
-		Command:    strings.TrimSpace(req.Command),
-		Stdout:     strings.TrimSpace(result.Stdout),
-		Stderr:     strings.TrimSpace(result.Stderr),
-		Text:       strings.TrimSpace(result.Text),
-		SessionID:  strings.TrimSpace(result.SessionID),
+		Command:    req.Command,
+		Stdout:     result.Stdout,
+		Stderr:     result.Stderr,
+		Text:       result.Text,
+		SessionID:  result.SessionID,
 		Events:     internalEvents,
 		OutputMode: agentcli.OutputText,
 	}
 	if out.Command == "" {
-		out.Command = strings.TrimSpace(strings.ToLower(req.Provider)) + "(sdk)"
+		out.Command = strings.ToLower(req.Provider) + "(sdk)"
 	}
-	switch strings.TrimSpace(strings.ToLower(result.OutputMode)) {
+	switch strings.ToLower(result.OutputMode) {
 	case string(agentcli.OutputJSONL):
 		out.OutputMode = agentcli.OutputJSONL
 	case string(agentcli.OutputJSON):

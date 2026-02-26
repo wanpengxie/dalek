@@ -74,7 +74,7 @@ func SynthesizeEventsFromCLIResult(runID string, startedAt time.Time, cliEvents 
 		items := buildAgentEventFromCLIEvent(runID, 0, ev, provider)
 		for _, item := range items {
 			item.Seq = nextSeq()
-			if replyText != "" && strings.TrimSpace(item.Data.Text) == replyText {
+			if replyText != "" && item.Data.Text == replyText {
 				continue
 			}
 			events = append(events, item)
@@ -106,7 +106,7 @@ func SynthesizeEventsFromCLIResult(runID string, startedAt time.Time, cliEvents 
 		},
 	}
 	if runErr != nil {
-		msg := strings.TrimSpace(runErr.Error())
+		msg := runErr.Error()
 		lifecycle.Data.Phase = "error"
 		lifecycle.Data.Error = msg
 		lifecycle.Data.ErrorType = classifyJobErrorType(msg)
@@ -156,7 +156,7 @@ func mapStepToAgentEvent(runID string, step eventrender.UnifiedStep) AgentEvent 
 		data.ErrorType = classifyJobErrorType(step.Summary)
 	}
 	return AgentEvent{
-		RunID:  strings.TrimSpace(runID),
+		RunID:  runID,
 		Seq:    step.Seq,
 		Stream: stream,
 		Ts:     step.Ts,
@@ -183,7 +183,7 @@ func AppendLifecycleErrorEvent(runID string, startedAt time.Time, in []AgentEven
 			maxSeq = ev.Seq
 		}
 	}
-	msg := strings.TrimSpace(runErr.Error())
+	msg := runErr.Error()
 	out = append(out, AgentEvent{
 		RunID:  runID,
 		Seq:    maxSeq + 1,
@@ -207,20 +207,20 @@ func copyAgentEvents(in []AgentEvent) []AgentEvent {
 	out := make([]AgentEvent, 0, len(in))
 	for _, ev := range in {
 		trimmed := AgentEvent{
-			RunID:  strings.TrimSpace(ev.RunID),
+			RunID:  ev.RunID,
 			Seq:    ev.Seq,
-			Stream: AgentEventStream(strings.TrimSpace(string(ev.Stream))),
+			Stream: AgentEventStream(string(ev.Stream)),
 			Ts:     ev.Ts,
 			Data: AgentEventData{
-				Phase:     strings.TrimSpace(ev.Data.Phase),
+				Phase:     ev.Data.Phase,
 				StartedAt: ev.Data.StartedAt,
 				EndedAt:   ev.Data.EndedAt,
-				Text:      strings.TrimSpace(ev.Data.Text),
-				RawJSON:   strings.TrimSpace(ev.Data.RawJSON),
-				Error:     strings.TrimSpace(ev.Data.Error),
-				ErrorType: strings.TrimSpace(ev.Data.ErrorType),
-				ToolName:  strings.TrimSpace(ev.Data.ToolName),
-				ToolInput: strings.TrimSpace(ev.Data.ToolInput),
+				Text:      ev.Data.Text,
+				RawJSON:   ev.Data.RawJSON,
+				Error:     ev.Data.Error,
+				ErrorType: ev.Data.ErrorType,
+				ToolName:  ev.Data.ToolName,
+				ToolInput: ev.Data.ToolInput,
 			},
 		}
 		if trimmed.RunID == "" {

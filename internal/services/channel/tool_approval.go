@@ -156,7 +156,7 @@ type ToolApprovalEventPayload struct {
 }
 
 func EncodeToolApprovalEventPayload(message string, pending []PendingActionView) string {
-	msg := strings.TrimSpace(message)
+	msg := message
 	views := copyPendingActionViews(pending)
 	if msg == "" && len(views) == 0 {
 		return ""
@@ -169,7 +169,7 @@ func EncodeToolApprovalEventPayload(message string, pending []PendingActionView)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(raw))
+	return string(raw)
 }
 
 func ParseToolApprovalEventPayload(raw string) (ToolApprovalEventPayload, bool) {
@@ -190,7 +190,7 @@ func ParseToolApprovalEventPayload(raw string) (ToolApprovalEventPayload, bool) 
 }
 
 func newSDKToolApprovalAction(toolName string, input map[string]any) contracts.TurnAction {
-	tool := strings.TrimSpace(toolName)
+	tool := toolName
 	if tool == "" {
 		tool = "unknown"
 	}
@@ -212,11 +212,11 @@ func newSDKToolApprovalAction(toolName string, input map[string]any) contracts.T
 }
 
 func isSDKToolApprovalAction(action contracts.TurnAction) bool {
-	return strings.EqualFold(strings.TrimSpace(action.Name), sdkToolApprovalActionName)
+	return strings.EqualFold(action.Name, sdkToolApprovalActionName)
 }
 
 func buildSDKToolApprovalMessage(toolName string, input map[string]any) string {
-	tool := strings.TrimSpace(toolName)
+	tool := toolName
 	if tool == "" {
 		tool = "unknown"
 	}
@@ -235,7 +235,7 @@ func readToolApprovalCommand(input map[string]any) string {
 		if !ok {
 			continue
 		}
-		if cmd := strings.TrimSpace(fmt.Sprint(raw)); cmd != "" && cmd != "<nil>" {
+		if cmd := fmt.Sprint(raw); cmd != "" && cmd != "<nil>" {
 			return cmd
 		}
 	}
@@ -249,13 +249,13 @@ func sanitizeToolApprovalInput(input map[string]any) map[string]any {
 	raw, err := json.Marshal(input)
 	if err != nil {
 		return map[string]any{
-			"raw": strings.TrimSpace(fmt.Sprint(input)),
+			"raw": fmt.Sprint(input),
 		}
 	}
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return map[string]any{
-			"raw": strings.TrimSpace(string(raw)),
+			"raw": string(raw),
 		}
 	}
 	if out == nil {

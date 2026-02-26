@@ -62,7 +62,7 @@ type ProjectRuntimePendingActionDecider interface {
 }
 
 func (d PendingActionDecision) normalize() PendingActionDecision {
-	return PendingActionDecision(strings.ToLower(strings.TrimSpace(string(d))))
+	return PendingActionDecision(strings.ToLower(string(d)))
 }
 
 func (d PendingActionDecision) valid() bool {
@@ -123,7 +123,7 @@ func (s *Service) createPendingActionsTx(ctx context.Context, tx *gorm.DB, conve
 		row := store.ChannelPendingAction{
 			ConversationID: conversationID,
 			JobID:          jobID,
-			ActionJSON:     strings.TrimSpace(string(actionJSON)),
+			ActionJSON:     string(actionJSON),
 			Status:         contracts.ChannelPendingActionPending,
 			Decider:        "",
 			DecisionNote:   "",
@@ -203,7 +203,7 @@ func pendingActionRowToView(row store.ChannelPendingAction) PendingActionView {
 		action = contracts.TurnAction{
 			Name: "invalid_action",
 			Args: map[string]any{
-				"raw_action_json": strings.TrimSpace(row.ActionJSON),
+				"raw_action_json": row.ActionJSON,
 			},
 		}
 	}
@@ -213,8 +213,8 @@ func pendingActionRowToView(row store.ChannelPendingAction) PendingActionView {
 		JobID:          row.JobID,
 		Action:         action,
 		Status:         row.Status,
-		Decider:        strings.TrimSpace(row.Decider),
-		DecisionNote:   strings.TrimSpace(row.DecisionNote),
+		Decider:        row.Decider,
+		DecisionNote:   row.DecisionNote,
 		CreatedAt:      row.CreatedAt,
 		UpdatedAt:      row.UpdatedAt,
 		DecidedAt:      row.DecidedAt,
@@ -244,7 +244,7 @@ func copyPendingActionViews(in []PendingActionView) []PendingActionView {
 		if len(item.Action.Args) > 0 {
 			copied.Action.Args = make(map[string]any, len(item.Action.Args))
 			for k, v := range item.Action.Args {
-				copied.Action.Args[strings.TrimSpace(k)] = v
+				copied.Action.Args[k] = v
 			}
 		}
 		if item.DecidedAt != nil {

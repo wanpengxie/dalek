@@ -11,9 +11,9 @@
 
 ## 当前执行状态（Kernel 回写）
 
-- 更新时间：`2026-02-27`
-- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W07A` `W08A` `W08B`
-- 当前批次：`W09A`（`in_execution`）
+- 更新时间：`2026-02-26`
+- 已完成批次：`W01` `W02` `W03` `W04` `W05` `W06A` `W07A` `W08A` `W08B` `W10A`
+- 当前批次：`W10B`（`in_execution`）
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
@@ -27,6 +27,8 @@
 - W09A 已完成票：`T33(40)`
 - W09A 进行中票：`T35(42)`
 - W10A 已完成票：`T32(39)`（logs->preview 重命名 + WorkerLookup 收口）
+- W10B 已完成票：`T17(24)`（Channel 边界清洗：TrimSpace 降噪 + cancel 语义收口 + 并发访问保护）
+- W10B 进行中票：`T36(43)`
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -35,6 +37,22 @@
   - Feishu 改造必须复用 `internal/services/channel/feishu/*`（`T04` 禁止维护第二套实现）。
   - gateway/ws 改造必须复用 `internal/services/channel/ws/*` 与 `internal/gateway/client/*`。
   - 跨层枚举/状态类型统一引用 `internal/contracts/*`（禁止回流到 `store` 常量）。
+
+## W10B 回写（T17 Channel 清洗边界）
+
+- 状态：`T17` 已完成（2026-02-26）。
+- 关键产物：
+  - `Service` 增加 `depsMu` 与快照访问器，`chatRunners/toolApprovalBridge` 并发读写路径完成锁保护，`Close` 与运行时访问不再裸共享字段。
+  - `InboundQueue.closed`、`EventBus.closed` 改为 `atomic.Bool` 生命周期标志；`InboundQueue.Enqueue` 改为持锁非阻塞入队，规避 `Close` 并发时向已关闭 channel 发送的风险。
+  - `internal/services/channel/*` 完成边界清洗重排：保留入口参数清洗，内部流转删除冗余 `TrimSpace`。
+  - Feishu webhook/card-action 同步修复取消语义：同步路径改用 `r.Context()`/上层 ctx；仅保留 relay 独立生命周期根 context，并在代码中注明原因。
+- 指标对比（`internal/services/channel`）：
+  - `strings.TrimSpace`：`786 -> 258`（生产代码 `719 -> 191`）
+  - `context.Background`：生产代码 `72 -> 43`
+- 验收验证：
+  - `go test ./internal/services/channel/...` 通过
+  - `go test -race ./internal/services/channel/...` 通过
+  - `go vet ./internal/services/channel/...` 通过
 
 ## W08A 回写（T18 Provider/默认值/客户端归位）
 

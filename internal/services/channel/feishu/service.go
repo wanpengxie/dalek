@@ -272,7 +272,8 @@ func ResolveCardProjectName(projectName string, resolver channelsvc.ProjectResol
 
 func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, rawOpt daemonFeishuWebhookOptions, logger *slog.Logger) http.HandlerFunc {
 	opt := rawOpt
-	if strings.TrimSpace(opt.Adapter) == "" {
+	opt.Adapter = strings.TrimSpace(opt.Adapter)
+	if opt.Adapter == "" {
 		opt.Adapter = defaultDaemonFeishuAdapter
 	}
 	relayTimeout := daemonFeishuRelayTimeout
@@ -291,6 +292,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 		dedup = channelsvc.NewEventDeduplicator(daemonFeishuEventDedupTTL, daemonFeishuEventDedupCap)
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
+		reqCtx := r.Context()
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -339,7 +341,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 
 		if strings.EqualFold(strings.TrimSpace(req.Type), "url_verification") {
 			writeJSON(w, http.StatusOK, map[string]any{
-				"challenge": strings.TrimSpace(req.Challenge),
+				"challenge": req.Challenge,
 			})
 			return
 		}
@@ -367,7 +369,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 		}
 		switch eventType {
 		case "card.action.trigger", "card.action.trigger_v1":
-			handleDaemonFeishuCardActionTrigger(w, gateway, resolver, sender, opt, req, logger)
+			handleDaemonFeishuCardActionTrigger(reqCtx, w, gateway, resolver, sender, opt, req, logger)
 			return
 		case "im.message.receive_v1":
 			// 继续走消息处理链路
@@ -391,11 +393,11 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 		}
 
 		text, supported := parseDaemonFeishuMessageText(
-			strings.TrimSpace(req.Event.Message.MessageType),
-			strings.TrimSpace(req.Event.Message.Content),
+			req.Event.Message.MessageType,
+			req.Event.Message.Content,
 		)
 		if !supported {
-			_ = sender.SendText(context.Background(), chatID, "暂不支持此类消息")
+			_ = sender.SendText(reqCtx, chatID, "暂不支持此类消息")
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
@@ -411,7 +413,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 		}
 		senderName := ""
 		if senderID != "" {
-			if resolvedName, nameErr := sender.GetUserName(context.Background(), senderID); nameErr != nil {
+			if resolvedName, nameErr := sender.GetUserName(reqCtx, senderID); nameErr != nil {
 				logDaemonFeishuf(logger, "GetUserName failed for %s: %v", senderID, nameErr)
 			} else {
 				senderName = strings.TrimSpace(resolvedName)
@@ -421,39 +423,40 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			senderID = "feishu.user"
 		}
 
-		if handled := tryHandleDaemonFeishuBindCommand(context.Background(), gateway, resolver, sender, opt.Adapter, chatID, text); handled {
+		if handled := tryHandleDaemonFeishuBindCommand(reqCtx, gateway, resolver, sender, opt.Adapter, chatID, text); handled {
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
-		if handled := tryHandleDaemonFeishuUnbindCommand(context.Background(), gateway, sender, opt.Adapter, chatID, text); handled {
+		if handled := tryHandleDaemonFeishuUnbindCommand(reqCtx, gateway, sender, opt.Adapter, chatID, text); handled {
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
-		if handled := tryHandleDaemonFeishuNewCommand(context.Background(), gateway, resolver, sender, opt.Adapter, chatID, text); handled {
+		if handled := tryHandleDaemonFeishuNewCommand(reqCtx, gateway, resolver, sender, opt.Adapter, chatID, text); handled {
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
-		if handled := tryHandleDaemonFeishuInterruptCommand(context.Background(), gateway, resolver, sender, opt.Adapter, chatID, text); handled {
+		if handled := tryHandleDaemonFeishuInterruptCommand(reqCtx, gateway, resolver, sender, opt.Adapter, chatID, text); handled {
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
 
-		boundProject, err := gateway.LookupBoundProject(context.Background(), contracts.ChannelTypeIM, opt.Adapter, chatID)
+		boundProject, err := gateway.LookupBoundProject(reqCtx, contracts.ChannelTypeIM, opt.Adapter, chatID)
 		if err != nil {
 			logDaemonFeishuf(logger, "lookup bound project failed: chat=%s err=%v", chatID, err)
-			_ = sender.SendText(context.Background(), chatID, "读取绑定失败，请稍后重试")
+			_ = sender.SendText(reqCtx, chatID, "读取绑定失败，请稍后重试")
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
-		if strings.TrimSpace(boundProject) == "" {
-			_ = sender.SendText(context.Background(), chatID, buildDaemonFeishuUnboundHint(resolver))
+		if boundProject == "" {
+			_ = sender.SendText(reqCtx, chatID, buildDaemonFeishuUnboundHint(resolver))
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
 
 		sub, unsubscribe := gateway.EventBus().Subscribe(boundProject, chatID, 256)
+		// relay 可能长于 webhook 请求生命周期，使用独立上下文避免随 HTTP 连接提前取消。
 		relayCtx, relayCancel := context.WithTimeout(context.Background(), relayTimeout)
-		progressCtx, progressCancel := context.WithCancel(context.Background())
+		progressCtx, progressCancel := context.WithCancel(relayCtx)
 
 		var (
 			progressMu        sync.Mutex
@@ -464,7 +467,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 		var writeMu sync.Mutex
 
 		logFinal := func(format string, args ...any) {
-			baseArgs := []any{strings.TrimSpace(chatID), strings.TrimSpace(msgID)}
+			baseArgs := []any{chatID, msgID}
 			allArgs := append(baseArgs, args...)
 			logDaemonFeishuf(logger, "daemon feishu final-reply: chat=%s peer_msg=%s "+format, allArgs...)
 		}
@@ -472,7 +475,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			if gateway == nil || outboxID == 0 {
 				return
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(relayCtx, 3*time.Second)
 			defer cancel()
 			if err := gateway.MarkOutboxDelivery(ctx, outboxID, delivered, cause); err != nil {
 				logFinal("mark outbox failed outbox=%d delivered=%v err=%v", outboxID, delivered, err)
@@ -488,23 +491,23 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			finalAttempt int
 		)
 		sendTextFallback := func(attempt int, source string, outboxID uint, reply string, prevErr error) bool {
-			textCtx, textCancel := context.WithTimeout(context.Background(), 8*time.Second)
+			textCtx, textCancel := context.WithTimeout(relayCtx, 8*time.Second)
 			textErr := sender.SendText(textCtx, chatID, reply)
 			textCancel()
 			if textErr == nil {
 				finalSent = true
 				relayCancel()
-				logFinal("attempt=%d source=%s text_fallback_success", attempt, strings.TrimSpace(source))
+				logFinal("attempt=%d source=%s text_fallback_success", attempt, source)
 				markOutbox(outboxID, true, nil)
 				return true
 			}
 			if prevErr != nil {
-				logFinal("attempt=%d source=%s text_fallback_failed err=%v; text_err=%v", attempt, strings.TrimSpace(source), prevErr, textErr)
+				logFinal("attempt=%d source=%s text_fallback_failed err=%v; text_err=%v", attempt, source, prevErr, textErr)
 				markOutbox(outboxID, false, fmt.Errorf("%w; text fallback failed: %v", prevErr, textErr))
 				relayCancel()
 				return false
 			}
-			logFinal("attempt=%d source=%s text_fallback_failed err=%v", attempt, strings.TrimSpace(source), textErr)
+			logFinal("attempt=%d source=%s text_fallback_failed err=%v", attempt, source, textErr)
 			markOutbox(outboxID, false, textErr)
 			relayCancel()
 			return false
@@ -519,7 +522,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			defer finalMu.Unlock()
 
 			if finalSent {
-				logFinal("skip source=%s reason=already_sent", strings.TrimSpace(source))
+				logFinal("skip source=%s reason=already_sent", source)
 				return
 			}
 			finalAttempt++
@@ -533,34 +536,34 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			writeMu.Lock()
 			progressCancel()
 			progressMu.Lock()
-			mid := strings.TrimSpace(progressCardMsgID)
+			mid := progressCardMsgID
 			lines := append([]string(nil), progressLines...)
 			progressMu.Unlock()
 			if mid != "" {
 				collapseJSON := buildDaemonFeishuProgressCollapsedCardJSON(lines)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(relayCtx, 5*time.Second)
 				err := sender.PatchCard(ctx, mid, collapseJSON)
 				cancel()
 				if err != nil {
-					logFinal("attempt=%d source=%s progress_collapse_failed mid=%s err=%v", attempt, strings.TrimSpace(source), mid, err)
+					logFinal("attempt=%d source=%s progress_collapse_failed mid=%s err=%v", attempt, source, mid, err)
 				} else {
-					logFinal("attempt=%d source=%s progress_collapse_success mid=%s", attempt, strings.TrimSpace(source), mid)
+					logFinal("attempt=%d source=%s progress_collapse_success mid=%s", attempt, source, mid)
 				}
 			}
 			writeMu.Unlock()
 
-			logFinal("attempt=%d source=%s outbox=%d has_progress_card=%v reply_len=%d", attempt, strings.TrimSpace(source), outboxID, mid != "", utf8.RuneCountInString(reply))
+			logFinal("attempt=%d source=%s outbox=%d has_progress_card=%v reply_len=%d", attempt, source, outboxID, mid != "", utf8.RuneCountInString(reply))
 
 			cardJSON := buildDaemonFeishuResultCardJSON(reply)
 			var lastErr error
 			for i := 0; i < 2; i++ {
-				sendCtx, sendCancel := context.WithTimeout(context.Background(), 8*time.Second)
+				sendCtx, sendCancel := context.WithTimeout(relayCtx, 8*time.Second)
 				resultMid, sendErr := sender.SendCardInteractive(sendCtx, chatID, cardJSON)
 				sendCancel()
-				if sendErr == nil && strings.TrimSpace(resultMid) != "" {
+				if sendErr == nil && resultMid != "" {
 					finalSent = true
 					relayCancel()
-					logFinal("attempt=%d source=%s result_send_success mid=%s", attempt, strings.TrimSpace(source), strings.TrimSpace(resultMid))
+					logFinal("attempt=%d source=%s result_send_success mid=%s", attempt, source, resultMid)
 					markOutbox(outboxID, true, nil)
 					return
 				}
@@ -572,11 +575,11 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 					time.Sleep(200 * time.Millisecond)
 				}
 			}
-			logFinal("attempt=%d source=%s result_send_failed err=%v", attempt, strings.TrimSpace(source), lastErr)
+			logFinal("attempt=%d source=%s result_send_failed err=%v", attempt, source, lastErr)
 			_ = sendTextFallback(attempt, source, outboxID, reply, lastErr)
 		}
 		sendApprovalReply := func(source string, result channelsvc.ProcessResult) {
-			reply := strings.TrimSpace(result.ReplyText)
+			reply := result.ReplyText
 			if reply == "" {
 				reply = "检测到待审批操作，请点击按钮确认。"
 			}
@@ -586,7 +589,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			defer finalMu.Unlock()
 
 			if finalSent {
-				logFinal("skip source=%s reason=already_sent", strings.TrimSpace(source))
+				logFinal("skip source=%s reason=already_sent", source)
 				return
 			}
 			finalAttempt++
@@ -600,18 +603,18 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			writeMu.Lock()
 			progressCancel()
 			progressMu.Lock()
-			mid := strings.TrimSpace(progressCardMsgID)
+			mid := progressCardMsgID
 			lines := append([]string(nil), progressLines...)
 			progressMu.Unlock()
 			if mid != "" {
 				collapseJSON := buildDaemonFeishuProgressCollapsedCardJSON(lines)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(relayCtx, 5*time.Second)
 				err := sender.PatchCard(ctx, mid, collapseJSON)
 				cancel()
 				if err != nil {
-					logFinal("attempt=%d source=%s progress_collapse_failed mid=%s err=%v", attempt, strings.TrimSpace(source), mid, err)
+					logFinal("attempt=%d source=%s progress_collapse_failed mid=%s err=%v", attempt, source, mid, err)
 				} else {
-					logFinal("attempt=%d source=%s progress_collapse_success mid=%s", attempt, strings.TrimSpace(source), mid)
+					logFinal("attempt=%d source=%s progress_collapse_success mid=%s", attempt, source, mid)
 				}
 			}
 			writeMu.Unlock()
@@ -619,13 +622,13 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			cardJSON := buildDaemonFeishuApprovalCardJSON(reply, result.PendingActions)
 			var lastErr error
 			for i := 0; i < 2; i++ {
-				sendCtx, sendCancel := context.WithTimeout(context.Background(), 8*time.Second)
+				sendCtx, sendCancel := context.WithTimeout(relayCtx, 8*time.Second)
 				resultMid, sendErr := sender.SendCardInteractive(sendCtx, chatID, cardJSON)
 				sendCancel()
-				if sendErr == nil && strings.TrimSpace(resultMid) != "" {
+				if sendErr == nil && resultMid != "" {
 					finalSent = true
 					relayCancel()
-					logFinal("attempt=%d source=%s approval_send_success mid=%s", attempt, strings.TrimSpace(source), strings.TrimSpace(resultMid))
+					logFinal("attempt=%d source=%s approval_send_success mid=%s", attempt, source, resultMid)
 					markOutbox(outboxID, true, nil)
 					return
 				}
@@ -637,7 +640,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 					time.Sleep(200 * time.Millisecond)
 				}
 			}
-			logFinal("attempt=%d source=%s approval_send_failed err=%v", attempt, strings.TrimSpace(source), lastErr)
+			logFinal("attempt=%d source=%s approval_send_failed err=%v", attempt, source, lastErr)
 			_ = sendTextFallback(attempt, source, outboxID, fallback, lastErr)
 		}
 		sendRealtimeApprovalCard := func(source, reply string, pending []channelsvc.PendingActionView) bool {
@@ -651,25 +654,25 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			cardJSON := buildDaemonFeishuApprovalCardJSON(reply, pending)
 
 			writeMu.Lock()
-			sendCtx, sendCancel := context.WithTimeout(context.Background(), 8*time.Second)
+			sendCtx, sendCancel := context.WithTimeout(relayCtx, 8*time.Second)
 			resultMid, sendErr := sender.SendCardInteractive(sendCtx, chatID, cardJSON)
 			sendCancel()
 			writeMu.Unlock()
-			if sendErr == nil && strings.TrimSpace(resultMid) != "" {
-				logFinal("source=%s approval_realtime_send_success mid=%s", strings.TrimSpace(source), strings.TrimSpace(resultMid))
+			if sendErr == nil && resultMid != "" {
+				logFinal("source=%s approval_realtime_send_success mid=%s", source, resultMid)
 				return true
 			}
 			if sendErr == nil {
 				sendErr = fmt.Errorf("feishu send realtime approval failed: empty message_id")
 			}
-			logFinal("source=%s approval_realtime_send_failed err=%v", strings.TrimSpace(source), sendErr)
+			logFinal("source=%s approval_realtime_send_failed err=%v", source, sendErr)
 
 			fallback := buildDaemonFeishuApprovalFallbackText(reply, pending)
-			textCtx, textCancel := context.WithTimeout(context.Background(), 8*time.Second)
+			textCtx, textCancel := context.WithTimeout(relayCtx, 8*time.Second)
 			textErr := sender.SendText(textCtx, chatID, fallback)
 			textCancel()
 			if textErr != nil {
-				logFinal("source=%s approval_realtime_text_fallback_failed send_err=%v text_err=%v", strings.TrimSpace(source), sendErr, textErr)
+				logFinal("source=%s approval_realtime_text_fallback_failed send_err=%v text_err=%v", source, sendErr, textErr)
 			}
 			return false
 		}
@@ -716,14 +719,14 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 					if !ok {
 						return
 					}
-					if strings.TrimSpace(ev.PeerMessageID) != msgID {
+					if ev.PeerMessageID != msgID {
 						continue
 					}
 					resetIdleTimer()
 
-					switch strings.TrimSpace(ev.Type) {
+					switch ev.Type {
 					case "assistant_event":
-						if strings.TrimSpace(ev.EventType) == channelsvc.ToolApprovalEventType {
+						if ev.EventType == channelsvc.ToolApprovalEventType {
 							payload, ok := channelsvc.ParseToolApprovalEventPayload(ev.Text)
 							if !ok {
 								continue
@@ -780,10 +783,10 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 							ctx, cancel := context.WithTimeout(progressCtx, 5*time.Second)
 							newMid, err := sender.SendCardInteractive(ctx, chatID, cardJSON)
 							cancel()
-							if err == nil && strings.TrimSpace(newMid) != "" {
+							if err == nil && newMid != "" {
 								progressMu.Lock()
 								if progressCardMsgID == "" {
-									progressCardMsgID = strings.TrimSpace(newMid)
+									progressCardMsgID = newMid
 								}
 								progressMu.Unlock()
 							}
@@ -801,9 +804,9 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 						}
 						writeMu.Unlock()
 					case "assistant_message", "error":
-						reply := strings.TrimSpace(ev.Text)
+						reply := ev.Text
 						if reply == "" {
-							reply = strings.TrimSpace(ev.JobError)
+							reply = ev.JobError
 						}
 						sendFinalReply("relay", reply)
 						return
@@ -812,7 +815,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			}
 		}()
 
-		submitErr := gateway.Submit(context.Background(), channelsvc.GatewayInboundRequest{
+		submitErr := gateway.Submit(reqCtx, channelsvc.GatewayInboundRequest{
 			ProjectName:    boundProject,
 			PeerProjectKey: chatID,
 			Envelope: contracts.InboundEnvelope{
@@ -830,13 +833,13 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 				reply := ""
 				if runErr != nil {
 					reply = "处理失败"
-					if errMsg := strings.TrimSpace(runErr.Error()); errMsg != "" {
+					if errMsg := runErr.Error(); errMsg != "" {
 						reply = reply + "：" + errMsg
 					}
 				} else {
-					reply = strings.TrimSpace(result.ReplyText)
+					reply = result.ReplyText
 					if reply == "" {
-						reply = strings.TrimSpace(result.JobError)
+						reply = result.JobError
 					}
 					if reply == "" {
 						reply = "(empty reply)"
@@ -851,9 +854,9 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 				alreadySent := finalSent
 				finalMu.Unlock()
 
-				logFinal("callback job_status=%s outbox=%d run_err=%v", strings.TrimSpace(string(result.JobStatus)), outboxID, runErr)
-				if runErr == nil && !isGatewayTurnTerminalStatus(strings.TrimSpace(string(result.JobStatus))) {
-					logFinal("callback non_terminal status=%s skip_final_reply", strings.TrimSpace(string(result.JobStatus)))
+				logFinal("callback job_status=%s outbox=%d run_err=%v", string(result.JobStatus), outboxID, runErr)
+				if runErr == nil && !isGatewayTurnTerminalStatus(string(result.JobStatus)) {
+					logFinal("callback non_terminal status=%s skip_final_reply", string(result.JobStatus))
 					return
 				}
 				if runErr == nil && len(result.PendingActions) > 0 {
@@ -872,19 +875,19 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			progressCancel()
 			unsubscribe()
 
-			msg := strings.TrimSpace(submitErr.Error())
+			msg := submitErr.Error()
 			if submitErr == channelsvc.ErrInboundQueueFull {
 				msg = "排队中，请稍后再试。"
 			}
 			logDaemonFeishuf(logger, "submit inbound failed: project=%s chat=%s err=%v", boundProject, chatID, submitErr)
-			_ = sender.SendText(context.Background(), chatID, msg)
+			_ = sender.SendText(reqCtx, chatID, msg)
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 	}
 }
 
-func handleDaemonFeishuCardActionTrigger(w http.ResponseWriter, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, opt daemonFeishuWebhookOptions, req daemonFeishuWebhookRequest, logger *slog.Logger) {
+func handleDaemonFeishuCardActionTrigger(ctx context.Context, w http.ResponseWriter, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, opt daemonFeishuWebhookOptions, req daemonFeishuWebhookRequest, logger *slog.Logger) {
 	eventType := strings.TrimSpace(req.Header.EventType)
 	if eventType == "" {
 		eventType = strings.TrimSpace(req.Event.Type)
@@ -902,15 +905,15 @@ func handleDaemonFeishuCardActionTrigger(w http.ResponseWriter, gateway *channel
 	logDaemonFeishuf(logger, "card action received: type=%s event_id=%s chat=%s msg=%s action=%d decision=%s",
 		eventType, eventID, payload.ChatID, payload.MessageID, payload.PendingActionID, payload.Decision)
 
-	boundProject, err := gateway.LookupBoundProject(context.Background(), contracts.ChannelTypeIM, opt.Adapter, payload.ChatID)
+	boundProject, err := gateway.LookupBoundProject(ctx, contracts.ChannelTypeIM, opt.Adapter, payload.ChatID)
 	if err != nil {
 		logDaemonFeishuf(logger, "lookup bound project failed: chat=%s err=%v", payload.ChatID, err)
-		_ = sender.SendText(context.Background(), payload.ChatID, "读取绑定失败，请稍后重试")
+		_ = sender.SendText(ctx, payload.ChatID, "读取绑定失败，请稍后重试")
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 		return
 	}
-	if strings.TrimSpace(boundProject) == "" {
-		_ = sender.SendText(context.Background(), payload.ChatID, buildDaemonFeishuUnboundHint(resolver))
+	if boundProject == "" {
+		_ = sender.SendText(ctx, payload.ChatID, buildDaemonFeishuUnboundHint(resolver))
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 		return
 	}
@@ -918,19 +921,19 @@ func handleDaemonFeishuCardActionTrigger(w http.ResponseWriter, gateway *channel
 	projectCtx, err := resolver.Resolve(boundProject)
 	if err != nil {
 		logDaemonFeishuf(logger, "resolve project failed: project=%s err=%v", boundProject, err)
-		_ = sender.SendText(context.Background(), payload.ChatID, "项目上下文不可用，请稍后重试")
+		_ = sender.SendText(ctx, payload.ChatID, "项目上下文不可用，请稍后重试")
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 		return
 	}
 	decider, ok := projectCtx.Runtime.(channelsvc.ProjectRuntimePendingActionDecider)
 	if !ok {
 		logDaemonFeishuf(logger, "project runtime does not support pending action decision: project=%s", boundProject)
-		_ = sender.SendText(context.Background(), payload.ChatID, "当前项目尚未启用审批能力")
+		_ = sender.SendText(ctx, payload.ChatID, "当前项目尚未启用审批能力")
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 		return
 	}
 
-	decisionResult, err := decider.DecidePendingAction(context.Background(), channelsvc.PendingActionDecisionRequest{
+	decisionResult, err := decider.DecidePendingAction(ctx, channelsvc.PendingActionDecisionRequest{
 		ChannelType:        contracts.ChannelTypeIM,
 		Adapter:            opt.Adapter,
 		PeerConversationID: payload.ChatID,
@@ -941,7 +944,7 @@ func handleDaemonFeishuCardActionTrigger(w http.ResponseWriter, gateway *channel
 	})
 	if err != nil {
 		logDaemonFeishuf(logger, "decide pending action failed: project=%s chat=%s action=%d err=%v", boundProject, payload.ChatID, payload.PendingActionID, err)
-		_ = sender.SendText(context.Background(), payload.ChatID, "审批处理失败："+strings.TrimSpace(err.Error()))
+		_ = sender.SendText(ctx, payload.ChatID, "审批处理失败："+err.Error())
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 		return
 	}
@@ -959,7 +962,7 @@ func handleDaemonFeishuCardActionTrigger(w http.ResponseWriter, gateway *channel
 	writeJSON(w, http.StatusOK, map[string]any{
 		"toast": map[string]any{
 			"type":    toastType,
-			"content": strings.TrimSpace(decisionResult.Message),
+			"content": decisionResult.Message,
 		},
 		"card": map[string]any{
 			"type": "raw",
@@ -997,7 +1000,7 @@ func parseDaemonFeishuCardActionPayload(req daemonFeishuWebhookRequest) (daemonF
 	if !ok || actionID == 0 {
 		return daemonFeishuCardActionPayload{}, fmt.Errorf("card action 缺少 pending_action_id")
 	}
-	decisionRaw := strings.ToLower(strings.TrimSpace(readDaemonFeishuMapString(value, "decision")))
+	decisionRaw := strings.ToLower(readDaemonFeishuMapString(value, "decision"))
 	decision := channelsvc.PendingActionDecision(decisionRaw)
 	if decision != channelsvc.PendingActionApprove && decision != channelsvc.PendingActionReject {
 		return daemonFeishuCardActionPayload{}, fmt.Errorf("card action decision 非法: %s", decisionRaw)
@@ -1101,7 +1104,7 @@ func readDaemonFeishuMapUint(value map[string]any, keys ...string) (uint, bool) 
 				return uint(x), true
 			}
 		case string:
-			n, err := strconv.ParseUint(strings.TrimSpace(x), 10, 64)
+			n, err := strconv.ParseUint(x, 10, 64)
 			if err == nil && n > 0 {
 				return uint(n), true
 			}
@@ -1120,7 +1123,7 @@ func tryHandleDaemonFeishuBindCommand(ctx context.Context, gateway *channelsvc.G
 		_ = sender.SendText(ctx, chatID, "命令格式错误，请使用 /bind <项目名>")
 		return true
 	}
-	projectName := strings.TrimSpace(fields[1])
+	projectName := fields[1]
 	if projectName == "" {
 		_ = sender.SendText(ctx, chatID, "命令格式错误，请使用 /bind <项目名>")
 		return true
@@ -1131,12 +1134,11 @@ func tryHandleDaemonFeishuBindCommand(ctx context.Context, gateway *channelsvc.G
 			return true
 		}
 	}
-	prevProject, err := gateway.BindProject(ctx, contracts.ChannelTypeIM, strings.TrimSpace(adapter), strings.TrimSpace(chatID), projectName)
+	prevProject, err := gateway.BindProject(ctx, contracts.ChannelTypeIM, adapter, chatID, projectName)
 	if err != nil {
 		_ = sender.SendText(ctx, chatID, "绑定失败，请稍后重试")
 		return true
 	}
-	prevProject = strings.TrimSpace(prevProject)
 	if prevProject == "" || prevProject == projectName {
 		_ = sender.SendText(ctx, chatID, "已绑定到 project "+projectName)
 		return true
@@ -1146,10 +1148,10 @@ func tryHandleDaemonFeishuBindCommand(ctx context.Context, gateway *channelsvc.G
 }
 
 func tryHandleDaemonFeishuUnbindCommand(ctx context.Context, gateway *channelsvc.Gateway, sender daemonFeishuMessageSender, adapter, chatID, text string) bool {
-	if strings.TrimSpace(strings.ToLower(text)) != "/unbind" {
+	if strings.ToLower(strings.TrimSpace(text)) != "/unbind" {
 		return false
 	}
-	removed, err := gateway.UnbindProject(ctx, contracts.ChannelTypeIM, strings.TrimSpace(adapter), strings.TrimSpace(chatID))
+	removed, err := gateway.UnbindProject(ctx, contracts.ChannelTypeIM, adapter, chatID)
 	if err != nil {
 		_ = sender.SendText(ctx, chatID, "解绑失败，请稍后重试")
 		return true
@@ -1163,22 +1165,22 @@ func tryHandleDaemonFeishuUnbindCommand(ctx context.Context, gateway *channelsvc
 }
 
 func tryHandleDaemonFeishuInterruptCommand(ctx context.Context, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, adapter, chatID, text string) bool {
-	normalized := strings.TrimSpace(strings.ToLower(text))
+	normalized := strings.ToLower(text)
 	if normalized != "/interrupt" && normalized != "/stop" {
 		return false
 	}
 	projectName, interruptResult, err := gateway.InterruptBoundConversation(
 		ctx,
 		contracts.ChannelTypeIM,
-		strings.TrimSpace(adapter),
-		strings.TrimSpace(chatID),
-		strings.TrimSpace(chatID),
+		adapter,
+		chatID,
+		chatID,
 	)
 	if err != nil {
 		_ = sender.SendText(ctx, chatID, "中断失败，请稍后重试")
 		return true
 	}
-	if strings.TrimSpace(projectName) == "" {
+	if projectName == "" {
 		_ = sender.SendText(ctx, chatID, buildDaemonFeishuUnboundHint(resolver))
 		return true
 	}
@@ -1199,21 +1201,21 @@ func tryHandleDaemonFeishuInterruptCommand(ctx context.Context, gateway *channel
 }
 
 func tryHandleDaemonFeishuNewCommand(ctx context.Context, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, adapter, chatID, text string) bool {
-	if strings.TrimSpace(strings.ToLower(text)) != "/new" {
+	if strings.ToLower(text) != "/new" {
 		return false
 	}
 	projectName, reset, err := gateway.ResetBoundConversationSession(
 		ctx,
 		contracts.ChannelTypeIM,
-		strings.TrimSpace(adapter),
-		strings.TrimSpace(chatID),
-		strings.TrimSpace(chatID),
+		adapter,
+		chatID,
+		chatID,
 	)
 	if err != nil {
 		_ = sender.SendText(ctx, chatID, "重置会话失败，请稍后重试")
 		return true
 	}
-	if strings.TrimSpace(projectName) == "" {
+	if projectName == "" {
 		_ = sender.SendText(ctx, chatID, buildDaemonFeishuUnboundHint(resolver))
 		return true
 	}
@@ -1259,14 +1261,14 @@ func buildDaemonFeishuProjectList(resolver channelsvc.ProjectResolver) string {
 }
 
 func buildDaemonFeishuStreamProgress(ev channelsvc.GatewayEvent) string {
-	if strings.TrimSpace(ev.Type) != "assistant_event" {
+	if ev.Type != "assistant_event" {
 		return ""
 	}
-	stream := strings.TrimSpace(ev.Stream)
-	eventType := strings.TrimSpace(ev.EventType)
-	text := strings.TrimSpace(ev.Text)
+	stream := ev.Stream
+	eventType := ev.EventType
+	text := ev.Text
 	if text == "" {
-		text = strings.TrimSpace(ev.JobError)
+		text = ev.JobError
 	}
 
 	switch stream {
@@ -1337,7 +1339,7 @@ func buildDaemonFeishuProgressCardJSON(progressLines []string) string {
 		md.WriteString(line)
 		md.WriteByte('\n')
 	}
-	content := strings.TrimSpace(md.String())
+	content := md.String()
 	if content == "" {
 		content = "处理中..."
 	}
@@ -1372,7 +1374,7 @@ func buildDaemonFeishuProgressCollapsedCardJSON(progressLines []string) string {
 		md.WriteString(line)
 		md.WriteByte('\n')
 	}
-	progressContent := strings.TrimSpace(md.String())
+	progressContent := md.String()
 	if progressContent == "" {
 		progressContent = "（无）"
 	}
@@ -1446,7 +1448,7 @@ func buildDaemonFeishuApprovalFallbackText(reply string, pending []channelsvc.Pe
 		}
 	}
 	lines = append(lines, "", "请在飞书卡片中点击“批准/拒绝”。")
-	return strings.TrimSpace(strings.Join(lines, "\n"))
+	return strings.Join(lines, "\n")
 }
 
 func buildDaemonFeishuApprovalCardJSON(reply string, pending []channelsvc.PendingActionView) string {
@@ -1528,7 +1530,7 @@ func buildDaemonFeishuApprovalCardJSON(reply string, pending []channelsvc.Pendin
 
 func buildDaemonFeishuApprovalDecisionCardJSON(result channelsvc.PendingActionDecisionResult) string {
 	actionLabel := formatDaemonFeishuPendingAction(result.Action)
-	status := strings.TrimSpace(string(result.Action.Status))
+	status := string(result.Action.Status)
 	if status == "" {
 		status = "unknown"
 	}
@@ -1542,7 +1544,7 @@ func buildDaemonFeishuApprovalDecisionCardJSON(result channelsvc.PendingActionDe
 		fmt.Sprintf("- 状态：`%s`", status),
 		message,
 	}
-	if note := strings.TrimSpace(result.Action.DecisionNote); note != "" {
+	if note := result.Action.DecisionNote; note != "" {
 		lines = append(lines, fmt.Sprintf("- 备注：%s", normalizeDaemonFeishuCardMarkdown(note)))
 	}
 	card := map[string]any{
@@ -1566,7 +1568,7 @@ func buildDaemonFeishuApprovalDecisionCardJSON(result channelsvc.PendingActionDe
 }
 
 func formatDaemonFeishuPendingAction(item channelsvc.PendingActionView) string {
-	name := strings.TrimSpace(item.Action.Name)
+	name := item.Action.Name
 	if name == "" {
 		name = "unknown_action"
 	}
@@ -1591,6 +1593,7 @@ func formatDaemonFeishuPendingAction(item channelsvc.PendingActionView) string {
 
 func parseDaemonFeishuMessageText(messageType, content string) (string, bool) {
 	messageType = strings.ToLower(strings.TrimSpace(messageType))
+	content = strings.TrimSpace(content)
 	switch messageType {
 	case "text":
 		var payload struct {
@@ -1599,7 +1602,7 @@ func parseDaemonFeishuMessageText(messageType, content string) (string, bool) {
 		if err := json.Unmarshal([]byte(content), &payload); err == nil {
 			return strings.TrimSpace(payload.Text), true
 		}
-		return strings.TrimSpace(content), true
+		return content, true
 	case "post":
 		var obj map[string]any
 		if err := json.Unmarshal([]byte(content), &obj); err != nil {
@@ -1654,7 +1657,7 @@ func normalizeDaemonFeishuWebhookSecretPath(raw string) string {
 			b.WriteRune(ch)
 		}
 	}
-	return strings.TrimSpace(b.String())
+	return b.String()
 }
 
 func daemonFeishuRepoBaseName(repoRoot string) string {
@@ -1662,7 +1665,7 @@ func daemonFeishuRepoBaseName(repoRoot string) string {
 	if repoRoot == "" {
 		return ""
 	}
-	base := strings.TrimSpace(filepath.Base(filepath.Clean(repoRoot)))
+	base := filepath.Base(filepath.Clean(repoRoot))
 	if base == "." || base == "" {
 		return ""
 	}
@@ -1820,7 +1823,7 @@ func (s *daemonFeishuHTTPSender) PatchCard(ctx context.Context, messageID, cardJ
 	defer resp.Body.Close()
 	raw, readErr := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("feishu patch card failed: http=%d body=%s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("feishu patch card failed: http=%d body=%s", resp.StatusCode, string(raw))
 	}
 	if readErr != nil {
 		return fmt.Errorf("feishu patch card failed: read body: %w", readErr)
@@ -1830,10 +1833,10 @@ func (s *daemonFeishuHTTPSender) PatchCard(ctx context.Context, messageID, cardJ
 		Msg  string `json:"msg"`
 	}
 	if err := json.Unmarshal(raw, &ack); err != nil {
-		return fmt.Errorf("feishu patch card failed: invalid json: %v body=%s", err, strings.TrimSpace(string(raw)))
+		return fmt.Errorf("feishu patch card failed: invalid json: %v body=%s", err, string(raw))
 	}
 	if ack.Code != 0 {
-		return fmt.Errorf("feishu patch card failed: code=%d msg=%s", ack.Code, strings.TrimSpace(ack.Msg))
+		return fmt.Errorf("feishu patch card failed: code=%d msg=%s", ack.Code, ack.Msg)
 	}
 	return nil
 }
@@ -1875,7 +1878,7 @@ func (s *daemonFeishuHTTPSender) GetUserName(ctx context.Context, userID string)
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("feishu get user failed: http=%d body=%s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return "", fmt.Errorf("feishu get user failed: http=%d body=%s", resp.StatusCode, string(raw))
 	}
 	var out struct {
 		Code int    `json:"code"`
@@ -1890,9 +1893,9 @@ func (s *daemonFeishuHTTPSender) GetUserName(ctx context.Context, userID string)
 		return "", err
 	}
 	if out.Code != 0 {
-		return "", fmt.Errorf("feishu get user failed: code=%d msg=%s", out.Code, strings.TrimSpace(out.Msg))
+		return "", fmt.Errorf("feishu get user failed: code=%d msg=%s", out.Code, out.Msg)
 	}
-	name := strings.TrimSpace(out.Data.User.Name)
+	name := out.Data.User.Name
 	if name == "" {
 		return "", nil
 	}
@@ -1924,7 +1927,7 @@ func (s *daemonFeishuHTTPSender) getCachedUserName(userID string) (string, bool)
 		s.userNames.Delete(userID)
 		return "", false
 	}
-	name := strings.TrimSpace(entry.name)
+	name := entry.name
 	if name == "" {
 		s.userNames.Delete(userID)
 		return "", false
@@ -1978,7 +1981,7 @@ func (s *daemonFeishuHTTPSender) sendMessage(ctx context.Context, chatID, msgTyp
 	defer resp.Body.Close()
 	raw, readErr := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("feishu send message failed: http=%d body=%s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return "", fmt.Errorf("feishu send message failed: http=%d body=%s", resp.StatusCode, string(raw))
 	}
 	if readErr != nil {
 		return "", fmt.Errorf("feishu send message failed: read body: %w", readErr)
@@ -1991,12 +1994,12 @@ func (s *daemonFeishuHTTPSender) sendMessage(ctx context.Context, chatID, msgTyp
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &ack); err != nil {
-		return "", fmt.Errorf("feishu send message failed: invalid json: %v body=%s", err, strings.TrimSpace(string(raw)))
+		return "", fmt.Errorf("feishu send message failed: invalid json: %v body=%s", err, string(raw))
 	}
 	if ack.Code != 0 {
-		return "", fmt.Errorf("feishu send message failed: code=%d msg=%s", ack.Code, strings.TrimSpace(ack.Msg))
+		return "", fmt.Errorf("feishu send message failed: code=%d msg=%s", ack.Code, ack.Msg)
 	}
-	return strings.TrimSpace(ack.Data.MessageID), nil
+	return ack.Data.MessageID, nil
 }
 
 func (s *daemonFeishuHTTPSender) getTenantToken(ctx context.Context) (string, error) {
@@ -2004,7 +2007,7 @@ func (s *daemonFeishuHTTPSender) getTenantToken(ctx context.Context) (string, er
 		return "", fmt.Errorf("sender 为空")
 	}
 	s.mu.Lock()
-	if strings.TrimSpace(s.token) != "" && time.Now().Before(s.tokenUntil) {
+	if s.token != "" && time.Now().Before(s.tokenUntil) {
 		tok := s.token
 		s.mu.Unlock()
 		return tok, nil
@@ -2012,8 +2015,8 @@ func (s *daemonFeishuHTTPSender) getTenantToken(ctx context.Context) (string, er
 	s.mu.Unlock()
 
 	payload := map[string]string{
-		"app_id":     strings.TrimSpace(s.appID),
-		"app_secret": strings.TrimSpace(s.appSecret),
+		"app_id":     s.appID,
+		"app_secret": s.appSecret,
 	}
 	body, _ := json.Marshal(payload)
 	u := strings.TrimRight(s.baseURL, "/") + "/open-apis/auth/v3/tenant_access_token/internal"
@@ -2030,7 +2033,7 @@ func (s *daemonFeishuHTTPSender) getTenantToken(ctx context.Context) (string, er
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("feishu token failed: http=%d body=%s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return "", fmt.Errorf("feishu token failed: http=%d body=%s", resp.StatusCode, string(raw))
 	}
 	var out struct {
 		Code              int    `json:"code"`
@@ -2042,9 +2045,9 @@ func (s *daemonFeishuHTTPSender) getTenantToken(ctx context.Context) (string, er
 		return "", err
 	}
 	if out.Code != 0 {
-		return "", fmt.Errorf("feishu token failed: code=%d msg=%s", out.Code, strings.TrimSpace(out.Msg))
+		return "", fmt.Errorf("feishu token failed: code=%d msg=%s", out.Code, out.Msg)
 	}
-	token := strings.TrimSpace(out.TenantAccessToken)
+	token := out.TenantAccessToken
 	if token == "" {
 		return "", fmt.Errorf("feishu token empty")
 	}
@@ -2062,7 +2065,7 @@ func (s *daemonFeishuHTTPSender) getTenantToken(ctx context.Context) (string, er
 }
 
 func sanitizeDaemonFeishuCardTitle(title string) string {
-	title = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(title, "\r", " "), "\n", " "))
+	title = strings.ReplaceAll(strings.ReplaceAll(title, "\r", " "), "\n", " ")
 	title = strings.Join(strings.Fields(title), " ")
 	if title == "" {
 		title = daemonFeishuCardDefaultTitle
@@ -2090,7 +2093,7 @@ func normalizeDaemonFeishuCardMarkdown(markdown string) string {
 			trimRight = prefix + leftTrim
 		}
 		if strings.HasPrefix(leftTrim, "```") {
-			lang := strings.TrimSpace(strings.TrimPrefix(leftTrim, "```"))
+			lang := strings.TrimPrefix(leftTrim, "```")
 			lang = strings.TrimPrefix(lang, "{")
 			lang = strings.TrimSuffix(lang, "}")
 			trimRight = prefix + "```"
@@ -2104,7 +2107,7 @@ func normalizeDaemonFeishuCardMarkdown(markdown string) string {
 	if inFence {
 		out = append(out, "```")
 	}
-	normalized := strings.TrimSpace(strings.Join(out, "\n"))
+	normalized := strings.Join(out, "\n")
 	if normalized == "" {
 		return ""
 	}
@@ -2125,14 +2128,14 @@ func degradeDaemonFeishuCardMarkdown(markdown string) string {
 			lines[i] = strings.ReplaceAll(lines[i], "|", " / ")
 		}
 	}
-	return strings.TrimSpace(strings.Join(lines, "\n"))
+	return strings.Join(lines, "\n")
 }
 
 func isDaemonFeishuCardContentError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	msg := strings.ToLower(err.Error())
 	if msg == "" {
 		return false
 	}
@@ -2170,7 +2173,7 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 }
 
 func isGatewayTurnTerminalStatus(status string) bool {
-	status = strings.ToLower(strings.TrimSpace(status))
+	status = strings.ToLower(status)
 	if status == "" {
 		return true
 	}

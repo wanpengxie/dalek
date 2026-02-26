@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 var ErrInboundQueueFull = errors.New("inbound queue full")
@@ -13,7 +14,7 @@ var ErrInboundQueueClosed = errors.New("inbound queue closed")
 type InboundQueue struct {
 	mu     sync.Mutex
 	depth  int
-	closed bool
+	closed atomic.Bool
 	queues map[string]chan InboundItem
 }
 
@@ -45,26 +46,29 @@ func (q *InboundQueue) GetOrCreate(projectName string) (chan InboundItem, bool, 
 
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.closed {
-		return nil, false, ErrInboundQueueClosed
-	}
-	if ch, ok := q.queues[projectName]; ok {
-		return ch, false, nil
-	}
-	ch := make(chan InboundItem, q.Depth())
-	q.queues[projectName] = ch
-	return ch, true, nil
+	return q.getOrCreateLocked(projectName)
 }
 
 func (q *InboundQueue) Enqueue(projectName string, item InboundItem) error {
-	ch, _, err := q.GetOrCreate(projectName)
+	if q == nil {
+		return errors.New("inbound queue 为空")
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return errors.New("project name 不能为空")
+	}
+	q.mu.Lock()
+	ch, _, err := q.getOrCreateLocked(projectName)
 	if err != nil {
+		q.mu.Unlock()
 		return err
 	}
 	select {
 	case ch <- item:
+		q.mu.Unlock()
 		return nil
 	default:
+		q.mu.Unlock()
 		return ErrInboundQueueFull
 	}
 }
@@ -90,12 +94,10 @@ func (q *InboundQueue) Close() {
 	if q == nil {
 		return
 	}
-	q.mu.Lock()
-	if q.closed {
-		q.mu.Unlock()
+	if q.closed.Swap(true) {
 		return
 	}
-	q.closed = true
+	q.mu.Lock()
 	oldQueues := q.queues
 	q.queues = make(map[string]chan InboundItem)
 	q.mu.Unlock()
@@ -111,4 +113,16 @@ func (q *InboundQueue) Close() {
 		close(ch)
 		closed[ch] = struct{}{}
 	}
+}
+
+func (q *InboundQueue) getOrCreateLocked(projectName string) (chan InboundItem, bool, error) {
+	if q.closed.Load() {
+		return nil, false, ErrInboundQueueClosed
+	}
+	if ch, ok := q.queues[projectName]; ok {
+		return ch, false, nil
+	}
+	ch := make(chan InboundItem, q.Depth())
+	q.queues[projectName] = ch
+	return ch, true, nil
 }

@@ -30,7 +30,7 @@ func (s *Service) buildSDKToolApprovalHandler(turnCtx context.Context, conversat
 		_, autoDenied := deniedSigSet[signature]
 		denyMu.Unlock()
 		if autoDenied {
-			if cmd := strings.TrimSpace(readToolApprovalCommand(input)); cmd != "" {
+			if cmd := readToolApprovalCommand(input); cmd != "" {
 				return false, fmt.Errorf("该轮会话中用户已拒绝同类命令（%s），本次自动拒绝", cmd)
 			}
 			return false, fmt.Errorf("该轮会话中用户已拒绝同类工具操作，本次自动拒绝")
@@ -55,20 +55,19 @@ func (s *Service) buildSDKToolApprovalHandler(turnCtx context.Context, conversat
 			emitStreamAgentEvent(eventCtx, AgentEvent{
 				Stream: "",
 				Data: AgentEventData{
-					Phase:    ToolApprovalEventType,
-					Text:     payloadText,
-					ToolName: strings.TrimSpace(toolName),
-					ToolInput: strings.TrimSpace(
-						readToolApprovalCommand(input),
-					),
+					Phase:     ToolApprovalEventType,
+					Text:      payloadText,
+					ToolName:  toolName,
+					ToolInput: readToolApprovalCommand(input),
 				},
 			})
 		}
 
-		if s.toolApprovalBridge == nil {
+		bridge := s.toolApprovalBridgeSnapshot()
+		if bridge == nil {
 			return false, fmt.Errorf("工具审批桥接未初始化")
 		}
-		decision, err := s.toolApprovalBridge.Wait(waitCtx, pending.ID)
+		decision, err := bridge.Wait(waitCtx, pending.ID)
 		if err != nil {
 			return false, fmt.Errorf("等待工具审批失败: %w", err)
 		}
@@ -81,17 +80,17 @@ func (s *Service) buildSDKToolApprovalHandler(turnCtx context.Context, conversat
 			denyMu.Unlock()
 			return false, nil
 		default:
-			return false, fmt.Errorf("未知审批结果: %s", strings.TrimSpace(string(decision)))
+			return false, fmt.Errorf("未知审批结果: %s", string(decision))
 		}
 	}
 }
 
 func sdkToolApprovalCommandSignature(toolName string, input map[string]any) string {
-	tool := strings.ToLower(strings.TrimSpace(toolName))
+	tool := strings.ToLower(toolName)
 	if tool == "" {
 		tool = "unknown"
 	}
-	cmd := strings.ToLower(strings.TrimSpace(readToolApprovalCommand(input)))
+	cmd := strings.ToLower(readToolApprovalCommand(input))
 	if cmd == "" {
 		return tool
 	}

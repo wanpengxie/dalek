@@ -19,18 +19,18 @@ func (s *Service) DecidePendingAction(ctx context.Context, req PendingActionDeci
 	}
 	decision := req.Decision.normalize()
 	if !decision.valid() {
-		return PendingActionDecisionResult{}, fmt.Errorf("decision 非法: %s", strings.TrimSpace(string(req.Decision)))
+		return PendingActionDecisionResult{}, fmt.Errorf("decision 非法: %s", string(req.Decision))
 	}
 
-	channelType := toStoreChannelType(contracts.ChannelType(strings.ToLower(strings.TrimSpace(string(req.ChannelType)))))
+	channelType := toStoreChannelType(contracts.ChannelType(strings.ToLower(string(req.ChannelType))))
 	if channelType == "" {
 		channelType = contracts.ChannelTypeIM
 	}
-	adapter := strings.TrimSpace(req.Adapter)
+	adapter := req.Adapter
 	if adapter == "" {
 		adapter = defaultAdapter(string(channelType))
 	}
-	peerConversationID := strings.TrimSpace(req.PeerConversationID)
+	peerConversationID := req.PeerConversationID
 	if peerConversationID == "" {
 		return PendingActionDecisionResult{}, fmt.Errorf("peer_conversation_id 不能为空")
 	}
@@ -52,14 +52,14 @@ func (s *Service) DecidePendingAction(ctx context.Context, req PendingActionDeci
 
 	switch decision {
 	case PendingActionApprove:
-		res, err := s.ApprovePendingAction(ctx, req.PendingActionID, strings.TrimSpace(req.Decider))
+		res, err := s.ApprovePendingAction(ctx, req.PendingActionID, req.Decider)
 		if err != nil {
 			return PendingActionDecisionResult{}, err
 		}
 		res.Decision = decision
 		return res, nil
 	case PendingActionReject:
-		res, err := s.RejectPendingAction(ctx, req.PendingActionID, strings.TrimSpace(req.Decider), strings.TrimSpace(req.Note))
+		res, err := s.RejectPendingAction(ctx, req.PendingActionID, req.Decider, req.Note)
 		if err != nil {
 			return PendingActionDecisionResult{}, err
 		}
@@ -154,8 +154,8 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 		}, nil
 	}
 	if isSDKToolApprovalAction(action) {
-		if s.toolApprovalBridge != nil {
-			notified, hasWaiter := s.toolApprovalBridge.NotifyIfWaiting(actionID, PendingActionApprove)
+		if bridge := s.toolApprovalBridgeSnapshot(); bridge != nil {
+			notified, hasWaiter := bridge.NotifyIfWaiting(actionID, PendingActionApprove)
 			if hasWaiter {
 				if !notified {
 					s.slog().Warn("tool approval approve notify skipped",
@@ -193,7 +193,7 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 
 	execResult := s.executeAction(ctx, action)
 	finalStatus := contracts.ChannelPendingActionExecuted
-	finalMsg := strings.TrimSpace(execResult.Message)
+	finalMsg := execResult.Message
 	if !execResult.Success {
 		finalStatus = contracts.ChannelPendingActionFailed
 	}
@@ -269,8 +269,8 @@ func (s *Service) RejectPendingAction(ctx context.Context, actionID uint, decide
 	if err != nil {
 		return PendingActionDecisionResult{}, err
 	}
-	if s.toolApprovalBridge != nil {
-		notified, hasWaiter := s.toolApprovalBridge.NotifyIfWaiting(actionID, PendingActionReject)
+	if bridge := s.toolApprovalBridgeSnapshot(); bridge != nil {
+		notified, hasWaiter := bridge.NotifyIfWaiting(actionID, PendingActionReject)
 		if hasWaiter && !notified {
 			s.slog().Warn("tool approval reject notify skipped",
 				"action_id", actionID,
@@ -292,7 +292,7 @@ func (s *Service) finishPendingActionExecution(ctx context.Context, actionID uin
 	now := time.Now()
 	_, err := s.updatePendingAction(ctx, actionID, "", map[string]any{
 		"status":        status,
-		"decision_note": strings.TrimSpace(message),
+		"decision_note": message,
 		"executed_at":   &now,
 		"updated_at":    now,
 	})
@@ -300,15 +300,15 @@ func (s *Service) finishPendingActionExecution(ctx context.Context, actionID uin
 }
 
 func rejectDecisionNote(note string) string {
-	if strings.TrimSpace(note) == "" {
+	if note == "" {
 		return "已拒绝"
 	}
-	return strings.TrimSpace(note)
+	return note
 }
 
 func finalizeAlreadyDecidedResult(row store.ChannelPendingAction) PendingActionDecisionResult {
 	view := pendingActionRowToView(row)
-	note := strings.TrimSpace(view.DecisionNote)
+	note := view.DecisionNote
 	out := PendingActionDecisionResult{
 		Action:            view,
 		AlreadyFinalState: true,
