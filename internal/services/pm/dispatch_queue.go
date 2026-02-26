@@ -208,7 +208,7 @@ func (s *Service) claimPMDispatchJob(ctx context.Context, jobID uint, runnerID s
 		return store.PMDispatchJob{}, false, fmt.Errorf("runner_id 不能为空")
 	}
 	if leaseTTL <= 0 {
-		leaseTTL = 2 * time.Minute
+		leaseTTL = dispatchLeaseTTLMin
 	}
 
 	now := time.Now()
@@ -295,7 +295,7 @@ func (s *Service) renewPMDispatchJobLease(ctx context.Context, jobID uint, runne
 		return fmt.Errorf("runner_id 不能为空")
 	}
 	if leaseTTL <= 0 {
-		leaseTTL = 2 * time.Minute
+		leaseTTL = dispatchLeaseTTLMin
 	}
 	now := time.Now()
 	lease := now.Add(leaseTTL)
@@ -691,7 +691,7 @@ func (s *Service) waitPMDispatchJob(ctx context.Context, jobID uint, pollInterva
 		ctx = context.Background()
 	}
 	if pollInterval <= 0 {
-		pollInterval = 100 * time.Millisecond
+		pollInterval = defaultDispatchPollInterval
 	}
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()

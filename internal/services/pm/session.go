@@ -44,7 +44,7 @@ func (s *Service) EnsureManagerSession(ctx context.Context) (string, error) {
 	session := s.ManagerSessionName()
 
 	// 已存在就直接返回
-	listCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	listCtx, cancel := context.WithTimeout(ctx, tmuxListSessionsTimeout)
 	defer cancel()
 	sessions, err := p.Tmux.ListSessions(listCtx, socket)
 	if err == nil && sessions[session] {
@@ -66,7 +66,7 @@ func (s *Service) EnsureManagerSession(ctx context.Context) (string, error) {
 		}, "\n")
 	}
 
-	newCtx, cancel2 := context.WithTimeout(ctx, 5*time.Second)
+	newCtx, cancel2 := context.WithTimeout(ctx, tmuxNewSessionTimeout)
 	defer cancel2()
 	cwd := strings.TrimSpace(p.RepoRoot)
 	if cwd == "" {

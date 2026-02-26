@@ -89,7 +89,7 @@ Tickets: <T.. T.. T..>
 
 | Wave | 本轮 tickets | 启动时必须提醒下游的“架构状态变化” |
 |---|---|---|
-| W01 | `T38` `T39` `T24` `T06` | 产出日志统一入口（slog + 注入点）、通用 FSM、migration runner、统一 env builder。后续票禁止再引入并行实现。 |
+| W01 | `T38` `T39` `T24` `T06` | 产出日志统一入口（slog + 注入点）、通用 FSM、migration runner、PM 配置基线（`buildBaseEnv()` + `constants.go` + dispatch prompt 模板外置）。后续票禁止再引入并行实现。 |
 | W02 | `T19` `T21` `T03` `T10` | 核心类型与 project 结构开始归位；Feishu/WS 归位后，下游 cmd/app 必须复用共享服务，不再自建链路。 |
 | W03 | `T01` `T02` `T04` `T11` | app/cmd 第一轮归位完成后，后续票不得把业务逻辑留在 cmd/app；配置逻辑必须走统一入口。 |
 | W04 | `T22` `T14` `T31` `T29` | 类型迁移第 2 阶段后，store 不再作为跨层类型中心；channel 入站与 gatewaysend 分层成为默认路径。 |
@@ -99,6 +99,12 @@ Tickets: <T.. T.. T..>
 | W08 | `T20` `T13` `T18` `T25` | TaskRuntime 必须复用 FSM；DaemonManager 与 Provider/默认值单点化；高频 JSON 字段类型化路径确定。 |
 | W09 | `T09` `T33` `T34` `T35` | PM 调度主链与通知解耦完成后，续后 PM 变更必须遵循拆分后的职责边界。 |
 | W10 | `T36` `T32` `T05` | 可靠性/测试/日志命名收口，后续优化票必须以该轮产出的测试护栏和日志体系为基线。 |
+
+## W01 PM 配置基线（T06）
+
+- `internal/services/pm/env.go`：新增 `buildBaseEnv()`，PM dispatch/bootstrap/worker SDK 三条路径统一复用基础 env 构建。
+- `internal/services/pm/constants.go`：集中维护 PM 域 timeout/interval 与关键字符串常量，禁止新增分散 magic number。
+- `internal/repo/templates/pm/dispatch_prompt_v1.tmpl`：dispatch prompt 模板外置，Go 代码仅传递变量并渲染。
 
 ## 每批执行建议
 

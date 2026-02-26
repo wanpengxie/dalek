@@ -9,35 +9,54 @@ import (
 	"text/template"
 )
 
-//go:embed templates/project/**
+//go:embed templates/**
 var seedTemplateFS embed.FS
 
 func MustReadSeedTemplate(path string) string {
-	return mustReadSeedTemplate(path)
+	out, err := ReadSeedTemplate(path)
+	if err != nil {
+		panic(err.Error())
+	}
+	return out
 }
 
 func MustRenderSeedTemplate(path string, data map[string]string) string {
-	return mustRenderSeedTemplate(path, data)
+	out, err := RenderSeedTemplate(path, data)
+	if err != nil {
+		panic(err.Error())
+	}
+	return out
 }
 
 func mustReadSeedTemplate(path string) string {
-	clean := strings.TrimSpace(path)
-	b, err := seedTemplateFS.ReadFile(clean)
-	if err != nil {
-		panic(fmt.Sprintf("读取内置种子模板失败: %s: %v", clean, err))
-	}
-	return string(b)
+	return MustReadSeedTemplate(path)
 }
 
 func mustRenderSeedTemplate(path string, data map[string]string) string {
-	tpl := mustReadSeedTemplate(path)
+	return MustRenderSeedTemplate(path, data)
+}
+
+func ReadSeedTemplate(path string) (string, error) {
+	clean := strings.TrimSpace(path)
+	b, err := seedTemplateFS.ReadFile(clean)
+	if err != nil {
+		return "", fmt.Errorf("读取内置种子模板失败: %s: %w", clean, err)
+	}
+	return string(b), nil
+}
+
+func RenderSeedTemplate(path string, data any) (string, error) {
+	tpl, err := ReadSeedTemplate(path)
+	if err != nil {
+		return "", err
+	}
 	t, err := template.New(filepath.Base(path)).Parse(tpl)
 	if err != nil {
-		panic(fmt.Sprintf("解析内置种子模板失败: %s: %v", path, err))
+		return "", fmt.Errorf("解析内置种子模板失败: %s: %w", path, err)
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, data); err != nil {
-		panic(fmt.Sprintf("渲染内置种子模板失败: %s: %v", path, err))
+		return "", fmt.Errorf("渲染内置种子模板失败: %s: %w", path, err)
 	}
-	return buf.String()
+	return buf.String(), nil
 }

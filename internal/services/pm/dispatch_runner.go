@@ -29,9 +29,9 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 	}
 
 	cfg := p.Config.WithDefaults()
-	leaseTTL := time.Duration(cfg.PMDispatchTimeoutMS)*time.Millisecond + 60*time.Second
-	if leaseTTL < 2*time.Minute {
-		leaseTTL = 2 * time.Minute
+	leaseTTL := time.Duration(cfg.PMDispatchTimeoutMS)*time.Millisecond + dispatchLeaseTTLBuffer
+	if leaseTTL < dispatchLeaseTTLMin {
+		leaseTTL = dispatchLeaseTTLMin
 	}
 	job, claimed, err := s.claimPMDispatchJob(ctx, jobID, runnerID, leaseTTL)
 	if err != nil {
@@ -50,7 +50,7 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 	stopRenew := make(chan struct{})
 	defer close(stopRenew)
 	go func() {
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(dispatchLeaseRenewInterval)
 		defer ticker.Stop()
 		for {
 			select {

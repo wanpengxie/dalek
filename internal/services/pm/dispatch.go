@@ -117,7 +117,7 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 
 	// worker loop 同步执行可能运行数小时，不设内部超时。
 	// 调用方若需要超时控制，应通过 ctx 传入。
-	finalJob, err := s.waitPMDispatchJob(ctx, submission.JobID, 100*time.Millisecond)
+	finalJob, err := s.waitPMDispatchJob(ctx, submission.JobID, defaultDispatchPollInterval)
 	if err != nil {
 		if runErr != nil {
 			return DispatchResult{}, fmt.Errorf("dispatch runner 失败: %v（wait: %w）", runErr, err)
