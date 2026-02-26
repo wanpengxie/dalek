@@ -2,7 +2,6 @@ package pm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -134,10 +133,7 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 		return DispatchResult{}, fmt.Errorf("dispatch job 失败: status=%s", finalJob.Status)
 	}
 
-	payload := contracts.PMDispatchJobResult{}
-	if strings.TrimSpace(finalJob.ResultJSON) != "" {
-		_ = json.Unmarshal([]byte(finalJob.ResultJSON), &payload)
-	}
+	payload := finalJob.ResultJSON
 
 	updatedWorker, err := s.worker.WorkerByID(ctx, finalJob.WorkerID)
 	if err != nil {

@@ -106,7 +106,7 @@ func TestHandler_Success(t *testing.T) {
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
 		PeerProjectKey: "chat-demo-1",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {
@@ -186,7 +186,7 @@ func TestSendProjectText_DedupRecentContent(t *testing.T) {
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
 		PeerProjectKey: "chat-demo-dedup",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {
@@ -254,7 +254,7 @@ func TestHandler_UsesRepoBaseNameInCardTitle(t *testing.T) {
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
 		PeerProjectKey: "chat-demo-3",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {
@@ -329,7 +329,7 @@ func TestHandler_SenderFailed_MarksOutboxFailed(t *testing.T) {
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
 		PeerProjectKey: "chat-demo-2",
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {

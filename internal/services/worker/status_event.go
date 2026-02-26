@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"dalek/internal/contracts"
-	"encoding/json"
 	"strings"
 	"time"
 
@@ -18,15 +17,8 @@ func normalizeWorkerStatus(st contracts.WorkerStatus) contracts.WorkerStatus {
 	return v
 }
 
-func marshalWorkerStatusPayload(v any) string {
-	if v == nil {
-		return ""
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
+func marshalWorkerStatusPayload(v any) contracts.JSONMap {
+	return contracts.JSONMapFromAny(v)
 }
 
 func (s *Service) appendWorkerStatusEventTx(ctx context.Context, tx *gorm.DB, workerID uint, ticketID uint, fromStatus, toStatus contracts.WorkerStatus, source, reason string, payload any, createdAt time.Time) error {

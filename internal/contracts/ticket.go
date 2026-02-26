@@ -27,9 +27,9 @@ type TicketWorkflowEvent struct {
 	FromStatus TicketWorkflowStatus `gorm:"column:from_workflow_status;type:text;not null;default:'';index"`
 	ToStatus   TicketWorkflowStatus `gorm:"column:to_workflow_status;type:text;not null;default:'';index"`
 
-	Source      string `gorm:"type:text;not null;default:'';index"`
-	Reason      string `gorm:"type:text;not null;default:''"`
-	PayloadJSON string `gorm:"type:text;not null;default:''"`
+	Source      string  `gorm:"type:text;not null;default:'';index"`
+	Reason      string  `gorm:"type:text;not null;default:''"`
+	PayloadJSON JSONMap `gorm:"type:text;not null;default:'{}'"`
 }
 
 func (TicketWorkflowEvent) TableName() string {

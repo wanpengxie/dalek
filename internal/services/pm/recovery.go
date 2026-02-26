@@ -98,9 +98,9 @@ func (s *Service) RecoverActiveTaskRuns(ctx context.Context, projectName string,
 			_ = tx.WithContext(ctx).Create(&contracts.TaskEvent{
 				TaskRunID:   run.ID,
 				EventType:   "daemon_recovery_failed",
-				ToStateJSON: `{"orchestration_state":"failed"}`,
+				ToStateJSON: contracts.JSONMap{"orchestration_state": "failed"},
 				Note:        errMsg,
-				PayloadJSON: marshalJSON(map[string]any{"source": "daemon_recovery"}),
+				PayloadJSON: contracts.JSONMap{"source": "daemon_recovery"},
 				CreatedAt:   now,
 			}).Error
 			_, _ = s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
@@ -233,16 +233,16 @@ func (s *Service) recoverDispatchJobs(ctx context.Context, projectName string, n
 					_ = tx.WithContext(ctx).Create(&contracts.TaskEvent{
 						TaskRunID:   job.TaskRunID,
 						EventType:   mode.eventType,
-						ToStateJSON: `{"orchestration_state":"failed"}`,
+						ToStateJSON: contracts.JSONMap{"orchestration_state": "failed"},
 						Note:        mode.errorMessage,
-						PayloadJSON: marshalJSON(map[string]any{
+						PayloadJSON: contracts.JSONMap{
 							"source":          mode.source,
 							"dispatch_job_id": job.ID,
 							"ticket_id":       job.TicketID,
 							"worker_id":       job.WorkerID,
 							"request_id":      strings.TrimSpace(job.RequestID),
 							"retry_action":    retryAction,
-						}),
+						},
 						CreatedAt: now,
 					}).Error
 				}

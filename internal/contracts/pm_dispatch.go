@@ -1,6 +1,8 @@
 package contracts
 
 import (
+	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -28,8 +30,8 @@ type PMDispatchJob struct {
 	LeaseExpiresAt *time.Time `gorm:""`
 	Attempt        int        `gorm:"not null;default:0"`
 
-	ResultJSON string `gorm:"type:text;not null;default:''"`
-	Error      string `gorm:"type:text;not null;default:''"`
+	ResultJSON PMDispatchJobResult `gorm:"type:text;not null;default:'{}'"`
+	Error      string              `gorm:"type:text;not null;default:''"`
 
 	StartedAt  *time.Time `gorm:""`
 	FinishedAt *time.Time `gorm:""`
@@ -50,6 +52,38 @@ type PMDispatchJobResult struct {
 	// Worker loop 同步执行的结果字段（sdk 模式下有值）
 	WorkerLoopStages     int    `json:"worker_loop_stages,omitempty"`
 	WorkerLoopNextAction string `json:"worker_loop_next_action,omitempty"`
+}
+
+func (r PMDispatchJobResult) Value() (driver.Value, error) {
+	return r.String(), nil
+}
+
+func (r *PMDispatchJobResult) Scan(value any) error {
+	out, ok := decodeRawJSON(value)
+	if !ok {
+		*r = PMDispatchJobResult{}
+		return nil
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == "" || strings.EqualFold(raw, "null") {
+		*r = PMDispatchJobResult{}
+		return nil
+	}
+	var parsed PMDispatchJobResult
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		*r = PMDispatchJobResult{}
+		return nil
+	}
+	*r = parsed
+	return nil
+}
+
+func (r PMDispatchJobResult) String() string {
+	b, err := json.Marshal(r)
+	if err != nil {
+		return "{}"
+	}
+	return strings.TrimSpace(string(b))
 }
 
 func (r PMDispatchJobResult) Validate() error {

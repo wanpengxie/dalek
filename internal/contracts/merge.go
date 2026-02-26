@@ -12,8 +12,8 @@ type MergeItem struct {
 	TicketID uint        `gorm:"not null;index"`
 	WorkerID uint        `gorm:"not null;default:0;index"`
 
-	Branch     string `gorm:"type:text;not null;default:''"`
-	ChecksJSON string `gorm:"type:text;not null;default:''"`
+	Branch     string  `gorm:"type:text;not null;default:''"`
+	ChecksJSON JSONMap `gorm:"type:text;not null;default:'{}'"`
 
 	ApprovedBy string     `gorm:"type:text;not null;default:''"`
 	ApprovedAt *time.Time `gorm:""`

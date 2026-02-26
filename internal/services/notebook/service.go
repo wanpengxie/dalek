@@ -6,7 +6,6 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -159,7 +158,7 @@ func (s *Service) AddNote(ctx context.Context, rawText string) (NoteAddResult, e
 			Status:         store.NoteOpen,
 			Source:         "cli",
 			Text:           rawText,
-			ContextJSON:    "",
+			ContextJSON:    contracts.JSONMap{},
 			NormalizedHash: nHash,
 			ShapedItemID:   0,
 			LastError:      "",
@@ -743,7 +742,7 @@ func (s *Service) buildNoteViews(ctx context.Context, notes []store.NoteItem) ([
 			ID:             n.ID,
 			Status:         string(canonicalNoteStatus(n.Status)),
 			Text:           strings.TrimSpace(n.Text),
-			ContextJSON:    strings.TrimSpace(n.ContextJSON),
+			ContextJSON:    strings.TrimSpace(n.ContextJSON.String()),
 			NormalizedHash: strings.TrimSpace(n.NormalizedHash),
 			ShapedItemID:   n.ShapedItemID,
 			LastError:      strings.TrimSpace(n.LastError),
@@ -761,11 +760,11 @@ func (s *Service) buildNoteViews(ctx context.Context, notes []store.NoteItem) ([
 				Status:         string(s.Status),
 				Title:          strings.TrimSpace(s.Title),
 				Description:    strings.TrimSpace(s.Description),
-				AcceptanceJSON: strings.TrimSpace(s.AcceptanceJSON),
+				AcceptanceJSON: strings.TrimSpace(s.AcceptanceJSON.String()),
 				PMNotes:        strings.TrimSpace(s.PMNotes),
 				ScopeEstimate:  strings.TrimSpace(s.ScopeEstimate),
 				DedupKey:       strings.TrimSpace(s.DedupKey),
-				SourceNoteIDs:  strings.TrimSpace(s.SourceNoteIDs),
+				SourceNoteIDs:  strings.TrimSpace(s.SourceNoteIDs.String()),
 				TicketID:       s.TicketID,
 				ReviewComment:  strings.TrimSpace(s.ReviewComment),
 				ReviewedAt:     s.ReviewedAt,
@@ -969,7 +968,7 @@ func buildShapedTitle(raw string, rules notebookShapingRules) string {
 	return title
 }
 
-func marshalAcceptanceItems(items []string) string {
+func marshalAcceptanceItems(items []string) contracts.JSONStringSlice {
 	cleaned := make([]string, 0, len(items))
 	for _, item := range items {
 		item = strings.TrimSpace(item)
@@ -981,11 +980,7 @@ func marshalAcceptanceItems(items []string) string {
 	if len(cleaned) == 0 {
 		cleaned = append(cleaned, defaultAcceptanceItems...)
 	}
-	b, err := json.Marshal(cleaned)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
+	return contracts.JSONStringSliceFromAny(cleaned)
 }
 
 func parseAcceptanceTemplate(raw string) []string {
@@ -1173,30 +1168,19 @@ func firstNonEmptyLine(s string) string {
 	return ""
 }
 
-func defaultSourceNoteIDs(noteID uint) string {
+func defaultSourceNoteIDs(noteID uint) contracts.JSONUintSlice {
 	if noteID == 0 {
-		return "[]"
+		return contracts.JSONUintSlice{}
 	}
-	b, err := json.Marshal([]uint{noteID})
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
+	return contracts.JSONUintSlice{noteID}
 }
 
-func mergeSourceNoteIDs(raw string, id uint) string {
+func mergeSourceNoteIDs(raw contracts.JSONUintSlice, id uint) contracts.JSONUintSlice {
 	if id == 0 {
-		if strings.TrimSpace(raw) == "" {
-			return "[]"
-		}
-		return strings.TrimSpace(raw)
-	}
-	var ids []uint
-	if strings.TrimSpace(raw) != "" {
-		_ = json.Unmarshal([]byte(raw), &ids)
+		return append(contracts.JSONUintSlice{}, raw...)
 	}
 	set := map[uint]bool{}
-	for _, v := range ids {
+	for _, v := range raw {
 		if v != 0 {
 			set[v] = true
 		}
@@ -1207,11 +1191,7 @@ func mergeSourceNoteIDs(raw string, id uint) string {
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	b, err := json.Marshal(out)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
+	return contracts.JSONUintSlice(out)
 }
 
 func trimOneLineNote(s string) string {

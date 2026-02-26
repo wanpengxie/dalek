@@ -137,10 +137,7 @@ func TestPersistInboundMessageTx_UnifiesFieldsAndDedup(t *testing.T) {
 		t.Fatalf("sender_name mismatch: %q", inbound1.SenderName)
 	}
 
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(inbound1.PayloadJSON), &payload); err != nil {
-		t.Fatalf("decode inbound payload failed: %v", err)
-	}
+	payload := map[string]any(inbound1.PayloadJSON)
 	if got := strings.TrimSpace(toString(payload["project"])); got != "alpha" {
 		t.Fatalf("payload.project mismatch, got=%q", got)
 	}
@@ -247,8 +244,11 @@ func TestPersistTurnResultTx_FinalizeSucceededAndFailure(t *testing.T) {
 		t.Fatalf("runner_id should be cleared, got=%q", gotJob.RunnerID)
 	}
 	var record TurnResultRecord
-	if err := json.Unmarshal([]byte(gotJob.ResultJSON), &record); err != nil {
-		t.Fatalf("decode success result json failed: %v", err)
+	{
+		resultBytes, _ := json.Marshal(gotJob.ResultJSON)
+		if err := json.Unmarshal(resultBytes, &record); err != nil {
+			t.Fatalf("decode success result json failed: %v", err)
+		}
 	}
 	if strings.TrimSpace(record.Schema) != turnResultSchemaV2 {
 		t.Fatalf("schema mismatch, got=%q", record.Schema)

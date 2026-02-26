@@ -1031,7 +1031,7 @@ func (g *Gateway) BindProject(ctx context.Context, channelType contracts.Channel
 			ChannelType:    toStoreChannelType(channelType),
 			Adapter:        adapter,
 			PeerProjectKey: peerProjectKey,
-			RolePolicyJSON: "{}",
+			RolePolicyJSON: contracts.JSONMap{},
 			Enabled:        true,
 		}
 		return tx.WithContext(ctx).Create(&binding).Error

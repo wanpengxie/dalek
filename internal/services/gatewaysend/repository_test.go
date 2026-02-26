@@ -30,7 +30,7 @@ func createRepositoryTestBinding(t *testing.T, db *gorm.DB, projectName, chatID 
 		ChannelType:    contracts.ChannelTypeIM,
 		Adapter:        AdapterFeishu,
 		PeerProjectKey: strings.TrimSpace(chatID),
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := db.Create(&binding).Error; err != nil {

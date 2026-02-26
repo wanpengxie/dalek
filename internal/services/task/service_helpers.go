@@ -2,27 +2,12 @@ package task
 
 import (
 	"dalek/internal/contracts"
-	"encoding/json"
-	"strings"
 
 	"dalek/internal/fsm"
 )
 
-func toJSON(v any) string {
-	if v == nil {
-		return ""
-	}
-	switch t := v.(type) {
-	case string:
-		return strings.TrimSpace(t)
-	case []byte:
-		return strings.TrimSpace(string(t))
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
+func toJSONMap(v any) contracts.JSONMap {
+	return contracts.JSONMapFromAny(v)
 }
 
 func validOwnerType(v contracts.TaskOwnerType) bool {

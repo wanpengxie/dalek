@@ -1,6 +1,10 @@
 package store
 
-import "time"
+import (
+	"time"
+
+	"dalek/internal/contracts"
+)
 
 type ShapedItemStatus string
 
@@ -20,15 +24,15 @@ type ShapedItem struct {
 	ProjectKey string           `gorm:"type:text;not null;default:'';index;uniqueIndex:idx_shaped_items_project_dedup,priority:1,where:trim(dedup_key) <> ''"`
 	Status     ShapedItemStatus `gorm:"type:text;not null;index"`
 
-	Title          string `gorm:"type:text;not null;default:''"`
-	Description    string `gorm:"type:text;not null;default:''"`
-	AcceptanceJSON string `gorm:"type:text;not null;default:'[]'"`
-	PMNotes        string `gorm:"type:text;not null;default:''"`
-	ScopeEstimate  string `gorm:"type:text;not null;default:''"`
-	DedupKey       string `gorm:"type:text;not null;default:'';index;uniqueIndex:idx_shaped_items_project_dedup,priority:2,where:trim(dedup_key) <> ''"`
+	Title          string                    `gorm:"type:text;not null;default:''"`
+	Description    string                    `gorm:"type:text;not null;default:''"`
+	AcceptanceJSON contracts.JSONStringSlice `gorm:"type:text;not null;default:'[]'"`
+	PMNotes        string                    `gorm:"type:text;not null;default:''"`
+	ScopeEstimate  string                    `gorm:"type:text;not null;default:''"`
+	DedupKey       string                    `gorm:"type:text;not null;default:'';index;uniqueIndex:idx_shaped_items_project_dedup,priority:2,where:trim(dedup_key) <> ''"`
 
-	SourceNoteIDs string `gorm:"type:text;not null;default:'[]'"`
-	TicketID      uint   `gorm:"not null;default:0;index"`
+	SourceNoteIDs contracts.JSONUintSlice `gorm:"type:text;not null;default:'[]'"`
+	TicketID      uint                    `gorm:"not null;default:0;index"`
 
 	ReviewComment string     `gorm:"type:text;not null;default:''"`
 	ReviewedAt    *time.Time `gorm:""`

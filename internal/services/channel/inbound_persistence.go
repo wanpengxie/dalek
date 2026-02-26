@@ -154,7 +154,7 @@ func EnsureBindingTx(ctx context.Context, tx *gorm.DB, p EnsureBindingParams) (s
 		ChannelType:    channelType,
 		Adapter:        adapter,
 		PeerProjectKey: peerProjectKey,
-		RolePolicyJSON: "{}",
+		RolePolicyJSON: contracts.JSONMap{},
 		Enabled:        true,
 	}
 	if err := tx.WithContext(ctx).Create(&binding).Error; err != nil {
@@ -223,7 +223,7 @@ func PersistInboundMessageTx(ctx context.Context, tx *gorm.DB, p PersistInboundP
 		SenderID:       senderID,
 		SenderName:     senderName,
 		ContentText:    env.Text,
-		PayloadJSON:    mustJSON(payload),
+		PayloadJSON:    contracts.JSONMapFromAny(payload),
 		Status:         contracts.ChannelMessageAccepted,
 	}
 	if err := tx.WithContext(ctx).Create(&inbound).Error; err != nil {
@@ -346,7 +346,7 @@ func PersistTurnResultTx(ctx context.Context, tx *gorm.DB, p PersistTurnResultPa
 			PeerMessageID:  &outPeerID,
 			SenderID:       "pm",
 			ContentText:    payload.AgentReplyText,
-			PayloadJSON:    payloadJSON,
+			PayloadJSON:    contracts.JSONMapFromAny(payloadJSON),
 			Status:         outboundStatus,
 		}
 		if err := tx.WithContext(ctx).Create(&outbound).Error; err != nil {
@@ -362,7 +362,7 @@ func PersistTurnResultTx(ctx context.Context, tx *gorm.DB, p PersistTurnResultPa
 		outbox := store.ChannelOutbox{
 			MessageID:   outbound.ID,
 			Adapter:     adapter,
-			PayloadJSON: payloadJSON,
+			PayloadJSON: contracts.JSONMapFromAny(payloadJSON),
 			Status:      outboxStatus,
 			RetryCount:  0,
 			LastError:   lastError,
@@ -454,13 +454,12 @@ func decodeTurnResult(job store.ChannelTurnJob) ProcessResult {
 		JobError:     job.Error,
 		JobErrorType: classifyJobErrorType(job.Error),
 	}
-	raw := job.ResultJSON
-	if raw == "" {
+	if len(job.ResultJSON) == 0 {
 		return res
 	}
 
 	var payload TurnResultRecord
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+	if err := json.Unmarshal([]byte(job.ResultJSON.String()), &payload); err != nil {
 		return res
 	}
 

@@ -46,10 +46,10 @@ func (s *Service) AppendEvent(ctx context.Context, in contracts.TaskEventInput) 
 	ev := contracts.TaskEvent{
 		TaskRunID:     in.TaskRunID,
 		EventType:     eventType,
-		FromStateJSON: toJSON(in.FromState),
-		ToStateJSON:   toJSON(in.ToState),
+		FromStateJSON: toJSONMap(in.FromState),
+		ToStateJSON:   toJSONMap(in.ToState),
 		Note:          strings.TrimSpace(in.Note),
-		PayloadJSON:   toJSON(in.Payload),
+		PayloadJSON:   toJSONMap(in.Payload),
 		CreatedAt:     in.CreatedAt,
 	}
 	return db.WithContext(ctx).Create(&ev).Error
@@ -79,7 +79,7 @@ func (s *Service) AppendRuntimeSample(ctx context.Context, in contracts.TaskRunt
 		Summary:     strings.TrimSpace(in.Summary),
 		Source:      strings.TrimSpace(in.Source),
 		ObservedAt:  in.ObservedAt,
-		MetricsJSON: toJSON(in.Metrics),
+		MetricsJSON: toJSONMap(in.Metrics),
 	}
 	return db.WithContext(ctx).Create(&sample).Error
 }
@@ -107,7 +107,7 @@ func (s *Service) AppendSemanticReport(ctx context.Context, in contracts.TaskSem
 		Milestone:         strings.TrimSpace(in.Milestone),
 		NextAction:        strings.TrimSpace(in.NextAction),
 		Summary:           strings.TrimSpace(in.Summary),
-		ReportPayloadJSON: toJSON(in.Payload),
+		ReportPayloadJSON: toJSONMap(in.Payload),
 		ReportedAt:        in.ReportedAt,
 	}
 	return db.WithContext(ctx).Create(&report).Error

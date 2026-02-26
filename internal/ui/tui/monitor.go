@@ -900,8 +900,8 @@ func (m model) mergeInspectorLeftView(panelW int, mergeID uint) string {
 		kvLine("approved:", approved+" @ "+approvedAt, innerW),
 		kvLine("updated:", mi.UpdatedAt.Local().Format("01-02 15:04"), innerW),
 	}
-	if strings.TrimSpace(mi.ChecksJSON) != "" {
-		lines = append(lines, kvLine("checks:", oneLine(strings.TrimSpace(mi.ChecksJSON)), innerW))
+	if strings.TrimSpace(mi.ChecksJSON.String()) != "" {
+		lines = append(lines, kvLine("checks:", oneLine(strings.TrimSpace(mi.ChecksJSON.String())), innerW))
 	}
 	lines = padBottom(lines, 6+tailShowLines)
 	return strings.Join(lines, "\n")

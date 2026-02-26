@@ -302,7 +302,7 @@ func TestOpenAndMigrate_ChannelTablesCRUD(t *testing.T) {
 		PeerMessageID:  &peerID,
 		SenderID:       "user-1",
 		ContentText:    "list tickets",
-		PayloadJSON:    "{}",
+		PayloadJSON:    contracts.JSONMap{},
 		Status:         contracts.ChannelMessageAccepted,
 	}
 	if err := db.Create(&inMsg).Error; err != nil {
@@ -324,7 +324,7 @@ func TestOpenAndMigrate_ChannelTablesCRUD(t *testing.T) {
 		Adapter:        "cli.local",
 		SenderID:       "pm",
 		ContentText:    "ok",
-		PayloadJSON:    "{}",
+		PayloadJSON:    contracts.JSONMap{},
 		Status:         contracts.ChannelMessageProcessed,
 	}
 	if err := db.Create(&outMsg).Error; err != nil {
@@ -334,7 +334,7 @@ func TestOpenAndMigrate_ChannelTablesCRUD(t *testing.T) {
 	outbox := ChannelOutbox{
 		MessageID:   outMsg.ID,
 		Adapter:     "cli.local",
-		PayloadJSON: "{}",
+		PayloadJSON: contracts.JSONMap{},
 		Status:      contracts.ChannelOutboxPending,
 	}
 	if err := db.Create(&outbox).Error; err != nil {
@@ -375,7 +375,7 @@ func TestOpenAndMigrate_ChannelMessageDedupScopedByConversation(t *testing.T) {
 		PeerMessageID:  &peerID,
 		SenderID:       "u1",
 		ContentText:    "hello-1",
-		PayloadJSON:    "{}",
+		PayloadJSON:    contracts.JSONMap{},
 		Status:         contracts.ChannelMessageAccepted,
 	}
 	if err := db.Create(&in1).Error; err != nil {
@@ -388,7 +388,7 @@ func TestOpenAndMigrate_ChannelMessageDedupScopedByConversation(t *testing.T) {
 		PeerMessageID:  &peerID,
 		SenderID:       "u2",
 		ContentText:    "hello-2",
-		PayloadJSON:    "{}",
+		PayloadJSON:    contracts.JSONMap{},
 		Status:         contracts.ChannelMessageAccepted,
 	}
 	if err := db.Create(&in2).Error; err != nil {
@@ -518,7 +518,7 @@ func TestOpenAndMigrate_ShapedItemUniqueConstraintByProjectAndDedupKey(t *testin
 		Title:         "A",
 		Description:   "A",
 		DedupKey:      "dup-k",
-		SourceNoteIDs: "[1]",
+		SourceNoteIDs: contracts.JSONUintSlice{1},
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -532,7 +532,7 @@ func TestOpenAndMigrate_ShapedItemUniqueConstraintByProjectAndDedupKey(t *testin
 		Title:         "B",
 		Description:   "B",
 		DedupKey:      "dup-k",
-		SourceNoteIDs: "[2]",
+		SourceNoteIDs: contracts.JSONUintSlice{2},
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
@@ -546,7 +546,7 @@ func TestOpenAndMigrate_ShapedItemUniqueConstraintByProjectAndDedupKey(t *testin
 		Title:         "C",
 		Description:   "C",
 		DedupKey:      "dup-k",
-		SourceNoteIDs: "[3]",
+		SourceNoteIDs: contracts.JSONUintSlice{3},
 		CreatedAt:     now,
 		UpdatedAt:     now,
 	}
