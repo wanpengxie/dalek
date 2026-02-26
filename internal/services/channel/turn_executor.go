@@ -103,7 +103,7 @@ func (s *Service) claimAndLoadTurnContext(ctx context.Context, jobID uint) (*tur
 		return nil, false, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, false, fmt.Errorf("context 不能为空")
 	}
 	if jobID == 0 {
 		return nil, false, fmt.Errorf("job_id 不能为空")
@@ -172,7 +172,7 @@ func (s *Service) claimAndLoadTurnContext(ctx context.Context, jobID uint) (*tur
 
 func (s *Service) executeTurnAgent(ctx context.Context, tctx *turnContext) (pmAgentTurnResponse, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return pmAgentTurnResponse{}, fmt.Errorf("context 不能为空")
 	}
 	if tctx == nil {
 		return pmAgentTurnResponse{}, fmt.Errorf("turn context 不能为空")
@@ -327,7 +327,7 @@ func (s *Service) persistTurnJobResult(ctx context.Context, tctx *turnContext, r
 		return TurnResultOutput{}, err
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return TurnResultOutput{}, fmt.Errorf("context 不能为空")
 	}
 	if tctx == nil {
 		return TurnResultOutput{}, fmt.Errorf("turn context 不能为空")

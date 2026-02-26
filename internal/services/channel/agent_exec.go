@@ -77,7 +77,7 @@ func (s *Service) runAgentSDK(ctx context.Context, req runAgentSDKRequest) (agen
 		return agentcli.Result{}, context.Canceled
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return agentcli.Result{}, fmt.Errorf("context 不能为空")
 	}
 	manager := s.chatRunners
 	if manager == nil {

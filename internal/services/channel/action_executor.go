@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"dalek/internal/contracts"
-	"dalek/internal/services/core"
 	pmsvc "dalek/internal/services/pm"
 	ticketsvc "dalek/internal/services/ticket"
 	workersvc "dalek/internal/services/worker"
@@ -28,15 +27,13 @@ type ActionResult struct {
 }
 
 type ActionExecutor struct {
-	project   *core.Project
 	ticketSvc *ticketsvc.Service
 	pmSvc     *pmsvc.Service
 	workerSvc *workersvc.Service
 }
 
-func newActionExecutor(project *core.Project, ticketSvc *ticketsvc.Service, pmSvc *pmsvc.Service, workerSvc *workersvc.Service) *ActionExecutor {
+func newActionExecutor(ticketSvc *ticketsvc.Service, pmSvc *pmsvc.Service, workerSvc *workersvc.Service) *ActionExecutor {
 	return &ActionExecutor{
-		project:   project,
 		ticketSvc: ticketSvc,
 		pmSvc:     pmSvc,
 		workerSvc: workerSvc,
@@ -45,9 +42,9 @@ func newActionExecutor(project *core.Project, ticketSvc *ticketsvc.Service, pmSv
 
 func (e *ActionExecutor) Execute(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return ActionResult{}, fmt.Errorf("action executor: context 不能为空")
 	}
-	if e == nil || e.project == nil || e.project.DB == nil || e.ticketSvc == nil || e.pmSvc == nil || e.workerSvc == nil {
+	if e == nil || e.ticketSvc == nil || e.pmSvc == nil || e.workerSvc == nil {
 		return ActionResult{}, fmt.Errorf("action executor 依赖未完成注入")
 	}
 

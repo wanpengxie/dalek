@@ -12,7 +12,7 @@ import (
 
 func (s *Service) DecidePendingAction(ctx context.Context, req PendingActionDecisionRequest) (PendingActionDecisionResult, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return PendingActionDecisionResult{}, fmt.Errorf("context 不能为空")
 	}
 	if req.PendingActionID == 0 {
 		return PendingActionDecisionResult{}, fmt.Errorf("pending_action_id 不能为空")
@@ -72,7 +72,7 @@ func (s *Service) DecidePendingAction(ctx context.Context, req PendingActionDeci
 
 func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decider string) (PendingActionDecisionResult, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return PendingActionDecisionResult{}, fmt.Errorf("context 不能为空")
 	}
 	if actionID == 0 {
 		return PendingActionDecisionResult{}, fmt.Errorf("action_id 不能为空")
@@ -221,7 +221,7 @@ func (s *Service) ApprovePendingAction(ctx context.Context, actionID uint, decid
 
 func (s *Service) RejectPendingAction(ctx context.Context, actionID uint, decider, note string) (PendingActionDecisionResult, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return PendingActionDecisionResult{}, fmt.Errorf("context 不能为空")
 	}
 	if actionID == 0 {
 		return PendingActionDecisionResult{}, fmt.Errorf("action_id 不能为空")
@@ -287,7 +287,7 @@ func (s *Service) RejectPendingAction(ctx context.Context, actionID uint, decide
 
 func (s *Service) finishPendingActionExecution(ctx context.Context, actionID uint, status contracts.ChannelPendingActionStatus, message string) error {
 	if ctx == nil {
-		ctx = context.Background()
+		return fmt.Errorf("context 不能为空")
 	}
 	now := time.Now()
 	_, err := s.updatePendingAction(ctx, actionID, "", map[string]any{
