@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 func TestStartLeaseRenewal_LogsOnFailure(t *testing.T) {
@@ -20,7 +19,7 @@ func TestStartLeaseRenewal_LogsOnFailure(t *testing.T) {
 	svc.logger = slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	tk := createTicket(t, p.DB, "lease-renewal-log-test")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
@@ -69,7 +68,7 @@ func TestStartLeaseRenewal_EscalatesAfterThreshold(t *testing.T) {
 	svc.logger = slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	tk := createTicket(t, p.DB, "lease-renewal-escalate-test")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
@@ -111,7 +110,7 @@ func TestStartLeaseRenewal_EscalatesAfterThreshold(t *testing.T) {
 func TestStartLeaseRenewal_StopsOnClose(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "lease-renewal-stop-test")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
@@ -147,7 +146,7 @@ func TestStartLeaseRenewal_StopsOnClose(t *testing.T) {
 func TestStartLeaseRenewal_StopsOnContextCancel(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "lease-renewal-ctx-test")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
@@ -184,7 +183,7 @@ func TestStartLeaseRenewal_StopsOnContextCancel(t *testing.T) {
 func TestStartLeaseRenewal_RecordsEvent(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "lease-renewal-event-test")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),

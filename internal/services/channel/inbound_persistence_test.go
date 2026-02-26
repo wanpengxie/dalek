@@ -24,7 +24,7 @@ func TestEnsureBindingTx_SupportsAutoUpdateAndBindingID(t *testing.T) {
 		ChannelType: contracts.ChannelTypeIM,
 		Adapter:     "im.feishu",
 	}
-	var created store.ChannelBinding
+	var created contracts.ChannelBinding
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
 		created, err = EnsureBindingTx(ctx, tx, EnsureBindingParams{
@@ -44,7 +44,7 @@ func TestEnsureBindingTx_SupportsAutoUpdateAndBindingID(t *testing.T) {
 		t.Fatalf("project_name mismatch: %q", created.ProjectName)
 	}
 
-	var updated store.ChannelBinding
+	var updated contracts.ChannelBinding
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
 		updated, err = EnsureBindingTx(ctx, tx, EnsureBindingParams{
@@ -64,7 +64,7 @@ func TestEnsureBindingTx_SupportsAutoUpdateAndBindingID(t *testing.T) {
 		t.Fatalf("project_name should be updated to beta, got=%q", updated.ProjectName)
 	}
 
-	if err := db.Model(&store.ChannelBinding{}).Where("id = ?", created.ID).Update("enabled", false).Error; err != nil {
+	if err := db.Model(&contracts.ChannelBinding{}).Where("id = ?", created.ID).Update("enabled", false).Error; err != nil {
 		t.Fatalf("disable binding failed: %v", err)
 	}
 	_, err := runEnsureBindingTx(ctx, db, EnsureBindingParams{
@@ -113,8 +113,8 @@ func TestPersistInboundMessageTx_UnifiesFieldsAndDedup(t *testing.T) {
 		ReceivedAt:         time.Now().UTC().Format(time.RFC3339),
 	}
 
-	var inbound1 store.ChannelMessage
-	var job1 store.ChannelTurnJob
+	var inbound1 contracts.ChannelMessage
+	var job1 contracts.ChannelTurnJob
 	var duplicate bool
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
@@ -142,8 +142,8 @@ func TestPersistInboundMessageTx_UnifiesFieldsAndDedup(t *testing.T) {
 		t.Fatalf("payload.project mismatch, got=%q", got)
 	}
 
-	var inbound2 store.ChannelMessage
-	var job2 store.ChannelTurnJob
+	var inbound2 contracts.ChannelMessage
+	var job2 contracts.ChannelTurnJob
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
 		inbound2, job2, duplicate, err = PersistInboundMessageTx(ctx, tx, PersistInboundParams{
@@ -166,7 +166,7 @@ func TestPersistInboundMessageTx_UnifiesFieldsAndDedup(t *testing.T) {
 	}
 
 	var inboundCount int64
-	if err := db.Model(&store.ChannelMessage{}).
+	if err := db.Model(&contracts.ChannelMessage{}).
 		Where("conversation_id = ? AND direction = ?", conv.ID, contracts.ChannelMessageIn).
 		Count(&inboundCount).Error; err != nil {
 		t.Fatalf("count inbound failed: %v", err)
@@ -176,7 +176,7 @@ func TestPersistInboundMessageTx_UnifiesFieldsAndDedup(t *testing.T) {
 	}
 
 	var jobCount int64
-	if err := db.Model(&store.ChannelTurnJob{}).Where("conversation_id = ?", conv.ID).Count(&jobCount).Error; err != nil {
+	if err := db.Model(&contracts.ChannelTurnJob{}).Where("conversation_id = ?", conv.ID).Count(&jobCount).Error; err != nil {
 		t.Fatalf("count job failed: %v", err)
 	}
 	if jobCount != 1 {
@@ -191,7 +191,7 @@ func TestPersistTurnResultTx_FinalizeSucceededAndFailure(t *testing.T) {
 	ctx := context.Background()
 
 	binding, conv, inbound, job := prepareInboundState(t, db, "alpha", "chat-a", "chat-a", "msg-success")
-	if err := db.Model(&store.ChannelTurnJob{}).
+	if err := db.Model(&contracts.ChannelTurnJob{}).
 		Where("id = ?", job.ID).
 		Updates(map[string]any{
 			"status":    contracts.ChannelTurnRunning,
@@ -233,7 +233,7 @@ func TestPersistTurnResultTx_FinalizeSucceededAndFailure(t *testing.T) {
 		t.Fatalf("success status mismatch: %s", successOut.Persisted.JobStatus)
 	}
 
-	var gotJob store.ChannelTurnJob
+	var gotJob contracts.ChannelTurnJob
 	if err := db.First(&gotJob, job.ID).Error; err != nil {
 		t.Fatalf("query success job failed: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestPersistTurnResultTx_FinalizeSucceededAndFailure(t *testing.T) {
 		t.Fatalf("schema mismatch, got=%q", record.Schema)
 	}
 
-	var gotConv store.ChannelConversation
+	var gotConv contracts.ChannelConversation
 	if err := db.First(&gotConv, conv.ID).Error; err != nil {
 		t.Fatalf("query conversation failed: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestPersistTurnResultTx_FinalizeSucceededAndFailure(t *testing.T) {
 		t.Fatalf("conversation agent_session_id mismatch: %q", gotConv.AgentSessionID)
 	}
 
-	var gotOutbox store.ChannelOutbox
+	var gotOutbox contracts.ChannelOutbox
 	if err := db.First(&gotOutbox, successOut.Persisted.OutboxID).Error; err != nil {
 		t.Fatalf("query outbox failed: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestPersistTurnResultTx_FinalizeSucceededAndFailure(t *testing.T) {
 		t.Fatalf("outbox retry_count should be 0, got=%d", gotOutbox.RetryCount)
 	}
 
-	var gotInbound store.ChannelMessage
+	var gotInbound contracts.ChannelMessage
 	if err := db.First(&gotInbound, inbound.ID).Error; err != nil {
 		t.Fatalf("query inbound failed: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestPersistTurnResultTx_FinalizeSucceededAndFailure(t *testing.T) {
 		t.Fatalf("failed/no-reply should not create outbound/outbox, outbound=%d outbox=%d", failedOut.Persisted.OutboundMessageID, failedOut.Persisted.OutboxID)
 	}
 
-	var gotFailedJob store.ChannelTurnJob
+	var gotFailedJob contracts.ChannelTurnJob
 	if err := db.First(&gotFailedJob, job2.ID).Error; err != nil {
 		t.Fatalf("query failed job failed: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestPersistTurnResultTx_FinalizeSucceededAndFailure(t *testing.T) {
 		t.Fatalf("failed job error mismatch: %q", gotFailedJob.Error)
 	}
 
-	var failedInbound store.ChannelMessage
+	var failedInbound contracts.ChannelMessage
 	if err := db.First(&failedInbound, inbound2.ID).Error; err != nil {
 		t.Fatalf("query failed inbound failed: %v", err)
 	}
@@ -341,24 +341,24 @@ func openChannelTestDB(t *testing.T, name string) *gorm.DB {
 	return db
 }
 
-func runEnsureBindingTx(ctx context.Context, db *gorm.DB, p EnsureBindingParams) (store.ChannelBinding, error) {
-	var out store.ChannelBinding
+func runEnsureBindingTx(ctx context.Context, db *gorm.DB, p EnsureBindingParams) (contracts.ChannelBinding, error) {
+	var out contracts.ChannelBinding
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
 		out, err = EnsureBindingTx(ctx, tx, p)
 		return err
 	})
 	if err != nil {
-		return store.ChannelBinding{}, err
+		return contracts.ChannelBinding{}, err
 	}
 	return out, nil
 }
 
-func prepareBindingConversation(t *testing.T, db *gorm.DB, project, peerProjectKey, peerConversationID string) (store.ChannelBinding, store.ChannelConversation) {
+func prepareBindingConversation(t *testing.T, db *gorm.DB, project, peerProjectKey, peerConversationID string) (contracts.ChannelBinding, contracts.ChannelConversation) {
 	t.Helper()
 	ctx := context.Background()
-	var binding store.ChannelBinding
-	var conv store.ChannelConversation
+	var binding contracts.ChannelBinding
+	var conv contracts.ChannelConversation
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
 		binding, err = EnsureBindingTx(ctx, tx, EnsureBindingParams{
@@ -382,7 +382,7 @@ func prepareBindingConversation(t *testing.T, db *gorm.DB, project, peerProjectK
 	return binding, conv
 }
 
-func prepareInboundState(t *testing.T, db *gorm.DB, project, peerProjectKey, peerConversationID, peerMessageID string) (store.ChannelBinding, store.ChannelConversation, store.ChannelMessage, store.ChannelTurnJob) {
+func prepareInboundState(t *testing.T, db *gorm.DB, project, peerProjectKey, peerConversationID, peerMessageID string) (contracts.ChannelBinding, contracts.ChannelConversation, contracts.ChannelMessage, contracts.ChannelTurnJob) {
 	t.Helper()
 	ctx := context.Background()
 	binding, conv := prepareBindingConversation(t, db, project, peerProjectKey, peerConversationID)
@@ -397,8 +397,8 @@ func prepareInboundState(t *testing.T, db *gorm.DB, project, peerProjectKey, pee
 		Text:               "hello",
 		ReceivedAt:         time.Now().UTC().Format(time.RFC3339),
 	}
-	var inbound store.ChannelMessage
-	var job store.ChannelTurnJob
+	var inbound contracts.ChannelMessage
+	var job contracts.ChannelTurnJob
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
 		inbound, job, _, err = PersistInboundMessageTx(ctx, tx, PersistInboundParams{

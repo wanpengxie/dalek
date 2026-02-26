@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 type runningCall struct {
@@ -102,7 +101,7 @@ func (f *fakeLifecycleRuntime) AppendSemanticReport(ctx context.Context, in cont
 	return nil
 }
 
-func (f *fakeLifecycleRuntime) ListStatus(ctx context.Context, opt contracts.TaskListStatusOptions) ([]store.TaskStatusView, error) {
+func (f *fakeLifecycleRuntime) ListStatus(ctx context.Context, opt contracts.TaskListStatusOptions) ([]contracts.TaskStatusView, error) {
 	return nil, nil
 }
 

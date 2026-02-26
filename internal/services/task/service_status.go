@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
-func (s *Service) ListStatus(ctx context.Context, opt contracts.TaskListStatusOptions) ([]store.TaskStatusView, error) {
+func (s *Service) ListStatus(ctx context.Context, opt contracts.TaskListStatusOptions) ([]contracts.TaskStatusView, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -23,7 +21,7 @@ func (s *Service) ListStatus(ctx context.Context, opt contracts.TaskListStatusOp
 	if limit <= 0 {
 		limit = 100
 	}
-	q := db.WithContext(ctx).Model(&store.TaskStatusView{})
+	q := db.WithContext(ctx).Model(&contracts.TaskStatusView{})
 	if validOwnerType(opt.OwnerType) {
 		q = q.Where("owner_type = ?", opt.OwnerType)
 	}
@@ -39,7 +37,7 @@ func (s *Service) ListStatus(ctx context.Context, opt contracts.TaskListStatusOp
 	if !opt.IncludeTerminal {
 		q = q.Where("orchestration_state IN ?", []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning})
 	}
-	var out []store.TaskStatusView
+	var out []contracts.TaskStatusView
 	if err := q.Order("run_id desc").Limit(limit).Find(&out).Error; err != nil {
 		return nil, err
 	}
@@ -110,7 +108,7 @@ func (s *Service) ListEventsAfterID(ctx context.Context, afterID uint, limit int
 	return out, nil
 }
 
-func (s *Service) GetStatusByRunID(ctx context.Context, runID uint) (*store.TaskStatusView, error) {
+func (s *Service) GetStatusByRunID(ctx context.Context, runID uint) (*contracts.TaskStatusView, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -121,8 +119,8 @@ func (s *Service) GetStatusByRunID(ctx context.Context, runID uint) (*store.Task
 	if runID == 0 {
 		return nil, fmt.Errorf("run_id 不能为空")
 	}
-	var out store.TaskStatusView
-	if err := db.WithContext(ctx).Model(&store.TaskStatusView{}).Where("run_id = ?", runID).First(&out).Error; err != nil {
+	var out contracts.TaskStatusView
+	if err := db.WithContext(ctx).Model(&contracts.TaskStatusView{}).Where("run_id = ?", runID).First(&out).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}

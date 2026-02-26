@@ -10,7 +10,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/repo"
-	"dalek/internal/store"
 )
 
 func TestDirectDispatchWorker_AllowsStoppedWorkerWithAliveSession(t *testing.T) {
@@ -43,7 +42,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-1","type":"agent_message
 	}
 
 	// 模拟上一轮 loop 已退出：worker 状态变为 stopped，但 tmux session 仍在线。
-	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"status": contracts.WorkerStopped,
 	}).Error; err != nil {
 		t.Fatalf("mark worker stopped failed: %v", err)
@@ -91,7 +90,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-stopped-offline","type":
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"status": contracts.WorkerStopped,
 	}).Error; err != nil {
 		t.Fatalf("mark worker stopped failed: %v", err)
@@ -116,7 +115,7 @@ func TestDirectDispatchWorker_RollbackWorkflowOnLoopFailure(t *testing.T) {
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketBlocked,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -132,12 +131,43 @@ func TestDirectDispatchWorker_RollbackWorkflowOnLoopFailure(t *testing.T) {
 		t.Fatalf("expected direct dispatch failure")
 	}
 
-	var after store.Ticket
+	var after contracts.Ticket
 	if err := p.DB.First(&after, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
 	if after.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("workflow should rollback to blocked, got=%s", after.WorkflowStatus)
+	}
+}
+
+func TestDirectDispatchWorker_RollbackWorkflowFallsBackToBlockedWhenPrevInvalid(t *testing.T) {
+	svc, p, _, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "direct-dispatch-rollback-invalid-prev")
+	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketWorkflowStatus("legacy_unknown_state"),
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket legacy workflow failed: %v", err)
+	}
+
+	p.Config.WorkerAgent = repo.AgentExecConfig{
+		Provider: "invalid-provider",
+		Mode:     "sdk",
+	}
+	if _, err := svc.DirectDispatchWorker(context.Background(), tk.ID, DirectDispatchOptions{}); err == nil {
+		t.Fatalf("expected direct dispatch failure")
+	}
+
+	var after contracts.Ticket
+	if err := p.DB.First(&after, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if after.WorkflowStatus != contracts.TicketBlocked {
+		t.Fatalf("workflow should fallback rollback to blocked, got=%s", after.WorkflowStatus)
 	}
 }
 
@@ -169,7 +199,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-wait","type":"agent_mess
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"status":     contracts.WorkerCreating,
 		"updated_at": time.Now(),
 	}).Error; err != nil {
@@ -180,7 +210,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-wait","type":"agent_mess
 	svc.workerReadyPollInterval = 10 * time.Millisecond
 	go func() {
 		time.Sleep(80 * time.Millisecond)
-		_ = p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		_ = p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 			"status":     contracts.WorkerRunning,
 			"updated_at": time.Now(),
 		}).Error
@@ -231,7 +261,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-auto-start","type":"agen
 		t.Fatalf("expected worker_id in direct dispatch result")
 	}
 
-	var w store.Worker
+	var w contracts.Worker
 	if err := p.DB.First(&w, out.WorkerID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
 	}
@@ -256,7 +286,7 @@ func TestDirectDispatchWorker_AutoStartFalsePreservesMissingSessionError(t *test
 	}
 
 	var workers int64
-	if err := p.DB.Model(&store.Worker{}).Where("ticket_id = ?", tk.ID).Count(&workers).Error; err != nil {
+	if err := p.DB.Model(&contracts.Worker{}).Where("ticket_id = ?", tk.ID).Count(&workers).Error; err != nil {
 		t.Fatalf("count workers failed: %v", err)
 	}
 	if workers != 0 {
@@ -289,7 +319,7 @@ func TestManagerTick_IgnoresContinueRedispatch(t *testing.T) {
 		t.Fatalf("ApplyWorkerReport failed: %v", err)
 	}
 
-	var beforeTicket store.Ticket
+	var beforeTicket contracts.Ticket
 	if err := p.DB.First(&beforeTicket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}

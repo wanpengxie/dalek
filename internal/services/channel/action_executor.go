@@ -9,9 +9,6 @@ import (
 	"strings"
 
 	"dalek/internal/contracts"
-	pmsvc "dalek/internal/services/pm"
-	ticketsvc "dalek/internal/services/ticket"
-	workersvc "dalek/internal/services/worker"
 
 	"gorm.io/gorm"
 )
@@ -27,12 +24,48 @@ type ActionResult struct {
 }
 
 type ActionExecutor struct {
-	ticketSvc *ticketsvc.Service
-	pmSvc     *pmsvc.Service
-	workerSvc *workersvc.Service
+	ticketSvc TicketActionService
+	pmSvc     PMActionService
+	workerSvc WorkerActionService
 }
 
-func newActionExecutor(ticketSvc *ticketsvc.Service, pmSvc *pmsvc.Service, workerSvc *workersvc.Service) *ActionExecutor {
+type TicketActionService interface {
+	List(ctx context.Context, includeArchived bool) ([]contracts.Ticket, error)
+	GetByID(ctx context.Context, ticketID uint) (*contracts.Ticket, error)
+	CreateWithDescription(ctx context.Context, title, description string) (*contracts.Ticket, error)
+}
+
+type DispatchTicketResult struct {
+	TicketID    uint
+	WorkerID    uint
+	TaskRunID   uint
+	TmuxSocket  string
+	TmuxSession string
+}
+
+type PMActionService interface {
+	StartTicket(ctx context.Context, ticketID uint, baseBranch string) (*contracts.Worker, error)
+	DispatchTicket(ctx context.Context, ticketID uint, entryPrompt string) (DispatchTicketResult, error)
+	ArchiveTicket(ctx context.Context, ticketID uint) error
+	ListMergeItems(ctx context.Context, status contracts.MergeStatus, limit int) ([]contracts.MergeItem, error)
+	ApproveMerge(ctx context.Context, mergeItemID uint, approvedBy string) error
+	DiscardMerge(ctx context.Context, mergeItemID uint, note string) error
+}
+
+type InterruptTicketResult struct {
+	TicketID    uint
+	WorkerID    uint
+	TargetPane  string
+	TmuxSocket  string
+	TmuxSession string
+}
+
+type WorkerActionService interface {
+	InterruptTicket(ctx context.Context, ticketID uint) (InterruptTicketResult, error)
+	StopTicket(ctx context.Context, ticketID uint) error
+}
+
+func NewActionExecutor(ticketSvc TicketActionService, pmSvc PMActionService, workerSvc WorkerActionService) *ActionExecutor {
 	return &ActionExecutor{
 		ticketSvc: ticketSvc,
 		pmSvc:     pmSvc,
@@ -180,9 +213,7 @@ func (e *ActionExecutor) executeStartTicket(ctx context.Context, action contract
 		return ActionResult{}, err
 	}
 	baseBranch := actionArgString(action.Args, "base_branch", "baseBranch", "base")
-	worker, err := e.pmSvc.StartTicketWithOptions(ctx, ticketID, pmsvc.StartOptions{
-		BaseBranch: baseBranch,
-	})
+	worker, err := e.pmSvc.StartTicket(ctx, ticketID, baseBranch)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -211,7 +242,7 @@ func (e *ActionExecutor) executeDispatchTicket(ctx context.Context, action contr
 		return ActionResult{}, err
 	}
 	entryPrompt := actionArgString(action.Args, "entry_prompt", "entryPrompt", "prompt")
-	res, err := e.pmSvc.DispatchTicketWithOptions(ctx, ticketID, pmsvc.DispatchOptions{EntryPrompt: entryPrompt})
+	res, err := e.pmSvc.DispatchTicket(ctx, ticketID, entryPrompt)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -291,11 +322,8 @@ func (e *ActionExecutor) executeArchiveTicket(ctx context.Context, action contra
 func (e *ActionExecutor) executeListMergeItems(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
 	limit := actionArgInt(action.Args, 20, 1, 200, "limit")
 	statusRaw := strings.ToLower(actionArgString(action.Args, "status"))
-	opt := pmsvc.ListMergeOptions{Limit: limit}
-	if statusRaw != "" {
-		opt.Status = contracts.MergeStatus(statusRaw)
-	}
-	items, err := e.pmSvc.ListMergeItems(ctx, opt)
+	status := contracts.MergeStatus(statusRaw)
+	items, err := e.pmSvc.ListMergeItems(ctx, status, limit)
 	if err != nil {
 		return ActionResult{}, err
 	}

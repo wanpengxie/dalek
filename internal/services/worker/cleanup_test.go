@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"dalek/internal/store"
 )
 
 func TestCleanupTicketWorktree_DryRunThenClean(t *testing.T) {
@@ -22,7 +20,7 @@ func TestCleanupTicketWorktree_DryRunThenClean(t *testing.T) {
 		t.Fatalf("write .git failed: %v", err)
 	}
 
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerStopped,
 		WorktreePath: worktreePath,
@@ -33,7 +31,7 @@ func TestCleanupTicketWorktree_DryRunThenClean(t *testing.T) {
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketArchived).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketArchived).Error; err != nil {
 		t.Fatalf("archive ticket failed: %v", err)
 	}
 
@@ -83,7 +81,7 @@ func TestCleanupTicketWorktree_RejectsNonArchived(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "cleanup-reject-ticket")
 
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerStopped,
 		WorktreePath: filepath.Join(t.TempDir(), "wt"),

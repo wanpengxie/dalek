@@ -5,14 +5,12 @@ import (
 	"dalek/internal/contracts"
 	"testing"
 	"time"
-
-	"dalek/internal/store"
 )
 
 func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-claim-promote-active")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
@@ -33,7 +31,7 @@ func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 		t.Fatalf("expected running job, got=%s", got.Status)
 	}
 
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
@@ -41,7 +39,7 @@ func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 		t.Fatalf("expected ticket active after claim, got=%s", ticket.WorkflowStatus)
 	}
 
-	var ev store.TicketWorkflowEvent
+	var ev contracts.TicketWorkflowEvent
 	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, contracts.TicketActive).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query workflow event failed: %v", err)
 	}
@@ -56,7 +54,7 @@ func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 func TestCompletePMDispatchJobFailed_DemotesTicketWorkflowToBlocked(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-failed-demote-blocked")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
@@ -76,7 +74,7 @@ func TestCompletePMDispatchJobFailed_DemotesTicketWorkflowToBlocked(t *testing.T
 		t.Fatalf("complete dispatch failed state failed: %v", err)
 	}
 
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
@@ -84,7 +82,7 @@ func TestCompletePMDispatchJobFailed_DemotesTicketWorkflowToBlocked(t *testing.T
 		t.Fatalf("expected ticket blocked after dispatch failed, got=%s", ticket.WorkflowStatus)
 	}
 
-	var ev store.TicketWorkflowEvent
+	var ev contracts.TicketWorkflowEvent
 	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, contracts.TicketBlocked).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query workflow event failed: %v", err)
 	}
@@ -95,7 +93,7 @@ func TestCompletePMDispatchJobFailed_DemotesTicketWorkflowToBlocked(t *testing.T
 		t.Fatalf("unexpected workflow event source: %s", ev.Source)
 	}
 
-	var inbox store.InboxItem
+	var inbox contracts.InboxItem
 	if err := p.DB.Where("key = ? AND status = ?", inboxKeyWorkerIncident(w.ID, "dispatch_failed"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("dispatch failed should create incident inbox: %v", err)
 	}

@@ -8,7 +8,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 )
 
 func TestConsumeTaskEvents_CreatesIncidentAndNeedsUserInbox(t *testing.T) {
@@ -53,12 +52,12 @@ func TestConsumeTaskEvents_CreatesIncidentAndNeedsUserInbox(t *testing.T) {
 		t.Fatalf("expected no consume errors, got=%v", out.Errors)
 	}
 
-	var incidentInbox store.InboxItem
+	var incidentInbox contracts.InboxItem
 	if err := p.DB.Where("key = ? AND status = ?", inboxKeyWorkerIncident(w.ID, "watch_error"), contracts.InboxOpen).
 		Order("id desc").First(&incidentInbox).Error; err != nil {
 		t.Fatalf("expected watch_error inbox, err=%v", err)
 	}
-	var needsUserInbox store.InboxItem
+	var needsUserInbox contracts.InboxItem
 	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).
 		Order("id desc").First(&needsUserInbox).Error; err != nil {
 		t.Fatalf("expected needs_user inbox, err=%v", err)
@@ -117,7 +116,7 @@ func TestScanRunningWorkers_TracksBlockedAndProgressable(t *testing.T) {
 		t.Fatalf("expected no scan errors, got=%v", out.Errors)
 	}
 
-	var inbox store.InboxItem
+	var inbox contracts.InboxItem
 	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(blockedWorker.ID), contracts.InboxOpen).
 		Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("expected needs_user inbox for blocked worker, err=%v", err)
@@ -141,7 +140,7 @@ func TestProposeMergesForDoneTickets_AvoidsDuplicateOpenItems(t *testing.T) {
 	if worker == nil || worker.ID == 0 {
 		t.Fatalf("expected started worker")
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketDone,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -160,7 +159,7 @@ func TestProposeMergesForDoneTickets_AvoidsDuplicateOpenItems(t *testing.T) {
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&mergeItem).Error; err != nil {
 		t.Fatalf("query merge item failed: %v", err)
 	}
-	var inbox store.InboxItem
+	var inbox contracts.InboxItem
 	if err := p.DB.Where("key = ? AND status = ?", inboxKeyMergeApproval(mergeItem.ID), contracts.InboxOpen).
 		Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("expected merge approval inbox, err=%v", err)
@@ -186,7 +185,7 @@ func TestScheduleQueuedTickets_StartsAndDispatchesWithSubmitter(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "manager-tick-schedule-queued")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {

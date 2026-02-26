@@ -8,18 +8,17 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"dalek/internal/app"
-	"dalek/internal/store"
 )
 
 func TestApplyViews_GroupOrderAndNoHeaderRows(t *testing.T) {
 	m := newModel(nil, nil, "")
-	m.mergeItems = []store.MergeItem{{ID: 7, TicketID: 3, Status: contracts.MergeProposed, Branch: "ts/demo/t3-abc"}}
-	m.archivedTickets = []store.Ticket{{ID: 99, Title: "已归档", WorkflowStatus: contracts.TicketArchived}}
+	m.mergeItems = []contracts.MergeItem{{ID: 7, TicketID: 3, Status: contracts.MergeProposed, Branch: "ts/demo/t3-abc"}}
+	m.archivedTickets = []contracts.Ticket{{ID: 99, Title: "已归档", WorkflowStatus: contracts.TicketArchived}}
 	m.applyViews([]app.TicketView{
-		{Ticket: store.Ticket{ID: 1, Title: "run"}, DerivedStatus: contracts.TicketActive, RuntimeHealthState: contracts.TaskHealthBusy},
-		{Ticket: store.Ticket{ID: 2, Title: "wait"}, DerivedStatus: contracts.TicketBlocked, RuntimeNeedsUser: true},
-		{Ticket: store.Ticket{ID: 3, Title: "backlog"}, DerivedStatus: contracts.TicketBacklog},
-		{Ticket: store.Ticket{ID: 4, Title: "done"}, DerivedStatus: contracts.TicketDone},
+		{Ticket: contracts.Ticket{ID: 1, Title: "run"}, DerivedStatus: contracts.TicketActive, RuntimeHealthState: contracts.TaskHealthBusy},
+		{Ticket: contracts.Ticket{ID: 2, Title: "wait"}, DerivedStatus: contracts.TicketBlocked, RuntimeNeedsUser: true},
+		{Ticket: contracts.Ticket{ID: 3, Title: "backlog"}, DerivedStatus: contracts.TicketBacklog},
+		{Ticket: contracts.Ticket{ID: 4, Title: "done"}, DerivedStatus: contracts.TicketDone},
 	})
 
 	if len(m.rowRefs) < 6 {
@@ -55,20 +54,20 @@ func TestApplyViews_GroupOrderAndNoHeaderRows(t *testing.T) {
 
 func TestManagerInspectorLeftView_ShowsPendingIssuePreview(t *testing.T) {
 	m := newModel(nil, nil, "")
-	m.mergeItems = []store.MergeItem{
+	m.mergeItems = []contracts.MergeItem{
 		{ID: 21, TicketID: 10, Status: contracts.MergeProposed, Branch: "ts/demo/t10-x1"},
 		{ID: 22, TicketID: 11, Status: contracts.MergeApproved, Branch: "ts/demo/t11-x2"},
 	}
 	m.applyViews([]app.TicketView{
 		{
-			Ticket:             store.Ticket{ID: 10, Title: "等待输入"},
+			Ticket:             contracts.Ticket{ID: 10, Title: "等待输入"},
 			DerivedStatus:      contracts.TicketActive,
 			RuntimeHealthState: contracts.TaskHealthBusy,
 			RuntimeNeedsUser:   true,
 			RuntimeSummary:     "需要你确认输入",
 		},
 		{
-			Ticket:        store.Ticket{ID: 11, Title: "卡住"},
+			Ticket:        contracts.Ticket{ID: 11, Title: "卡住"},
 			DerivedStatus: contracts.TicketBlocked,
 		},
 	})
@@ -96,9 +95,9 @@ func TestManagerInspectorLeftView_ShowsPendingIssuePreview(t *testing.T) {
 
 func TestSelectedRow_ReturnsManagerAndMergeKinds(t *testing.T) {
 	m := newModel(nil, nil, "")
-	m.mergeItems = []store.MergeItem{{ID: 31, TicketID: 10, Status: contracts.MergeProposed, Branch: "ts/demo/t10-x1"}}
+	m.mergeItems = []contracts.MergeItem{{ID: 31, TicketID: 10, Status: contracts.MergeProposed, Branch: "ts/demo/t10-x1"}}
 	m.applyViews([]app.TicketView{{
-		Ticket:             store.Ticket{ID: 10, Title: "等待输入"},
+		Ticket:             contracts.Ticket{ID: 10, Title: "等待输入"},
 		DerivedStatus:      contracts.TicketActive,
 		RuntimeHealthState: contracts.TaskHealthBusy,
 		RuntimeNeedsUser:   true,
@@ -131,13 +130,13 @@ func TestSelectedRow_ReturnsManagerAndMergeKinds(t *testing.T) {
 
 func TestApplyViews_MergeSectionHidesDiscardedAndMerged(t *testing.T) {
 	m := newModel(nil, nil, "")
-	m.mergeItems = []store.MergeItem{
+	m.mergeItems = []contracts.MergeItem{
 		{ID: 31, TicketID: 10, Status: contracts.MergeProposed, Branch: "ts/demo/t10-x1"},
 		{ID: 32, TicketID: 11, Status: contracts.MergeDiscarded, Branch: "ts/demo/t11-x2"},
 		{ID: 33, TicketID: 12, Status: contracts.MergeMerged, Branch: "ts/demo/t12-x3"},
 	}
 	m.applyViews([]app.TicketView{
-		{Ticket: store.Ticket{ID: 10, Title: "run"}, DerivedStatus: contracts.TicketActive, RuntimeHealthState: contracts.TaskHealthBusy},
+		{Ticket: contracts.Ticket{ID: 10, Title: "run"}, DerivedStatus: contracts.TicketActive, RuntimeHealthState: contracts.TaskHealthBusy},
 	})
 
 	for _, r := range m.rowRefs {

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/services/channel/inbounddb"
 
 	"gorm.io/gorm"
 )
@@ -131,7 +130,7 @@ func (r *GormRepository) CreatePending(ctx context.Context, binding contracts.Ch
 	}
 	var out persistState
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		conv, err := inbounddb.EnsureConversationTx(ctx, tx, binding.ID, binding.PeerProjectKey)
+		conv, err := ensureConversationTx(ctx, tx, binding.ID, binding.PeerProjectKey)
 		if err != nil {
 			return err
 		}
@@ -194,6 +193,28 @@ func (r *GormRepository) CreatePending(ctx context.Context, binding contracts.Ch
 		return persistState{}, err
 	}
 	return out, nil
+}
+
+func ensureConversationTx(ctx context.Context, tx *gorm.DB, bindingID uint, peerConversationID string) (contracts.ChannelConversation, error) {
+	peerConversationID = strings.TrimSpace(peerConversationID)
+	var conv contracts.ChannelConversation
+	err := tx.WithContext(ctx).
+		Where("binding_id = ? AND peer_conversation_id = ?", bindingID, peerConversationID).
+		First(&conv).Error
+	if err == nil {
+		return conv, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return contracts.ChannelConversation{}, err
+	}
+	conv = contracts.ChannelConversation{
+		BindingID:          bindingID,
+		PeerConversationID: peerConversationID,
+	}
+	if err := tx.WithContext(ctx).Create(&conv).Error; err != nil {
+		return contracts.ChannelConversation{}, err
+	}
+	return conv, nil
 }
 
 func (r *GormRepository) MarkSending(ctx context.Context, outboxID uint) error {

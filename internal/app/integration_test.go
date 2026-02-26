@@ -16,8 +16,9 @@ import (
 	"time"
 
 	"dalek/internal/repo"
-	"dalek/internal/store"
 	"dalek/internal/testutil"
+
+	"gorm.io/gorm"
 )
 
 func newIntegrationHomeProject(t *testing.T) (*Home, *Project) {
@@ -48,6 +49,15 @@ func newIntegrationProject(t *testing.T) *Project {
 	t.Helper()
 	_, p := newIntegrationHomeProject(t)
 	return p
+}
+
+func mustProjectDB(t *testing.T, p *Project) *gorm.DB {
+	t.Helper()
+	db, err := p.OpenDBForTest()
+	if err != nil {
+		t.Fatalf("OpenDBForTest failed: %v", err)
+	}
+	return db
 }
 
 func ensureNotebookShapingSkill(t *testing.T, p *Project) {
@@ -148,7 +158,7 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession(t *testing.T) {
 	}
 
 	missingSession := fmt.Sprintf("missing-session-%d", time.Now().UnixNano())
-	if err := p.core.DB.WithContext(ctx).Model(&store.Worker{}).Where("id = ?", w.ID).Update("tmux_session", missingSession).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Update("tmux_session", missingSession).Error; err != nil {
 		t.Fatalf("update tmux_session failed: %v", err)
 	}
 
@@ -193,8 +203,8 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession(t *testing.T) {
 		t.Fatalf("expected worker stopped_at populated after recovery")
 	}
 
-	var inbox []store.InboxItem
-	if err := p.core.DB.WithContext(ctx).
+	var inbox []contracts.InboxItem
+	if err := mustProjectDB(t, p).WithContext(ctx).
 		Where("key = ?", fmt.Sprintf("worker_session_recover_%d", w.ID)).
 		Order("id desc").
 		Find(&inbox).Error; err != nil {
@@ -224,12 +234,12 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession_ArchivedTicket(t 
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 
-	if err := p.core.DB.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketArchived).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketArchived).Error; err != nil {
 		t.Fatalf("archive ticket failed: %v", err)
 	}
 
 	missingSession := fmt.Sprintf("missing-archived-session-%d", time.Now().UnixNano())
-	if err := p.core.DB.WithContext(ctx).Model(&store.Worker{}).Where("id = ?", w.ID).Update("tmux_session", missingSession).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Update("tmux_session", missingSession).Error; err != nil {
 		t.Fatalf("update tmux_session failed: %v", err)
 	}
 
@@ -250,8 +260,8 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession_ArchivedTicket(t 
 		t.Fatalf("expected worker stopped_at populated after recovery")
 	}
 
-	var inbox []store.InboxItem
-	if err := p.core.DB.WithContext(ctx).
+	var inbox []contracts.InboxItem
+	if err := mustProjectDB(t, p).WithContext(ctx).
 		Where("key = ?", fmt.Sprintf("worker_session_recover_%d", w.ID)).
 		Order("id desc").
 		Find(&inbox).Error; err != nil {
@@ -278,13 +288,13 @@ func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, 
 		t.Fatalf("SubmitDispatchTicket failed: %v", err)
 	}
 	var job contracts.PMDispatchJob
-	if err := p.core.DB.WithContext(ctx).First(&job, submission.JobID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&job, submission.JobID).Error; err != nil {
 		t.Fatalf("load dispatch job failed: %v", err)
 	}
 	if jobStatus == contracts.PMDispatchRunning {
 		now := time.Now()
 		lease := now.Add(2 * time.Minute)
-		if err := p.core.DB.WithContext(ctx).Model(&contracts.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
+		if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
 			"status":           contracts.PMDispatchRunning,
 			"runner_id":        "recovery-runner",
 			"lease_expires_at": &lease,
@@ -294,7 +304,7 @@ func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, 
 			t.Fatalf("set dispatch running failed: %v", err)
 		}
 		if job.TaskRunID != 0 {
-			if err := p.core.DB.WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
+			if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
 				"orchestration_state": contracts.TaskRunning,
 				"runner_id":           "recovery-runner",
 				"lease_expires_at":    &lease,
@@ -305,7 +315,7 @@ func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, 
 			}
 		}
 	}
-	if err := p.core.DB.WithContext(ctx).First(&job, job.ID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&job, job.ID).Error; err != nil {
 		t.Fatalf("reload dispatch job failed: %v", err)
 	}
 	return job
@@ -314,7 +324,7 @@ func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, 
 func assertRecoveredDispatchJob(t *testing.T, p *Project, jobID uint) contracts.PMDispatchJob {
 	t.Helper()
 	var got contracts.PMDispatchJob
-	if err := p.core.DB.WithContext(context.Background()).First(&got, jobID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(context.Background()).First(&got, jobID).Error; err != nil {
 		t.Fatalf("load recovered dispatch job failed: %v", err)
 	}
 	if got.Status != contracts.PMDispatchFailed {
@@ -347,7 +357,7 @@ func TestIntegration_DaemonRecovery_PMDispatchRunning_AutopilotOff(t *testing.T)
 		t.Fatalf("SetAutopilotEnabled(false) failed: %v", err)
 	}
 	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
-	if err := p.core.DB.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketActive,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -366,23 +376,23 @@ func TestIntegration_DaemonRecovery_PMDispatchRunning_AutopilotOff(t *testing.T)
 	}
 
 	var run contracts.TaskRun
-	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
 	if run.OrchestrationState != contracts.TaskFailed {
 		t.Fatalf("task run should be failed after recovery, got=%s", run.OrchestrationState)
 	}
 
-	var ticket store.Ticket
-	if err := p.core.DB.WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
+	var ticket contracts.Ticket
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
 	if ticket.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("autopilot=false should demote ticket to blocked, got=%s", ticket.WorkflowStatus)
 	}
 
-	var inbox store.InboxItem
-	if err := p.core.DB.WithContext(ctx).Where("key = ?", fmt.Sprintf("daemon_recovery_dispatch_%d", job.ID)).First(&inbox).Error; err != nil {
+	var inbox contracts.InboxItem
+	if err := mustProjectDB(t, p).WithContext(ctx).Where("key = ?", fmt.Sprintf("daemon_recovery_dispatch_%d", job.ID)).First(&inbox).Error; err != nil {
 		t.Fatalf("expected dispatch recovery inbox item: %v", err)
 	}
 	if inbox.TicketID != tk.ID {
@@ -416,7 +426,7 @@ func TestIntegration_DaemonRecovery_PMDispatchPending_AutopilotOn(t *testing.T) 
 		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
 	}
 	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchPending)
-	if err := p.core.DB.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketActive,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -429,15 +439,15 @@ func TestIntegration_DaemonRecovery_PMDispatchPending_AutopilotOn(t *testing.T) 
 	assertRecoveredDispatchJob(t, p, job.ID)
 
 	var run contracts.TaskRun
-	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
 	if run.OrchestrationState != contracts.TaskFailed {
 		t.Fatalf("task run should be failed after recovery, got=%s", run.OrchestrationState)
 	}
 
-	var ticket store.Ticket
-	if err := p.core.DB.WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
+	var ticket contracts.Ticket
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
 	if ticket.WorkflowStatus != contracts.TicketQueued {
@@ -468,7 +478,7 @@ func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) 
 	manager.runRecovery(ctx)
 
 	var run contracts.TaskRun
-	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
 	if run.OrchestrationState != contracts.TaskFailed {
@@ -476,7 +486,7 @@ func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) 
 	}
 
 	var dispatchEventCount int64
-	if err := p.core.DB.WithContext(ctx).
+	if err := mustProjectDB(t, p).WithContext(ctx).
 		Model(&contracts.TaskEvent{}).
 		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "daemon_recovery_dispatch_failed").
 		Count(&dispatchEventCount).Error; err != nil {
@@ -487,7 +497,7 @@ func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) 
 	}
 
 	var fallbackEventCount int64
-	if err := p.core.DB.WithContext(ctx).
+	if err := mustProjectDB(t, p).WithContext(ctx).
 		Model(&contracts.TaskEvent{}).
 		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "daemon_recovery_failed").
 		Count(&fallbackEventCount).Error; err != nil {
@@ -498,8 +508,8 @@ func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) 
 	}
 
 	var dispatchInboxCount int64
-	if err := p.core.DB.WithContext(ctx).
-		Model(&store.InboxItem{}).
+	if err := mustProjectDB(t, p).WithContext(ctx).
+		Model(&contracts.InboxItem{}).
 		Where("key = ?", fmt.Sprintf("daemon_recovery_dispatch_%d", job.ID)).
 		Count(&dispatchInboxCount).Error; err != nil {
 		t.Fatalf("count dispatch recovery inbox failed: %v", err)
@@ -509,8 +519,8 @@ func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) 
 	}
 
 	var fallbackInboxCount int64
-	if err := p.core.DB.WithContext(ctx).
-		Model(&store.InboxItem{}).
+	if err := mustProjectDB(t, p).WithContext(ctx).
+		Model(&contracts.InboxItem{}).
 		Where("key = ?", fmt.Sprintf("daemon_recovery_run_%d", job.TaskRunID)).
 		Count(&fallbackInboxCount).Error; err != nil {
 		t.Fatalf("count fallback run inbox failed: %v", err)
@@ -533,21 +543,21 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 	}
 	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
 	expiredAt := time.Now().Add(-3 * time.Minute)
-	if err := p.core.DB.WithContext(ctx).Model(&contracts.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
 		"status":           contracts.PMDispatchRunning,
 		"lease_expires_at": &expiredAt,
 		"updated_at":       time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set dispatch lease expired failed: %v", err)
 	}
-	if err := p.core.DB.WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
 		"orchestration_state": contracts.TaskRunning,
 		"lease_expires_at":    &expiredAt,
 		"updated_at":          time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set task run lease expired failed: %v", err)
 	}
-	if err := p.core.DB.WithContext(ctx).Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketActive,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -563,7 +573,7 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 	}
 
 	var run contracts.TaskRun
-	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
 	if run.OrchestrationState != contracts.TaskFailed {
@@ -574,7 +584,7 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 	}
 
 	var leaseEventCount int64
-	if err := p.core.DB.WithContext(ctx).
+	if err := mustProjectDB(t, p).WithContext(ctx).
 		Model(&contracts.TaskEvent{}).
 		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "lease_expired_dispatch_failed").
 		Count(&leaseEventCount).Error; err != nil {
@@ -585,7 +595,7 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 	}
 
 	var recoveryEventCount int64
-	if err := p.core.DB.WithContext(ctx).
+	if err := mustProjectDB(t, p).WithContext(ctx).
 		Model(&contracts.TaskEvent{}).
 		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "daemon_recovery_dispatch_failed").
 		Count(&recoveryEventCount).Error; err != nil {
@@ -596,8 +606,8 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 	}
 
 	var leaseInboxCount int64
-	if err := p.core.DB.WithContext(ctx).
-		Model(&store.InboxItem{}).
+	if err := mustProjectDB(t, p).WithContext(ctx).
+		Model(&contracts.InboxItem{}).
 		Where("key = ?", fmt.Sprintf("lease_expired_dispatch_%d", job.ID)).
 		Count(&leaseInboxCount).Error; err != nil {
 		t.Fatalf("count lease expired inbox failed: %v", err)
@@ -607,8 +617,8 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 	}
 
 	var recoveryInboxCount int64
-	if err := p.core.DB.WithContext(ctx).
-		Model(&store.InboxItem{}).
+	if err := mustProjectDB(t, p).WithContext(ctx).
+		Model(&contracts.InboxItem{}).
 		Where("key = ?", fmt.Sprintf("daemon_recovery_dispatch_%d", job.ID)).
 		Count(&recoveryInboxCount).Error; err != nil {
 		t.Fatalf("count daemon recovery inbox failed: %v", err)
@@ -617,8 +627,8 @@ func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T
 		t.Fatalf("expected zero daemon recovery inbox for lease check, got=%d", recoveryInboxCount)
 	}
 
-	var ticket store.Ticket
-	if err := p.core.DB.WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
+	var ticket contracts.Ticket
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
 	if ticket.WorkflowStatus != contracts.TicketBlocked {
@@ -659,10 +669,10 @@ func TestIntegration_DaemonRecovery_PMDispatchTerminalJobs_Unaffected(t *testing
 		Error:           "already failed",
 		FinishedAt:      &failFinished,
 	}
-	if err := p.core.DB.WithContext(ctx).Create(&doneJob).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).Create(&doneJob).Error; err != nil {
 		t.Fatalf("create done job failed: %v", err)
 	}
-	if err := p.core.DB.WithContext(ctx).Create(&failJob).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).Create(&failJob).Error; err != nil {
 		t.Fatalf("create fail job failed: %v", err)
 	}
 
@@ -670,14 +680,14 @@ func TestIntegration_DaemonRecovery_PMDispatchTerminalJobs_Unaffected(t *testing
 	manager.runRecovery(ctx)
 
 	var doneAfter contracts.PMDispatchJob
-	if err := p.core.DB.WithContext(ctx).First(&doneAfter, doneJob.ID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&doneAfter, doneJob.ID).Error; err != nil {
 		t.Fatalf("load done job failed: %v", err)
 	}
 	if doneAfter.Status != contracts.PMDispatchSucceeded {
 		t.Fatalf("succeeded job should remain succeeded, got=%s", doneAfter.Status)
 	}
 	var failAfter contracts.PMDispatchJob
-	if err := p.core.DB.WithContext(ctx).First(&failAfter, failJob.ID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&failAfter, failJob.ID).Error; err != nil {
 		t.Fatalf("load fail job failed: %v", err)
 	}
 	if failAfter.Status != contracts.PMDispatchFailed || !strings.Contains(failAfter.Error, "already failed") {
@@ -799,7 +809,7 @@ func TestIntegration_StopTicket_ForceFailActiveDispatchAndArchive(t *testing.T) 
 	}
 
 	var afterJob contracts.PMDispatchJob
-	if err := p.core.DB.WithContext(ctx).First(&afterJob, job.ID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&afterJob, job.ID).Error; err != nil {
 		t.Fatalf("load dispatch job after stop failed: %v", err)
 	}
 	if afterJob.Status != contracts.PMDispatchFailed {
@@ -822,7 +832,7 @@ func TestIntegration_StopTicket_ForceFailActiveDispatchAndArchive(t *testing.T) 
 	}
 
 	var run contracts.TaskRun
-	if err := p.core.DB.WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
 		t.Fatalf("load dispatch task run failed: %v", err)
 	}
 	if run.OrchestrationState != contracts.TaskFailed {
@@ -833,7 +843,7 @@ func TestIntegration_StopTicket_ForceFailActiveDispatchAndArchive(t *testing.T) 
 	}
 
 	var ev contracts.TaskEvent
-	if err := p.core.DB.WithContext(ctx).
+	if err := mustProjectDB(t, p).WithContext(ctx).
 		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "dispatch_force_failed_on_stop").
 		Order("id desc").
 		First(&ev).Error; err != nil {
@@ -1068,7 +1078,7 @@ func TestIntegration_NoteShapingSkillMissingRollsBackToOpen(t *testing.T) {
 	if note == nil {
 		t.Fatalf("expected note exists")
 	}
-	if note.Status != string(store.NoteOpen) {
+	if note.Status != string(contracts.NoteOpen) {
 		t.Fatalf("expected note reopen to open when skill missing, got=%s", note.Status)
 	}
 	if strings.TrimSpace(note.LastError) == "" {
@@ -1114,7 +1124,7 @@ func TestIntegration_NoteShapingSuccessWithSkill(t *testing.T) {
 	if note == nil {
 		t.Fatalf("expected note exists")
 	}
-	if note.Status != string(store.NoteShaped) {
+	if note.Status != string(contracts.NoteShaped) {
 		t.Fatalf("expected note shaped after shaping, got=%s", note.Status)
 	}
 	if note.ShapedItemID == 0 {
@@ -1126,7 +1136,7 @@ func TestIntegration_NoteShapingSuccessWithSkill(t *testing.T) {
 	if strings.TrimSpace(note.Shaped.DedupKey) == "" {
 		t.Fatalf("expected dedup key")
 	}
-	if note.Shaped.Status != string(store.ShapedPendingReview) {
+	if note.Shaped.Status != string(contracts.ShapedPendingReview) {
 		t.Fatalf("expected shaped item pending_review, got=%s", note.Shaped.Status)
 	}
 	if strings.TrimSpace(note.Shaped.ScopeEstimate) != "L" {
@@ -1185,7 +1195,7 @@ defaults:
 	if note == nil || note.Shaped == nil {
 		t.Fatalf("expected shaped note")
 	}
-	if note.Status != string(store.NoteShaped) {
+	if note.Status != string(contracts.NoteShaped) {
 		t.Fatalf("expected note shaped after fallback, got=%s", note.Status)
 	}
 	if strings.TrimSpace(note.Shaped.ScopeEstimate) != "M" {
@@ -1227,22 +1237,22 @@ func TestIntegration_NoteAdd_DedupByProjectAndHash(t *testing.T) {
 	}
 
 	normalized := normalizeNoteTextForTest("支持导出 CSV")
-	foreign := store.NoteItem{
+	foreign := contracts.NoteItem{
 		ProjectKey:     "other_project",
-		Status:         store.NoteOpen,
+		Status:         contracts.NoteOpen,
 		Source:         "cli",
 		Text:           "支持导出 CSV",
 		ContextJSON:    contracts.JSONMap{},
 		NormalizedHash: hashNormalizedTextForTest(normalized),
 		ShapedItemID:   0,
 	}
-	if err := p.core.DB.WithContext(ctx).Create(&foreign).Error; err != nil {
+	if err := mustProjectDB(t, p).WithContext(ctx).Create(&foreign).Error; err != nil {
 		t.Fatalf("insert foreign project note failed: %v", err)
 	}
-	if err := p.core.DB.WithContext(ctx).
-		Model(&store.NoteItem{}).
+	if err := mustProjectDB(t, p).WithContext(ctx).
+		Model(&contracts.NoteItem{}).
 		Where("id = ?", first.NoteID).
-		Update("status", store.NoteDiscarded).Error; err != nil {
+		Update("status", contracts.NoteDiscarded).Error; err != nil {
 		t.Fatalf("mark first note discarded failed: %v", err)
 	}
 
@@ -1346,10 +1356,10 @@ func TestIntegration_ApproveNote_OperatesOnShapedItem(t *testing.T) {
 	if note == nil || note.Shaped == nil {
 		t.Fatalf("expected shaped note exists")
 	}
-	if note.Status != string(store.NoteShaped) {
+	if note.Status != string(contracts.NoteShaped) {
 		t.Fatalf("note status should stay shaped after approve, got=%s", note.Status)
 	}
-	if note.Shaped.Status != string(store.ShapedApproved) {
+	if note.Shaped.Status != string(contracts.ShapedApproved) {
 		t.Fatalf("shaped status should be approved, got=%s", note.Shaped.Status)
 	}
 	if note.Shaped.TicketID != ticket.ID {
@@ -1381,10 +1391,10 @@ func TestIntegration_RejectNote_OperatesOnShapedItem(t *testing.T) {
 	if note == nil || note.Shaped == nil {
 		t.Fatalf("expected shaped note exists")
 	}
-	if note.Status != string(store.NoteShaped) {
+	if note.Status != string(contracts.NoteShaped) {
 		t.Fatalf("note status should stay shaped after reject, got=%s", note.Status)
 	}
-	if note.Shaped.Status != string(store.ShapedRejected) {
+	if note.Shaped.Status != string(contracts.ShapedRejected) {
 		t.Fatalf("shaped status should be rejected, got=%s", note.Shaped.Status)
 	}
 	if strings.TrimSpace(note.Shaped.ReviewComment) != "信息不完整" {
@@ -1396,8 +1406,8 @@ func TestIntegration_InitCreatesControlPlaneSeed(t *testing.T) {
 	p := newIntegrationProject(t)
 
 	wantDB := filepath.Join(p.ProjectDir(), "runtime", "dalek.sqlite3")
-	if strings.TrimSpace(p.core.DBPath()) != wantDB {
-		t.Fatalf("unexpected DBPath: got=%s want=%s", p.core.DBPath(), wantDB)
+	if strings.TrimSpace(p.DBPath()) != wantDB {
+		t.Fatalf("unexpected DBPath: got=%s want=%s", p.DBPath(), wantDB)
 	}
 
 	mustExist := []string{
@@ -1425,8 +1435,8 @@ func TestIntegration_InitCreatesControlPlaneSeed(t *testing.T) {
 		t.Fatalf("CLAUDE.md should be tracked after init: %v", err)
 	}
 
-	if p.core.Config.SchemaVersion != repo.CurrentProjectSchemaVersion {
-		t.Fatalf("unexpected schema version: got=%d want=%d", p.core.Config.SchemaVersion, repo.CurrentProjectSchemaVersion)
+	if p.SchemaVersion() != repo.CurrentProjectSchemaVersion {
+		t.Fatalf("unexpected schema version: got=%d want=%d", p.SchemaVersion(), repo.CurrentProjectSchemaVersion)
 	}
 	cfgRaw, err := os.ReadFile(filepath.Join(p.ProjectDir(), "config.json"))
 	if err != nil {
@@ -1477,8 +1487,8 @@ func TestIntegration_OpenProject_BackfillsSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenProjectByName failed: %v", err)
 	}
-	if reopened.core.Config.SchemaVersion != repo.CurrentProjectSchemaVersion {
-		t.Fatalf("unexpected schema version after reopen: got=%d want=%d", reopened.core.Config.SchemaVersion, repo.CurrentProjectSchemaVersion)
+	if reopened.SchemaVersion() != repo.CurrentProjectSchemaVersion {
+		t.Fatalf("unexpected schema version after reopen: got=%d want=%d", reopened.SchemaVersion(), repo.CurrentProjectSchemaVersion)
 	}
 	backfilled, err := os.ReadFile(cfgPath)
 	if err != nil {

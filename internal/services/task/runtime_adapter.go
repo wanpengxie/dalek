@@ -6,7 +6,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
@@ -77,7 +76,7 @@ func (r runtimeAdapter) AppendSemanticReport(ctx context.Context, in contracts.T
 	return r.svc.AppendSemanticReport(ctx, in)
 }
 
-func (r runtimeAdapter) ListStatus(ctx context.Context, opt contracts.TaskListStatusOptions) ([]store.TaskStatusView, error) {
+func (r runtimeAdapter) ListStatus(ctx context.Context, opt contracts.TaskListStatusOptions) ([]contracts.TaskStatusView, error) {
 	return r.svc.ListStatus(ctx, opt)
 }
 

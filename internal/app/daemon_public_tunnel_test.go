@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	tunnelsvc "dalek/internal/services/tunnel"
 )
 
 func TestNewDaemonPublicTunnelRuntimeConfig(t *testing.T) {
@@ -99,17 +101,17 @@ func TestDaemonPublicTunnelSupervisor_CircuitBreakerOnStartFailures(t *testing.T
 	startCalls := 0
 	waitCalls := 0
 	supervisor := &daemonPublicTunnelSupervisor{
-		runtimeCfg: daemonPublicTunnelRuntimeConfig{
+		RuntimeConfig: daemonPublicTunnelRuntimeConfig{
 			Enabled:  true,
 			Hostname: "gw.example.com",
 		},
-		logger:                 slog.New(slog.NewTextHandler(&logs, nil)),
-		maxConsecutiveFailures: 3,
-		startFn: func(daemonPublicTunnelRuntimeConfig) (*daemonPublicTunnelProcess, error) {
+		Logger:                 slog.New(slog.NewTextHandler(&logs, nil)),
+		MaxConsecutiveFailures: 3,
+		StartFn: func(daemonPublicTunnelRuntimeConfig) (tunnelsvc.ProcessHandle, error) {
 			startCalls++
 			return nil, errors.New("invalid tunnel config")
 		},
-		waitFn: func(context.Context, time.Duration) bool {
+		WaitFn: func(context.Context, time.Duration) bool {
 			waitCalls++
 			return true
 		},
@@ -141,13 +143,13 @@ func TestDaemonPublicTunnelSupervisor_ResetFailuresAfterStableRun(t *testing.T) 
 	defer cancel()
 
 	supervisor := &daemonPublicTunnelSupervisor{
-		runtimeCfg: daemonPublicTunnelRuntimeConfig{
+		RuntimeConfig: daemonPublicTunnelRuntimeConfig{
 			Enabled:  true,
 			Hostname: "gw.example.com",
 		},
-		logger:                 slog.New(slog.NewTextHandler(&logs, nil)),
-		maxConsecutiveFailures: 2,
-		startFn: func(daemonPublicTunnelRuntimeConfig) (*daemonPublicTunnelProcess, error) {
+		Logger:                 slog.New(slog.NewTextHandler(&logs, nil)),
+		MaxConsecutiveFailures: 2,
+		StartFn: func(daemonPublicTunnelRuntimeConfig) (tunnelsvc.ProcessHandle, error) {
 			attempt++
 			switch attempt {
 			case 1:
@@ -161,7 +163,7 @@ func TestDaemonPublicTunnelSupervisor_ResetFailuresAfterStableRun(t *testing.T) 
 				return nil, nil
 			}
 		},
-		waitFn: func(context.Context, time.Duration) bool {
+		WaitFn: func(context.Context, time.Duration) bool {
 			waitCalls++
 			if waitCalls >= 3 {
 				cancel()
@@ -169,7 +171,7 @@ func TestDaemonPublicTunnelSupervisor_ResetFailuresAfterStableRun(t *testing.T) 
 			}
 			return true
 		},
-		nowFn: func() time.Time {
+		NowFn: func() time.Time {
 			nowCalls++
 			switch nowCalls {
 			case 1:
@@ -193,8 +195,8 @@ func TestDaemonPublicTunnelSupervisor_ResetFailuresAfterStableRun(t *testing.T) 
 	if waitCalls != 3 {
 		t.Fatalf("expected third wait (no trip after reset), got=%d", waitCalls)
 	}
-	if supervisor.consecutiveFailures != 1 {
-		t.Fatalf("unexpected consecutive failures after reset: got=%d want=%d", supervisor.consecutiveFailures, 1)
+	if supervisor.ConsecutiveFailures() != 1 {
+		t.Fatalf("unexpected consecutive failures after reset: got=%d want=%d", supervisor.ConsecutiveFailures(), 1)
 	}
 	if strings.Contains(logs.String(), "cloudflared 熔断") {
 		t.Fatalf("unexpected circuit breaker log, logs:\n%s", logs.String())
@@ -208,18 +210,18 @@ func TestDaemonPublicTunnelSupervisor_NormalRunDoesNotTripCircuit(t *testing.T) 
 	var startCalls atomic.Int32
 	var waitCalls atomic.Int32
 	supervisor := &daemonPublicTunnelSupervisor{
-		runtimeCfg: daemonPublicTunnelRuntimeConfig{
+		RuntimeConfig: daemonPublicTunnelRuntimeConfig{
 			Enabled:  true,
 			Hostname: "gw.example.com",
 		},
-		maxConsecutiveFailures: 2,
-		startFn: func(daemonPublicTunnelRuntimeConfig) (*daemonPublicTunnelProcess, error) {
+		MaxConsecutiveFailures: 2,
+		StartFn: func(daemonPublicTunnelRuntimeConfig) (tunnelsvc.ProcessHandle, error) {
 			startCalls.Add(1)
 			return &daemonPublicTunnelProcess{
 				done: make(chan error),
 			}, nil
 		},
-		waitFn: func(context.Context, time.Duration) bool {
+		WaitFn: func(context.Context, time.Duration) bool {
 			waitCalls.Add(1)
 			return true
 		},

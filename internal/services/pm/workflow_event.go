@@ -2,16 +2,13 @@ package pm
 
 import (
 	"context"
-	"dalek/internal/contracts"
 	"strings"
 	"time"
 
+	"dalek/internal/contracts"
+
 	"gorm.io/gorm"
 )
-
-func normalizeTicketWorkflowStatus(st contracts.TicketWorkflowStatus) contracts.TicketWorkflowStatus {
-	return contracts.CanonicalTicketWorkflowStatus(st)
-}
 
 func marshalWorkflowEventPayload(v any) contracts.JSONMap {
 	return contracts.JSONMapFromAny(v)
@@ -24,8 +21,8 @@ func (s *Service) appendTicketWorkflowEventTx(ctx context.Context, tx *gorm.DB, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	fromStatus = normalizeTicketWorkflowStatus(fromStatus)
-	toStatus = normalizeTicketWorkflowStatus(toStatus)
+	fromStatus = contracts.CanonicalTicketWorkflowStatus(fromStatus)
+	toStatus = contracts.CanonicalTicketWorkflowStatus(toStatus)
 	if fromStatus == toStatus {
 		return nil
 	}

@@ -7,14 +7,13 @@ import (
 	"time"
 
 	tasksvc "dalek/internal/services/task"
-	"dalek/internal/store"
 )
 
 func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "pm-task-runtime")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),

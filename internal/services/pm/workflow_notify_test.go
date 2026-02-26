@@ -241,7 +241,7 @@ func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
 func TestClaimPMDispatchJob_Promote_EmitsHook(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-dispatch-claim")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
@@ -273,7 +273,7 @@ func TestClaimPMDispatchJob_Promote_EmitsHook(t *testing.T) {
 func TestCompletePMDispatchJobFailed_Demote_EmitsHook(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-dispatch-failed")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)

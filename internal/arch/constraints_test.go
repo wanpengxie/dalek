@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -128,14 +129,39 @@ func TestInfraDoesNotImportInternalPackages(t *testing.T) {
 	}
 }
 
+func TestContractsDoNotImportOtherInternalPackages(t *testing.T) {
+	root := repoRoot(t)
+	contractsDir := filepath.Join(root, "internal", "contracts")
+	files := listGoFiles(t, contractsDir)
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		f := parseFile(t, path)
+		for _, imp := range f.Imports {
+			p := strings.Trim(imp.Path.Value, `"`)
+			if !strings.HasPrefix(p, "dalek/internal/") {
+				continue
+			}
+			if p == "dalek/internal/contracts" {
+				continue
+			}
+			t.Fatalf("contracts 不应 import 其他 internal 包（%s import %s）", rel, p)
+		}
+	}
+}
+
 func TestServicesDoNotImportOSExecExceptChannelRunner(t *testing.T) {
 	root := repoRoot(t)
 	servicesDir := filepath.Join(root, "internal", "services")
 	files := listGoFilesRecursive(t, servicesDir)
 	allow := map[string]bool{
-		"internal/services/agentexec/process.go": true,
-		"internal/services/pm/session.go":        true,
-		"internal/services/worker/start.go":      true,
+		"internal/services/agentexec/process.go":  true,
+		"internal/services/pm/session.go":         true,
+		"internal/services/worker/start.go":       true,
+		"internal/services/tunnel/cloudflared.go": true,
 	}
 	for _, path := range files {
 		if strings.HasSuffix(path, "_test.go") {
@@ -262,6 +288,47 @@ func TestCmdChannelServiceImportAllowlist(t *testing.T) {
 	}
 }
 
+func TestGatewaySendDoesNotImportChannelSubpackages(t *testing.T) {
+	root := repoRoot(t)
+	targetDir := filepath.Join(root, "internal", "services", "gatewaysend")
+	files := listGoFilesRecursive(t, targetDir)
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		f := parseFile(t, path)
+		for _, imp := range f.Imports {
+			p := strings.Trim(imp.Path.Value, `"`)
+			if strings.HasPrefix(p, "dalek/internal/services/channel/") {
+				t.Fatalf("gatewaysend 不应 import channel 子包（%s import %s）", rel, p)
+			}
+		}
+	}
+}
+
+func TestChannelServicesDoNotImportPMTicketWorkerPackages(t *testing.T) {
+	root := repoRoot(t)
+	targetDir := filepath.Join(root, "internal", "services", "channel")
+	files := listGoFilesRecursive(t, targetDir)
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		f := parseFile(t, path)
+		for _, imp := range f.Imports {
+			p := strings.Trim(imp.Path.Value, `"`)
+			switch p {
+			case "dalek/internal/services/pm", "dalek/internal/services/ticket", "dalek/internal/services/worker":
+				t.Fatalf("channel service 不应直接 import %s（%s）", p, rel)
+			}
+		}
+	}
+}
+
 func TestCmdTestsDoNotImportStore(t *testing.T) {
 	root := repoRoot(t)
 	cmdDir := filepath.Join(root, "cmd", "dalek")
@@ -278,6 +345,113 @@ func TestCmdTestsDoNotImportStore(t *testing.T) {
 			if p == "dalek/internal/store" {
 				t.Fatalf("cmd 测试不应 import internal/store（%s）", rel)
 			}
+		}
+	}
+}
+
+func TestCmdProductionFilesDoNotImportStore(t *testing.T) {
+	root := repoRoot(t)
+	cmdDir := filepath.Join(root, "cmd", "dalek")
+	files := listGoFiles(t, cmdDir)
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		f := parseFile(t, path)
+		for _, imp := range f.Imports {
+			p := strings.Trim(imp.Path.Value, `"`)
+			if p == "dalek/internal/store" {
+				t.Fatalf("cmd 生产代码不应 import internal/store（%s）", rel)
+			}
+		}
+	}
+}
+
+func TestConfigDoesNotImportAppPackage(t *testing.T) {
+	root := repoRoot(t)
+	targetDir := filepath.Join(root, "internal", "config")
+	files := listGoFilesRecursive(t, targetDir)
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		rel, _ := filepath.Rel(root, path)
+		rel = filepath.ToSlash(rel)
+		f := parseFile(t, path)
+		for _, imp := range f.Imports {
+			p := strings.Trim(imp.Path.Value, `"`)
+			if p == "dalek/internal/app" {
+				t.Fatalf("config 层不应 import app（%s）", rel)
+			}
+		}
+	}
+}
+
+func TestServiceAndUITestsDoNotUseStoreContractAliasTypes(t *testing.T) {
+	root := repoRoot(t)
+	targetDirs := []string{
+		filepath.Join(root, "internal", "services"),
+		filepath.Join(root, "internal", "ui"),
+	}
+	banned := map[string]bool{
+		"Ticket":              true,
+		"Worker":              true,
+		"MergeItem":           true,
+		"InboxItem":           true,
+		"TaskStatusView":      true,
+		"TicketWorkflowEvent": true,
+		"ChannelBinding":      true,
+		"ChannelTurnJob":      true,
+		"ChannelMessage":      true,
+		"ChannelConversation": true,
+		"ChannelOutbox":       true,
+	}
+
+	for _, dir := range targetDirs {
+		files := listGoFilesRecursive(t, dir)
+		for _, path := range files {
+			if !strings.HasSuffix(path, "_test.go") {
+				continue
+			}
+			rel, _ := filepath.Rel(root, path)
+			rel = filepath.ToSlash(rel)
+			f := parseFile(t, path)
+			usesStore := false
+			for _, imp := range f.Imports {
+				p := strings.Trim(imp.Path.Value, `"`)
+				if p == "dalek/internal/store" {
+					usesStore = true
+					break
+				}
+			}
+			if !usesStore {
+				continue
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s failed: %v", rel, err)
+			}
+			text := string(raw)
+			for typ := range banned {
+				pattern := regexp.MustCompile(`\bstore\.` + typ + `\b`)
+				if pattern.MatchString(text) {
+					t.Fatalf("services/ui 测试不应使用 store.%s（%s），请改用 contracts.%s", typ, rel, typ)
+				}
+			}
+		}
+	}
+}
+
+func TestCoreTaskRuntimeDoesNotImportStore(t *testing.T) {
+	root := repoRoot(t)
+	path := filepath.Join(root, "internal", "services", "core", "task_runtime.go")
+	f := parseFile(t, path)
+	for _, imp := range f.Imports {
+		p := strings.Trim(imp.Path.Value, `"`)
+		if p == "dalek/internal/store" {
+			t.Fatalf("core/task_runtime.go 不应 import store（请改用 contracts 视图类型）")
 		}
 	}
 }
@@ -312,5 +486,21 @@ func TestCmdTestsServicesImportAllowlist(t *testing.T) {
 				t.Fatalf("cmd 测试 import internal/services 必须在 allowlist（%s import %s）", rel, p)
 			}
 		}
+	}
+}
+
+func TestAppIntegrationTestDoesNotUseProjectCoreOrStore(t *testing.T) {
+	root := repoRoot(t)
+	path := filepath.Join(root, "internal", "app", "integration_test.go")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read integration_test.go failed: %v", err)
+	}
+	text := string(raw)
+	if strings.Contains(text, ".core.") {
+		t.Fatalf("integration_test.go 不应直接访问 p.core（请通过 app facade 方法）")
+	}
+	if strings.Contains(text, `"dalek/internal/store"`) || strings.Contains(text, "store.") {
+		t.Fatalf("integration_test.go 不应直接依赖 store 包（请使用 contracts 或 app facade）")
 	}
 }

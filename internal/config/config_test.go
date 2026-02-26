@@ -2,14 +2,42 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
-	"dalek/internal/app"
 	"dalek/internal/repo"
 )
+
+type fakeProject struct {
+	configPath string
+	maxRunning int
+}
+
+func (p *fakeProject) ConfigPath() string {
+	if p == nil {
+		return ""
+	}
+	return p.configPath
+}
+
+func (p *fakeProject) GetMaxRunningWorkers(ctx context.Context) (int, error) {
+	_ = ctx
+	if p == nil {
+		return 0, nil
+	}
+	return p.maxRunning, nil
+}
+
+func (p *fakeProject) SetMaxRunningWorkers(ctx context.Context, n int) (int, error) {
+	_ = ctx
+	if p != nil {
+		p.maxRunning = n
+	}
+	return n, nil
+}
 
 func TestLoadPresence(t *testing.T) {
 	t.Parallel()
@@ -51,7 +79,7 @@ func TestLoadPresence(t *testing.T) {
 
 func TestResolveValue(t *testing.T) {
 	t.Parallel()
-	defaultHome := app.DefaultHomeConfig()
+	defaultHome := HomeConfig{}
 
 	t.Run("daemon.max_concurrent source from default/global", func(t *testing.T) {
 		t.Parallel()
@@ -76,7 +104,7 @@ func TestResolveValue(t *testing.T) {
 
 	t.Run("agent.provider source precedence", func(t *testing.T) {
 		t.Parallel()
-		homeCfg := app.DefaultHomeConfig()
+		homeCfg := HomeConfig{}
 		homeCfg.Agent.Provider = "claude"
 		homeCfg.Agent.Model = "claude-3-7-sonnet"
 		localCfg := repo.Config{}.WithDefaults()
@@ -114,9 +142,14 @@ func TestResolveValue(t *testing.T) {
 func TestSetValue_Global(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "home", "config.json")
+	var written HomeConfig
 	ctx := &SetContext{
-		Home:    &app.Home{ConfigPath: path},
-		HomeCfg: app.DefaultHomeConfig(),
+		HomeConfigPath: path,
+		HomeCfg:        HomeConfig{},
+		WriteHomeConfig: func(path string, cfg HomeConfig) error {
+			written = cfg.WithDefaults()
+			return nil
+		},
 	}
 	v, err := SetValue(ctx, ConfigKeyDaemonMaxConcurrent, ScopeGlobal, "8")
 	if err != nil {
@@ -125,37 +158,27 @@ func TestSetValue_Global(t *testing.T) {
 	if v != "8" {
 		t.Fatalf("unexpected normalized value: %s", v)
 	}
-	cfg, exists, _, err := app.LoadHomeConfig(path)
-	if err != nil {
-		t.Fatalf("LoadHomeConfig failed: %v", err)
-	}
-	if !exists {
-		t.Fatalf("home config should exist after write")
-	}
-	if got := cfg.WithDefaults().Daemon.MaxConcurrent; got != 8 {
+	if got := written.WithDefaults().Daemon.MaxConcurrent; got != 8 {
 		t.Fatalf("unexpected daemon.max_concurrent=%d", got)
 	}
 }
 
 func TestSetValue_LocalWritesProjectConfig(t *testing.T) {
 	repoRoot := initGitRepo(t)
-	homeDir := filepath.Join(t.TempDir(), "home")
-	h, err := app.OpenHome(homeDir)
-	if err != nil {
-		t.Fatalf("OpenHome failed: %v", err)
+	cfgPath := filepath.Join(repoRoot, ".dalek", "config.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
 	}
-	p, err := h.InitProjectFromDir(repoRoot, "demo", repo.Config{})
-	if err != nil {
-		t.Fatalf("InitProjectFromDir failed: %v", err)
+	if err := repo.WriteConfigAtomic(cfgPath, repo.Config{}.WithDefaults()); err != nil {
+		t.Fatalf("WriteConfigAtomic failed: %v", err)
 	}
+	p := &fakeProject{configPath: cfgPath, maxRunning: 4}
 	localCfg, err := LoadProjectConfigFromProject(p)
 	if err != nil {
 		t.Fatalf("LoadProjectConfigFromProject failed: %v", err)
 	}
 
 	ctx := &SetContext{
-		Home:     h,
-		HomeCfg:  h.Config.WithDefaults(),
 		Project:  p,
 		LocalCfg: localCfg,
 	}
@@ -167,7 +190,6 @@ func TestSetValue_LocalWritesProjectConfig(t *testing.T) {
 		t.Fatalf("unexpected normalized value: %s", v)
 	}
 
-	cfgPath := repo.NewLayout(p.RepoRoot()).ConfigPath
 	cfg, _, err := repo.LoadConfig(cfgPath)
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
@@ -180,7 +202,7 @@ func TestSetValue_LocalWritesProjectConfig(t *testing.T) {
 
 func TestBuildEffectiveProjectConfig(t *testing.T) {
 	t.Parallel()
-	homeCfg := app.DefaultHomeConfig()
+	homeCfg := HomeConfig{}
 	homeCfg.Agent.Provider = "claude"
 	homeCfg.Agent.Model = "home-model"
 

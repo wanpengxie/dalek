@@ -33,14 +33,11 @@ const (
 	daemonFeishuUserNameCacheTTL    = 10 * time.Minute
 	daemonFeishuEventDedupTTL       = 24 * time.Hour
 	daemonFeishuEventDedupCap       = 10000
+	DefaultRelayTimeout             = 10 * time.Minute
+	DefaultRelayIdleTimeout         = 5 * time.Minute
 )
 
 const DefaultAdapter = defaultDaemonFeishuAdapter
-
-var (
-	daemonFeishuRelayTimeout     = 10 * time.Minute
-	daemonFeishuRelayIdleTimeout = 5 * time.Minute
-)
 
 type daemonFeishuWebhookOptions struct {
 	Adapter           string
@@ -276,11 +273,11 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 	if opt.Adapter == "" {
 		opt.Adapter = defaultDaemonFeishuAdapter
 	}
-	relayTimeout := daemonFeishuRelayTimeout
+	relayTimeout := DefaultRelayTimeout
 	if opt.RelayTimeout > 0 {
 		relayTimeout = opt.RelayTimeout
 	}
-	relayIdleTimeout := daemonFeishuRelayIdleTimeout
+	relayIdleTimeout := DefaultRelayIdleTimeout
 	if opt.RelayIdleTimeout > 0 {
 		relayIdleTimeout = opt.RelayIdleTimeout
 	}
@@ -362,8 +359,12 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			if peerID == "" {
 				peerID = strings.TrimSpace(req.Event.OpenMessageID)
 			}
-			logDaemonFeishuf(logger, "daemon feishu dedup: dedup_type=event_id dedup_key=%s peer_msg=%s action=skip",
-				eventID, peerID)
+			logDaemonFeishuInfo(logger, "daemon feishu dedup",
+				"dedup_type", "event_id",
+				"dedup_key", eventID,
+				"peer_msg", peerID,
+				"action", "skip",
+			)
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
@@ -414,7 +415,10 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 		senderName := ""
 		if senderID != "" {
 			if resolvedName, nameErr := sender.GetUserName(reqCtx, senderID); nameErr != nil {
-				logDaemonFeishuf(logger, "GetUserName failed for %s: %v", senderID, nameErr)
+				logDaemonFeishuInfo(logger, "GetUserName failed",
+					"sender_id", senderID,
+					"error", nameErr,
+				)
 			} else {
 				senderName = strings.TrimSpace(resolvedName)
 			}
@@ -442,7 +446,10 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 
 		boundProject, err := gateway.LookupBoundProject(reqCtx, contracts.ChannelTypeIM, opt.Adapter, chatID)
 		if err != nil {
-			logDaemonFeishuf(logger, "lookup bound project failed: chat=%s err=%v", chatID, err)
+			logDaemonFeishuInfo(logger, "lookup bound project failed",
+				"chat", chatID,
+				"error", err,
+			)
 			_ = sender.SendText(reqCtx, chatID, "读取绑定失败，请稍后重试")
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
@@ -466,10 +473,13 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 		)
 		var writeMu sync.Mutex
 
-		logFinal := func(format string, args ...any) {
-			baseArgs := []any{chatID, msgID}
-			allArgs := append(baseArgs, args...)
-			logDaemonFeishuf(logger, "daemon feishu final-reply: chat=%s peer_msg=%s "+format, allArgs...)
+		logFinal := func(message string, args ...any) {
+			fields := []any{
+				"chat", chatID,
+				"peer_msg", msgID,
+			}
+			fields = append(fields, args...)
+			logDaemonFeishuInfo(logger, message, fields...)
 		}
 		markOutbox := func(outboxID uint, delivered bool, cause error) {
 			if gateway == nil || outboxID == 0 {
@@ -479,10 +489,17 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			if err := gateway.MarkOutboxDelivery(ctx, outboxID, delivered, cause); err != nil {
-				logFinal("mark outbox failed outbox=%d delivered=%v err=%v", outboxID, delivered, err)
+				logFinal("mark outbox failed",
+					"outbox", outboxID,
+					"delivered", delivered,
+					"error", err,
+				)
 				return
 			}
-			logFinal("mark outbox ok outbox=%d delivered=%v", outboxID, delivered)
+			logFinal("mark outbox ok",
+				"outbox", outboxID,
+				"delivered", delivered,
+			)
 		}
 
 		var (
@@ -498,17 +515,29 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			if textErr == nil {
 				finalSent = true
 				relayCancel()
-				logFinal("attempt=%d source=%s text_fallback_success", attempt, source)
+				logFinal("text fallback success",
+					"attempt", attempt,
+					"source", source,
+				)
 				markOutbox(outboxID, true, nil)
 				return true
 			}
 			if prevErr != nil {
-				logFinal("attempt=%d source=%s text_fallback_failed err=%v; text_err=%v", attempt, source, prevErr, textErr)
+				logFinal("text fallback failed",
+					"attempt", attempt,
+					"source", source,
+					"error", prevErr,
+					"text_error", textErr,
+				)
 				markOutbox(outboxID, false, fmt.Errorf("%w; text fallback failed: %v", prevErr, textErr))
 				relayCancel()
 				return false
 			}
-			logFinal("attempt=%d source=%s text_fallback_failed err=%v", attempt, source, textErr)
+			logFinal("text fallback failed",
+				"attempt", attempt,
+				"source", source,
+				"error", textErr,
+			)
 			markOutbox(outboxID, false, textErr)
 			relayCancel()
 			return false
@@ -523,7 +552,10 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			defer finalMu.Unlock()
 
 			if finalSent {
-				logFinal("skip source=%s reason=already_sent", source)
+				logFinal("skip final reply",
+					"source", source,
+					"reason", "already_sent",
+				)
 				return
 			}
 			finalAttempt++
@@ -546,14 +578,29 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 				err := sender.PatchCard(ctx, mid, collapseJSON)
 				cancel()
 				if err != nil {
-					logFinal("attempt=%d source=%s progress_collapse_failed mid=%s err=%v", attempt, source, mid, err)
+					logFinal("progress collapse failed",
+						"attempt", attempt,
+						"source", source,
+						"message_id", mid,
+						"error", err,
+					)
 				} else {
-					logFinal("attempt=%d source=%s progress_collapse_success mid=%s", attempt, source, mid)
+					logFinal("progress collapse success",
+						"attempt", attempt,
+						"source", source,
+						"message_id", mid,
+					)
 				}
 			}
 			writeMu.Unlock()
 
-			logFinal("attempt=%d source=%s outbox=%d has_progress_card=%v reply_len=%d", attempt, source, outboxID, mid != "", utf8.RuneCountInString(reply))
+			logFinal("send final reply",
+				"attempt", attempt,
+				"source", source,
+				"outbox", outboxID,
+				"has_progress_card", mid != "",
+				"reply_len", utf8.RuneCountInString(reply),
+			)
 
 			cardJSON := buildDaemonFeishuResultCardJSON(reply)
 			var lastErr error
@@ -564,7 +611,11 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 				if sendErr == nil && resultMid != "" {
 					finalSent = true
 					relayCancel()
-					logFinal("attempt=%d source=%s result_send_success mid=%s", attempt, source, resultMid)
+					logFinal("result card send success",
+						"attempt", attempt,
+						"source", source,
+						"message_id", resultMid,
+					)
 					markOutbox(outboxID, true, nil)
 					return
 				}
@@ -576,7 +627,11 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 					time.Sleep(200 * time.Millisecond)
 				}
 			}
-			logFinal("attempt=%d source=%s result_send_failed err=%v", attempt, source, lastErr)
+			logFinal("result card send failed",
+				"attempt", attempt,
+				"source", source,
+				"error", lastErr,
+			)
 			_ = sendTextFallback(attempt, source, outboxID, reply, lastErr)
 		}
 		sendApprovalReply := func(source string, result channelsvc.ProcessResult) {
@@ -590,7 +645,10 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			defer finalMu.Unlock()
 
 			if finalSent {
-				logFinal("skip source=%s reason=already_sent", source)
+				logFinal("skip approval reply",
+					"source", source,
+					"reason", "already_sent",
+				)
 				return
 			}
 			finalAttempt++
@@ -613,9 +671,18 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 				err := sender.PatchCard(ctx, mid, collapseJSON)
 				cancel()
 				if err != nil {
-					logFinal("attempt=%d source=%s progress_collapse_failed mid=%s err=%v", attempt, source, mid, err)
+					logFinal("progress collapse failed",
+						"attempt", attempt,
+						"source", source,
+						"message_id", mid,
+						"error", err,
+					)
 				} else {
-					logFinal("attempt=%d source=%s progress_collapse_success mid=%s", attempt, source, mid)
+					logFinal("progress collapse success",
+						"attempt", attempt,
+						"source", source,
+						"message_id", mid,
+					)
 				}
 			}
 			writeMu.Unlock()
@@ -629,7 +696,11 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 				if sendErr == nil && resultMid != "" {
 					finalSent = true
 					relayCancel()
-					logFinal("attempt=%d source=%s approval_send_success mid=%s", attempt, source, resultMid)
+					logFinal("approval card send success",
+						"attempt", attempt,
+						"source", source,
+						"message_id", resultMid,
+					)
 					markOutbox(outboxID, true, nil)
 					return
 				}
@@ -641,7 +712,11 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 					time.Sleep(200 * time.Millisecond)
 				}
 			}
-			logFinal("attempt=%d source=%s approval_send_failed err=%v", attempt, source, lastErr)
+			logFinal("approval card send failed",
+				"attempt", attempt,
+				"source", source,
+				"error", lastErr,
+			)
 			_ = sendTextFallback(attempt, source, outboxID, fallback, lastErr)
 		}
 		sendRealtimeApprovalCard := func(source, reply string, pending []channelsvc.PendingActionView) bool {
@@ -660,20 +735,30 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			sendCancel()
 			writeMu.Unlock()
 			if sendErr == nil && resultMid != "" {
-				logFinal("source=%s approval_realtime_send_success mid=%s", source, resultMid)
+				logFinal("realtime approval card send success",
+					"source", source,
+					"message_id", resultMid,
+				)
 				return true
 			}
 			if sendErr == nil {
 				sendErr = fmt.Errorf("feishu send realtime approval failed: empty message_id")
 			}
-			logFinal("source=%s approval_realtime_send_failed err=%v", source, sendErr)
+			logFinal("realtime approval card send failed",
+				"source", source,
+				"error", sendErr,
+			)
 
 			fallback := buildDaemonFeishuApprovalFallbackText(reply, pending)
 			textCtx, textCancel := context.WithTimeout(relayCtx, 8*time.Second)
 			textErr := sender.SendText(textCtx, chatID, fallback)
 			textCancel()
 			if textErr != nil {
-				logFinal("source=%s approval_realtime_text_fallback_failed send_err=%v text_err=%v", source, sendErr, textErr)
+				logFinal("realtime approval text fallback failed",
+					"source", source,
+					"send_error", sendErr,
+					"text_error", textErr,
+				)
 			}
 			return false
 		}
@@ -855,9 +940,16 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 				alreadySent := finalSent
 				finalMu.Unlock()
 
-				logFinal("callback job_status=%s outbox=%d run_err=%v", string(result.JobStatus), outboxID, runErr)
-				if runErr == nil && !isGatewayTurnTerminalStatus(string(result.JobStatus)) {
-					logFinal("callback non_terminal status=%s skip_final_reply", string(result.JobStatus))
+				jobStatus := strings.TrimSpace(string(result.JobStatus))
+				logFinal("callback received",
+					"job_status", jobStatus,
+					"outbox", outboxID,
+					"run_error", runErr,
+				)
+				if runErr == nil && jobStatus != "" && !isGatewayTurnTerminalStatus(jobStatus) {
+					logFinal("callback non-terminal skip final reply",
+						"job_status", jobStatus,
+					)
 					return
 				}
 				if runErr == nil && len(result.PendingActions) > 0 {
@@ -880,7 +972,11 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			if submitErr == channelsvc.ErrInboundQueueFull {
 				msg = "排队中，请稍后再试。"
 			}
-			logDaemonFeishuf(logger, "submit inbound failed: project=%s chat=%s err=%v", boundProject, chatID, submitErr)
+			logDaemonFeishuInfo(logger, "submit inbound failed",
+				"project", boundProject,
+				"chat", chatID,
+				"error", submitErr,
+			)
 			_ = sender.SendText(reqCtx, chatID, msg)
 		}
 
@@ -899,16 +995,29 @@ func handleDaemonFeishuCardActionTrigger(ctx context.Context, w http.ResponseWri
 	}
 	payload, err := parseDaemonFeishuCardActionPayload(req)
 	if err != nil {
-		logDaemonFeishuf(logger, "parse card action failed: type=%s event_id=%s err=%v", eventType, eventID, err)
+		logDaemonFeishuInfo(logger, "parse card action failed",
+			"type", eventType,
+			"event_id", eventID,
+			"error", err,
+		)
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 		return
 	}
-	logDaemonFeishuf(logger, "card action received: type=%s event_id=%s chat=%s msg=%s action=%d decision=%s",
-		eventType, eventID, payload.ChatID, payload.MessageID, payload.PendingActionID, payload.Decision)
+	logDaemonFeishuInfo(logger, "card action received",
+		"type", eventType,
+		"event_id", eventID,
+		"chat", payload.ChatID,
+		"message_id", payload.MessageID,
+		"action_id", payload.PendingActionID,
+		"decision", payload.Decision,
+	)
 
 	boundProject, err := gateway.LookupBoundProject(ctx, contracts.ChannelTypeIM, opt.Adapter, payload.ChatID)
 	if err != nil {
-		logDaemonFeishuf(logger, "lookup bound project failed: chat=%s err=%v", payload.ChatID, err)
+		logDaemonFeishuInfo(logger, "lookup bound project failed",
+			"chat", payload.ChatID,
+			"error", err,
+		)
 		_ = sender.SendText(ctx, payload.ChatID, "读取绑定失败，请稍后重试")
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 		return
@@ -921,14 +1030,19 @@ func handleDaemonFeishuCardActionTrigger(ctx context.Context, w http.ResponseWri
 
 	projectCtx, err := resolver.Resolve(boundProject)
 	if err != nil {
-		logDaemonFeishuf(logger, "resolve project failed: project=%s err=%v", boundProject, err)
+		logDaemonFeishuInfo(logger, "resolve project failed",
+			"project", boundProject,
+			"error", err,
+		)
 		_ = sender.SendText(ctx, payload.ChatID, "项目上下文不可用，请稍后重试")
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 		return
 	}
 	decider, ok := projectCtx.Runtime.(channelsvc.ProjectRuntimePendingActionDecider)
 	if !ok {
-		logDaemonFeishuf(logger, "project runtime does not support pending action decision: project=%s", boundProject)
+		logDaemonFeishuInfo(logger, "project runtime does not support pending action decision",
+			"project", boundProject,
+		)
 		_ = sender.SendText(ctx, payload.ChatID, "当前项目尚未启用审批能力")
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 		return
@@ -944,13 +1058,23 @@ func handleDaemonFeishuCardActionTrigger(ctx context.Context, w http.ResponseWri
 		Note:               payload.Note,
 	})
 	if err != nil {
-		logDaemonFeishuf(logger, "decide pending action failed: project=%s chat=%s action=%d err=%v", boundProject, payload.ChatID, payload.PendingActionID, err)
+		logDaemonFeishuInfo(logger, "decide pending action failed",
+			"project", boundProject,
+			"chat", payload.ChatID,
+			"action_id", payload.PendingActionID,
+			"error", err,
+		)
 		_ = sender.SendText(ctx, payload.ChatID, "审批处理失败："+err.Error())
 		writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 		return
 	}
-	logDaemonFeishuf(logger, "card action decided: project=%s chat=%s action=%d decision=%s status=%s",
-		boundProject, payload.ChatID, payload.PendingActionID, payload.Decision, decisionResult.Action.Status)
+	logDaemonFeishuInfo(logger, "card action decided",
+		"project", boundProject,
+		"chat", payload.ChatID,
+		"action_id", payload.PendingActionID,
+		"decision", payload.Decision,
+		"status", decisionResult.Action.Status,
+	)
 
 	cardJSON := buildDaemonFeishuApprovalDecisionCardJSON(decisionResult)
 
@@ -1619,11 +1743,7 @@ func parseDaemonFeishuMessageText(messageType, content string) (string, bool) {
 }
 
 func BuildWebhookPath(secretPath string) string {
-	return buildDaemonFeishuWebhookPath(secretPath)
-}
-
-func buildDaemonFeishuWebhookPath(secretPath string) string {
-	segment := normalizeDaemonFeishuWebhookSecretPath(secretPath)
+	segment := NormalizeWebhookSecretPath(secretPath)
 	if segment == "" {
 		return "/feishu/webhook"
 	}
@@ -1631,10 +1751,6 @@ func buildDaemonFeishuWebhookPath(secretPath string) string {
 }
 
 func NormalizeWebhookSecretPath(raw string) string {
-	return normalizeDaemonFeishuWebhookSecretPath(raw)
-}
-
-func normalizeDaemonFeishuWebhookSecretPath(raw string) string {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return ""
@@ -1688,7 +1804,10 @@ func (s *daemonFeishuHTTPSender) SendText(ctx context.Context, chatID, text stri
 	}
 	_, err = s.sendMessage(ctx, chatID, "text", string(payload))
 	if err != nil {
-		s.logf("send text failed: chat=%s err=%v", chatID, err)
+		s.logInfo("send text failed",
+			"chat", chatID,
+			"error", err,
+		)
 	}
 	return err
 }
@@ -1737,13 +1856,19 @@ func (s *daemonFeishuHTTPSender) SendCard(ctx context.Context, chatID, title, ma
 		return nil
 	}
 	if !isDaemonFeishuCardContentError(err) {
-		s.logf("send card failed: chat=%s err=%v", chatID, err)
+		s.logInfo("send card failed",
+			"chat", chatID,
+			"error", err,
+		)
 		return err
 	}
 
 	degraded := degradeDaemonFeishuCardMarkdown(markdown)
 	if degraded == "" || degraded == markdown {
-		s.logf("send card failed without degradable markdown: chat=%s err=%v", chatID, err)
+		s.logInfo("send card failed without degradable markdown",
+			"chat", chatID,
+			"error", err,
+		)
 		return err
 	}
 	retryBody, marshalErr := json.Marshal(map[string]any{
@@ -1776,7 +1901,10 @@ func (s *daemonFeishuHTTPSender) SendCard(ctx context.Context, chatID, title, ma
 	if retryErr == nil {
 		return nil
 	}
-	s.logf("send card degrade retry failed: chat=%s err=%v", chatID, retryErr)
+	s.logInfo("send card degrade retry failed",
+		"chat", chatID,
+		"error", retryErr,
+	)
 	return retryErr
 }
 
@@ -2174,23 +2302,24 @@ func writeJSON(w http.ResponseWriter, code int, payload any) {
 }
 
 func isGatewayTurnTerminalStatus(status string) bool {
-	status = strings.ToLower(status)
-	if status == "" {
+	switch contracts.ChannelTurnJobStatus(strings.TrimSpace(strings.ToLower(status))) {
+	case contracts.ChannelTurnSucceeded, contracts.ChannelTurnFailed:
 		return true
+	default:
+		return false
 	}
-	return status == "succeeded" || status == "failed"
 }
 
-func (s *daemonFeishuHTTPSender) logf(format string, args ...any) {
+func (s *daemonFeishuHTTPSender) logInfo(message string, args ...any) {
 	if s == nil || s.logger == nil {
 		return
 	}
-	s.logger.Info(fmt.Sprintf(format, args...))
+	logDaemonFeishuInfo(s.logger, message, args...)
 }
 
-func logDaemonFeishuf(logger *slog.Logger, format string, args ...any) {
+func logDaemonFeishuInfo(logger *slog.Logger, message string, args ...any) {
 	if logger == nil {
 		return
 	}
-	logger.Info(fmt.Sprintf(format, args...))
+	logger.Info(strings.TrimSpace(message), args...)
 }

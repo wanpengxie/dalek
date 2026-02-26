@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	agentprovider "dalek/internal/agent/provider"
-	"dalek/internal/app"
 	"dalek/internal/repo"
 )
 
@@ -29,6 +28,12 @@ const (
 	ConfigKeyProjectMaxRunningWorkers = "project.max_running_workers"
 	ConfigKeyAgentProvider            = "agent.provider"
 	ConfigKeyAgentModel               = "agent.model"
+)
+
+const (
+	defaultDaemonInternalListen = "127.0.0.1:18081"
+	defaultDaemonPublicListen   = "127.0.0.1:18080"
+	defaultDaemonMaxConcurrent  = 4
 )
 
 type KeyMeta struct {
@@ -83,19 +88,77 @@ type LocalPresence struct {
 	AgentModel    bool
 }
 
+type HomeConfig struct {
+	Agent  HomeAgentConfig
+	Daemon HomeDaemonConfig
+}
+
+type HomeAgentConfig struct {
+	Provider string
+	Model    string
+}
+
+type HomeDaemonConfig struct {
+	MaxConcurrent int
+	Internal      HomeDaemonInternalConfig
+	Public        HomeDaemonPublicConfig
+}
+
+type HomeDaemonInternalConfig struct {
+	Listen string
+}
+
+type HomeDaemonPublicConfig struct {
+	Listen string
+}
+
+func (c HomeConfig) WithDefaults() HomeConfig {
+	out := c
+	out.Daemon.Internal.Listen = strings.TrimSpace(out.Daemon.Internal.Listen)
+	if out.Daemon.Internal.Listen == "" {
+		out.Daemon.Internal.Listen = defaultDaemonInternalListen
+	}
+	out.Daemon.Public.Listen = strings.TrimSpace(out.Daemon.Public.Listen)
+	if out.Daemon.Public.Listen == "" {
+		out.Daemon.Public.Listen = defaultDaemonPublicListen
+	}
+	if out.Daemon.MaxConcurrent <= 0 {
+		out.Daemon.MaxConcurrent = defaultDaemonMaxConcurrent
+	}
+	out.Agent.Provider = strings.TrimSpace(strings.ToLower(out.Agent.Provider))
+	switch out.Agent.Provider {
+	case "", agentprovider.ProviderCodex, agentprovider.ProviderClaude:
+	default:
+		out.Agent.Provider = ""
+	}
+	out.Agent.Model = strings.TrimSpace(out.Agent.Model)
+	return out
+}
+
+type ProjectConfigPathProvider interface {
+	ConfigPath() string
+}
+
+type ProjectConfigAccessor interface {
+	ProjectConfigPathProvider
+	GetMaxRunningWorkers(ctx context.Context) (int, error)
+	SetMaxRunningWorkers(ctx context.Context, n int) (int, error)
+}
+
 type EvalContext struct {
-	HomeCfg       app.HomeConfig
+	HomeCfg       HomeConfig
 	HomePresence  HomePresence
-	Project       *app.Project
+	Project       ProjectConfigAccessor
 	LocalCfg      repo.Config
 	LocalPresence LocalPresence
 }
 
 type SetContext struct {
-	Home     *app.Home
-	HomeCfg  app.HomeConfig
-	Project  *app.Project
-	LocalCfg repo.Config
+	HomeConfigPath  string
+	HomeCfg         HomeConfig
+	WriteHomeConfig func(path string, cfg HomeConfig) error
+	Project         ProjectConfigAccessor
+	LocalCfg        repo.Config
 }
 
 func NormalizeKey(raw string) string {
@@ -136,21 +199,22 @@ func ResolveValue(key string, eval *EvalContext) (string, Scope, error) {
 	if eval == nil {
 		return "", ScopeDefault, fmt.Errorf("config eval context 为空")
 	}
+	home := eval.HomeCfg.WithDefaults()
 	switch NormalizeKey(key) {
 	case ConfigKeyDaemonInternalListen:
-		value := strings.TrimSpace(eval.HomeCfg.WithDefaults().Daemon.Internal.Listen)
+		value := strings.TrimSpace(home.Daemon.Internal.Listen)
 		if eval.HomePresence.DaemonInternalListen {
 			return value, ScopeGlobal, nil
 		}
 		return value, ScopeDefault, nil
 	case ConfigKeyDaemonPublicListen:
-		value := strings.TrimSpace(eval.HomeCfg.WithDefaults().Daemon.Public.Listen)
+		value := strings.TrimSpace(home.Daemon.Public.Listen)
 		if eval.HomePresence.DaemonPublicListen {
 			return value, ScopeGlobal, nil
 		}
 		return value, ScopeDefault, nil
 	case ConfigKeyDaemonMaxConcurrent:
-		value := strconv.Itoa(eval.HomeCfg.WithDefaults().Daemon.MaxConcurrent)
+		value := strconv.Itoa(home.Daemon.MaxConcurrent)
 		if eval.HomePresence.DaemonMaxConcurrent {
 			return value, ScopeGlobal, nil
 		}
@@ -159,13 +223,13 @@ func ResolveValue(key string, eval *EvalContext) (string, Scope, error) {
 		if eval.Project == nil {
 			return "", ScopeDB, fmt.Errorf("project 为空")
 		}
-		st, err := eval.Project.GetPMState(context.Background())
+		n, err := eval.Project.GetMaxRunningWorkers(context.Background())
 		if err != nil {
 			return "", ScopeDB, err
 		}
-		return strconv.Itoa(st.MaxRunningWorkers), ScopeDB, nil
+		return strconv.Itoa(n), ScopeDB, nil
 	case ConfigKeyAgentProvider:
-		effective := BuildEffectiveProjectConfig(eval.HomeCfg, eval.LocalCfg)
+		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
 		value := strings.TrimSpace(strings.ToLower(effective.WorkerAgent.Provider))
 		if eval.LocalPresence.AgentProvider {
 			return value, ScopeLocal, nil
@@ -175,7 +239,7 @@ func ResolveValue(key string, eval *EvalContext) (string, Scope, error) {
 		}
 		return value, ScopeDefault, nil
 	case ConfigKeyAgentModel:
-		effective := BuildEffectiveProjectConfig(eval.HomeCfg, eval.LocalCfg)
+		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
 		value := strings.TrimSpace(effective.WorkerAgent.Model)
 		if eval.LocalPresence.AgentModel {
 			return value, ScopeLocal, nil
@@ -202,13 +266,10 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 		if strings.TrimSpace(ctx.HomeCfg.Daemon.Internal.Listen) == "" {
 			return "", fmt.Errorf("daemon.internal.listen 不能为空")
 		}
-		if ctx.Home == nil {
-			return "", fmt.Errorf("home 为空")
-		}
-		if err := app.WriteHomeConfigAtomic(ctx.Home.ConfigPath, ctx.HomeCfg); err != nil {
+		if err := persistHomeConfig(ctx); err != nil {
 			return "", err
 		}
-		return ctx.HomeCfg.WithDefaults().Daemon.Internal.Listen, nil
+		return strings.TrimSpace(ctx.HomeCfg.WithDefaults().Daemon.Internal.Listen), nil
 	case ConfigKeyDaemonPublicListen:
 		if scope != ScopeGlobal {
 			return "", fmt.Errorf("%s 仅支持 global 层", key)
@@ -217,13 +278,10 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 		if strings.TrimSpace(ctx.HomeCfg.Daemon.Public.Listen) == "" {
 			return "", fmt.Errorf("daemon.public.listen 不能为空")
 		}
-		if ctx.Home == nil {
-			return "", fmt.Errorf("home 为空")
-		}
-		if err := app.WriteHomeConfigAtomic(ctx.Home.ConfigPath, ctx.HomeCfg); err != nil {
+		if err := persistHomeConfig(ctx); err != nil {
 			return "", err
 		}
-		return ctx.HomeCfg.WithDefaults().Daemon.Public.Listen, nil
+		return strings.TrimSpace(ctx.HomeCfg.WithDefaults().Daemon.Public.Listen), nil
 	case ConfigKeyDaemonMaxConcurrent:
 		if scope != ScopeGlobal {
 			return "", fmt.Errorf("%s 仅支持 global 层", key)
@@ -236,10 +294,7 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 			return "", fmt.Errorf("daemon.max_concurrent 必须大于 0")
 		}
 		ctx.HomeCfg.Daemon.MaxConcurrent = n
-		if ctx.Home == nil {
-			return "", fmt.Errorf("home 为空")
-		}
-		if err := app.WriteHomeConfigAtomic(ctx.Home.ConfigPath, ctx.HomeCfg); err != nil {
+		if err := persistHomeConfig(ctx); err != nil {
 			return "", err
 		}
 		return strconv.Itoa(ctx.HomeCfg.WithDefaults().Daemon.MaxConcurrent), nil
@@ -257,11 +312,11 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 		if n < 1 || n > 32 {
 			return "", fmt.Errorf("project.max_running_workers 取值范围为 1-32")
 		}
-		st, err := ctx.Project.SetMaxRunningWorkers(context.Background(), n)
+		got, err := ctx.Project.SetMaxRunningWorkers(context.Background(), n)
 		if err != nil {
 			return "", err
 		}
-		return strconv.Itoa(st.MaxRunningWorkers), nil
+		return strconv.Itoa(got), nil
 	case ConfigKeyAgentProvider:
 		provider := agentprovider.NormalizeProvider(rawValue)
 		if !agentprovider.IsSupportedProvider(provider) {
@@ -270,10 +325,7 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 		switch scope {
 		case ScopeGlobal:
 			ctx.HomeCfg.Agent.Provider = provider
-			if ctx.Home == nil {
-				return "", fmt.Errorf("home 为空")
-			}
-			if err := app.WriteHomeConfigAtomic(ctx.Home.ConfigPath, ctx.HomeCfg); err != nil {
+			if err := persistHomeConfig(ctx); err != nil {
 				return "", err
 			}
 			return strings.TrimSpace(strings.ToLower(ctx.HomeCfg.WithDefaults().Agent.Provider)), nil
@@ -281,10 +333,9 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 			if ctx.Project == nil {
 				return "", fmt.Errorf("project 为空")
 			}
-			pc := app.ProjectConfig(ctx.LocalCfg)
-			app.ApplyAgentProviderModelOverride(&pc, provider, "")
-			next := repo.Config(pc).WithDefaults()
-			if err := repo.WriteConfigAtomic(repo.NewLayout(ctx.Project.RepoRoot()).ConfigPath, next); err != nil {
+			next := ctx.LocalCfg.WithDefaults()
+			applyAgentProviderModelOverride(&next, provider, "")
+			if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
 				return "", err
 			}
 			return strings.TrimSpace(strings.ToLower(next.WorkerAgent.Provider)), nil
@@ -299,10 +350,7 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 		switch scope {
 		case ScopeGlobal:
 			ctx.HomeCfg.Agent.Model = model
-			if ctx.Home == nil {
-				return "", fmt.Errorf("home 为空")
-			}
-			if err := app.WriteHomeConfigAtomic(ctx.Home.ConfigPath, ctx.HomeCfg); err != nil {
+			if err := persistHomeConfig(ctx); err != nil {
 				return "", err
 			}
 			return strings.TrimSpace(ctx.HomeCfg.WithDefaults().Agent.Model), nil
@@ -313,7 +361,7 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 			next := ctx.LocalCfg.WithDefaults()
 			next.WorkerAgent.Model = model
 			next.PMAgent.Model = model
-			if err := repo.WriteConfigAtomic(repo.NewLayout(ctx.Project.RepoRoot()).ConfigPath, next); err != nil {
+			if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
 				return "", err
 			}
 			return strings.TrimSpace(next.WorkerAgent.Model), nil
@@ -325,16 +373,19 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 	}
 }
 
-func LoadProjectConfigFromProject(p *app.Project) (repo.Config, error) {
-	if p == nil {
-		return repo.Config{}, fmt.Errorf("project 为空")
-	}
-	cfgPath := repo.NewLayout(p.RepoRoot()).ConfigPath
-	cfg, _, err := repo.LoadConfig(cfgPath)
+func LoadProjectConfigFromPath(path string) (repo.Config, error) {
+	cfg, _, err := repo.LoadConfig(strings.TrimSpace(path))
 	if err != nil {
 		return repo.Config{}, err
 	}
 	return cfg.WithDefaults(), nil
+}
+
+func LoadProjectConfigFromProject(p ProjectConfigPathProvider) (repo.Config, error) {
+	if p == nil {
+		return repo.Config{}, fmt.Errorf("project 为空")
+	}
+	return LoadProjectConfigFromPath(p.ConfigPath())
 }
 
 func LoadHomeConfigPresence(path string) (HomePresence, error) {
@@ -362,21 +413,71 @@ func LoadLocalConfigPresence(path string) (LocalPresence, error) {
 	}, nil
 }
 
-func LoadLocalConfigPresenceFromProject(p *app.Project) (LocalPresence, error) {
+func LoadLocalConfigPresenceFromProject(p ProjectConfigPathProvider) (LocalPresence, error) {
 	if p == nil {
 		return LocalPresence{}, fmt.Errorf("project 为空")
 	}
-	cfgPath := repo.NewLayout(p.RepoRoot()).ConfigPath
-	return LoadLocalConfigPresence(cfgPath)
+	return LoadLocalConfigPresence(p.ConfigPath())
 }
 
-func BuildEffectiveProjectConfig(homeCfg app.HomeConfig, localCfg repo.Config) repo.Config {
+func BuildEffectiveProjectConfig(homeCfg HomeConfig, localCfg repo.Config) repo.Config {
 	merged := repo.Config{}.WithDefaults()
-	pc := app.ProjectConfig(merged)
-	app.ApplyAgentProviderModelOverride(&pc, homeCfg.Agent.Provider, homeCfg.Agent.Model)
-	merged = repo.Config(pc)
+	applyAgentProviderModelOverride(&merged, homeCfg.Agent.Provider, homeCfg.Agent.Model)
 	merged = repo.MergeConfig(merged, localCfg)
 	return merged.WithDefaults()
+}
+
+func persistHomeConfig(ctx *SetContext) error {
+	if ctx == nil {
+		return fmt.Errorf("config set context 为空")
+	}
+	if ctx.WriteHomeConfig == nil {
+		return fmt.Errorf("home config 写入器未注入")
+	}
+	path := strings.TrimSpace(ctx.HomeConfigPath)
+	if path == "" {
+		return fmt.Errorf("home config path 为空")
+	}
+	return ctx.WriteHomeConfig(path, ctx.HomeCfg)
+}
+
+func applyAgentProviderModelOverride(cfg *repo.Config, providerRaw, model string) {
+	if cfg == nil {
+		return
+	}
+	providerName := agentprovider.NormalizeProvider(providerRaw)
+	model = strings.TrimSpace(model)
+	if providerName != "" {
+		prevWorkerProvider := strings.TrimSpace(strings.ToLower(cfg.WorkerAgent.Provider))
+		prevPMProvider := strings.TrimSpace(strings.ToLower(cfg.PMAgent.Provider))
+		cfg.WorkerAgent.Provider = providerName
+		cfg.PMAgent.Provider = providerName
+		if model == "" {
+			if prevWorkerProvider != providerName {
+				cfg.WorkerAgent.Model = ""
+			}
+			if prevPMProvider != providerName {
+				cfg.PMAgent.Model = ""
+			}
+			if providerName == agentprovider.ProviderCodex {
+				defaultCodexModel := agentprovider.DefaultModel(agentprovider.ProviderCodex)
+				if strings.TrimSpace(cfg.WorkerAgent.Model) == "" {
+					cfg.WorkerAgent.Model = defaultCodexModel
+				}
+				if strings.TrimSpace(cfg.PMAgent.Model) == "" {
+					cfg.PMAgent.Model = defaultCodexModel
+				}
+			}
+		}
+		if providerName == agentprovider.ProviderClaude {
+			cfg.WorkerAgent.ReasoningEffort = ""
+			cfg.PMAgent.ReasoningEffort = ""
+		}
+	}
+	if model != "" {
+		cfg.WorkerAgent.Model = model
+		cfg.PMAgent.Model = model
+	}
 }
 
 func loadJSONRoot(path string) (map[string]any, error) {

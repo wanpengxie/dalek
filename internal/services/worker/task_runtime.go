@@ -102,7 +102,7 @@ func (s *Service) ensureActiveWorkerTaskRunWithRuntime(ctx context.Context, rt c
 	if reason == "" {
 		reason = "worker report bootstrap"
 	}
-	requestID := fmt.Sprintf("wrk_legacy_w%d_%d", w.ID, now.UnixNano())
+	requestID := fmt.Sprintf("wrk_w%d_%d", w.ID, now.UnixNano())
 	created, err := rt.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           "deliver_ticket",

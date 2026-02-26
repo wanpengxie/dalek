@@ -4,44 +4,22 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
-	"strings"
 
 	"dalek/internal/contracts"
-	workersvc "dalek/internal/services/worker"
 )
 
 func (p *Project) InterruptTicket(ctx context.Context, ticketID uint) (InterruptResult, error) {
 	if p == nil || p.worker == nil {
 		return InterruptResult{}, fmt.Errorf("project worker service 为空")
 	}
-	r, err := p.worker.InterruptTicket(ctx, ticketID)
-	if err != nil {
-		return InterruptResult{}, err
-	}
-	return InterruptResult{
-		TicketID:    r.TicketID,
-		WorkerID:    r.WorkerID,
-		TmuxSocket:  r.TmuxSocket,
-		TmuxSession: r.TmuxSession,
-		TargetPane:  r.TargetPane,
-	}, nil
+	return p.worker.InterruptTicket(ctx, ticketID)
 }
 
 func (p *Project) InterruptWorker(ctx context.Context, workerID uint) (InterruptResult, error) {
 	if p == nil || p.worker == nil {
 		return InterruptResult{}, fmt.Errorf("project worker service 为空")
 	}
-	r, err := p.worker.InterruptWorker(ctx, workerID)
-	if err != nil {
-		return InterruptResult{}, err
-	}
-	return InterruptResult{
-		TicketID:    r.TicketID,
-		WorkerID:    r.WorkerID,
-		TmuxSocket:  r.TmuxSocket,
-		TmuxSession: r.TmuxSession,
-		TargetPane:  r.TargetPane,
-	}, nil
+	return p.worker.InterruptWorker(ctx, workerID)
 }
 
 func (p *Project) StopWorker(ctx context.Context, workerID uint) error {
@@ -52,52 +30,17 @@ func (p *Project) StopWorker(ctx context.Context, workerID uint) error {
 }
 
 func (p *Project) StopTicket(ctx context.Context, ticketID uint) error {
-	if p == nil || p.worker == nil {
-		return fmt.Errorf("project worker service 为空")
+	if p == nil || p.pm == nil {
+		return fmt.Errorf("project pm service 为空")
 	}
-	stopErr := p.worker.StopTicket(ctx, ticketID)
-
-	var dispatchErr error
-	if p.pm != nil {
-		_, dispatchErr = p.pm.ForceFailActiveDispatchesForTicket(ctx, ticketID, "ticket stop: force fail active dispatch")
-	} else if stopErr == nil {
-		dispatchErr = fmt.Errorf("project pm service 为空")
-	}
-
-	if stopErr != nil && dispatchErr != nil {
-		return fmt.Errorf("%w；另外 dispatch 终结失败: %v", stopErr, dispatchErr)
-	}
-	if stopErr != nil {
-		return stopErr
-	}
-	return dispatchErr
+	return p.pm.StopTicket(ctx, ticketID)
 }
 
 func (p *Project) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt WorktreeCleanupOptions) (WorktreeCleanupResult, error) {
 	if p == nil || p.worker == nil {
 		return WorktreeCleanupResult{}, fmt.Errorf("project worker service 为空")
 	}
-	r, err := p.worker.CleanupTicketWorktree(ctx, ticketID, workersvc.CleanupWorktreeOptions{
-		Force:  opt.Force,
-		DryRun: opt.DryRun,
-	})
-	if err != nil {
-		return WorktreeCleanupResult{}, err
-	}
-	return WorktreeCleanupResult{
-		TicketID:    r.TicketID,
-		WorkerID:    r.WorkerID,
-		Worktree:    strings.TrimSpace(r.Worktree),
-		Branch:      strings.TrimSpace(r.Branch),
-		RequestedAt: r.RequestedAt,
-		CleanedAt:   r.CleanedAt,
-		DryRun:      r.DryRun,
-		Pending:     r.Pending,
-		Cleaned:     r.Cleaned,
-		Dirty:       r.Dirty,
-		SessionLive: r.SessionLive,
-		Message:     strings.TrimSpace(r.Message),
-	}, nil
+	return p.worker.CleanupTicketWorktree(ctx, ticketID, opt)
 }
 
 func (p *Project) CountPendingWorktreeCleanup(ctx context.Context) (int64, error) {

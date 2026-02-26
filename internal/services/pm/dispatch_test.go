@@ -11,7 +11,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/repo"
-	"dalek/internal/store"
 )
 
 func TestDispatchTicket_SingleModeRunsPMAgent(t *testing.T) {
@@ -107,7 +106,7 @@ func TestDispatchTicket_PromptContainsStructuredContext(t *testing.T) {
 func TestDispatchTicket_AllowsTicketWithoutDescription(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 
-	tk := store.Ticket{
+	tk := contracts.Ticket{
 		Title:          "dispatch-no-description",
 		Description:    "",
 		WorkflowStatus: contracts.TicketBacklog,
@@ -255,7 +254,7 @@ func TestDispatchTicket_DefaultAutoStartWhenNotStarted(t *testing.T) {
 		t.Fatalf("expected worker_id in dispatch result")
 	}
 
-	var w store.Worker
+	var w contracts.Worker
 	if err := p.DB.First(&w, out.WorkerID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
 	}
@@ -266,7 +265,7 @@ func TestDispatchTicket_DefaultAutoStartWhenNotStarted(t *testing.T) {
 		t.Fatalf("expected worker session after auto-start dispatch")
 	}
 
-	var events []store.TicketWorkflowEvent
+	var events []contracts.TicketWorkflowEvent
 	if err := p.DB.Where("ticket_id = ? AND source IN ?", tk.ID, []string{"pm.start", "pm.dispatch"}).
 		Order("id asc").
 		Find(&events).Error; err != nil {
@@ -310,7 +309,7 @@ func TestDispatchTicket_AutoStartFalsePreservesMissingSessionError(t *testing.T)
 	}
 
 	var workers int64
-	if err := p.DB.Model(&store.Worker{}).Where("ticket_id = ?", tk.ID).Count(&workers).Error; err != nil {
+	if err := p.DB.Model(&contracts.Worker{}).Where("ticket_id = ?", tk.ID).Count(&workers).Error; err != nil {
 		t.Fatalf("count workers failed: %v", err)
 	}
 	if workers != 0 {
@@ -332,7 +331,7 @@ func TestSubmitDispatchTicket_AutoStartWhenNotStarted(t *testing.T) {
 		t.Fatalf("unexpected submission: %+v", sub)
 	}
 
-	var w store.Worker
+	var w contracts.Worker
 	if err := p.DB.First(&w, sub.WorkerID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
 	}
@@ -352,7 +351,7 @@ func TestResolveDispatchTarget_WaitsCreatingWorkerReady(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"status":     contracts.WorkerCreating,
 		"updated_at": time.Now(),
 	}).Error; err != nil {
@@ -364,7 +363,7 @@ func TestResolveDispatchTarget_WaitsCreatingWorkerReady(t *testing.T) {
 
 	go func() {
 		time.Sleep(80 * time.Millisecond)
-		_ = p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		_ = p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 			"status":     contracts.WorkerRunning,
 			"updated_at": time.Now(),
 		}).Error
@@ -387,7 +386,7 @@ func TestResolveDispatchTarget_TimeoutWhenWorkerKeepsCreating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"status":     contracts.WorkerCreating,
 		"updated_at": time.Now(),
 	}).Error; err != nil {

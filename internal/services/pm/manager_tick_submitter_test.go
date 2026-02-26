@@ -7,8 +7,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"dalek/internal/store"
 )
 
 type stubDispatchSubmitter struct {
@@ -35,7 +33,7 @@ func (s *stubDispatchSubmitter) CallIDs() []uint {
 func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-submitter")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -80,7 +78,7 @@ func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
 func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-fallback")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -110,7 +108,7 @@ func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 		t.Fatalf("expected no local dispatch job without submitter, got=%d", cnt)
 	}
 
-	var inbox store.InboxItem
+	var inbox contracts.InboxItem
 	if err := p.DB.Where("key = ? AND status = ?", inboxKeyTicketIncident(tk.ID, "dispatch_no_submitter"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("expected dispatch_no_submitter inbox, err=%v", err)
 	}
@@ -125,7 +123,7 @@ func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 func TestManagerTick_DryRunSkipsDispatchSubmitter(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-dry-run")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -150,7 +148,7 @@ func TestManagerTick_DryRunSkipsDispatchSubmitter(t *testing.T) {
 func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-sync-dispatch")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -186,7 +184,7 @@ func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 func TestManagerTick_SyncDispatchHonorsDispatchTimeout(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-sync-timeout")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -215,7 +213,7 @@ func TestManagerTick_SyncDispatchHonorsDispatchTimeout(t *testing.T) {
 func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-worker-ready-timeout")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
@@ -243,7 +241,7 @@ func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *test
 		t.Fatalf("expected submit dispatch failure in errors, got=%v", res.Errors)
 	}
 
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
@@ -251,16 +249,16 @@ func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *test
 		t.Fatalf("expected ticket blocked after worker ready timeout, got=%s", ticket.WorkflowStatus)
 	}
 
-	var w store.Worker
+	var w contracts.Worker
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&w).Error; err != nil {
 		t.Fatalf("load latest worker failed: %v", err)
 	}
-	var inbox store.InboxItem
+	var inbox contracts.InboxItem
 	if err := p.DB.Where("key = ? AND status = ?", inboxKeyWorkerIncident(w.ID, "worker_not_ready"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("expected worker_not_ready inbox, err=%v", err)
 	}
 
-	var ev store.TicketWorkflowEvent
+	var ev contracts.TicketWorkflowEvent
 	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, contracts.TicketBlocked).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("expected workflow event blocked, err=%v", err)
 	}

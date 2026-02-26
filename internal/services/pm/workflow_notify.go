@@ -65,8 +65,8 @@ func (n *GatewayStatusNotifier) OnStatusChange(ctx context.Context, event Status
 	if n == nil {
 		return nil
 	}
-	event.FromStatus = normalizeTicketWorkflowStatus(event.FromStatus)
-	event.ToStatus = normalizeTicketWorkflowStatus(event.ToStatus)
+	event.FromStatus = contracts.CanonicalTicketWorkflowStatus(event.FromStatus)
+	event.ToStatus = contracts.CanonicalTicketWorkflowStatus(event.ToStatus)
 	if event.TicketID == 0 || event.FromStatus == "" || event.ToStatus == "" || event.FromStatus == event.ToStatus {
 		return nil
 	}
@@ -129,7 +129,7 @@ func (n *GatewayStatusNotifier) loadTicketTitle(ctx context.Context, ticketID ui
 }
 
 func shouldNotifyTicketStatusChange(event StatusChangeEvent) bool {
-	switch normalizeTicketWorkflowStatus(event.ToStatus) {
+	switch contracts.CanonicalTicketWorkflowStatus(event.ToStatus) {
 	case contracts.TicketDone, contracts.TicketBlocked:
 		return true
 	default:
@@ -177,8 +177,8 @@ func buildStatusChangeNotifyText(event StatusChangeEvent, ticketTitle string) st
 		fmt.Sprintf(
 			"[ticket] t%d %s -> %s",
 			event.TicketID,
-			normalizeTicketWorkflowStatus(event.FromStatus),
-			normalizeTicketWorkflowStatus(event.ToStatus),
+			contracts.CanonicalTicketWorkflowStatus(event.FromStatus),
+			contracts.CanonicalTicketWorkflowStatus(event.ToStatus),
 		),
 		ticketTitle,
 	}
@@ -198,8 +198,8 @@ func buildStatusChangeNotifyText(event StatusChangeEvent, ticketTitle string) st
 }
 
 func (s *Service) buildStatusChangeEvent(ticketID uint, from, to contracts.TicketWorkflowStatus, source string, occurredAt time.Time) *StatusChangeEvent {
-	from = normalizeTicketWorkflowStatus(from)
-	to = normalizeTicketWorkflowStatus(to)
+	from = contracts.CanonicalTicketWorkflowStatus(from)
+	to = contracts.CanonicalTicketWorkflowStatus(to)
 	if ticketID == 0 || from == "" || to == "" || from == to {
 		return nil
 	}

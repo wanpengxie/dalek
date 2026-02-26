@@ -306,7 +306,7 @@ func (s *Service) applyTicketStatusForRecoveryTx(ctx context.Context, tx *gorm.D
 	if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&ticket, job.TicketID).Error; err != nil {
 		return false, err
 	}
-	from := normalizeTicketWorkflowStatus(ticket.WorkflowStatus)
+	from := contracts.CanonicalTicketWorkflowStatus(ticket.WorkflowStatus)
 	if from == contracts.TicketDone || from == contracts.TicketArchived || from == target {
 		return false, nil
 	}

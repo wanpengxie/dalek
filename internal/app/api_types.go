@@ -5,142 +5,29 @@ import (
 
 	"dalek/internal/contracts"
 	notebooksvc "dalek/internal/services/notebook"
+	pmsvc "dalek/internal/services/pm"
+	subagentsvc "dalek/internal/services/subagent"
+	tasksvc "dalek/internal/services/task"
+	ticketsvc "dalek/internal/services/ticket"
+	workersvc "dalek/internal/services/worker"
 )
 
 // 说明：
 // app 层对外暴露的类型尽量是“稳定 API”。
 // notebook 域类型已迁移到 services/notebook，app 层保留兼容别名避免上层调用回退。
 
-type DispatchResult struct {
-	TicketID  uint
-	WorkerID  uint
-	TaskRunID uint
-
-	TmuxSocket  string
-	TmuxSession string
-
-	WorkerCommand string
-	InjectedCmd   string
-}
-
-type StartOptions struct {
-	BaseBranch string
-}
-
-type DispatchOptions struct {
-	EntryPrompt string
-	AutoStart   *bool
-}
-
-type DispatchSubmitOptions struct {
-	RequestID string
-	AutoStart *bool
-}
-
-type DispatchSubmission struct {
-	JobID      uint
-	TaskRunID  uint
-	RequestID  string
-	TicketID   uint
-	WorkerID   uint
-	JobStatus  string
-	Dispatched bool
-}
-
-type DispatchRunOptions struct {
-	RunnerID    string
-	EntryPrompt string
-}
-
-type DirectDispatchOptions struct {
-	EntryPrompt string
-	AutoStart   *bool
-}
-
-type DirectDispatchResult struct {
-	TicketID       uint
-	WorkerID       uint
-	Stages         int
-	LastNextAction string
-	LastRunID      uint
-}
-
-type InterruptResult struct {
-	TicketID uint
-	WorkerID uint
-
-	TmuxSocket  string
-	TmuxSession string
-	TargetPane  string
-}
-
-type WorktreeCleanupOptions struct {
-	Force  bool
-	DryRun bool
-}
-
-type WorktreeCleanupResult struct {
-	TicketID    uint
-	WorkerID    uint
-	Worktree    string
-	Branch      string
-	RequestedAt *time.Time
-	CleanedAt   *time.Time
-	DryRun      bool
-	Pending     bool
-	Cleaned     bool
-	Dirty       bool
-	SessionLive bool
-	Message     string
-}
-
-type TicketView struct {
-	Ticket       contracts.Ticket
-	LatestWorker *contracts.Worker
-	SessionAlive bool
-	// SessionProbeFailed=true 表示 tmux 会话探测失败（非离线）。
-	SessionProbeFailed bool
-
-	DerivedStatus contracts.TicketWorkflowStatus
-
-	Capability contracts.TicketCapability
-
-	TaskRunID uint
-
-	RuntimeHealthState contracts.TaskRuntimeHealthState
-	RuntimeNeedsUser   bool
-	RuntimeSummary     string
-	RuntimeObservedAt  *time.Time
-
-	SemanticPhase      contracts.TaskSemanticPhase
-	SemanticNextAction string
-	SemanticSummary    string
-	SemanticReportedAt *time.Time
-
-	LastEventType string
-	LastEventNote string
-	LastEventAt   *time.Time
-}
-
-type WatchResult struct {
-	TicketID    uint
-	WorkerID    uint
-	TmuxSession string
-
-	ObservedAt time.Time
-	Duration   time.Duration
-
-	State     contracts.TaskRuntimeHealthState
-	NeedsUser bool
-	Summary   string
-	Source    string
-
-	StreamBytes      int64
-	StreamBytesDelta int64
-	StreamAgeSec     float64
-	AnyScreenChanged bool
-	InMode           bool
-}
+type DispatchResult = pmsvc.DispatchResult
+type StartOptions = pmsvc.StartOptions
+type DispatchOptions = pmsvc.DispatchOptions
+type DispatchSubmitOptions = pmsvc.DispatchSubmitOptions
+type DispatchSubmission = pmsvc.DispatchSubmission
+type DispatchRunOptions = pmsvc.DispatchRunOptions
+type DirectDispatchOptions = pmsvc.DirectDispatchOptions
+type DirectDispatchResult = pmsvc.DirectDispatchResult
+type InterruptResult = workersvc.InterruptResult
+type WorktreeCleanupOptions = workersvc.CleanupWorktreeOptions
+type WorktreeCleanupResult = workersvc.CleanupWorktreeResult
+type TicketView = ticketsvc.TicketView
 
 type ListInboxOptions struct {
 	Status contracts.InboxStatus
@@ -157,31 +44,8 @@ type NoteAddResult = notebooksvc.NoteAddResult
 type NoteView = notebooksvc.NoteView
 type ShapedView = notebooksvc.ShapedView
 
-type ManagerTickOptions struct {
-	MaxRunningWorkers int
-	DryRun            bool
-	SyncDispatch      bool
-	DispatchTimeout   time.Duration
-}
-
-type ManagerTickResult struct {
-	At time.Time
-
-	AutopilotEnabled bool
-	MaxRunning       int
-	Running          int
-	RunningBlocked   int
-	Capacity         int
-
-	EventsConsumed int
-	InboxUpserts   int
-
-	StartedTickets    []uint
-	DispatchedTickets []uint
-	MergeProposed     []uint
-
-	Errors []string
-}
+type ManagerTickOptions = pmsvc.ManagerTickOptions
+type ManagerTickResult = pmsvc.ManagerTickResult
 
 type ListTaskOptions struct {
 	OwnerType       contracts.TaskOwnerType
@@ -192,21 +56,7 @@ type ListTaskOptions struct {
 	Limit           int
 }
 
-type SubagentRun struct {
-	ID        uint
-	TaskRunID uint
-
-	ProjectKey string
-	RequestID  string
-	Provider   string
-	Model      string
-	Prompt     string
-	CWD        string
-	RuntimeDir string
-
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
+type SubagentRun = contracts.SubagentRun
 
 type CreateSubagentRunOptions struct {
 	TaskRunID  uint
@@ -218,68 +68,13 @@ type CreateSubagentRunOptions struct {
 	RuntimeDir string
 }
 
-type SubagentSubmitOptions struct {
-	RequestID string
-	Provider  string
-	Model     string
-	Prompt    string
-}
+type SubagentSubmitOptions = subagentsvc.SubmitInput
 
-type SubagentSubmission struct {
-	Accepted bool
+type SubagentSubmission = subagentsvc.SubmitResult
 
-	TaskRunID  uint
-	RequestID  string
-	Provider   string
-	Model      string
-	RuntimeDir string
-}
+type SubagentRunOptions = subagentsvc.RunInput
 
-type SubagentRunOptions struct {
-	RunnerID string
-}
-
-type TaskStatus struct {
-	RunID uint
-
-	OwnerType  string
-	TaskType   string
-	ProjectKey string
-
-	TicketID uint
-	WorkerID uint
-
-	SubjectType string
-	SubjectID   string
-
-	OrchestrationState string
-	RunnerID           string
-	LeaseExpiresAt     *time.Time
-	Attempt            int
-
-	ErrorCode    string
-	ErrorMessage string
-
-	StartedAt  *time.Time
-	FinishedAt *time.Time
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-
-	RuntimeHealthState string
-	RuntimeNeedsUser   bool
-	RuntimeSummary     string
-	RuntimeObservedAt  *time.Time
-
-	SemanticPhase      string
-	SemanticMilestone  string
-	SemanticNextAction string
-	SemanticSummary    string
-	SemanticReportedAt *time.Time
-
-	LastEventType string
-	LastEventNote string
-	LastEventAt   *time.Time
-}
+type TaskStatus = contracts.TaskStatusView
 
 type TaskEvent struct {
 	ID        uint
@@ -294,11 +89,4 @@ type TaskEvent struct {
 	CreatedAt time.Time
 }
 
-type TaskCancelResult struct {
-	RunID     uint
-	Found     bool
-	Canceled  bool
-	Reason    string
-	FromState string
-	ToState   string
-}
+type TaskCancelResult = tasksvc.CancelRunResult

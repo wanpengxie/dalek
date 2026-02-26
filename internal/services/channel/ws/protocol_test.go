@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 func TestNormalizePath(t *testing.T) {
@@ -62,7 +61,7 @@ func TestFormatInboxSummary(t *testing.T) {
 		t.Fatalf("empty summary mismatch: %q", got)
 	}
 
-	items := []store.InboxItem{
+	items := []contracts.InboxItem{
 		{
 			ID:       1,
 			Severity: contracts.InboxWarn,
@@ -85,7 +84,7 @@ func TestFormatInboxSummary(t *testing.T) {
 }
 
 func TestBuildInboxUpdateFrame(t *testing.T) {
-	items := []store.InboxItem{
+	items := []contracts.InboxItem{
 		{
 			ID:        7,
 			Status:    contracts.InboxOpen,

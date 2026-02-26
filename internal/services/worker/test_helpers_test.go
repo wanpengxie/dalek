@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 	"dalek/internal/testutil"
 
 	"gorm.io/gorm"
@@ -23,10 +22,10 @@ func newServiceForTest(t *testing.T) (*Service, *core.Project, *fakeTmuxClient, 
 	return New(cp, ticket.New(cp.DB)), cp, fTmux, fGit
 }
 
-func createTicket(t *testing.T, db *gorm.DB, title string) store.Ticket {
+func createTicket(t *testing.T, db *gorm.DB, title string) contracts.Ticket {
 	t.Helper()
 
-	tk := store.Ticket{Title: strings.TrimSpace(title), Description: "", WorkflowStatus: contracts.TicketBacklog}
+	tk := contracts.Ticket{Title: strings.TrimSpace(title), Description: "", WorkflowStatus: contracts.TicketBacklog}
 	if err := db.Create(&tk).Error; err != nil {
 		t.Fatalf("create ticket failed: %v", err)
 	}

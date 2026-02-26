@@ -75,7 +75,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 			return res.Error
 		}
 		if res.RowsAffected > 0 {
-			from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
+			from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
 			if from == "" {
 				from = contracts.TicketBacklog
 			}

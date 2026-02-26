@@ -1,11 +1,11 @@
 package pm
 
 import (
+	"dalek/internal/contracts"
 	"testing"
 
 	"dalek/internal/repo"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 )
 
 func TestBuildBaseEnvConsistency(t *testing.T) {
@@ -18,12 +18,12 @@ func TestBuildBaseEnvConsistency(t *testing.T) {
 			DBPath: " /tmp/repo/dalek.db ",
 		},
 	}
-	ticket := store.Ticket{
+	ticket := contracts.Ticket{
 		ID:          12,
 		Title:       "  fix t12  ",
 		Description: "  tighten pm env  ",
 	}
-	worker := store.Worker{
+	worker := contracts.Worker{
 		ID:           34,
 		WorktreePath: " /tmp/worktree/t12 ",
 		Branch:       " feat/t12 ",

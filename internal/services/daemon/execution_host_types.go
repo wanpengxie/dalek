@@ -7,6 +7,11 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"dalek/internal/contracts"
+	notebooksvc "dalek/internal/services/notebook"
+	pmsvc "dalek/internal/services/pm"
+	subagentsvc "dalek/internal/services/subagent"
 )
 
 const (
@@ -58,25 +63,9 @@ type ExecutionHostProject interface {
 	ListTaskEvents(ctx context.Context, runID uint, limit int) ([]RunEvent, error)
 }
 
-type DispatchSubmitOptions struct {
-	RequestID string
-	AutoStart *bool
-}
-
-type DispatchSubmission struct {
-	JobID      uint
-	TaskRunID  uint
-	RequestID  string
-	TicketID   uint
-	WorkerID   uint
-	JobStatus  string
-	Dispatched bool
-}
-
-type DispatchRunOptions struct {
-	RunnerID    string
-	EntryPrompt string
-}
+type DispatchSubmitOptions = pmsvc.DispatchSubmitOptions
+type DispatchSubmission = pmsvc.DispatchSubmission
+type DispatchRunOptions = pmsvc.DispatchRunOptions
 
 type DispatchSubmitRequest struct {
 	Project   string
@@ -94,7 +83,7 @@ type DispatchSubmitReceipt struct {
 	JobID     uint
 	TicketID  uint
 	WorkerID  uint
-	JobStatus string
+	JobStatus contracts.PMDispatchJobStatus
 }
 
 type WorkerRunOptions struct {
@@ -123,26 +112,9 @@ type WorkerRunSubmitReceipt struct {
 	WorkerID  uint
 }
 
-type SubagentSubmitOptions struct {
-	RequestID string
-	Provider  string
-	Model     string
-	Prompt    string
-}
-
-type SubagentSubmission struct {
-	Accepted bool
-
-	TaskRunID  uint
-	RequestID  string
-	Provider   string
-	Model      string
-	RuntimeDir string
-}
-
-type SubagentRunOptions struct {
-	RunnerID string
-}
+type SubagentSubmitOptions = subagentsvc.SubmitInput
+type SubagentSubmission = subagentsvc.SubmitResult
+type SubagentRunOptions = subagentsvc.RunInput
 
 type SubagentSubmitRequest struct {
 	Project string
@@ -164,11 +136,7 @@ type SubagentSubmitReceipt struct {
 	RuntimeDir string
 }
 
-type NoteAddResult struct {
-	NoteID       uint
-	ShapedItemID uint
-	Deduped      bool
-}
+type NoteAddResult = notebooksvc.NoteAddResult
 
 type NoteSubmitRequest struct {
 	Project string
@@ -250,7 +218,7 @@ type executionRunHandle struct {
 	requestID string
 	runID     uint
 	jobID     uint
-	jobStatus string
+	jobStatus contracts.PMDispatchJobStatus
 	ticketID  uint
 	workerID  uint
 

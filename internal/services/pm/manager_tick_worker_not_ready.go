@@ -35,7 +35,7 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 		if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&t, ticketID).Error; err != nil {
 			return err
 		}
-		from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
+		from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
 		if !fsm.ShouldDemoteOnDispatchFailed(from) {
 			return nil
 		}

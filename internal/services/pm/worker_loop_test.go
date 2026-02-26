@@ -10,7 +10,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/services/agentexec"
-	"dalek/internal/store"
 )
 
 // fakeAgentRunHandle implements agentexec.AgentRunHandle for testing.
@@ -46,7 +45,7 @@ func makeSemanticReport(t *testing.T, svc *Service, runID uint, nextAction strin
 }
 
 // createWorkerLoopTestFixture sets up ticket + worker + task run + semantic report for worker_loop tests.
-func createWorkerLoopTestFixture(t *testing.T, svc *Service, nextAction string) (store.Ticket, store.Worker, uint) {
+func createWorkerLoopTestFixture(t *testing.T, svc *Service, nextAction string) (contracts.Ticket, contracts.Worker, uint) {
 	t.Helper()
 	_, db, err := svc.require()
 	if err != nil {
@@ -54,7 +53,7 @@ func createWorkerLoopTestFixture(t *testing.T, svc *Service, nextAction string) 
 	}
 
 	tk := createTicket(t, db, "worker-loop-test")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
@@ -156,7 +155,7 @@ func TestExecuteWorkerLoop_ContinuesThenStops(t *testing.T) {
 	}
 
 	tk := createTicket(t, db, "worker-loop-multi")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),

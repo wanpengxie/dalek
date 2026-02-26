@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 func TestApplyWorkerReport_DoesNotChangeTicketWorkflow(t *testing.T) {
@@ -14,11 +13,11 @@ func TestApplyWorkerReport_DoesNotChangeTicketWorkflow(t *testing.T) {
 	root := t.TempDir()
 
 	tk := createTicket(t, p.DB, "continue-backflow")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketBlocked).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketBlocked).Error; err != nil {
 		t.Fatalf("set blocked failed: %v", err)
 	}
 
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: root,
@@ -41,7 +40,7 @@ func TestApplyWorkerReport_DoesNotChangeTicketWorkflow(t *testing.T) {
 		t.Fatalf("ApplyWorkerReport failed: %v", err)
 	}
 
-	var got store.Ticket
+	var got contracts.Ticket
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
@@ -56,11 +55,11 @@ func TestApplyWorkerReport_DoesNotRollbackDoneWorkflow(t *testing.T) {
 	root := t.TempDir()
 
 	tk := createTicket(t, p.DB, "continue-not-rollback-done")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketDone).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketDone).Error; err != nil {
 		t.Fatalf("set done failed: %v", err)
 	}
 
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: root,
@@ -83,7 +82,7 @@ func TestApplyWorkerReport_DoesNotRollbackDoneWorkflow(t *testing.T) {
 		t.Fatalf("ApplyWorkerReport failed: %v", err)
 	}
 
-	var got store.Ticket
+	var got contracts.Ticket
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
@@ -97,7 +96,7 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 
 	root := t.TempDir()
 	tk := createTicket(t, p.DB, "runtime-sync-best-effort")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: root,
@@ -125,7 +124,7 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 		t.Fatalf("ApplyWorkerReport should not fail on runtime sync error, got=%v", err)
 	}
 
-	var gotTicket store.Ticket
+	var gotTicket contracts.Ticket
 	if err := p.DB.First(&gotTicket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}

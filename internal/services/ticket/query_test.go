@@ -9,7 +9,6 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
-	"dalek/internal/store"
 	"dalek/internal/testutil"
 
 	"gorm.io/gorm"
@@ -22,10 +21,10 @@ func newQueryServiceForTest(t *testing.T) (*QueryService, *core.Project, *testut
 	return NewQueryService(cp), cp, fTmux
 }
 
-func createTicketForQueryTest(t *testing.T, db *gorm.DB, title string) store.Ticket {
+func createTicketForQueryTest(t *testing.T, db *gorm.DB, title string) contracts.Ticket {
 	t.Helper()
 
-	tk := store.Ticket{Title: strings.TrimSpace(title), Description: "", WorkflowStatus: contracts.TicketBacklog}
+	tk := contracts.Ticket{Title: strings.TrimSpace(title), Description: "", WorkflowStatus: contracts.TicketBacklog}
 	if err := db.Create(&tk).Error; err != nil {
 		t.Fatalf("create ticket failed: %v", err)
 	}
@@ -36,7 +35,7 @@ func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testin
 	svc, p, fTmux := newQueryServiceForTest(t)
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-view")
-	a := store.Worker{
+	a := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w1",
@@ -89,7 +88,7 @@ func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testin
 
 	// session 不在 + worker stopped => 运行态派生为 dead
 	delete(fTmux.Sessions, a.TmuxSession)
-	if err := p.DB.Model(&store.Worker{}).Where("id = ?", a.ID).Update("status", contracts.WorkerStopped).Error; err != nil {
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", a.ID).Update("status", contracts.WorkerStopped).Error; err != nil {
 		t.Fatalf("update worker failed: %v", err)
 	}
 	views, err = svc.ListTicketViews(context.Background())
@@ -109,7 +108,7 @@ func TestQueryService_ListTicketViews_UsesWorkerSocketForSessionAlive(t *testing
 	p.Config.TmuxSocket = "dalek-default"
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-view-socket")
-	a := store.Worker{
+	a := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w2",
@@ -169,7 +168,7 @@ func TestQueryService_ListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflow
 	svc, p, fTmux := newQueryServiceForTest(t)
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-derived-running")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w3",
@@ -204,7 +203,7 @@ func TestQueryService_ListTicketViews_SessionProbeFailureKeepsWorkflow(t *testin
 	svc, p, fTmux := newQueryServiceForTest(t)
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-probe-failed")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w4",

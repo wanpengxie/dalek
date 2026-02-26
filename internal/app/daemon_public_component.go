@@ -181,8 +181,8 @@ func (c *daemonPublicGatewayComponent) Start(ctx context.Context) error {
 	if tunnelCfg.Enabled {
 		tunnelCtx, cancel := context.WithCancel(context.Background())
 		supervisor := &daemonPublicTunnelSupervisor{
-			runtimeCfg: tunnelCfg,
-			logger:     c.logger,
+			RuntimeConfig: tunnelCfg,
+			Logger:        c.logger,
 		}
 		done := make(chan struct{})
 		go func() {

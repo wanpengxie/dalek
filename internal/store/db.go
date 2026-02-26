@@ -46,7 +46,8 @@ func Open(path string) (*gorm.DB, error) {
 	return db, nil
 }
 
-func AutoMigrate(db *gorm.DB) error {
+// ApplyMigrations 按版本化迁移清单执行 store schema 迁移。
+func ApplyMigrations(db *gorm.DB) error {
 	return RunMigrations(db, storeMigrations())
 }
 
@@ -63,7 +64,7 @@ func OpenAndMigrate(path string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := AutoMigrate(db); err != nil {
+	if err := ApplyMigrations(db); err != nil {
 		return nil, err
 	}
 	return db, nil

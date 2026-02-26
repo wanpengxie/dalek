@@ -4,18 +4,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	channelsvc "dalek/internal/services/channel"
 	feishusvc "dalek/internal/services/channel/feishu"
 )
 
 const defaultDaemonFeishuAdapter = feishusvc.DefaultAdapter
-
-var (
-	daemonFeishuRelayTimeout     = 10 * time.Minute
-	daemonFeishuRelayIdleTimeout = 5 * time.Minute
-)
 
 type daemonFeishuMessageSender = feishusvc.MessageSender
 
@@ -39,8 +33,6 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 		opt.Adapter = defaultDaemonFeishuAdapter
 	}
 	opt.Logger = logger
-	opt.RelayTimeout = daemonFeishuRelayTimeout
-	opt.RelayIdleTimeout = daemonFeishuRelayIdleTimeout
 	return feishusvc.NewWebhookHandler(gateway, resolver, sender, opt)
 }
 
@@ -53,12 +45,4 @@ func resolveDaemonFeishuWebhookPath(cfg HomeConfig) string {
 		return override
 	}
 	return feishusvc.BuildWebhookPath(cfg.Daemon.Public.Feishu.WebhookSecretPath)
-}
-
-func buildDaemonFeishuWebhookPath(secretPath string) string {
-	return feishusvc.BuildWebhookPath(secretPath)
-}
-
-func normalizeDaemonFeishuWebhookSecretPath(raw string) string {
-	return feishusvc.NormalizeWebhookSecretPath(raw)
 }

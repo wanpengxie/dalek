@@ -137,7 +137,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 
 	// 先推进到 active，失败时回滚，避免残留 active 悬挂态。
 	workflowPromoted := false
-	prevWorkflow := normalizeTicketWorkflowStatus(t.WorkflowStatus)
+	prevWorkflow := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
 	if prevWorkflow != contracts.TicketActive {
 		now := time.Now()
 		if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -163,7 +163,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		}
 		var refreshed contracts.Ticket
 		if rerr := db.WithContext(ctx).Select("workflow_status").First(&refreshed, ticketID).Error; rerr == nil {
-			workflowPromoted = normalizeTicketWorkflowStatus(refreshed.WorkflowStatus) == contracts.TicketActive && prevWorkflow != contracts.TicketActive
+			workflowPromoted = contracts.CanonicalTicketWorkflowStatus(refreshed.WorkflowStatus) == contracts.TicketActive && prevWorkflow != contracts.TicketActive
 		}
 	}
 
@@ -178,6 +178,10 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	loopResult, err := s.executeWorkerLoop(ctx, t, *w, entryPrompt)
 	if err != nil {
 		loopErrMsg := strings.TrimSpace(err.Error())
+		rollbackTarget := prevWorkflow
+		if !fsm.CanTicketWorkflowTransition(contracts.TicketActive, rollbackTarget) {
+			rollbackTarget = contracts.TicketBlocked
+		}
 		now := time.Now()
 		failErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			// best-effort：仅在 workflow 仍为 active 时回滚，避免覆盖并发 report 推进后的状态。
@@ -185,17 +189,23 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 				res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
 					Where("id = ? AND workflow_status = ?", ticketID, contracts.TicketActive).
 					Updates(map[string]any{
-						"workflow_status": prevWorkflow,
+						"workflow_status": rollbackTarget,
 						"updated_at":      now,
 					})
 				if res.Error != nil {
 					return res.Error
 				}
 				if res.RowsAffected > 0 {
-					if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, contracts.TicketActive, prevWorkflow, "pm.direct_dispatch", "direct dispatch 失败回滚 workflow", map[string]any{
-						"ticket_id": ticketID,
-						"worker_id": w.ID,
-						"error":     loopErrMsg,
+					reason := "direct dispatch 失败回滚 workflow"
+					if rollbackTarget != prevWorkflow {
+						reason = "direct dispatch 失败回滚 workflow（回退目标非法，已降级到 blocked）"
+					}
+					if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, contracts.TicketActive, rollbackTarget, "pm.direct_dispatch", reason, map[string]any{
+						"ticket_id":         ticketID,
+						"worker_id":         w.ID,
+						"error":             loopErrMsg,
+						"previous_workflow": prevWorkflow,
+						"rollback_target":   rollbackTarget,
 					}, now); err != nil {
 						return err
 					}

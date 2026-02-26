@@ -146,7 +146,7 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 		if err := tx.WithContext(ctx).First(&cur, ticketID).Error; err != nil {
 			return err
 		}
-		from := normalizeTicketWorkflowStatus(cur.WorkflowStatus)
+		from := contracts.CanonicalTicketWorkflowStatus(cur.WorkflowStatus)
 		if !fsm.ShouldPromoteOnDispatchClaim(from) {
 			return nil
 		}

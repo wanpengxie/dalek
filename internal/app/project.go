@@ -136,6 +136,27 @@ func (p *Project) OpenDBForTest() (*gorm.DB, error) {
 	return p.core.DB, nil
 }
 
+func (p *Project) DBPath() string {
+	if p == nil || p.core == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.core.DBPath())
+}
+
+func (p *Project) ConfigPath() string {
+	if p == nil || p.core == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.core.ConfigPath())
+}
+
+func (p *Project) SchemaVersion() int {
+	if p == nil || p.core == nil {
+		return 0
+	}
+	return p.core.Config.SchemaVersion
+}
+
 func (p *Project) Close() error {
 	if p == nil {
 		return nil

@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"dalek/internal/app"
-	"dalek/internal/store"
 )
 
 func keyRune(r rune) tea.KeyMsg {
@@ -20,7 +19,7 @@ func TestUpdateTable_DeniedActionShowsBoundaryMessage(t *testing.T) {
 	m.rowRefs = []rowRef{{kind: rowTicket, section: "done", ticketID: 10}}
 	m.viewsByID = map[uint]app.TicketView{
 		10: {
-			Ticket:     store.Ticket{ID: 10, WorkflowStatus: contracts.TicketDone},
+			Ticket:     contracts.Ticket{ID: 10, WorkflowStatus: contracts.TicketDone},
 			Capability: app.TicketView{}.Capability, // zero
 		},
 	}
@@ -43,7 +42,7 @@ func TestUpdateTable_AllowedActionReturnsCommand(t *testing.T) {
 	m.rowRefs = []rowRef{{kind: rowTicket, section: "running", ticketID: 10}}
 	m.viewsByID = map[uint]app.TicketView{
 		10: {
-			Ticket: store.Ticket{ID: 10, WorkflowStatus: contracts.TicketActive},
+			Ticket: contracts.Ticket{ID: 10, WorkflowStatus: contracts.TicketActive},
 		},
 	}
 	v := m.viewsByID[10]
@@ -65,7 +64,7 @@ func TestSelectedTicketForAction_BacklogRunningWorkerAllowsDispatch(t *testing.T
 	m.rowRefs = []rowRef{{kind: rowTicket, section: "backlog", ticketID: 10}}
 	m.viewsByID = map[uint]app.TicketView{
 		10: {
-			Ticket: store.Ticket{ID: 10, WorkflowStatus: contracts.TicketBacklog},
+			Ticket: contracts.Ticket{ID: 10, WorkflowStatus: contracts.TicketBacklog},
 		},
 	}
 	v := m.viewsByID[10]
@@ -86,7 +85,7 @@ func TestSelectedTicketForAction_BacklogWithoutSessionStillDenied(t *testing.T) 
 	m.rowRefs = []rowRef{{kind: rowTicket, section: "backlog", ticketID: 10}}
 	m.viewsByID = map[uint]app.TicketView{
 		10: {
-			Ticket: store.Ticket{ID: 10, WorkflowStatus: contracts.TicketBacklog},
+			Ticket: contracts.Ticket{ID: 10, WorkflowStatus: contracts.TicketBacklog},
 		},
 	}
 	v := m.viewsByID[10]

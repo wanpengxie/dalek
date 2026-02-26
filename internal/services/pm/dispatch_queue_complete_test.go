@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"dalek/internal/store"
 )
 
 func TestCompletePMDispatchJobSuccess_RollbackOnTaskRunSyncFailure(t *testing.T) {
@@ -109,7 +107,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 	svc, p, _, _ := newServiceForTest(t)
 	ctx := context.Background()
 	tk := createTicket(t, p.DB, "dispatch-force-fail-pending")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
@@ -172,7 +170,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 		t.Fatalf("unexpected force-fail event note: %q", ev.Note)
 	}
 
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
@@ -181,7 +179,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 	}
 
 	var inboxCount int64
-	if err := p.DB.Model(&store.InboxItem{}).Where("ticket_id = ? AND reason = ?", tk.ID, contracts.InboxIncident).Count(&inboxCount).Error; err != nil {
+	if err := p.DB.Model(&contracts.InboxItem{}).Where("ticket_id = ? AND reason = ?", tk.ID, contracts.InboxIncident).Count(&inboxCount).Error; err != nil {
 		t.Fatalf("count incident inbox failed: %v", err)
 	}
 	if inboxCount != 0 {
@@ -193,7 +191,7 @@ func TestForceFailActiveDispatchesForTicket_FailsRunningJobAndTaskRun(t *testing
 	svc, p, _, _ := newServiceForTest(t)
 	ctx := context.Background()
 	tk := createTicket(t, p.DB, "dispatch-force-fail-running")
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)

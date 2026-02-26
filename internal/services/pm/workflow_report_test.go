@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
@@ -31,7 +30,7 @@ func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 		t.Fatalf("ApplyWorkerReport failed: %v", err)
 	}
 
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
@@ -39,7 +38,7 @@ func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 		t.Fatalf("expected ticket blocked, got=%s", ticket.WorkflowStatus)
 	}
 
-	var inbox store.InboxItem
+	var inbox contracts.InboxItem
 	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("wait_user should create inbox immediately: %v", err)
 	}
@@ -71,7 +70,7 @@ func TestApplyWorkerReport_DoneCreatesMergeProposalAndApprovalInboxSynchronously
 		t.Fatalf("ApplyWorkerReport failed: %v", err)
 	}
 
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
@@ -79,7 +78,7 @@ func TestApplyWorkerReport_DoneCreatesMergeProposalAndApprovalInboxSynchronously
 		t.Fatalf("expected ticket done, got=%s", ticket.WorkflowStatus)
 	}
 
-	var mi store.MergeItem
+	var mi contracts.MergeItem
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&mi).Error; err != nil {
 		t.Fatalf("done report should create merge proposal immediately: %v", err)
 	}
@@ -90,7 +89,7 @@ func TestApplyWorkerReport_DoneCreatesMergeProposalAndApprovalInboxSynchronously
 		t.Fatalf("merge proposal should carry worker branch")
 	}
 
-	var inbox store.InboxItem
+	var inbox contracts.InboxItem
 	if err := p.DB.Where("merge_item_id = ? AND status = ?", mi.ID, contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("done report should create approval inbox immediately: %v", err)
 	}

@@ -475,3 +475,139 @@ func TestService_ListEvents_LatestNAscending(t *testing.T) {
 		t.Fatalf("expected ascending created_at")
 	}
 }
+
+func TestService_FinishAgentRun_Succeeded(t *testing.T) {
+	svc := newTaskServiceForTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           "deliver_ticket",
+		ProjectKey:         "demo",
+		TicketID:           91,
+		WorkerID:           101,
+		SubjectType:        "ticket",
+		SubjectID:          "91",
+		RequestID:          "req-finish-agent-ok",
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun failed: %v", err)
+	}
+
+	finishAt := now.Add(2 * time.Minute)
+	if err := svc.FinishAgentRun(ctx, run.ID, 0, finishAt); err != nil {
+		t.Fatalf("FinishAgentRun failed: %v", err)
+	}
+
+	status, err := svc.GetStatusByRunID(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetStatusByRunID failed: %v", err)
+	}
+	if status == nil || status.OrchestrationState != string(contracts.TaskSucceeded) {
+		t.Fatalf("expected succeeded after FinishAgentRun, got=%+v", status)
+	}
+
+	evs, err := svc.ListEvents(ctx, run.ID, 1)
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(evs) != 1 || evs[0].EventType != "task_succeeded" {
+		t.Fatalf("expected last event task_succeeded, got=%+v", evs)
+	}
+}
+
+func TestService_FinishAgentRun_Failed(t *testing.T) {
+	svc := newTaskServiceForTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           "deliver_ticket",
+		ProjectKey:         "demo",
+		TicketID:           92,
+		WorkerID:           102,
+		SubjectType:        "ticket",
+		SubjectID:          "92",
+		RequestID:          "req-finish-agent-failed",
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun failed: %v", err)
+	}
+
+	finishAt := now.Add(2 * time.Minute)
+	if err := svc.FinishAgentRun(ctx, run.ID, 17, finishAt); err != nil {
+		t.Fatalf("FinishAgentRun failed: %v", err)
+	}
+
+	var loaded contracts.TaskRun
+	if err := svc.db.WithContext(ctx).First(&loaded, run.ID).Error; err != nil {
+		t.Fatalf("load run failed: %v", err)
+	}
+	if loaded.OrchestrationState != contracts.TaskFailed {
+		t.Fatalf("expected failed state, got=%s", loaded.OrchestrationState)
+	}
+	if loaded.ErrorCode != "agent_exit" {
+		t.Fatalf("expected error_code=agent_exit, got=%s", loaded.ErrorCode)
+	}
+
+	evs, err := svc.ListEvents(ctx, run.ID, 1)
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(evs) != 1 || evs[0].EventType != "task_failed" {
+		t.Fatalf("expected last event task_failed, got=%+v", evs)
+	}
+}
+
+func TestService_CancelRun(t *testing.T) {
+	svc := newTaskServiceForTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           "deliver_ticket",
+		ProjectKey:         "demo",
+		TicketID:           93,
+		WorkerID:           103,
+		SubjectType:        "ticket",
+		SubjectID:          "93",
+		RequestID:          "req-cancel-run",
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun failed: %v", err)
+	}
+
+	cancelAt := now.Add(1 * time.Minute)
+	got, err := svc.CancelRun(ctx, run.ID, cancelAt)
+	if err != nil {
+		t.Fatalf("CancelRun failed: %v", err)
+	}
+	if !got.Found || !got.Canceled || got.ToState != string(contracts.TaskCanceled) {
+		t.Fatalf("unexpected cancel result: %+v", got)
+	}
+
+	status, err := svc.GetStatusByRunID(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetStatusByRunID failed: %v", err)
+	}
+	if status == nil || status.OrchestrationState != string(contracts.TaskCanceled) {
+		t.Fatalf("expected canceled state, got=%+v", status)
+	}
+
+	evs, err := svc.ListEvents(ctx, run.ID, 1)
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(evs) != 1 || evs[0].EventType != "task_canceled" {
+		t.Fatalf("expected last event task_canceled, got=%+v", evs)
+	}
+}

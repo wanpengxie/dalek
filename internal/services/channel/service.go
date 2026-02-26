@@ -16,9 +16,6 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/services/channel/agentcli"
 	"dalek/internal/services/core"
-	pmsvc "dalek/internal/services/pm"
-	ticketsvc "dalek/internal/services/ticket"
-	workersvc "dalek/internal/services/worker"
 
 	"gorm.io/gorm"
 )
@@ -52,24 +49,25 @@ func New(p *core.Project) *Service {
 		chatRunners:        newDefaultChatRunnerManager(nil),
 		toolApprovalBridge: NewToolApprovalBridge(logger.With("component", "tool_approval")),
 	}
-	svc.actionExec = svc.actionExecutor()
 	return svc
 }
 
 func (s *Service) actionExecutor() *ActionExecutor {
-	if s == nil || s.p == nil || s.p.DB == nil {
+	if s == nil {
 		return nil
 	}
 	s.actionExecMu.Lock()
 	defer s.actionExecMu.Unlock()
-	if s.actionExec != nil {
-		return s.actionExec
-	}
-	ticketSvc := ticketsvc.New(s.p.DB)
-	workerSvc := workersvc.New(s.p, ticketSvc)
-	pmSvc := pmsvc.New(s.p, workerSvc)
-	s.actionExec = newActionExecutor(ticketSvc, pmSvc, workerSvc)
 	return s.actionExec
+}
+
+func (s *Service) SetActionExecutor(executor *ActionExecutor) {
+	if s == nil {
+		return
+	}
+	s.actionExecMu.Lock()
+	defer s.actionExecMu.Unlock()
+	s.actionExec = executor
 }
 
 type runningTurn struct {

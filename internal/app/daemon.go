@@ -3,14 +3,12 @@ package app
 import (
 	"context"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"dalek/internal/services/core"
 	daemonsvc "dalek/internal/services/daemon"
 	pmsvc "dalek/internal/services/pm"
-	"dalek/internal/store"
 )
 
 type DaemonPaths = daemonsvc.ProcessPaths
@@ -73,11 +71,7 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *slog.Logger) erro
 		return err
 	}
 	manager.setDispatchHost(host)
-	gatewayDBPath := strings.TrimSpace(home.GatewayDBPath)
-	if gatewayDBPath == "" {
-		gatewayDBPath = filepath.Join(home.Root, "gateway.db")
-	}
-	internalSendDB, err := store.OpenGatewayDB(gatewayDBPath)
+	internalSendDB, err := home.OpenGatewayDB()
 	if err != nil {
 		return err
 	}

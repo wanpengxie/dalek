@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -68,9 +66,9 @@ func TestEnqueuePMDispatchJob_IdempotentByRequestID(t *testing.T) {
 	}
 }
 
-func createDispatchWorker(t *testing.T, db *gorm.DB, ticketID uint) store.Worker {
+func createDispatchWorker(t *testing.T, db *gorm.DB, ticketID uint) contracts.Worker {
 	t.Helper()
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     ticketID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),

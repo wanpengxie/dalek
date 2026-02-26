@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 func TestWaitWorkerReady_AlreadyRunning(t *testing.T) {
@@ -100,7 +99,7 @@ func TestWaitWorkerReady_TimeoutWhileCreating(t *testing.T) {
 	svc.workerReadyPollInterval = 10 * time.Millisecond
 
 	tk := createTicket(t, p.DB, "wait-worker-timeout")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerCreating,
 		WorktreePath: t.TempDir(),
@@ -135,7 +134,7 @@ func TestWaitWorkerReady_TransitionCreatingToRunning(t *testing.T) {
 	svc.workerReadyPollInterval = 10 * time.Millisecond
 
 	tk := createTicket(t, p.DB, "wait-worker-transition")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerCreating,
 		WorktreePath: t.TempDir(),
@@ -150,7 +149,7 @@ func TestWaitWorkerReady_TransitionCreatingToRunning(t *testing.T) {
 	// Transition worker to running after a short delay.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		_ = p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		_ = p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 			"status":     contracts.WorkerRunning,
 			"updated_at": time.Now(),
 		}).Error
@@ -176,7 +175,7 @@ func TestWaitWorkerReady_ParentContextCancel(t *testing.T) {
 	svc.workerReadyPollInterval = 10 * time.Millisecond
 
 	tk := createTicket(t, p.DB, "wait-worker-ctx-cancel")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerCreating,
 		WorktreePath: t.TempDir(),
@@ -211,7 +210,7 @@ func TestWaitWorkerReady_TransitionToStopped(t *testing.T) {
 	svc.workerReadyPollInterval = 10 * time.Millisecond
 
 	tk := createTicket(t, p.DB, "wait-worker-to-stopped")
-	w := store.Worker{
+	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerCreating,
 		WorktreePath: t.TempDir(),
@@ -226,7 +225,7 @@ func TestWaitWorkerReady_TransitionToStopped(t *testing.T) {
 	// Transition worker to stopped after a short delay.
 	go func() {
 		time.Sleep(30 * time.Millisecond)
-		_ = p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		_ = p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 			"status":     contracts.WorkerStopped,
 			"updated_at": time.Now(),
 		}).Error

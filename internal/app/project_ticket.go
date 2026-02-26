@@ -11,34 +11,7 @@ func (p *Project) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 	if p == nil || p.ticketQuery == nil {
 		return nil, fmt.Errorf("project ticket query service 为空")
 	}
-	views, err := p.ticketQuery.ListTicketViews(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]TicketView, 0, len(views))
-	for _, v := range views {
-		out = append(out, TicketView{
-			Ticket:             v.Ticket,
-			LatestWorker:       v.LatestWorker,
-			SessionAlive:       v.SessionAlive,
-			SessionProbeFailed: v.SessionProbeFailed,
-			DerivedStatus:      v.DerivedStatus,
-			Capability:         v.Capability,
-			TaskRunID:          v.TaskRunID,
-			RuntimeHealthState: v.RuntimeHealthState,
-			RuntimeNeedsUser:   v.RuntimeNeedsUser,
-			RuntimeSummary:     v.RuntimeSummary,
-			RuntimeObservedAt:  v.RuntimeObservedAt,
-			SemanticPhase:      v.SemanticPhase,
-			SemanticNextAction: v.SemanticNextAction,
-			SemanticSummary:    v.SemanticSummary,
-			SemanticReportedAt: v.SemanticReportedAt,
-			LastEventType:      v.LastEventType,
-			LastEventNote:      v.LastEventNote,
-			LastEventAt:        v.LastEventAt,
-		})
-	}
-	return out, nil
+	return p.ticketQuery.ListTicketViews(ctx)
 }
 
 func (p *Project) ListTickets(ctx context.Context, includeArchived bool) ([]contracts.Ticket, error) {

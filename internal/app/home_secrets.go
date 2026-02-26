@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+
+	feishusvc "dalek/internal/services/channel/feishu"
 )
 
 // EnsureHomeSecrets 确保 daemon/public 所需的密钥配置存在并持久化。
@@ -61,28 +63,5 @@ func GenerateWebhookSecretPath() (string, error) {
 }
 
 func NormalizeWebhookSecretPath(raw string) string {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return ""
-	}
-	s = strings.TrimPrefix(s, "/")
-	s = strings.TrimPrefix(s, "feishu/webhook/")
-	s = strings.TrimPrefix(s, "/feishu/webhook/")
-	s = strings.Trim(s, "/")
-	if idx := strings.LastIndex(s, "/"); idx >= 0 {
-		s = s[idx+1:]
-	}
-	if s == "" {
-		return ""
-	}
-	var b strings.Builder
-	for _, ch := range s {
-		if ch >= 'a' && ch <= 'z' ||
-			ch >= 'A' && ch <= 'Z' ||
-			ch >= '0' && ch <= '9' ||
-			ch == '-' || ch == '_' {
-			b.WriteRune(ch)
-		}
-	}
-	return strings.TrimSpace(b.String())
+	return feishusvc.NormalizeWebhookSecretPath(raw)
 }

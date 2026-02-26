@@ -5,13 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"dalek/internal/app"
 	"dalek/internal/contracts"
 	channelsvc "dalek/internal/services/channel"
-	"dalek/internal/store"
 )
 
 func cmdGatewayBind(args []string) {
@@ -115,11 +113,7 @@ func mustOpenGatewayRuntime(out cliOutputFormat, homeFlag string) (*channelsvc.G
 	if err != nil {
 		exitRuntimeError(out, "打开 Home 失败", err.Error(), "检查 Home 目录权限与文件完整性")
 	}
-	gatewayDBPath := strings.TrimSpace(h.GatewayDBPath)
-	if gatewayDBPath == "" {
-		gatewayDBPath = filepath.Join(homeDir, "gateway.db")
-	}
-	db, err := store.OpenGatewayDB(gatewayDBPath)
+	db, err := h.OpenGatewayDB()
 	if err != nil {
 		exitRuntimeError(out, "打开 gateway.db 失败", err.Error(), "检查 gateway.db 权限与完整性")
 	}

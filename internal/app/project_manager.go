@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"dalek/internal/contracts"
-	pmsvc "dalek/internal/services/pm"
 )
 
 func (p *Project) ManagerSessionName() string {
@@ -70,27 +69,5 @@ func (p *Project) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	if p == nil || p.pm == nil {
 		return ManagerTickResult{}, fmt.Errorf("project pm service 为空")
 	}
-	res, err := p.pm.ManagerTick(ctx, pmsvc.ManagerTickOptions{
-		MaxRunningWorkers: opt.MaxRunningWorkers,
-		DryRun:            opt.DryRun,
-		SyncDispatch:      opt.SyncDispatch,
-		DispatchTimeout:   opt.DispatchTimeout,
-	})
-	if err != nil {
-		return ManagerTickResult{}, err
-	}
-	return ManagerTickResult{
-		At:                res.At,
-		AutopilotEnabled:  res.AutopilotEnabled,
-		MaxRunning:        res.MaxRunning,
-		Running:           res.Running,
-		RunningBlocked:    res.RunningBlocked,
-		Capacity:          res.Capacity,
-		EventsConsumed:    res.EventsConsumed,
-		InboxUpserts:      res.InboxUpserts,
-		StartedTickets:    res.StartedTickets,
-		DispatchedTickets: res.DispatchedTickets,
-		MergeProposed:     res.MergeProposed,
-		Errors:            res.Errors,
-	}, nil
+	return p.pm.ManagerTick(ctx, opt)
 }

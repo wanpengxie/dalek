@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"dalek/internal/store"
+	"dalek/internal/contracts"
 	"dalek/internal/testutil"
 )
 
@@ -88,7 +88,7 @@ func TestService_ProcessOnePendingNote_AndList(t *testing.T) {
 		t.Fatalf("expected one note processed")
 	}
 
-	list, err := svc.ListNotes(ctx, ListNoteOptions{StatusOnly: string(store.NoteShaped), Limit: 10})
+	list, err := svc.ListNotes(ctx, ListNoteOptions{StatusOnly: string(contracts.NoteShaped), Limit: 10})
 	if err != nil {
 		t.Fatalf("ListNotes failed: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestService_ProcessOnePendingNote_AndList(t *testing.T) {
 	if item.ID != added.NoteID {
 		t.Fatalf("note id mismatch: got=%d want=%d", item.ID, added.NoteID)
 	}
-	if item.Status != string(store.NoteShaped) {
+	if item.Status != string(contracts.NoteShaped) {
 		t.Fatalf("expected shaped status, got=%s", item.Status)
 	}
 	if item.Shaped == nil {
@@ -145,7 +145,7 @@ func TestService_ApproveNote_CreatesTicketAndUpdatesShaped(t *testing.T) {
 	if note == nil || note.Shaped == nil {
 		t.Fatalf("expected shaped note exists")
 	}
-	if note.Shaped.Status != string(store.ShapedApproved) {
+	if note.Shaped.Status != string(contracts.ShapedApproved) {
 		t.Fatalf("expected shaped approved, got=%s", note.Shaped.Status)
 	}
 	if note.Shaped.TicketID != tk.ID {

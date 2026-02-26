@@ -915,8 +915,6 @@ func TestDaemonFeishuWebhookHandler_DedupByEventID(t *testing.T) {
 }
 
 func TestDaemonFeishuWebhookHandler_RelayTimeoutSendsTimeoutReply(t *testing.T) {
-	setDaemonFeishuRelayTimeoutsForTest(t, 220*time.Millisecond, 90*time.Millisecond)
-
 	runtime := &testDaemonFeishuDelayedNoEventRuntime{delay: 700 * time.Millisecond}
 	_, gateway, resolver := newTestDaemonFeishuGatewayWithRuntime(t, runtime)
 	if _, err := gateway.BindProject(context.Background(), contracts.ChannelTypeIM, defaultDaemonFeishuAdapter, "chat-timeout", "demo"); err != nil {
@@ -925,8 +923,10 @@ func TestDaemonFeishuWebhookHandler_RelayTimeoutSendsTimeoutReply(t *testing.T) 
 
 	sender := &testDaemonFeishuSender{}
 	handler := newDaemonFeishuWebhookHandler(gateway, resolver, sender, daemonFeishuWebhookOptions{
-		Adapter:     defaultDaemonFeishuAdapter,
-		VerifyToken: "token-ok",
+		Adapter:          defaultDaemonFeishuAdapter,
+		VerifyToken:      "token-ok",
+		RelayTimeout:     220 * time.Millisecond,
+		RelayIdleTimeout: 90 * time.Millisecond,
 	}, nil)
 
 	postDaemonFeishuTextEvent(t, handler, "token-ok", "chat-timeout", "msg-timeout", "open-user-1", "hello")
@@ -948,8 +948,6 @@ func TestDaemonFeishuWebhookHandler_RelayTimeoutSendsTimeoutReply(t *testing.T) 
 
 func TestDaemonFeishuWebhookHandler_RelayDeadlineExceededStillSendsTimeoutReply(t *testing.T) {
 	// 让 relayCtx 先于 idle timer 触发，覆盖 <-relayCtx.Done() 分支。
-	setDaemonFeishuRelayTimeoutsForTest(t, 180*time.Millisecond, 2*time.Second)
-
 	runtime := &testDaemonFeishuDelayedNoEventRuntime{delay: 900 * time.Millisecond}
 	_, gateway, resolver := newTestDaemonFeishuGatewayWithRuntime(t, runtime)
 	if _, err := gateway.BindProject(context.Background(), contracts.ChannelTypeIM, defaultDaemonFeishuAdapter, "chat-relay-deadline", "demo"); err != nil {
@@ -958,8 +956,10 @@ func TestDaemonFeishuWebhookHandler_RelayDeadlineExceededStillSendsTimeoutReply(
 
 	sender := &testDaemonFeishuSender{}
 	handler := newDaemonFeishuWebhookHandler(gateway, resolver, sender, daemonFeishuWebhookOptions{
-		Adapter:     defaultDaemonFeishuAdapter,
-		VerifyToken: "token-ok",
+		Adapter:          defaultDaemonFeishuAdapter,
+		VerifyToken:      "token-ok",
+		RelayTimeout:     180 * time.Millisecond,
+		RelayIdleTimeout: 2 * time.Second,
 	}, nil)
 
 	postDaemonFeishuTextEvent(t, handler, "token-ok", "chat-relay-deadline", "msg-relay-deadline", "open-user-1", "hello")
@@ -980,8 +980,6 @@ func TestDaemonFeishuWebhookHandler_RelayDeadlineExceededStillSendsTimeoutReply(
 }
 
 func TestDaemonFeishuWebhookHandler_RelayIdleTimerResetByEvents(t *testing.T) {
-	setDaemonFeishuRelayTimeoutsForTest(t, 900*time.Millisecond, 120*time.Millisecond)
-
 	runtime := &testDaemonFeishuDelayedNoEventRuntime{delay: 500 * time.Millisecond}
 	_, gateway, resolver := newTestDaemonFeishuGatewayWithRuntime(t, runtime)
 	chatID := "chat-keepalive"
@@ -992,8 +990,10 @@ func TestDaemonFeishuWebhookHandler_RelayIdleTimerResetByEvents(t *testing.T) {
 
 	sender := &testDaemonFeishuSender{}
 	handler := newDaemonFeishuWebhookHandler(gateway, resolver, sender, daemonFeishuWebhookOptions{
-		Adapter:     defaultDaemonFeishuAdapter,
-		VerifyToken: "token-ok",
+		Adapter:          defaultDaemonFeishuAdapter,
+		VerifyToken:      "token-ok",
+		RelayTimeout:     900 * time.Millisecond,
+		RelayIdleTimeout: 120 * time.Millisecond,
 	}, nil)
 
 	postDaemonFeishuTextEvent(t, handler, "token-ok", chatID, msgID, "open-user-1", "hello")
@@ -1111,18 +1111,6 @@ func waitDaemonFeishuOutboxStatus(t *testing.T, db *gorm.DB, want contracts.Chan
 	}
 	t.Fatalf("outbox status should become %s, got=%s last_error=%q", want, outbox.Status, outbox.LastError)
 	return contracts.ChannelOutbox{}
-}
-
-func setDaemonFeishuRelayTimeoutsForTest(t *testing.T, relayTimeout, idleTimeout time.Duration) {
-	t.Helper()
-	originRelay := daemonFeishuRelayTimeout
-	originIdle := daemonFeishuRelayIdleTimeout
-	daemonFeishuRelayTimeout = relayTimeout
-	daemonFeishuRelayIdleTimeout = idleTimeout
-	t.Cleanup(func() {
-		daemonFeishuRelayTimeout = originRelay
-		daemonFeishuRelayIdleTimeout = originIdle
-	})
 }
 
 func postDaemonFeishuTextEvent(t *testing.T, handler http.HandlerFunc, token, chatID, msgID, senderID, text string) {

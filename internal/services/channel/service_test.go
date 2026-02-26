@@ -13,7 +13,10 @@ import (
 	"dalek/internal/repo"
 	"dalek/internal/services/channel/agentcli"
 	"dalek/internal/services/core"
+	pmsvc "dalek/internal/services/pm"
 	"dalek/internal/services/task"
+	ticketsvc "dalek/internal/services/ticket"
+	workersvc "dalek/internal/services/worker"
 	"dalek/internal/store"
 
 	"gorm.io/gorm"
@@ -53,10 +56,10 @@ func TestProcessInbound_ListTicketsAndOutboxSent(t *testing.T) {
 	}
 	svc := newChannelServiceWithFakeAgent(t, db)
 
-	if err := db.Create(&store.Ticket{Title: "ticket-a", WorkflowStatus: contracts.TicketBacklog, Priority: 2}).Error; err != nil {
+	if err := db.Create(&contracts.Ticket{Title: "ticket-a", WorkflowStatus: contracts.TicketBacklog, Priority: 2}).Error; err != nil {
 		t.Fatalf("seed ticket-a failed: %v", err)
 	}
-	if err := db.Create(&store.Ticket{Title: "ticket-b", WorkflowStatus: contracts.TicketActive, Priority: 1}).Error; err != nil {
+	if err := db.Create(&contracts.Ticket{Title: "ticket-b", WorkflowStatus: contracts.TicketActive, Priority: 1}).Error; err != nil {
 		t.Fatalf("seed ticket-b failed: %v", err)
 	}
 
@@ -232,7 +235,7 @@ func TestProcessInbound_TicketDetailActionSuccess(t *testing.T) {
 	}
 	svc := newChannelServiceWithFakeAgent(t, db)
 
-	ticket := store.Ticket{
+	ticket := contracts.Ticket{
 		Title:          "detail-target",
 		WorkflowStatus: contracts.TicketActive,
 		Priority:       3,
@@ -308,7 +311,7 @@ func TestProcessInbound_StructuredTurnResponseCreatesPendingActions(t *testing.T
 	installFakeClaudeBinaryWithMessageText(t, turnResp)
 
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -373,7 +376,7 @@ func TestDecidePendingAction_ApproveExecutesAndMarksExecuted(t *testing.T) {
 	installFakeClaudeBinaryWithMessageText(t, turnResp)
 
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -421,7 +424,7 @@ func TestDecidePendingAction_ApproveExecutesAndMarksExecuted(t *testing.T) {
 	}
 
 	var cnt int64
-	if err := db.Model(&store.Ticket{}).Where("title = ?", "approved ticket").Count(&cnt).Error; err != nil {
+	if err := db.Model(&contracts.Ticket{}).Where("title = ?", "approved ticket").Count(&cnt).Error; err != nil {
 		t.Fatalf("count approved ticket failed: %v", err)
 	}
 	if cnt != 1 {
@@ -440,7 +443,7 @@ func TestDecidePendingAction_RejectMarksRejected(t *testing.T) {
 	installFakeClaudeBinaryWithMessageText(t, turnResp)
 
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -486,7 +489,7 @@ func TestDecidePendingAction_RejectMarksRejected(t *testing.T) {
 	}
 
 	var cnt int64
-	if err := db.Model(&store.Ticket{}).Where("title = ?", "rejected ticket").Count(&cnt).Error; err != nil {
+	if err := db.Model(&contracts.Ticket{}).Where("title = ?", "rejected ticket").Count(&cnt).Error; err != nil {
 		t.Fatalf("count rejected ticket failed: %v", err)
 	}
 	if cnt != 0 {
@@ -502,7 +505,7 @@ func TestProcessInbound_FailedWhenAgentNoResponse(t *testing.T) {
 	}
 	installFakeClaudeBinary(t, true)
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -585,7 +588,7 @@ PY
 	t.Setenv("DALEK_TEST_CLAUDE_LOG", logPath)
 
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -699,7 +702,7 @@ PY
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -750,7 +753,7 @@ func TestProcessInbound_TimeoutStillReturnsFailedJobResult(t *testing.T) {
 	}
 	installFakeClaudeBinaryWithDelay(t, 2*time.Second)
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -793,7 +796,7 @@ func TestInterruptPeerConversation_CancelsRunningTurnWhenRunnerNotInterrupted(t 
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -856,7 +859,7 @@ func TestInterruptPeerConversation_UsesRunnerInterruptWithoutCancel(t *testing.T
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -913,7 +916,7 @@ func TestResetPeerConversationSession_ClearsSessionAndClosesRunner(t *testing.T)
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -973,7 +976,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -1059,7 +1062,7 @@ func TestProcessInbound_CodexBackend_JSONLAndEvents(t *testing.T) {
 	t.Setenv("DALEK_GATEWAY_AGENT_MODEL", "gpt-5-codex-test")
 
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
@@ -1106,7 +1109,7 @@ func TestProcessInbound_ResolveBackendFromProjectConfig(t *testing.T) {
 	}
 	installFakeCodexBinary(t)
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		Key:      "demo",
 		RepoRoot: repoRoot,
@@ -1157,7 +1160,7 @@ func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
 	}
 	installFakeCodexBinaryForSDK(t)
 	repoRoot := t.TempDir()
-	svc := New(&core.Project{
+	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		Key:      "demo",
 		RepoRoot: repoRoot,
@@ -1284,11 +1287,103 @@ func (m *stubInterruptChatRunnerManager) CloseConversation(conversationID string
 
 func (m *stubInterruptChatRunnerManager) Close() error { return nil }
 
+type testTicketActionAdapter struct {
+	svc *ticketsvc.Service
+}
+
+func (a testTicketActionAdapter) List(ctx context.Context, includeArchived bool) ([]contracts.Ticket, error) {
+	return a.svc.List(ctx, includeArchived)
+}
+
+func (a testTicketActionAdapter) GetByID(ctx context.Context, ticketID uint) (*contracts.Ticket, error) {
+	return a.svc.GetByID(ctx, ticketID)
+}
+
+func (a testTicketActionAdapter) CreateWithDescription(ctx context.Context, title, description string) (*contracts.Ticket, error) {
+	return a.svc.CreateWithDescription(ctx, title, description)
+}
+
+type testPMActionAdapter struct {
+	svc *pmsvc.Service
+}
+
+func (a testPMActionAdapter) StartTicket(ctx context.Context, ticketID uint, baseBranch string) (*contracts.Worker, error) {
+	return a.svc.StartTicketWithOptions(ctx, ticketID, pmsvc.StartOptions{BaseBranch: baseBranch})
+}
+
+func (a testPMActionAdapter) DispatchTicket(ctx context.Context, ticketID uint, entryPrompt string) (DispatchTicketResult, error) {
+	res, err := a.svc.DispatchTicketWithOptions(ctx, ticketID, pmsvc.DispatchOptions{EntryPrompt: entryPrompt})
+	if err != nil {
+		return DispatchTicketResult{}, err
+	}
+	return DispatchTicketResult{
+		TicketID:    res.TicketID,
+		WorkerID:    res.WorkerID,
+		TaskRunID:   res.TaskRunID,
+		TmuxSocket:  res.TmuxSocket,
+		TmuxSession: res.TmuxSession,
+	}, nil
+}
+
+func (a testPMActionAdapter) ArchiveTicket(ctx context.Context, ticketID uint) error {
+	return a.svc.ArchiveTicket(ctx, ticketID)
+}
+
+func (a testPMActionAdapter) ListMergeItems(ctx context.Context, status contracts.MergeStatus, limit int) ([]contracts.MergeItem, error) {
+	return a.svc.ListMergeItems(ctx, pmsvc.ListMergeOptions{Status: status, Limit: limit})
+}
+
+func (a testPMActionAdapter) ApproveMerge(ctx context.Context, mergeItemID uint, approvedBy string) error {
+	return a.svc.ApproveMerge(ctx, mergeItemID, approvedBy)
+}
+
+func (a testPMActionAdapter) DiscardMerge(ctx context.Context, mergeItemID uint, note string) error {
+	return a.svc.DiscardMerge(ctx, mergeItemID, note)
+}
+
+type testWorkerActionAdapter struct {
+	svc *workersvc.Service
+}
+
+func (a testWorkerActionAdapter) InterruptTicket(ctx context.Context, ticketID uint) (InterruptTicketResult, error) {
+	res, err := a.svc.InterruptTicket(ctx, ticketID)
+	if err != nil {
+		return InterruptTicketResult{}, err
+	}
+	return InterruptTicketResult{
+		TicketID:    res.TicketID,
+		WorkerID:    res.WorkerID,
+		TargetPane:  res.TargetPane,
+		TmuxSocket:  res.TmuxSocket,
+		TmuxSession: res.TmuxSession,
+	}, nil
+}
+
+func (a testWorkerActionAdapter) StopTicket(ctx context.Context, ticketID uint) error {
+	return a.svc.StopTicket(ctx, ticketID)
+}
+
+func newChannelServiceForTestProject(p *core.Project) *Service {
+	svc := New(p)
+	if p == nil || p.DB == nil {
+		return svc
+	}
+	ticketSvc := ticketsvc.New(p.DB)
+	workerSvc := workersvc.New(p, ticketSvc)
+	pmSvc := pmsvc.New(p, workerSvc)
+	svc.SetActionExecutor(NewActionExecutor(
+		testTicketActionAdapter{svc: ticketSvc},
+		testPMActionAdapter{svc: pmSvc},
+		testWorkerActionAdapter{svc: workerSvc},
+	))
+	return svc
+}
+
 func newChannelServiceWithFakeAgent(t *testing.T, db *gorm.DB) *Service {
 	t.Helper()
 	installFakeClaudeBinary(t, false)
 	repoRoot := t.TempDir()
-	return New(&core.Project{
+	p := &core.Project{
 		Name:     "demo",
 		Key:      "demo",
 		RepoRoot: repoRoot,
@@ -1300,7 +1395,8 @@ func newChannelServiceWithFakeAgent(t *testing.T, db *gorm.DB) *Service {
 		},
 		DB:          db,
 		TaskRuntime: task.NewRuntimeFactory(),
-	})
+	}
+	return newChannelServiceForTestProject(p)
 }
 
 func assertChannelTaskRunCreated(t *testing.T, db *gorm.DB, conversationID uint) {

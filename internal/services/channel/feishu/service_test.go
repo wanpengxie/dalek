@@ -38,3 +38,18 @@ func TestNewWebhookHandlerRejectNonPost(t *testing.T) {
 		t.Fatalf("expected 405, got %d", rr.Code)
 	}
 }
+
+func TestIsGatewayTurnTerminalStatus(t *testing.T) {
+	if !isGatewayTurnTerminalStatus("succeeded") {
+		t.Fatalf("succeeded should be terminal")
+	}
+	if !isGatewayTurnTerminalStatus("FAILED") {
+		t.Fatalf("FAILED should be terminal")
+	}
+	if isGatewayTurnTerminalStatus("") {
+		t.Fatalf("empty status should be non-terminal")
+	}
+	if isGatewayTurnTerminalStatus("running") {
+		t.Fatalf("running should be non-terminal")
+	}
+}

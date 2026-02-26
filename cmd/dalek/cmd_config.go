@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -41,6 +42,58 @@ type configItem struct {
 	Key    string      `json:"key"`
 	Value  string      `json:"value"`
 	Source configScope `json:"source"`
+}
+
+type appProjectConfigAdapter struct {
+	project *app.Project
+}
+
+func (a appProjectConfigAdapter) ConfigPath() string {
+	if a.project == nil {
+		return ""
+	}
+	return a.project.ConfigPath()
+}
+
+func (a appProjectConfigAdapter) GetMaxRunningWorkers(ctx context.Context) (int, error) {
+	if a.project == nil {
+		return 0, fmt.Errorf("project 为空")
+	}
+	st, err := a.project.GetPMState(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return st.MaxRunningWorkers, nil
+}
+
+func (a appProjectConfigAdapter) SetMaxRunningWorkers(ctx context.Context, n int) (int, error) {
+	if a.project == nil {
+		return 0, fmt.Errorf("project 为空")
+	}
+	st, err := a.project.SetMaxRunningWorkers(ctx, n)
+	if err != nil {
+		return 0, err
+	}
+	return st.MaxRunningWorkers, nil
+}
+
+func toConfigHomeCfg(cfg app.HomeConfig) config.HomeConfig {
+	v := cfg.WithDefaults()
+	return config.HomeConfig{
+		Agent: config.HomeAgentConfig{
+			Provider: strings.TrimSpace(v.Agent.Provider),
+			Model:    strings.TrimSpace(v.Agent.Model),
+		},
+		Daemon: config.HomeDaemonConfig{
+			MaxConcurrent: v.Daemon.MaxConcurrent,
+			Internal: config.HomeDaemonInternalConfig{
+				Listen: strings.TrimSpace(v.Daemon.Internal.Listen),
+			},
+			Public: config.HomeDaemonPublicConfig{
+				Listen: strings.TrimSpace(v.Daemon.Public.Listen),
+			},
+		},
+	}
 }
 
 func cmdConfig(args []string) {
@@ -277,13 +330,30 @@ func cmdConfigSet(args []string) {
 	scope := resolveConfigSetScopeOrExit(out, meta, *forceGlobal, *forceLocal)
 
 	homeHandle := mustOpenHomeForConfig(out, *home)
+	homeCfg := homeHandle.Config.WithDefaults()
 	setCtx := &configSetContext{
-		Home:    homeHandle,
-		HomeCfg: homeHandle.Config.WithDefaults(),
+		HomeConfigPath: homeHandle.ConfigPath,
+		HomeCfg:        toConfigHomeCfg(homeCfg),
+		WriteHomeConfig: func(path string, cfg config.HomeConfig) error {
+			next := homeCfg
+			normalized := cfg.WithDefaults()
+			next.Daemon.Internal.Listen = strings.TrimSpace(normalized.Daemon.Internal.Listen)
+			next.Daemon.Public.Listen = strings.TrimSpace(normalized.Daemon.Public.Listen)
+			next.Daemon.MaxConcurrent = normalized.Daemon.MaxConcurrent
+			next.Agent.Provider = strings.TrimSpace(normalized.Agent.Provider)
+			next.Agent.Model = strings.TrimSpace(normalized.Agent.Model)
+			if err := app.WriteHomeConfigAtomic(path, next); err != nil {
+				return err
+			}
+			homeCfg = next.WithDefaults()
+			homeHandle.Config = homeCfg
+			return nil
+		},
 	}
 	if scope == configScopeLocal || scope == configScopeDB {
 		p := mustOpenProjectForConfig(out, homeHandle, *proj)
-		setCtx.Project = p
+		adapter := appProjectConfigAdapter{project: p}
+		setCtx.Project = adapter
 		localCfg, err := config.LoadProjectConfigFromProject(p)
 		if err != nil {
 			exitRuntimeError(out,
@@ -335,7 +405,7 @@ func mustBuildConfigEvalContext(out cliOutputFormat, homeFlag, projectFlag strin
 		)
 	}
 	eval := &configEvalContext{
-		HomeCfg:      home.Config.WithDefaults(),
+		HomeCfg:      toConfigHomeCfg(home.Config.WithDefaults()),
 		HomePresence: homePresence,
 	}
 	if !requireProject {
@@ -359,7 +429,7 @@ func mustBuildConfigEvalContext(out cliOutputFormat, homeFlag, projectFlag strin
 			"检查项目配置文件格式后重试",
 		)
 	}
-	eval.Project = project
+	eval.Project = appProjectConfigAdapter{project: project}
 	eval.LocalCfg = localCfg
 	eval.LocalPresence = localPresence
 	return eval

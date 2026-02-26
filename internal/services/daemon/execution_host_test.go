@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"dalek/internal/contracts"
 )
 
 type testExecutionHostResolver struct {
@@ -140,7 +142,7 @@ func (p *testExecutionHostProject) SubmitDispatchTicket(ctx context.Context, tic
 		RequestID:  requestID,
 		TicketID:   ticketID,
 		WorkerID:   301,
-		JobStatus:  "queued",
+		JobStatus:  contracts.PMDispatchPending,
 		Dispatched: false,
 	}
 	p.dispatchByRequest[requestID] = submission

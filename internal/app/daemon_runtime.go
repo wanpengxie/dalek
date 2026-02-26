@@ -69,32 +69,22 @@ func (p *daemonProjectAdapter) SubmitDispatchTicket(ctx context.Context, ticketI
 	if p == nil || p.project == nil {
 		return daemonsvc.DispatchSubmission{}, fmt.Errorf("daemon project 为空")
 	}
-	res, err := p.project.SubmitDispatchTicket(ctx, ticketID, DispatchSubmitOptions{
-		RequestID: strings.TrimSpace(opt.RequestID),
-		AutoStart: opt.AutoStart,
-	})
+	opt.RequestID = strings.TrimSpace(opt.RequestID)
+	res, err := p.project.SubmitDispatchTicket(ctx, ticketID, opt)
 	if err != nil {
 		return daemonsvc.DispatchSubmission{}, err
 	}
-	return daemonsvc.DispatchSubmission{
-		JobID:      res.JobID,
-		TaskRunID:  res.TaskRunID,
-		RequestID:  strings.TrimSpace(res.RequestID),
-		TicketID:   res.TicketID,
-		WorkerID:   res.WorkerID,
-		JobStatus:  strings.TrimSpace(res.JobStatus),
-		Dispatched: res.Dispatched,
-	}, nil
+	res.RequestID = strings.TrimSpace(res.RequestID)
+	return res, nil
 }
 
 func (p *daemonProjectAdapter) RunDispatchJob(ctx context.Context, jobID uint, opt daemonsvc.DispatchRunOptions) error {
 	if p == nil || p.project == nil {
 		return fmt.Errorf("daemon project 为空")
 	}
-	return p.project.RunDispatchJob(ctx, jobID, DispatchRunOptions{
-		RunnerID:    strings.TrimSpace(opt.RunnerID),
-		EntryPrompt: strings.TrimSpace(opt.EntryPrompt),
-	})
+	opt.RunnerID = strings.TrimSpace(opt.RunnerID)
+	opt.EntryPrompt = strings.TrimSpace(opt.EntryPrompt)
+	return p.project.RunDispatchJob(ctx, jobID, opt)
 }
 
 func (p *daemonProjectAdapter) DirectDispatchWorker(ctx context.Context, ticketID uint, opt daemonsvc.WorkerRunOptions) (daemonsvc.WorkerRunResult, error) {
@@ -118,32 +108,27 @@ func (p *daemonProjectAdapter) SubmitSubagentRun(ctx context.Context, opt daemon
 	if p == nil || p.project == nil {
 		return daemonsvc.SubagentSubmission{}, fmt.Errorf("daemon project 为空")
 	}
-	res, err := p.project.SubmitSubagentRun(ctx, SubagentSubmitOptions{
-		RequestID: strings.TrimSpace(opt.RequestID),
-		Provider:  strings.TrimSpace(opt.Provider),
-		Model:     strings.TrimSpace(opt.Model),
-		Prompt:    strings.TrimSpace(opt.Prompt),
-	})
+	opt.RequestID = strings.TrimSpace(opt.RequestID)
+	opt.Provider = strings.TrimSpace(opt.Provider)
+	opt.Model = strings.TrimSpace(opt.Model)
+	opt.Prompt = strings.TrimSpace(opt.Prompt)
+	res, err := p.project.SubmitSubagentRun(ctx, opt)
 	if err != nil {
 		return daemonsvc.SubagentSubmission{}, err
 	}
-	return daemonsvc.SubagentSubmission{
-		TaskRunID:  res.TaskRunID,
-		RequestID:  strings.TrimSpace(res.RequestID),
-		Provider:   strings.TrimSpace(res.Provider),
-		Model:      strings.TrimSpace(res.Model),
-		RuntimeDir: strings.TrimSpace(res.RuntimeDir),
-		Accepted:   res.Accepted,
-	}, nil
+	res.RequestID = strings.TrimSpace(res.RequestID)
+	res.Provider = strings.TrimSpace(res.Provider)
+	res.Model = strings.TrimSpace(res.Model)
+	res.RuntimeDir = strings.TrimSpace(res.RuntimeDir)
+	return res, nil
 }
 
 func (p *daemonProjectAdapter) RunSubagentJob(ctx context.Context, taskRunID uint, opt daemonsvc.SubagentRunOptions) error {
 	if p == nil || p.project == nil {
 		return fmt.Errorf("daemon project 为空")
 	}
-	return p.project.RunSubagentJob(ctx, taskRunID, SubagentRunOptions{
-		RunnerID: strings.TrimSpace(opt.RunnerID),
-	})
+	opt.RunnerID = strings.TrimSpace(opt.RunnerID)
+	return p.project.RunSubagentJob(ctx, taskRunID, opt)
 }
 
 func (p *daemonProjectAdapter) FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*daemonsvc.RunStatus, error) {
@@ -186,11 +171,7 @@ func (p *daemonProjectAdapter) AddNote(ctx context.Context, rawText string) (dae
 	if err != nil {
 		return daemonsvc.NoteAddResult{}, err
 	}
-	return daemonsvc.NoteAddResult{
-		NoteID:       res.NoteID,
-		ShapedItemID: res.ShapedItemID,
-		Deduped:      res.Deduped,
-	}, nil
+	return res, nil
 }
 
 func (p *daemonProjectAdapter) GetTaskStatus(ctx context.Context, runID uint) (*daemonsvc.RunStatus, error) {

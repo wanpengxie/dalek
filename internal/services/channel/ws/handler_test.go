@@ -14,7 +14,6 @@ import (
 
 	"dalek/internal/contracts"
 	channelsvc "dalek/internal/services/channel"
-	"dalek/internal/store"
 )
 
 type fakeTurnProcessor struct {
@@ -57,8 +56,8 @@ func TestNewSyncHandler_KeyPath(t *testing.T) {
 		InboxPollInterval:  50 * time.Millisecond,
 		InboxLimit:         20,
 		TurnProcessor:      processor,
-		ListInbox: func(_ context.Context, _ int) ([]store.InboxItem, error) {
-			return []store.InboxItem{{
+		ListInbox: func(_ context.Context, _ int) ([]contracts.InboxItem, error) {
+			return []contracts.InboxItem{{
 				ID:       1,
 				Status:   contracts.InboxOpen,
 				Severity: contracts.InboxWarn,

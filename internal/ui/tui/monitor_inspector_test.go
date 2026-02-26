@@ -9,19 +9,18 @@ import (
 
 	"dalek/internal/app"
 	"dalek/internal/contracts"
-	"dalek/internal/store"
 )
 
 func TestInspectorLeftView_ShowsDispatchRunningProcess(t *testing.T) {
 	m := newModel(nil, nil, "")
 	now := time.Now().UTC().Add(-3 * time.Second)
 	view := app.TicketView{
-		Ticket: store.Ticket{
+		Ticket: contracts.Ticket{
 			ID:        1,
 			Title:     "dispatch 可视化",
 			UpdatedAt: now,
 		},
-		LatestWorker: &store.Worker{
+		LatestWorker: &contracts.Worker{
 			ID:                 11,
 			Status:             contracts.WorkerRunning,
 			WorktreePath:       "/tmp/worktree/t1",
@@ -71,11 +70,11 @@ func TestInspectorRightView_SimplifiesTailToRecentLines(t *testing.T) {
 	m := newModel(nil, nil, "")
 	now := time.Now().UTC().Add(-2 * time.Second)
 	view := app.TicketView{
-		Ticket: store.Ticket{
+		Ticket: contracts.Ticket{
 			ID:    2,
 			Title: "tail 简化",
 		},
-		LatestWorker: &store.Worker{
+		LatestWorker: &contracts.Worker{
 			ID:          22,
 			Status:      contracts.WorkerRunning,
 			TmuxSession: "ts-demo-t2-w22",

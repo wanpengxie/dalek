@@ -5,8 +5,6 @@ import (
 	"dalek/internal/contracts"
 	"time"
 
-	"dalek/internal/store"
-
 	"gorm.io/gorm"
 )
 
@@ -28,6 +26,6 @@ type TaskRuntime interface {
 	AppendEvent(ctx context.Context, in contracts.TaskEventInput) error
 	AppendRuntimeSample(ctx context.Context, in contracts.TaskRuntimeSampleInput) error
 	AppendSemanticReport(ctx context.Context, in contracts.TaskSemanticReportInput) error
-	ListStatus(ctx context.Context, opt contracts.TaskListStatusOptions) ([]store.TaskStatusView, error)
+	ListStatus(ctx context.Context, opt contracts.TaskListStatusOptions) ([]contracts.TaskStatusView, error)
 	ListEventsAfterID(ctx context.Context, afterID uint, limit int) ([]contracts.TaskEventScopeRow, error)
 }

@@ -8,7 +8,6 @@ import (
 
 	"dalek/internal/services/core"
 	"dalek/internal/services/worker"
-	"dalek/internal/store"
 	"dalek/internal/testutil"
 
 	"gorm.io/gorm"
@@ -26,10 +25,10 @@ func newServiceForTest(t *testing.T) (*Service, *core.Project, *fakeTmuxClient, 
 	return pmSvc, cp, fTmux, fGit
 }
 
-func createTicket(t *testing.T, db *gorm.DB, title string) store.Ticket {
+func createTicket(t *testing.T, db *gorm.DB, title string) contracts.Ticket {
 	t.Helper()
 
-	tk := store.Ticket{
+	tk := contracts.Ticket{
 		Title:          strings.TrimSpace(title),
 		Description:    "test ticket description",
 		WorkflowStatus: contracts.TicketBacklog,

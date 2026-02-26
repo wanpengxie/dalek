@@ -13,7 +13,6 @@ import (
 	"time"
 
 	tasksvc "dalek/internal/services/task"
-	"dalek/internal/store"
 )
 
 func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
@@ -35,14 +34,14 @@ func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
 	}
 
 	var cnt int64
-	if err := p.DB.Model(&store.Worker{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
+	if err := p.DB.Model(&contracts.Worker{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
 		t.Fatalf("count workers failed: %v", err)
 	}
 	if cnt != 1 {
 		t.Fatalf("expected 1 worker, got %d", cnt)
 	}
 
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
@@ -56,7 +55,7 @@ func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
 		t.Fatalf("expected one git worktree add call, got %d", fGit.AddCalls)
 	}
 
-	var ev store.WorkerStatusEvent
+	var ev contracts.WorkerStatusEvent
 	if err := p.DB.Where("worker_id = ?", w.ID).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query worker status event failed: %v", err)
 	}
@@ -219,7 +218,7 @@ func TestStartTicket_RestartReusesWorkerRecord(t *testing.T) {
 	}
 
 	var cnt int64
-	if err := p.DB.Model(&store.Worker{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
+	if err := p.DB.Model(&contracts.Worker{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
 		t.Fatalf("count workers failed: %v", err)
 	}
 	if cnt != 1 {
@@ -238,10 +237,10 @@ func TestStartTicket_RunningSessionDoesNotPromoteTicketStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first StartTicketResources failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Worker{}).Where("id = ?", w.ID).Update("status", contracts.WorkerRunning).Error; err != nil {
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Update("status", contracts.WorkerRunning).Error; err != nil {
 		t.Fatalf("set worker running failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketBacklog).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketBacklog).Error; err != nil {
 		t.Fatalf("reset ticket backlog failed: %v", err)
 	}
 
@@ -249,7 +248,7 @@ func TestStartTicket_RunningSessionDoesNotPromoteTicketStatus(t *testing.T) {
 		t.Fatalf("second StartTicketResources failed: %v", err)
 	}
 
-	var got store.Ticket
+	var got contracts.Ticket
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
@@ -298,7 +297,7 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 		t.Fatalf("StopWorker failed: %v", err)
 	}
 
-	var got store.Worker
+	var got contracts.Worker
 	if err := p.DB.First(&got, w.ID).Error; err != nil {
 		t.Fatalf("query worker failed: %v", err)
 	}
@@ -306,7 +305,7 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 		t.Fatalf("expected stopped worker, got %s", got.Status)
 	}
 
-	var ticket store.Ticket
+	var ticket contracts.Ticket
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
@@ -365,20 +364,20 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 	tkBlocked := createTicket(t, p.DB, "reconcile-blocked")
 	tkBacklog := createTicket(t, p.DB, "reconcile-backlog")
 
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkRunning.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tkRunning.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set active ticket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkDone.ID).Update("workflow_status", contracts.TicketDone).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tkDone.ID).Update("workflow_status", contracts.TicketDone).Error; err != nil {
 		t.Fatalf("set done ticket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkBlocked.ID).Update("workflow_status", contracts.TicketBlocked).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tkBlocked.ID).Update("workflow_status", contracts.TicketBlocked).Error; err != nil {
 		t.Fatalf("set blocked ticket failed: %v", err)
 	}
-	if err := p.DB.Model(&store.Ticket{}).Where("id = ?", tkBacklog.ID).Update("workflow_status", contracts.TicketBacklog).Error; err != nil {
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tkBacklog.ID).Update("workflow_status", contracts.TicketBacklog).Error; err != nil {
 		t.Fatalf("set backlog ticket failed: %v", err)
 	}
 
-	workers := []store.Worker{
+	workers := []contracts.Worker{
 		{
 			TicketID:     tkRunning.ID,
 			Status:       contracts.WorkerRunning,
@@ -453,7 +452,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 		t.Fatalf("expected reconciled workers=%d, got=%d", len(workers), rows)
 	}
 
-	var tickets []store.Ticket
+	var tickets []contracts.Ticket
 	if err := p.DB.Where("id IN ?", []uint{tkRunning.ID, tkDone.ID, tkBlocked.ID, tkBacklog.ID}).Order("id asc").Find(&tickets).Error; err != nil {
 		t.Fatalf("query tickets failed: %v", err)
 	}
@@ -483,7 +482,7 @@ func TestReconcileRunningWorkersAfterKillAll_DoesNotChangeTicketWorkflowStatus(t
 	if err != nil {
 		t.Fatalf("list task status failed: %v", err)
 	}
-	byWorker := map[uint]store.TaskStatusView{}
+	byWorker := map[uint]contracts.TaskStatusView{}
 	for _, it := range statusRows {
 		if it.WorkerID == 0 {
 			continue

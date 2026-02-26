@@ -19,7 +19,7 @@ func (s *Service) promoteTicketActiveOnDispatchClaimTx(ctx context.Context, tx *
 	if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&ticket, job.TicketID).Error; err != nil {
 		return nil, err
 	}
-	from := normalizeTicketWorkflowStatus(ticket.WorkflowStatus)
+	from := contracts.CanonicalTicketWorkflowStatus(ticket.WorkflowStatus)
 	if !fsm.ShouldPromoteOnDispatchClaim(from) {
 		return nil, nil
 	}
@@ -50,7 +50,7 @@ func (s *Service) demoteTicketBlockedOnDispatchFailedTx(ctx context.Context, tx 
 	if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&ticket, job.TicketID).Error; err != nil {
 		return nil, err
 	}
-	from := normalizeTicketWorkflowStatus(ticket.WorkflowStatus)
+	from := contracts.CanonicalTicketWorkflowStatus(ticket.WorkflowStatus)
 	if !fsm.ShouldDemoteOnDispatchFailed(from) {
 		return nil, nil
 	}

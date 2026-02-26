@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"dalek/internal/store"
 )
 
 func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
@@ -29,7 +27,7 @@ func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
 		t.Fatalf("expected .dalek dir exists: %v", err)
 	}
 
-	var got store.Ticket
+	var got contracts.Ticket
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
@@ -37,7 +35,7 @@ func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
 		t.Fatalf("start 应推进 workflow_status backlog->queued，got=%s", got.WorkflowStatus)
 	}
 
-	var ev store.TicketWorkflowEvent
+	var ev contracts.TicketWorkflowEvent
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query ticket workflow event failed: %v", err)
 	}

@@ -503,6 +503,7 @@ func assembleProject(cp *core.Project) *Project {
 	taskSvc := task.New(cp.DB)
 	subagentSvc := subagentsvc.New(cp, taskSvc, cp.Logger)
 	channelSvc := channelsvc.New(cp)
+	channelSvc.SetActionExecutor(newChannelActionExecutor(ticketSvc, pmSvc, workerSvc))
 	return &Project{
 		core:        cp,
 		ticket:      ticketSvc,

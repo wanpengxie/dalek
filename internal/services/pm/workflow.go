@@ -41,7 +41,7 @@ func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, st
 		if err := tx.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 			return err
 		}
-		from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
+		from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
 		if !fsm.CanManualSetWorkflowStatus(from) {
 			return fmt.Errorf("ticket 已归档，不能修改 workflow_status: t%d", ticketID)
 		}
@@ -120,7 +120,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 		if err := tx.WithContext(ctx).First(&cur, ticketID).Error; err != nil {
 			return err
 		}
-		from := normalizeTicketWorkflowStatus(cur.WorkflowStatus)
+		from := contracts.CanonicalTicketWorkflowStatus(cur.WorkflowStatus)
 		if !fsm.CanArchiveTicket(from) {
 			return nil
 		}
@@ -240,7 +240,7 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 		if !fsm.CanReportPromoteTo(t.WorkflowStatus, promoteTo) {
 			return nil
 		}
-		from := normalizeTicketWorkflowStatus(t.WorkflowStatus)
+		from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
 		if from != promoteTo {
 			if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", t.ID).Updates(map[string]any{
 				"workflow_status": promoteTo,
