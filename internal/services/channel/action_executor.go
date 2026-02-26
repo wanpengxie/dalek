@@ -514,3 +514,79 @@ func clampInt(v, minValue, maxValue int) int {
 	}
 	return v
 }
+
+type actionExecuteResult struct {
+	Action  contracts.TurnAction
+	Success bool
+	Message string
+}
+
+func (s *Service) executeAction(ctx context.Context, action contracts.TurnAction) actionExecuteResult {
+	action.Normalize()
+	result := actionExecuteResult{Action: action}
+	if s == nil || s.p == nil {
+		result.Message = "channel service 缺少 project 上下文"
+		return result
+	}
+	execRes, err := newActionExecutor(s.p).Execute(ctx, action)
+	if err != nil {
+		result.Success = false
+		result.Message = strings.TrimSpace(err.Error())
+		return result
+	}
+	result.Success = execRes.Success
+	result.Message = strings.TrimSpace(execRes.Message)
+	if result.Message == "" {
+		if result.Success {
+			result.Message = "操作执行成功"
+		} else {
+			result.Message = "操作执行失败"
+		}
+	}
+	return result
+}
+
+func renderActionExecutionSummary(results []actionExecuteResult) string {
+	if len(results) == 0 {
+		return ""
+	}
+	lines := make([]string, 0, len(results)+1)
+	lines = append(lines, "Action 执行结果：")
+	for _, res := range results {
+		prefix := "[OK]"
+		if !res.Success {
+			prefix = "[FAIL]"
+		}
+		msg := strings.TrimSpace(res.Message)
+		desc := describePendingAction(res.Action)
+		if msg == "" {
+			lines = append(lines, fmt.Sprintf("- %s %s", prefix, desc))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s %s -> %s", prefix, desc, msg))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func describePendingAction(action contracts.TurnAction) string {
+	action.Normalize()
+	name := strings.TrimSpace(action.Name)
+	if name == "" {
+		name = "unknown_action"
+	}
+	if len(action.Args) == 0 {
+		return name
+	}
+	parts := make([]string, 0, len(action.Args))
+	for k, v := range action.Args {
+		key := strings.TrimSpace(k)
+		if key == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%v", key, v))
+	}
+	if len(parts) == 0 {
+		return name
+	}
+	return name + "(" + strings.Join(parts, ", ") + ")"
+}

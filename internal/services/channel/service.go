@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"dalek/internal/agent/eventlog"
 	"dalek/internal/contracts"
 	"dalek/internal/services/channel/agentcli"
 	"dalek/internal/services/core"
@@ -446,295 +445,33 @@ func (s *Service) ProcessInbound(ctx context.Context, env contracts.InboundEnvel
 }
 
 func (s *Service) runTurnJob(ctx context.Context, jobID uint) error {
-	_, db, err := s.require()
-	if err != nil {
+	tctx, claimed, err := s.claimAndLoadTurnContext(ctx, jobID)
+	if err != nil || !claimed {
 		return err
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if jobID == 0 {
-		return fmt.Errorf("job_id 不能为空")
-	}
+	defer tctx.closeEventLogger()
 
-	runnerID := newRunnerID()
-	job, claimed, err := s.claimTurnJob(ctx, jobID, runnerID, 90*time.Second)
-	if err != nil {
-		return err
+	agentResp, err := s.executeTurnAgent(ctx, tctx)
+	if tctx.slotAcquired {
+		defer s.releaseTurnSlot()
 	}
-	if !claimed {
-		return nil
-	}
-	runID := newRunID()
-	startedAt := time.Now()
-	gaCfg := s.p.Config.WithDefaults().GatewayAgent
-	providerHint, modelHint := resolveGatewayAgentHints(agentcli.ConfigOverride{
-		Provider:     strings.TrimSpace(gaCfg.Provider),
-		Model:        strings.TrimSpace(gaCfg.Model),
-		Command:      strings.TrimSpace(gaCfg.Command),
-		Output:       strings.TrimSpace(gaCfg.Output),
-		ResumeOutput: strings.TrimSpace(gaCfg.ResumeOutput),
-	})
-	collector := newTurnEventCollector(ctx, runID, startedAt, providerHint)
-	collector.AppendLifecycleStart()
-
-	// eventlog: 初始化 run 日志
-	evLogProject := strings.TrimSpace(s.p.Name)
-	if evLogProject == "" {
-		evLogProject = strings.TrimSpace(s.p.Key)
-	}
-	if evLogProject == "" {
-		evLogProject = "unknown"
-	}
-	evLogger, evLogErr := eventlog.Open(evLogProject, runID)
-	if evLogErr != nil {
-		s.slog().Warn("eventlog open failed",
-			"project", evLogProject,
-			"run_id", runID,
-			"error", evLogErr,
-		)
-	}
-	if evLogger != nil {
-		defer func() { _ = evLogger.Close() }()
-	}
-	failTurn := func(cause error, resultJSON string) error {
-		msg := strings.TrimSpace(fmt.Sprint(cause))
-		if cause == nil || msg == "" || msg == "<nil>" {
-			msg = "turn job failed"
-		}
-		if failErr := s.completeTurnJobFailed(context.Background(), job.ID, runnerID, msg, resultJSON); failErr != nil {
-			if cause == nil {
-				return failErr
+	if tctx.runningTurnSet {
+		defer func() {
+			if tctx.turnCancel != nil {
+				tctx.turnCancel()
 			}
-			return fmt.Errorf("%w；并且写入 turn_job failed 失败: %v", cause, failErr)
-		}
-		return nil
-	}
-
-	var inbound contracts.ChannelMessage
-	if err := db.WithContext(ctx).First(&inbound, job.InboundMessageID).Error; err != nil {
-		return failTurn(err, "")
-	}
-	var conv contracts.ChannelConversation
-	if err := db.WithContext(ctx).First(&conv, inbound.ConversationID).Error; err != nil {
-		return failTurn(err, "")
-	}
-	var binding contracts.ChannelBinding
-	if err := db.WithContext(ctx).First(&binding, conv.BindingID).Error; err != nil {
-		return failTurn(err, "")
-	}
-
-	persistJobResult := func(runErr error, result ProcessResult, pendingActions []contracts.TurnAction) (TurnResultOutput, error) {
-		var output TurnResultOutput
-		err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if len(pendingActions) > 0 {
-				pendingModels, err := s.createPendingActionsTx(ctx, tx, conv.ID, job.ID, pendingActions)
-				if err != nil {
-					return err
-				}
-				result.PendingActions = pendingActionViewsFromModels(pendingModels)
-			}
-			var txErr error
-			output, txErr = PersistTurnResultTx(ctx, tx, PersistTurnResultParams{
-				Binding:     binding,
-				Conv:        conv,
-				Inbound:     inbound,
-				Job:         job,
-				Adapter:     strings.TrimSpace(binding.Adapter),
-				Result:      result,
-				RunErr:      runErr,
-				FinalizeJob: false,
-			})
-			return txErr
-		})
-		if err != nil {
-			return TurnResultOutput{}, err
-		}
-		return output, nil
-	}
-
-	s.cancelConflictingTurn(conv.AgentSessionID, job.ID)
-	if err := s.acquireTurnSlot(ctx); err != nil {
-		collector.AppendLifecycleEnd(err)
-		output, pErr := persistJobResult(err, ProcessResult{
-			RunID:         runID,
-			JobStatus:     contracts.ChannelTurnFailed,
-			AgentProvider: strings.TrimSpace(providerHint),
-			AgentModel:    strings.TrimSpace(modelHint),
-			AgentEvents:   collector.Snapshot(),
-		}, nil)
-		if pErr != nil {
-			return failTurn(pErr, "")
-		}
-		return failTurn(err, output.ResultJSON)
-	}
-	defer s.releaseTurnSlot()
-
-	turnTimeout := s.gatewayTurnTimeout()
-	turnCtx := ctx
-	turnCancel := func() {}
-	if turnTimeout > 0 {
-		turnCtx, turnCancel = context.WithTimeout(ctx, turnTimeout)
-	} else {
-		turnCtx, turnCancel = context.WithCancel(ctx)
-	}
-	s.setRunningTurn(job.ID, conv.ID, conv.AgentSessionID, turnCancel)
-	defer func() {
-		turnCancel()
-		s.clearRunningTurn(job.ID)
-	}()
-
-	// eventlog: 写入 header
-	if evLogger != nil {
-		_ = evLogger.WriteHeader(eventlog.RunMeta{
-			RunID:          runID,
-			Project:        evLogProject,
-			ConversationID: fmt.Sprintf("%d", conv.ID),
-			Provider:       providerHint,
-			Model:          modelHint,
-			WorkDir:        strings.TrimSpace(s.p.RepoRoot),
-			Layer:          "chat_runner",
-		})
-	}
-	var evLogSeq int
-	agentResp, err := s.planTurnByPMAgent(turnCtx, inbound, conv, binding, job, func(ev agentcli.Event) {
-		evLogSeq++
-		if evLogger != nil {
-			_ = evLogger.WriteEvent(evLogSeq, ev.Type, ev.RawJSON)
-		}
-		collector.AppendCLIEvent(ev)
-	})
-	// eventlog: 写入 footer
-	if evLogger != nil {
-		replyForLog := strings.TrimSpace(agentResp.Text)
-		errForLog := ""
-		if err != nil {
-			errForLog = strings.TrimSpace(err.Error())
-		}
-		_ = evLogger.WriteFooter(eventlog.RunFooter{
-			RunID:      runID,
-			DurationMS: time.Since(startedAt).Milliseconds(),
-			ReplyText:  replyForLog,
-			Error:      errForLog,
-			SessionID:  strings.TrimSpace(agentResp.SessionID),
-		})
+			s.clearRunningTurn(tctx.job.ID)
+		}()
 	}
 	if err != nil {
-		if collector.CLIEventCount() == 0 {
-			for _, ev := range copyCLIEvents(agentResp.Events) {
-				collector.AppendCLIEvent(ev)
-			}
-		}
-		collector.AppendLifecycleEnd(err)
-		output, pErr := persistJobResult(err, ProcessResult{
-			RunID:           runID,
-			JobStatus:       contracts.ChannelTurnFailed,
-			AgentProvider:   strings.TrimSpace(agentResp.Provider),
-			AgentModel:      strings.TrimSpace(agentResp.Model),
-			AgentSessionID:  strings.TrimSpace(agentResp.SessionID),
-			AgentOutputMode: strings.TrimSpace(string(agentResp.OutputMode)),
-			AgentCommand:    strings.TrimSpace(agentResp.Command),
-			AgentStdout:     strings.TrimSpace(agentResp.Stdout),
-			AgentStderr:     strings.TrimSpace(agentResp.Stderr),
-			AgentEvents:     collector.Snapshot(),
-		}, nil)
-		if pErr != nil {
-			return failTurn(pErr, "")
-		}
-		return failTurn(err, output.ResultJSON)
+		return s.failAndPersistTurn(ctx, tctx, agentResp, err)
 	}
 
-	if collector.CLIEventCount() == 0 {
-		for _, ev := range copyCLIEvents(agentResp.Events) {
-			collector.AppendCLIEvent(ev)
-		}
-	}
-
-	replyText := strings.TrimSpace(agentResp.Text)
-	effectiveReply := replyText
-	pendingActionsToCreate := []contracts.TurnAction{}
-	if turnResp, ok := parseTurnResponseFromAgent(agentResp); ok {
-		if text := strings.TrimSpace(turnResp.ReplyText); text != "" {
-			effectiveReply = text
-		}
-		if len(turnResp.Actions) > 0 {
-			if turnResp.RequiresConfirmation {
-				pendingActionsToCreate = append(pendingActionsToCreate, turnResp.Actions...)
-				if strings.TrimSpace(effectiveReply) == "" {
-					effectiveReply = "检测到待审批操作，请点击审批卡片确认。"
-				}
-			} else {
-				results := make([]actionExecuteResult, 0, len(turnResp.Actions))
-				for _, action := range turnResp.Actions {
-					results = append(results, s.executeAction(turnCtx, action))
-				}
-				if summary := renderActionExecutionSummary(results); summary != "" {
-					if strings.TrimSpace(effectiveReply) == "" {
-						effectiveReply = summary
-					} else {
-						effectiveReply = strings.TrimSpace(effectiveReply + "\n\n" + summary)
-					}
-				}
-			}
-		}
-	}
-	if strings.TrimSpace(effectiveReply) == "" {
-		noReplyErr := fmt.Errorf("project manager agent 无响应（reply_text 为空）")
-		collector.AppendLifecycleEnd(noReplyErr)
-		output, pErr := persistJobResult(noReplyErr, ProcessResult{
-			RunID:           runID,
-			JobStatus:       contracts.ChannelTurnFailed,
-			AgentProvider:   strings.TrimSpace(agentResp.Provider),
-			AgentModel:      strings.TrimSpace(agentResp.Model),
-			AgentSessionID:  strings.TrimSpace(agentResp.SessionID),
-			AgentOutputMode: strings.TrimSpace(string(agentResp.OutputMode)),
-			AgentCommand:    strings.TrimSpace(agentResp.Command),
-			AgentStdout:     strings.TrimSpace(agentResp.Stdout),
-			AgentStderr:     strings.TrimSpace(agentResp.Stderr),
-			AgentEvents:     collector.Snapshot(),
-		}, nil)
-		if pErr != nil {
-			return failTurn(pErr, "")
-		}
-		return failTurn(noReplyErr, output.ResultJSON)
-	}
-
-	collector.AppendAssistantText(effectiveReply)
-	collector.AppendLifecycleEnd(nil)
-	events := collector.Snapshot()
-	output, err := persistJobResult(nil, ProcessResult{
-		RunID:           runID,
-		JobStatus:       contracts.ChannelTurnSucceeded,
-		ReplyText:       effectiveReply,
-		AgentProvider:   strings.TrimSpace(agentResp.Provider),
-		AgentModel:      strings.TrimSpace(agentResp.Model),
-		AgentSessionID:  strings.TrimSpace(agentResp.SessionID),
-		AgentOutputMode: strings.TrimSpace(string(agentResp.OutputMode)),
-		AgentCommand:    strings.TrimSpace(agentResp.Command),
-		AgentStdout:     strings.TrimSpace(agentResp.Stdout),
-		AgentStderr:     strings.TrimSpace(agentResp.Stderr),
-		AgentEvents:     copyAgentEvents(events),
-	}, pendingActionsToCreate)
+	effectiveReply, pendingActions, err := s.processTurnResponse(tctx.executionCtx(ctx), tctx, agentResp)
 	if err != nil {
-		return failTurn(err, "")
+		return s.failAndPersistTurn(ctx, tctx, agentResp, err)
 	}
-
-	payloadJSON := output.ResultJSON
-	if output.Persisted.OutboxID > 0 {
-		if err := s.dispatchOutbox(ctx, output.Persisted.OutboxID); err != nil {
-			var payload TurnResultRecord
-			if uErr := json.Unmarshal([]byte(payloadJSON), &payload); uErr == nil {
-				prev := len(payload.AgentEvents)
-				payload.AgentEvents = AppendLifecycleErrorEvent(runID, startedAt, payload.AgentEvents, err)
-				if len(payload.AgentEvents) > prev {
-					emitStreamAgentEvent(ctx, payload.AgentEvents[len(payload.AgentEvents)-1])
-				}
-				payloadJSON = mustJSON(payload)
-			}
-			return s.completeTurnJobFailed(context.Background(), job.ID, runnerID, err.Error(), payloadJSON)
-		}
-	}
-	return s.completeTurnJobSuccess(context.Background(), job.ID, runnerID, payloadJSON)
+	return s.finalizeTurn(ctx, tctx, effectiveReply, pendingActions)
 }
 
 func resolveGatewayAgentHints(cfg agentcli.ConfigOverride) (provider, model string) {
