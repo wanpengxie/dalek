@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -223,6 +224,50 @@ func NewWebhookHandler(gateway *channelsvc.Gateway, resolver channelsvc.ProjectR
 	opt := rawOpt
 	opt.Logger = core.EnsureLogger(opt.Logger).With("service", "feishu_webhook")
 	return newDaemonFeishuWebhookHandler(gateway, resolver, sender, opt, opt.Logger)
+}
+
+func TryHandleBindCommand(ctx context.Context, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender MessageSender, adapter, chatID, text string) bool {
+	return tryHandleDaemonFeishuBindCommand(ctx, gateway, resolver, sender, adapter, chatID, text)
+}
+
+func TryHandleUnbindCommand(ctx context.Context, gateway *channelsvc.Gateway, sender MessageSender, adapter, chatID, text string) bool {
+	return tryHandleDaemonFeishuUnbindCommand(ctx, gateway, sender, adapter, chatID, text)
+}
+
+func TryHandleInterruptCommand(ctx context.Context, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender MessageSender, adapter, chatID, text string) bool {
+	return tryHandleDaemonFeishuInterruptCommand(ctx, gateway, resolver, sender, adapter, chatID, text)
+}
+
+func TryHandleNewCommand(ctx context.Context, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender MessageSender, adapter, chatID, text string) bool {
+	return tryHandleDaemonFeishuNewCommand(ctx, gateway, resolver, sender, adapter, chatID, text)
+}
+
+func BuildUnboundHint(resolver channelsvc.ProjectResolver) string {
+	return buildDaemonFeishuUnboundHint(resolver)
+}
+
+func AppendProgressLine(lines []string, line string, maxLines int) []string {
+	return appendDaemonFeishuProgressLine(lines, line, maxLines)
+}
+
+func NormalizeCardMarkdown(markdown string) string {
+	return normalizeDaemonFeishuCardMarkdown(markdown)
+}
+
+func ResolveCardProjectName(projectName string, resolver channelsvc.ProjectResolver) string {
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return ""
+	}
+	if resolver != nil {
+		project, err := resolver.Resolve(projectName)
+		if err == nil && project != nil {
+			if base := daemonFeishuRepoBaseName(project.RepoRoot); base != "" {
+				return base
+			}
+		}
+	}
+	return projectName
 }
 
 func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, rawOpt daemonFeishuWebhookOptions, logger *slog.Logger) http.HandlerFunc {
@@ -1610,6 +1655,18 @@ func normalizeDaemonFeishuWebhookSecretPath(raw string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func daemonFeishuRepoBaseName(repoRoot string) string {
+	repoRoot = strings.TrimSpace(repoRoot)
+	if repoRoot == "" {
+		return ""
+	}
+	base := strings.TrimSpace(filepath.Base(filepath.Clean(repoRoot)))
+	if base == "." || base == "" {
+		return ""
+	}
+	return base
 }
 
 func (s *daemonFeishuHTTPSender) SendText(ctx context.Context, chatID, text string) error {
