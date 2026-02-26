@@ -7,18 +7,14 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
+	"dalek/internal/fsm"
 	"dalek/internal/store"
 
 	"gorm.io/gorm"
 )
 
 func validTicketWorkflowStatus(st store.TicketWorkflowStatus) bool {
-	switch st {
-	case store.TicketBacklog, store.TicketQueued, store.TicketActive, store.TicketBlocked, store.TicketDone, store.TicketArchived:
-		return true
-	default:
-		return false
-	}
+	return fsm.TicketWorkflowTable.IsKnownState(st)
 }
 
 // SetTicketWorkflowStatus 是“唯一写者（PM reducer）”对 ticket.workflow_status 的手动入口。

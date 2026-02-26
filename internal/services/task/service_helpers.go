@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"dalek/internal/fsm"
 	"dalek/internal/store"
 )
 
@@ -47,12 +48,7 @@ func validOwnerType(v store.TaskOwnerType) bool {
 }
 
 func validOrchestrationState(v store.TaskOrchestrationState) bool {
-	switch v {
-	case store.TaskPending, store.TaskRunning, store.TaskSucceeded, store.TaskFailed, store.TaskCanceled:
-		return true
-	default:
-		return false
-	}
+	return fsm.TaskRunOrchestrationTable.IsKnownState(v)
 }
 
 func validHealthState(v store.TaskRuntimeHealthState) bool {
