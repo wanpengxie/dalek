@@ -17,8 +17,8 @@
 - W01 完成票：`T06(13)` `T24(31)` `T38(45)` `T39(46)`（均已 merge/archived）
 - W02 完成票：`T19(26)` `T21(28)` `T03(10)` `T10(17)`（均已 merge/archived）
 - W03 完成票：`T01(8)` `T02(9)` `T04(11)` `T11(18)`（均已 merge/archived）
-- W04 已完成票：`T22(29)`
-- W04 进行中票：`T14(21)` `T31(38)` `T29(36)`
+- W04 已完成票：`T22(29)` `T31(38)`
+- W04 进行中票：`T14(21)` `T29(36)`
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -294,6 +294,23 @@ Tickets: <T.. T.. T..>
 - 下游约束更新：
   - 后续涉及 CLI 配置读写的改动必须通过 `internal/config` 入口，不得回流到 cmd 层承载配置业务。
   - task run 状态推导必须复用 `app.DeriveRunStatus`，禁止在 cmd/daemon 侧新增并行分支逻辑。
+
+## W04 回写（T31 GatewaySend 分层拆分）
+
+- 状态：`T31` 已完成（2026-02-26），`internal/services/gatewaysend/send.go` 已拆分为 handler/service/repository/types/helpers 分层结构。
+- 交付物：
+  - 新增 `internal/services/gatewaysend/{types.go,helpers.go,repository.go,service.go,handler.go}`，原 `send.go` 删除。
+  - 引入 `Repository` 接口与 `GormRepository` 实现，发送链路数据访问集中收敛，避免 handler/service 直接操作裸 `*gorm.DB`。
+  - `Service` 层统一编排 dedup + outbox 状态机（`pending -> sending -> sent/failed`），并保留 `SendProjectText*` 兼容入口。
+  - handler 层改为 `NewHandler(*Service, HandlerConfig)`，daemon 与 PM 调用方已适配为 service 注入模式。
+  - 新增关键测试：`service_test.go`（业务编排）与 `repository_test.go`（数据层事务与状态流转）；原 handler/集成测试保持通过。
+- 回归结果：
+  - `go test ./internal/services/gatewaysend/...` 通过
+  - `go test ./internal/services/daemon/... -run Send -count=1` 通过
+  - `go test ./internal/services/pm/... -run GatewayStatusNotifier -count=1` 通过
+  - `go test ./...` 全量通过
+- 下游约束更新：
+  - `T35` 必须复用 `gatewaysend.Service` 入口做 PM 通知解耦，禁止回退到包内直接裸 DB 访问。
 
 ## 每批执行建议
 
