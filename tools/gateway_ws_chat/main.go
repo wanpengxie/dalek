@@ -13,31 +13,15 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
+
+	gatewayws "dalek/internal/services/channel/ws"
 )
 
 const defaultGatewayWSURL = "ws://127.0.0.1:18081/ws"
 
-type inboundFrame struct {
-	Text     string `json:"text"`
-	SenderID string `json:"sender_id,omitempty"`
-}
+type inboundFrame = gatewayws.InboundFrame
 
-type outboundFrame struct {
-	Type           string `json:"type"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	RunID          string `json:"run_id,omitempty"`
-	Seq            int    `json:"seq,omitempty"`
-	Stream         string `json:"stream,omitempty"`
-	Text           string `json:"text,omitempty"`
-	EventType      string `json:"event_type,omitempty"`
-	AgentProvider  string `json:"agent_provider,omitempty"`
-	AgentModel     string `json:"agent_model,omitempty"`
-	JobStatus      string `json:"job_status,omitempty"`
-	JobErrorType   string `json:"job_error_type,omitempty"`
-	JobError       string `json:"job_error,omitempty"`
-	InboxCount     int    `json:"inbox_count,omitempty"`
-	At             string `json:"at,omitempty"`
-}
+type outboundFrame = gatewayws.OutboundFrame
 
 func main() {
 	fs := flag.NewFlagSet("gateway_ws_chat", flag.ContinueOnError)

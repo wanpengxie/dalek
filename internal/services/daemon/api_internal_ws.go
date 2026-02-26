@@ -2,11 +2,7 @@ package daemon
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -17,6 +13,8 @@ import (
 
 	"dalek/internal/contracts"
 	channelsvc "dalek/internal/services/channel"
+	gatewayws "dalek/internal/services/channel/ws"
+	"dalek/internal/services/core"
 )
 
 type internalGatewayWSOptions struct {
@@ -24,38 +22,17 @@ type internalGatewayWSOptions struct {
 	DefaultSender string
 }
 
-type internalGatewayWSInboundFrame struct {
-	Text     string `json:"text"`
-	SenderID string `json:"sender_id,omitempty"`
-}
-
-type internalGatewayWSOutboundFrame struct {
-	Type           string `json:"type"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	PeerMessageID  string `json:"peer_message_id,omitempty"`
-	RunID          string `json:"run_id,omitempty"`
-	Seq            int    `json:"seq,omitempty"`
-	Stream         string `json:"stream,omitempty"`
-	Text           string `json:"text,omitempty"`
-	EventType      string `json:"event_type,omitempty"`
-	AgentProvider  string `json:"agent_provider,omitempty"`
-	AgentModel     string `json:"agent_model,omitempty"`
-	JobStatus      string `json:"job_status,omitempty"`
-	JobErrorType   string `json:"job_error_type,omitempty"`
-	JobError       string `json:"job_error,omitempty"`
-	At             string `json:"at,omitempty"`
-}
-
 var internalGatewayWSUpgrader = websocket.Upgrader{
 	CheckOrigin: func(_ *http.Request) bool { return true },
 }
 
 func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGatewayWSOptions, logger *slog.Logger) (string, http.HandlerFunc) {
-	path := normalizeInternalGatewayWSPath(rawOpt.Path)
+	path := gatewayws.NormalizePath(rawOpt.Path)
 	defaultSender := strings.TrimSpace(rawOpt.DefaultSender)
 	if defaultSender == "" {
 		defaultSender = "ws.user"
 	}
+	baseLogger := core.EnsureLogger(logger).With("component", "daemon_gateway_ws")
 
 	return path, func(w http.ResponseWriter, r *http.Request) {
 		if gateway == nil {
@@ -71,13 +48,13 @@ func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGat
 
 		conn, err := internalGatewayWSUpgrader.Upgrade(w, r, nil)
 		if err != nil {
-			logInternalGatewayWSf(logger, "ws upgrade failed: %v", err)
+			baseLogger.Warn("ws upgrade failed", "error", err)
 			return
 		}
 
 		conversationID := strings.TrimSpace(r.URL.Query().Get("conv"))
 		if conversationID == "" {
-			conversationID = buildInternalGatewayWSConversationID("gw")
+			conversationID = gatewayws.BuildConversationID("gw")
 		}
 		senderID := strings.TrimSpace(r.URL.Query().Get("sender"))
 		if senderID == "" {
@@ -96,8 +73,8 @@ func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGat
 		sub, unsubscribe := gateway.EventBus().Subscribe(projectName, conversationID, 128)
 		defer unsubscribe()
 
-		writeCh := make(chan internalGatewayWSOutboundFrame, 128)
-		send := func(frame internalGatewayWSOutboundFrame) bool {
+		writeCh := make(chan gatewayws.OutboundFrame, 128)
+		send := func(frame gatewayws.OutboundFrame) bool {
 			select {
 			case <-done:
 				return false
@@ -129,7 +106,7 @@ func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGat
 					if !ok {
 						return
 					}
-					frame := internalGatewayWSOutboundFrame{
+					frame := gatewayws.OutboundFrame{
 						Type:           strings.TrimSpace(ev.Type),
 						ConversationID: conversationID,
 						PeerMessageID:  strings.TrimSpace(ev.PeerMessageID),
@@ -143,7 +120,7 @@ func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGat
 						JobStatus:      strings.TrimSpace(string(ev.JobStatus)),
 						JobErrorType:   strings.TrimSpace(ev.JobErrorType),
 						JobError:       strings.TrimSpace(ev.JobError),
-						At:             formatInternalGatewayWSTimestamp(time.Now()),
+						At:             gatewayws.FormatTimestamp(time.Now()),
 					}
 					if !send(frame) {
 						return
@@ -152,11 +129,11 @@ func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGat
 			}
 		}()
 
-		if !send(internalGatewayWSOutboundFrame{
-			Type:           "ready",
+		if !send(gatewayws.OutboundFrame{
+			Type:           gatewayws.FrameTypeReady,
 			ConversationID: conversationID,
 			Text:           "connected",
-			At:             formatInternalGatewayWSTimestamp(time.Now()),
+			At:             gatewayws.FormatTimestamp(time.Now()),
 		}) {
 			closeConn()
 			return
@@ -176,13 +153,13 @@ func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGat
 			if msgType != websocket.TextMessage && msgType != websocket.BinaryMessage {
 				continue
 			}
-			text, parsedSenderID, parseErr := parseInternalGatewayWSInboundText(payload)
+			text, parsedSenderID, parseErr := gatewayws.ParseInboundText(payload)
 			if parseErr != nil {
-				_ = send(internalGatewayWSOutboundFrame{
-					Type:           "error",
+				_ = send(gatewayws.OutboundFrame{
+					Type:           gatewayws.FrameTypeError,
 					ConversationID: conversationID,
 					Text:           parseErr.Error(),
-					At:             formatInternalGatewayWSTimestamp(time.Now()),
+					At:             gatewayws.FormatTimestamp(time.Now()),
 				})
 				continue
 			}
@@ -196,10 +173,10 @@ func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGat
 				ChannelType:        contracts.ChannelTypeWeb,
 				Adapter:            "web.ws",
 				PeerConversationID: conversationID,
-				PeerMessageID:      nextInternalGatewayPeerMessageID(seq),
+				PeerMessageID:      gatewayws.NextPeerMessageID(seq),
 				SenderID:           senderID,
 				Text:               text,
-				ReceivedAt:         formatInternalGatewayWSTimestamp(time.Now()),
+				ReceivedAt:         gatewayws.FormatTimestamp(time.Now()),
 			}
 			err = gateway.Submit(context.Background(), channelsvc.GatewayInboundRequest{
 				ProjectName: projectName,
@@ -212,85 +189,12 @@ func newInternalGatewayWSHandler(gateway *channelsvc.Gateway, rawOpt internalGat
 			if errors.Is(err, channelsvc.ErrInboundQueueFull) {
 				msg = "消息排队中，请稍后重试"
 			}
-			_ = send(internalGatewayWSOutboundFrame{
-				Type:           "error",
+			_ = send(gatewayws.OutboundFrame{
+				Type:           gatewayws.FrameTypeError,
 				ConversationID: conversationID,
 				Text:           msg,
-				At:             formatInternalGatewayWSTimestamp(time.Now()),
+				At:             gatewayws.FormatTimestamp(time.Now()),
 			})
 		}
 	}
-}
-
-func formatInternalGatewayWSTimestamp(at time.Time) string {
-	return at.UTC().Format(time.RFC3339)
-}
-
-func parseInternalGatewayWSInboundText(payload []byte) (string, string, error) {
-	raw := strings.TrimSpace(string(payload))
-	if raw == "" {
-		return "", "", fmt.Errorf("消息不能为空")
-	}
-
-	var frame internalGatewayWSInboundFrame
-	if err := json.Unmarshal(payload, &frame); err == nil {
-		text := strings.TrimSpace(frame.Text)
-		senderID := strings.TrimSpace(frame.SenderID)
-		if text == "" {
-			return "", "", fmt.Errorf("消息不能为空")
-		}
-		return text, senderID, nil
-	}
-
-	var asString string
-	if err := json.Unmarshal(payload, &asString); err == nil {
-		text := strings.TrimSpace(asString)
-		if text == "" {
-			return "", "", fmt.Errorf("消息不能为空")
-		}
-		return text, "", nil
-	}
-
-	return raw, "", nil
-}
-
-func normalizeInternalGatewayWSPath(rawPath string) string {
-	path := strings.TrimSpace(rawPath)
-	if path == "" {
-		return "/ws"
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	return path
-}
-
-func buildInternalGatewayWSConversationID(prefix string) string {
-	p := strings.TrimSpace(prefix)
-	if p == "" {
-		p = "ws"
-	}
-	return fmt.Sprintf("%s-%s", p, randomInternalGatewayHex(4))
-}
-
-func nextInternalGatewayPeerMessageID(seq uint64) string {
-	return fmt.Sprintf("ws-%d-%d-%s", time.Now().UnixNano(), seq, randomInternalGatewayHex(2))
-}
-
-func randomInternalGatewayHex(nbytes int) string {
-	if nbytes <= 0 {
-		nbytes = 4
-	}
-	buf := make([]byte, nbytes)
-	if _, err := rand.Read(buf); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(buf)
-}
-
-func logInternalGatewayWSf(logger *slog.Logger, format string, args ...any) {
-	if logger == nil {
-		return
-	}
-	logger.Info(fmt.Sprintf(format, args...))
 }
