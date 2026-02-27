@@ -101,3 +101,79 @@ func TestSelectedTicketForAction_BacklogWithoutSessionStillDenied(t *testing.T) 
 		t.Fatalf("unexpected denied message: %q", denied)
 	}
 }
+
+func TestUpdateTable_WorkerRunDenied(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.rowRefs = []rowRef{{kind: rowTicket, section: "done", ticketID: 10}}
+	m.viewsByID = map[uint]app.TicketView{
+		10: {
+			Ticket: contracts.Ticket{ID: 10, WorkflowStatus: contracts.TicketDone},
+		},
+	}
+	v := m.viewsByID[10]
+	v.Capability.CanDispatch = false
+	v.Capability.Reason = "已完成"
+	m.viewsByID[10] = v
+
+	gotModel, cmd := m.updateTable(keyRune('r'))
+	if cmd != nil {
+		t.Fatalf("denied worker run should not schedule cmd")
+	}
+	got := gotModel.(model)
+	if !strings.Contains(got.status, "不支持 重新跑(r)") || !strings.Contains(got.status, "已完成") {
+		t.Fatalf("unexpected denied status: %q", got.status)
+	}
+}
+
+func TestUpdateTable_WorkerRunAllowed(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.projectName = "demo"
+	m.rowRefs = []rowRef{{kind: rowTicket, section: "running", ticketID: 10}}
+	m.viewsByID = map[uint]app.TicketView{
+		10: {
+			Ticket: contracts.Ticket{ID: 10, WorkflowStatus: contracts.TicketActive},
+		},
+	}
+	v := m.viewsByID[10]
+	v.Capability.CanDispatch = true
+	m.viewsByID[10] = v
+
+	gotModel, cmd := m.updateTable(keyRune('r'))
+	if cmd == nil {
+		t.Fatalf("allowed worker run should return cmd")
+	}
+	got := gotModel.(model)
+	if !strings.Contains(got.status, "重新跑中 t10") {
+		t.Fatalf("unexpected status: %q", got.status)
+	}
+	if got.refreshManual {
+		t.Fatalf("worker run should not mark manual refresh")
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("worker run cmd should not panic, got=%v", r)
+		}
+	}()
+	msg := cmd()
+	if _, ok := msg.(workerRunMsg); !ok {
+		t.Fatalf("expected workerRunMsg, got=%T", msg)
+	}
+}
+
+func TestUpdateEvents_RKeepsRefreshSemantics(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.eventsTicketID = 9
+
+	gotModel, cmd := m.updateEvents(keyRune('r'))
+	if cmd == nil {
+		t.Fatalf("events r should return load events cmd")
+	}
+	got := gotModel.(model)
+	if !got.eventsInFlight {
+		t.Fatalf("events r should mark loading in flight")
+	}
+	if !strings.Contains(got.status, "加载事件 t9") {
+		t.Fatalf("unexpected events status: %q", got.status)
+	}
+}

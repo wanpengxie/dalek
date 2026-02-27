@@ -35,21 +35,17 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "r":
-		if m.refreshInFlight {
-			m.status = "刷新已在进行中"
+		id, ok, denied := m.selectedTicketForAction(ticketActionWorkerRun)
+		if !ok {
+			if denied != "" {
+				m.status = denied
+				m.errMsg = ""
+			}
 			return m, nil
 		}
-		id := m.selectedTicketID()
-		m.refreshInFlight = true
-		m.refreshManual = true
-		m.refreshTicketID = id
-		m.refreshStarted = time.Now()
-		if id != 0 {
-			m.status = fmt.Sprintf("刷新中 t%d...", id)
-		} else {
-			m.status = "刷新中..."
-		}
-		return m, m.manualRefreshCmd(id)
+		m.status = fmt.Sprintf("重新跑中 t%d...", id)
+		m.errMsg = ""
+		return m, m.workerRunTicketCmd(id)
 	case "n":
 		m.mode = modeNewTicket
 		m.newFocus = 0
@@ -141,7 +137,7 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		v, ok := m.viewsByID[id]
 		if !ok {
-			m.status = "详情尚未加载（等一下自动刷新，或按 r）"
+			m.status = "详情尚未加载（等一下自动刷新）"
 			return m, nil
 		}
 		m.mode = modeEditTicket
