@@ -60,6 +60,19 @@ type SenderConfig struct {
 	Logger      *slog.Logger
 }
 
+type daemonFeishuMentionID struct {
+	OpenID  string `json:"open_id"`
+	UnionID string `json:"union_id"`
+	UserID  string `json:"user_id"`
+}
+
+type daemonFeishuMention struct {
+	Key       string                `json:"key"`
+	ID        daemonFeishuMentionID `json:"id"`
+	Name      string                `json:"name"`
+	TenantKey string                `json:"tenant_key"`
+}
+
 type daemonFeishuWebhookRequest struct {
 	Type      string `json:"type"`
 	Token     string `json:"token"`
@@ -94,10 +107,11 @@ type daemonFeishuWebhookRequest struct {
 			Name   string `json:"name"`
 		} `json:"operator"`
 		Message struct {
-			MessageID   string `json:"message_id"`
-			ChatID      string `json:"chat_id"`
-			MessageType string `json:"message_type"`
-			Content     string `json:"content"`
+			MessageID   string                `json:"message_id"`
+			ChatID      string                `json:"chat_id"`
+			MessageType string                `json:"message_type"`
+			Content     string                `json:"content"`
+			Mentions    []daemonFeishuMention `json:"mentions"`
 		} `json:"message"`
 		Action struct {
 			Tag   string         `json:"tag"`
@@ -444,8 +458,12 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
+		if handled := tryHandleDaemonFeishuQuietCommand(reqCtx, gateway, resolver, sender, opt.Adapter, chatID, text); handled {
+			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
+			return
+		}
 
-		boundProject, err := gateway.LookupBoundProject(reqCtx, contracts.ChannelTypeIM, opt.Adapter, chatID)
+		boundProject, quietMode, err := gateway.LookupBindingDetail(reqCtx, contracts.ChannelTypeIM, opt.Adapter, chatID)
 		if err != nil {
 			logDaemonFeishuInfo(logger, "lookup bound project failed",
 				"chat", chatID,
@@ -457,6 +475,14 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 		}
 		if boundProject == "" {
 			_ = sender.SendText(reqCtx, chatID, buildDaemonFeishuUnboundHint(resolver))
+			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
+			return
+		}
+		if quietMode && !hasDaemonFeishuMention(req.Event.Message.Mentions) {
+			logDaemonFeishuInfo(logger, "quiet mode skip message",
+				"chat", chatID,
+				"peer_msg", msgID,
+			)
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
@@ -1351,6 +1377,61 @@ func tryHandleDaemonFeishuNewCommand(ctx context.Context, gateway *channelsvc.Ga
 	}
 	_ = sender.SendText(ctx, chatID, "当前没有可重置的会话")
 	return true
+}
+
+func tryHandleDaemonFeishuQuietCommand(ctx context.Context, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, adapter, chatID, text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "/quiet") {
+		return false
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) > 2 {
+		_ = sender.SendText(ctx, chatID, "命令格式错误，请使用 /quiet [on|off]")
+		return true
+	}
+
+	projectName, quietMode, err := gateway.LookupBindingDetail(ctx, contracts.ChannelTypeIM, adapter, chatID)
+	if err != nil {
+		_ = sender.SendText(ctx, chatID, "读取安静模式失败，请稍后重试")
+		return true
+	}
+	if projectName == "" {
+		_ = sender.SendText(ctx, chatID, buildDaemonFeishuUnboundHint(resolver))
+		return true
+	}
+
+	if len(fields) == 1 {
+		if quietMode {
+			_ = sender.SendText(ctx, chatID, "当前安静模式：开启")
+		} else {
+			_ = sender.SendText(ctx, chatID, "当前安静模式：关闭")
+		}
+		return true
+	}
+
+	switch strings.ToLower(strings.TrimSpace(fields[1])) {
+	case "on":
+		if err := gateway.SetBindingQuietMode(ctx, contracts.ChannelTypeIM, adapter, chatID, true); err != nil {
+			_ = sender.SendText(ctx, chatID, "设置安静模式失败，请稍后重试")
+			return true
+		}
+		_ = sender.SendText(ctx, chatID, "安静模式已开启，仅在被 @ 时回复")
+		return true
+	case "off":
+		if err := gateway.SetBindingQuietMode(ctx, contracts.ChannelTypeIM, adapter, chatID, false); err != nil {
+			_ = sender.SendText(ctx, chatID, "设置安静模式失败，请稍后重试")
+			return true
+		}
+		_ = sender.SendText(ctx, chatID, "安静模式已关闭，将响应所有消息")
+		return true
+	default:
+		_ = sender.SendText(ctx, chatID, "命令格式错误，请使用 /quiet [on|off]")
+		return true
+	}
+}
+
+func hasDaemonFeishuMention(mentions []daemonFeishuMention) bool {
+	return len(mentions) > 0
 }
 
 func buildDaemonFeishuUnboundHint(resolver channelsvc.ProjectResolver) string {

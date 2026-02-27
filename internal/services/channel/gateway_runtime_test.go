@@ -12,6 +12,8 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/store"
+
+	"gorm.io/gorm"
 )
 
 type fakeProjectResolver struct {
@@ -751,6 +753,77 @@ func TestGateway_ResetBoundConversationSession(t *testing.T) {
 	}
 	if runtime.lastResetConvID != "chat-r" {
 		t.Fatalf("reset conversation id mismatch: %q", runtime.lastResetConvID)
+	}
+}
+
+func TestGateway_BindingQuietMode(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	resolver := &fakeProjectResolver{ctx: &ProjectContext{
+		Name:     "alpha",
+		RepoRoot: "/tmp/alpha",
+		Runtime:  &fakeProjectRuntime{},
+	}}
+	gw, err := NewGateway(db, resolver, GatewayOptions{QueueDepth: 2})
+	if err != nil {
+		t.Fatalf("new gateway failed: %v", err)
+	}
+
+	projectName, quietMode, err := gw.LookupBindingDetail(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-q")
+	if err != nil {
+		t.Fatalf("LookupBindingDetail on unbound chat should not fail: %v", err)
+	}
+	if projectName != "" {
+		t.Fatalf("unbound project should be empty, got %q", projectName)
+	}
+	if quietMode {
+		t.Fatalf("unbound quiet mode should default to false")
+	}
+
+	err = gw.SetBindingQuietMode(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-q", true)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("SetBindingQuietMode on unbound chat should return not found, got=%v", err)
+	}
+
+	if _, err := gw.BindProject(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-q", "alpha"); err != nil {
+		t.Fatalf("BindProject failed: %v", err)
+	}
+
+	quietMode, err = gw.GetBindingQuietMode(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-q")
+	if err != nil {
+		t.Fatalf("GetBindingQuietMode failed: %v", err)
+	}
+	if quietMode {
+		t.Fatalf("quiet mode should default to false after bind")
+	}
+
+	if err := gw.SetBindingQuietMode(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-q", true); err != nil {
+		t.Fatalf("SetBindingQuietMode true failed: %v", err)
+	}
+	projectName, quietMode, err = gw.LookupBindingDetail(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-q")
+	if err != nil {
+		t.Fatalf("LookupBindingDetail after enable quiet failed: %v", err)
+	}
+	if projectName != "alpha" {
+		t.Fatalf("unexpected project after bind: %q", projectName)
+	}
+	if !quietMode {
+		t.Fatalf("quiet mode should be true after set")
+	}
+
+	if err := gw.SetBindingQuietMode(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-q", false); err != nil {
+		t.Fatalf("SetBindingQuietMode false failed: %v", err)
+	}
+	quietMode, err = gw.GetBindingQuietMode(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-q")
+	if err != nil {
+		t.Fatalf("GetBindingQuietMode after disable failed: %v", err)
+	}
+	if quietMode {
+		t.Fatalf("quiet mode should be false after disable")
 	}
 }
 
