@@ -1,6 +1,17 @@
 package contracts
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+const (
+	TicketPriorityNone   = 0
+	TicketPriorityLow    = 1
+	TicketPriorityMedium = 2
+	TicketPriorityHigh   = 3
+)
 
 // Ticket 是跨层复用的工单领域模型。
 type Ticket struct {
@@ -15,6 +26,36 @@ type Ticket struct {
 
 func (Ticket) TableName() string {
 	return "tickets"
+}
+
+func ParseTicketPriority(raw string) (int, bool) {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "none":
+		return TicketPriorityNone, true
+	case "low":
+		return TicketPriorityLow, true
+	case "medium":
+		return TicketPriorityMedium, true
+	case "high":
+		return TicketPriorityHigh, true
+	default:
+		return 0, false
+	}
+}
+
+func TicketPriorityLabel(priority int) string {
+	switch priority {
+	case TicketPriorityNone:
+		return "none"
+	case TicketPriorityLow:
+		return "low"
+	case TicketPriorityMedium:
+		return "medium"
+	case TicketPriorityHigh:
+		return "high"
+	default:
+		return fmt.Sprintf("%d", priority)
+	}
 }
 
 // TicketWorkflowEvent 记录 ticket.workflow_status 的状态迁移（append-only）。

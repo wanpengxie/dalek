@@ -53,6 +53,13 @@ func (p *Project) BumpTicketPriority(ctx context.Context, ticketID uint, delta i
 	return p.ticket.BumpPriority(ctx, ticketID, delta)
 }
 
+func (p *Project) SetTicketPriority(ctx context.Context, ticketID uint, priority int) error {
+	if p == nil || p.ticket == nil {
+		return fmt.Errorf("project ticket service 为空")
+	}
+	return p.ticket.SetPriority(ctx, ticketID, priority)
+}
+
 func (p *Project) UpdateTicketText(ctx context.Context, ticketID uint, title, description string) error {
 	if p == nil || p.ticket == nil {
 		return fmt.Errorf("project ticket service 为空")
