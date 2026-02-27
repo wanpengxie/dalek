@@ -1412,7 +1412,7 @@ func TestIntegration_InitCreatesControlPlaneSeed(t *testing.T) {
 
 	mustExist := []string{
 		filepath.Join(p.ProjectDir(), "AGENTS.md"),
-		filepath.Join(p.ProjectDir(), "control", "worker", "bootstrap.sh"),
+		filepath.Join(p.ProjectDir(), "bootstrap.sh"),
 		filepath.Join(p.ProjectDir(), "control", "skills", "dispatch-new-ticket"),
 		filepath.Join(p.ProjectDir(), "control", "skills", "dispatch-new-ticket", "SKILL.md"),
 		filepath.Join(p.ProjectDir(), "control", "skills", "notebook-shaping"),

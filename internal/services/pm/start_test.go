@@ -61,7 +61,7 @@ func TestStartTicketWithOptions_PassesBaseBranch(t *testing.T) {
 func TestStartTicket_RunsBootstrapScript(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 
-	bootstrapPath := filepath.Join(p.Layout.ControlWorkerDir, "bootstrap.sh")
+	bootstrapPath := p.Layout.ProjectBootstrapPath
 	bootstrapScript := `#!/usr/bin/env bash
 set -euo pipefail
 echo "bootstrap" > "${DALEK_WORKTREE_PATH}/.dalek/bootstrap-ran.txt"

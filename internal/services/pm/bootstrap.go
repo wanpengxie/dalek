@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"dalek/internal/contracts"
@@ -20,7 +19,7 @@ func (s *Service) executePMBootstrapEntrypoint(ctx context.Context, t contracts.
 		ctx = context.Background()
 	}
 
-	scriptPath := filepath.Join(p.Layout.ControlWorkerDir, "bootstrap.sh")
+	scriptPath := p.Layout.ProjectBootstrapPath
 	if _, err := os.Stat(scriptPath); err != nil {
 		if os.IsNotExist(err) {
 			return nil

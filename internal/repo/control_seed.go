@@ -41,8 +41,7 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 	if _, err := writeFileIfMissing(layout.ProjectAgentUserPath, defaultControlProjectAgentUserTemplate(layout, projectName), 0o644); err != nil {
 		return err
 	}
-	bootstrapPath := filepath.Join(layout.ControlWorkerDir, "bootstrap.sh")
-	if _, err := writeFileIfMissing(bootstrapPath, defaultControlWorkerBootstrapTemplate(), 0o755); err != nil {
+	if _, err := writeFileIfMissing(layout.ProjectBootstrapPath, defaultProjectBootstrapTemplate(), 0o755); err != nil {
 		return err
 	}
 	for _, line := range []string{
@@ -88,27 +87,8 @@ func CurrentControlVersion(ctx context.Context, repoRoot string) string {
 	return sha
 }
 
-func defaultControlProjectAgentKernelTemplate(layout Layout, projectName string) string {
-	name := strings.TrimSpace(projectName)
-	if name == "" {
-		name = DeriveProjectName(layout.RepoRoot)
-	}
-	if name == "" {
-		name = "-"
-	}
-	repoRoot := strings.TrimSpace(layout.RepoRoot)
-	if repoRoot == "" {
-		repoRoot = "-"
-	}
-	projectKey := "-"
-	if strings.TrimSpace(layout.RepoRoot) != "" {
-		projectKey = ProjectKey(layout.RepoRoot)
-	}
-	return mustRenderSeedTemplate("templates/project/agent-kernel.md", map[string]string{
-		"ProjectName": name,
-		"ProjectKey":  projectKey,
-		"RepoRoot":    repoRoot,
-	})
+func defaultControlProjectAgentKernelTemplate(_ Layout, _ string) string {
+	return mustReadSeedTemplate("templates/project/agent-kernel.md")
 }
 
 func defaultControlProjectAgentUserTemplate(layout Layout, projectName string) string {
@@ -134,8 +114,8 @@ func defaultControlProjectAgentUserTemplate(layout Layout, projectName string) s
 	})
 }
 
-func defaultControlWorkerBootstrapTemplate() string {
-	return mustReadSeedTemplate("templates/project/control/worker/bootstrap.sh")
+func defaultProjectBootstrapTemplate() string {
+	return mustReadSeedTemplate("templates/project/bootstrap.sh")
 }
 
 func seedControlSkillsTemplates(layout Layout) error {

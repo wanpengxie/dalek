@@ -21,6 +21,7 @@ type Layout struct {
 	ProjectGitignorePath    string
 	ProjectAgentKernelPath  string
 	ProjectAgentUserPath    string
+	ProjectBootstrapPath    string
 	ProjectLegacyAgentsPath string
 }
 
@@ -47,6 +48,7 @@ func NewLayout(repoRoot string) Layout {
 		ProjectGitignorePath:    filepath.Join(projectDir, ".gitignore"),
 		ProjectAgentKernelPath:  filepath.Join(projectDir, "agent-kernel.md"),
 		ProjectAgentUserPath:    filepath.Join(projectDir, "agent-user.md"),
+		ProjectBootstrapPath:    filepath.Join(projectDir, "bootstrap.sh"),
 		ProjectLegacyAgentsPath: filepath.Join(projectDir, "AGENTS.md"),
 	}
 }

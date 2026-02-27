@@ -2,7 +2,6 @@ package repo
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -57,7 +56,7 @@ func TestEnsureControlPlaneSeed_RenderProjectIdentityInAgentsTemplate(t *testing
 		t.Fatalf("AGENTS.md should not contain unresolved template placeholders")
 	}
 
-	bootstrapPath := filepath.Join(layout.ControlWorkerDir, "bootstrap.sh")
+	bootstrapPath := layout.ProjectBootstrapPath
 	info, err := os.Stat(bootstrapPath)
 	if err != nil {
 		t.Fatalf("bootstrap placeholder should exist, err=%v", err)
