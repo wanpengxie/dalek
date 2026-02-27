@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"runtime/pprof"
 	"strings"
@@ -68,6 +69,33 @@ func waitForNoteStatus(t *testing.T, p *Project, noteID uint, want store.NoteSta
 	}
 	t.Fatalf("note status not reached: note=%d want=%s timeout=%s", noteID, want, timeout)
 	return nil
+}
+
+func registerProjectForNotebookComponentTest(t *testing.T, h *Home, name, repoRoot string) {
+	t.Helper()
+	r, err := h.LoadRegistry()
+	if err != nil {
+		t.Fatalf("LoadRegistry failed: %v", err)
+	}
+	now := time.Now()
+	r.Projects = append(r.Projects, RegisteredProject{
+		Name:      name,
+		RepoRoot:  repoRoot,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err := h.SaveRegistry(r); err != nil {
+		t.Fatalf("SaveRegistry failed: %v", err)
+	}
+}
+
+func containsProjectName(names []string, want string) bool {
+	for _, name := range names {
+		if strings.TrimSpace(name) == strings.TrimSpace(want) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNewDaemonNotebookComponent_UsesConfiguredWorkerCount(t *testing.T) {
@@ -146,5 +174,72 @@ func TestDaemonNotebookComponent_NotifyProjectBypassesShapeGap(t *testing.T) {
 	note := waitForNoteStatus(t, p, added.NoteID, store.NoteShaped, 3*time.Second)
 	if note.ShapedItemID == 0 {
 		t.Fatalf("expected shaped_item_id after notify trigger")
+	}
+}
+
+func TestDaemonNotebookComponent_NotInitializedProjectBackoffUntilNotify(t *testing.T) {
+	h := newNotebookComponentTestHome(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo-uninitialized")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll repoRoot failed: %v", err)
+	}
+	const projectName = "demo-uninitialized"
+	registerProjectForNotebookComponentTest(t, h, projectName, repoRoot)
+
+	registry := NewProjectRegistry(h)
+	component := newDaemonNotebookComponent(h, nil, 1, registry)
+	component.openBackoffGap = time.Hour
+
+	if got := component.processProject(context.Background(), 1, projectName, false); got {
+		t.Fatalf("expected no work for uninitialized project")
+	}
+	if !component.shouldSkipProjectOpen(projectName, time.Now()) {
+		t.Fatalf("expected project open to enter backoff after ErrNotInitialized")
+	}
+
+	if _, err := h.AddOrUpdateProject(projectName, repoRoot, ProjectConfig{}); err != nil {
+		t.Fatalf("AddOrUpdateProject failed: %v", err)
+	}
+
+	if got := component.processProject(context.Background(), 1, projectName, false); got {
+		t.Fatalf("expected no work while open backoff is active")
+	}
+	if opened := registry.ListOpenProjectNames(); containsProjectName(opened, projectName) {
+		t.Fatalf("project should still be skipped during backoff, opened=%v", opened)
+	}
+
+	component.NotifyProject(projectName)
+	if component.shouldSkipProjectOpen(projectName, time.Now()) {
+		t.Fatalf("expected NotifyProject to clear open backoff")
+	}
+	if got := component.processProject(context.Background(), 1, projectName, false); got {
+		t.Fatalf("expected no pending note work after notify retry")
+	}
+	if opened := registry.ListOpenProjectNames(); !containsProjectName(opened, projectName) {
+		t.Fatalf("expected project to be opened after notify clears backoff, opened=%v", opened)
+	}
+}
+
+func TestDaemonNotebookComponent_TemporaryOpenErrorDoesNotEnterBackoff(t *testing.T) {
+	h := newNotebookComponentTestHome(t)
+	repoRoot := filepath.Join(t.TempDir(), "repo-broken-config")
+	configPath := filepath.Join(repoRoot, ".dalek", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll config dir failed: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("{invalid-json"), 0o644); err != nil {
+		t.Fatalf("WriteFile config failed: %v", err)
+	}
+	const projectName = "demo-broken-config"
+	registerProjectForNotebookComponentTest(t, h, projectName, repoRoot)
+
+	component := newDaemonNotebookComponent(h, nil, 1)
+	component.openBackoffGap = time.Hour
+
+	if got := component.processProject(context.Background(), 1, projectName, false); got {
+		t.Fatalf("expected no work for temporary open error")
+	}
+	if component.shouldSkipProjectOpen(projectName, time.Now()) {
+		t.Fatalf("temporary open errors should not enter long backoff")
 	}
 }
