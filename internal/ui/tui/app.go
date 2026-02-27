@@ -22,6 +22,7 @@ type appPage int
 const (
 	pageProjects appPage = iota
 	pageMonitor
+	pageNotebook
 )
 
 type projectsMode int
@@ -60,6 +61,10 @@ type appModel struct {
 	// monitor page（复用现有页面）
 	monitor    model
 	hasMonitor bool
+
+	// notebook page
+	notebook    notebookModel
+	hasNotebook bool
 }
 
 type projectsLoadedMsg struct {
@@ -89,6 +94,10 @@ type startupProbeMsg struct {
 	Interactive    bool
 	Err            error
 }
+
+type gotoNotebookMsg struct{}
+
+type notebookClosedMsg struct{}
 
 func newAppModel(h *app.Home, initialProject string) appModel {
 	cols := []table.Column{
@@ -125,6 +134,8 @@ func newAppModel(h *app.Home, initialProject string) appModel {
 		p:                  nil,
 		monitor:            model{},
 		hasMonitor:         false,
+		notebook:           notebookModel{},
+		hasNotebook:        false,
 	}
 	return m
 }
@@ -162,6 +173,11 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m = mon
 			return m, cmd
 		}
+		if m.page == pageNotebook && m.p != nil {
+			nb, cmd := m.notebookUpdate(msg)
+			m = nb
+			return m, cmd
+		}
 		return m, nil
 
 	case projectsLoadedMsg:
@@ -180,6 +196,7 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projectsMode = projectsModeList
 			m.p = nil
 			m.hasMonitor = false
+			m.hasNotebook = false
 			m.lastProjectsErr = msg.Err.Error()
 			return m, m.loadProjectsCmd()
 		}
@@ -193,6 +210,21 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		mon := newModel(m.p, m.home, m.currentProjectName)
 		return m.setMonitor(mon)
+
+	case gotoNotebookMsg:
+		if m.p == nil {
+			return m, nil
+		}
+		nb := newNotebookModel(m.p, m.currentProjectName)
+		return m.setNotebook(nb)
+
+	case notebookClosedMsg:
+		if !m.hasMonitor {
+			return m, nil
+		}
+		m.page = pageMonitor
+		m.hasNotebook = false
+		return m, nil
 
 	case startupProbeMsg:
 		if msg.Err != nil {
@@ -254,6 +286,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			mon, cmd := m.monitorUpdate(msg)
 			m = mon
 			return m, cmd
+		case pageNotebook:
+			nb, cmd := m.notebookUpdate(msg)
+			m = nb
+			return m, cmd
 		}
 	}
 
@@ -262,6 +298,11 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.page == pageMonitor {
 		mon, cmd := m.monitorUpdate(msg)
 		m = mon
+		return m, cmd
+	}
+	if m.page == pageNotebook {
+		nb, cmd := m.notebookUpdate(msg)
+		m = nb
 		return m, cmd
 	}
 
@@ -274,6 +315,8 @@ func (m appModel) View() string {
 		return m.viewProjects()
 	case pageMonitor:
 		return m.viewMonitor()
+	case pageNotebook:
+		return m.viewNotebook()
 	default:
 		return "unknown page"
 	}
@@ -591,6 +634,7 @@ func (m appModel) setMonitor(mon model) (tea.Model, tea.Cmd) {
 	}
 	m.monitor = mon
 	m.hasMonitor = true
+	m.hasNotebook = false
 	m.page = pageMonitor
 	return m, mon.Init()
 }
@@ -611,4 +655,37 @@ func (m appModel) viewMonitor() string {
 		return appStyle().Render(panelStyle().Render("monitor 未初始化"))
 	}
 	return m.monitor.View()
+}
+
+func (m appModel) setNotebook(nb notebookModel) (tea.Model, tea.Cmd) {
+	// 进入 notebook 前先注入一次窗口尺寸，避免初次渲染过窄。
+	if m.width > 0 && m.height > 0 {
+		if nn, _ := nb.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height}); nn != nil {
+			if nm, ok := nn.(notebookModel); ok {
+				nb = nm
+			}
+		}
+	}
+	m.notebook = nb
+	m.hasNotebook = true
+	m.page = pageNotebook
+	return m, nb.Init()
+}
+
+func (m appModel) notebookUpdate(msg tea.Msg) (appModel, tea.Cmd) {
+	if !m.hasNotebook {
+		return m, nil
+	}
+	nm, cmd := m.notebook.Update(msg)
+	if nn, ok := nm.(notebookModel); ok {
+		m.notebook = nn
+	}
+	return m, cmd
+}
+
+func (m appModel) viewNotebook() string {
+	if !m.hasNotebook {
+		return appStyle().Render(panelStyle().Render("notebook 未初始化"))
+	}
+	return m.notebook.View()
 }

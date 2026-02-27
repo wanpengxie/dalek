@@ -47,6 +47,8 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 		return m, m.workerRunTicketCmd(id)
 	case "n":
+		return m, openNotebookCmd()
+	case "c":
 		m.mode = modeNewTicket
 		m.newFocus = 0
 		m.titleInput.Focus()
