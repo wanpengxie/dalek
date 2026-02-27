@@ -817,6 +817,106 @@ func oneLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
+type backlogReorderPlan struct {
+	ticketID       uint
+	targetTicketID uint
+	ticketPriority int
+	targetPriority int
+	direction      int
+}
+
+func (m model) planBacklogReorder(direction int) (backlogReorderPlan, bool, string) {
+	id, ok, denied := m.selectedTicketForAction(ticketActionPriority)
+	if !ok {
+		return backlogReorderPlan{}, false, denied
+	}
+	if direction != -1 && direction != 1 {
+		return backlogReorderPlan{}, false, "未知移动方向"
+	}
+	sel := m.selectedRow()
+	if sel.section != "backlog" {
+		return backlogReorderPlan{}, false, "仅 backlog 区支持 Shift+K/J 手动排序"
+	}
+
+	backlogIDs := make([]uint, 0, len(m.rowRefs))
+	idx := -1
+	for _, ref := range m.rowRefs {
+		if ref.kind != rowTicket || ref.section != "backlog" || ref.ticketID == 0 {
+			continue
+		}
+		if ref.ticketID == id {
+			idx = len(backlogIDs)
+		}
+		backlogIDs = append(backlogIDs, ref.ticketID)
+	}
+	if idx < 0 || idx >= len(backlogIDs) {
+		return backlogReorderPlan{}, false, "未找到 backlog 位置（请稍后重试）"
+	}
+
+	targetIdx := idx + direction
+	if targetIdx < 0 {
+		return backlogReorderPlan{}, false, "已在 backlog 顶部"
+	}
+	if targetIdx >= len(backlogIDs) {
+		return backlogReorderPlan{}, false, "已在 backlog 底部"
+	}
+	targetID := backlogIDs[targetIdx]
+
+	selfView, ok := m.viewsByID[id]
+	if !ok {
+		return backlogReorderPlan{}, false, "详情尚未加载（等一下自动刷新）"
+	}
+	targetView, ok := m.viewsByID[targetID]
+	if !ok {
+		return backlogReorderPlan{}, false, "目标详情尚未加载（等一下自动刷新）"
+	}
+
+	selfPriority := selfView.Ticket.Priority
+	targetPriority := targetView.Ticket.Priority
+	nextSelf := targetPriority
+	nextTarget := selfPriority
+	if selfPriority == targetPriority {
+		if direction < 0 {
+			nextSelf = targetPriority + 1
+		} else {
+			nextSelf = targetPriority - 1
+		}
+		nextTarget = targetPriority
+	}
+
+	return backlogReorderPlan{
+		ticketID:       id,
+		targetTicketID: targetID,
+		ticketPriority: nextSelf,
+		targetPriority: nextTarget,
+		direction:      direction,
+	}, true, ""
+}
+
+func (m model) reorderBacklogCmd(plan backlogReorderPlan) tea.Cmd {
+	return func() tea.Msg {
+		if m.p == nil {
+			return ticketReorderMsg{Err: fmt.Errorf("project 为空")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		if err := m.p.SetTicketPriority(ctx, plan.ticketID, plan.ticketPriority); err != nil {
+			return ticketReorderMsg{Err: err}
+		}
+		if err := m.p.SetTicketPriority(ctx, plan.targetTicketID, plan.targetPriority); err != nil {
+			return ticketReorderMsg{Err: err}
+		}
+		return ticketReorderMsg{
+			TicketID:       plan.ticketID,
+			TargetTicketID: plan.targetTicketID,
+			TicketPriority: plan.ticketPriority,
+			TargetPriority: plan.targetPriority,
+			Direction:      plan.direction,
+		}
+	}
+}
+
 func (m model) setTicketStatusCmd(ticketID uint, status contracts.TicketWorkflowStatus) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

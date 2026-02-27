@@ -231,3 +231,57 @@ func TestQueryService_ListTicketViews_SessionProbeFailureKeepsWorkflow(t *testin
 		t.Fatalf("probe failure should not degrade runtime to dead")
 	}
 }
+
+func TestQueryService_ListTicketViews_SortsByPriorityThenCreatedAtThenID(t *testing.T) {
+	svc, p, _ := newQueryServiceForTest(t)
+
+	t1 := createTicketForQueryTest(t, p.DB, "t1")
+	t2 := createTicketForQueryTest(t, p.DB, "t2")
+	t3 := createTicketForQueryTest(t, p.DB, "t3")
+
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", t1.ID).Update("priority", 1).Error; err != nil {
+		t.Fatalf("update t1 priority failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", t2.ID).Update("priority", 1).Error; err != nil {
+		t.Fatalf("update t2 priority failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", t3.ID).Update("priority", 2).Error; err != nil {
+		t.Fatalf("update t3 priority failed: %v", err)
+	}
+
+	base := time.Date(2026, 2, 27, 10, 0, 0, 0, time.UTC)
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", t1.ID).Updates(map[string]any{
+		"created_at": base.Add(2 * time.Hour),
+		"updated_at": base.Add(9 * time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("update t1 timestamps failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", t2.ID).Updates(map[string]any{
+		"created_at": base.Add(1 * time.Hour),
+		"updated_at": base.Add(8 * time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("update t2 timestamps failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", t3.ID).Updates(map[string]any{
+		"created_at": base.Add(3 * time.Hour),
+		"updated_at": base.Add(7 * time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("update t3 timestamps failed: %v", err)
+	}
+
+	views, err := svc.ListTicketViews(context.Background())
+	if err != nil {
+		t.Fatalf("ListTicketViews failed: %v", err)
+	}
+	if len(views) != 3 {
+		t.Fatalf("expected 3 views, got %d", len(views))
+	}
+
+	got := []uint{views[0].Ticket.ID, views[1].Ticket.ID, views[2].Ticket.ID}
+	want := []uint{t3.ID, t2.ID, t1.ID}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected order: got=%v want=%v", got, want)
+		}
+	}
+}

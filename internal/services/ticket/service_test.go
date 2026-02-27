@@ -6,6 +6,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"dalek/internal/store"
 
@@ -125,5 +126,102 @@ func TestService_GetByID(t *testing.T) {
 
 	if _, err := svc.GetByID(context.Background(), created.ID+1000); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("expected gorm.ErrRecordNotFound, got=%v", err)
+	}
+}
+
+func TestService_List_SortsByPriorityThenCreatedAtThenID(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	svc := New(db)
+	t1, err := svc.CreateWithDescription(context.Background(), "t1", "d1")
+	if err != nil {
+		t.Fatalf("create t1 failed: %v", err)
+	}
+	t2, err := svc.CreateWithDescription(context.Background(), "t2", "d2")
+	if err != nil {
+		t.Fatalf("create t2 failed: %v", err)
+	}
+	t3, err := svc.CreateWithDescription(context.Background(), "t3", "d3")
+	if err != nil {
+		t.Fatalf("create t3 failed: %v", err)
+	}
+
+	if err := svc.SetPriority(context.Background(), t1.ID, 1); err != nil {
+		t.Fatalf("set t1 priority failed: %v", err)
+	}
+	if err := svc.SetPriority(context.Background(), t2.ID, 1); err != nil {
+		t.Fatalf("set t2 priority failed: %v", err)
+	}
+	if err := svc.SetPriority(context.Background(), t3.ID, 2); err != nil {
+		t.Fatalf("set t3 priority failed: %v", err)
+	}
+
+	base := time.Date(2026, 2, 27, 10, 0, 0, 0, time.UTC)
+	if err := db.Model(&contracts.Ticket{}).Where("id = ?", t1.ID).Updates(map[string]any{
+		"created_at": base.Add(2 * time.Hour),
+		"updated_at": base.Add(8 * time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("update t1 timestamps failed: %v", err)
+	}
+	if err := db.Model(&contracts.Ticket{}).Where("id = ?", t2.ID).Updates(map[string]any{
+		"created_at": base.Add(1 * time.Hour),
+		"updated_at": base.Add(9 * time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("update t2 timestamps failed: %v", err)
+	}
+	if err := db.Model(&contracts.Ticket{}).Where("id = ?", t3.ID).Updates(map[string]any{
+		"created_at": base.Add(3 * time.Hour),
+		"updated_at": base.Add(1 * time.Hour),
+	}).Error; err != nil {
+		t.Fatalf("update t3 timestamps failed: %v", err)
+	}
+
+	items, err := svc.List(context.Background(), false)
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 tickets, got %d", len(items))
+	}
+
+	got := []uint{items[0].ID, items[1].ID, items[2].ID}
+	want := []uint{t3.ID, t2.ID, t1.ID}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unexpected order: got=%v want=%v", got, want)
+		}
+	}
+}
+
+func TestService_SetPriority_UpdatesTicket(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	svc := New(db)
+	tk, err := svc.CreateWithDescription(context.Background(), "hello", "desc")
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if err := svc.SetPriority(context.Background(), tk.ID, contracts.TicketPriorityHigh); err != nil {
+		t.Fatalf("set priority failed: %v", err)
+	}
+
+	got, err := svc.GetByID(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if got.Priority != contracts.TicketPriorityHigh {
+		t.Fatalf("unexpected priority: got=%d want=%d", got.Priority, contracts.TicketPriorityHigh)
+	}
+
+	if err := svc.SetPriority(context.Background(), 99999, contracts.TicketPriorityLow); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("set priority on missing ticket should return record not found, got=%v", err)
 	}
 }

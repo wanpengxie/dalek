@@ -47,6 +47,8 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 		return m, m.workerRunTicketCmd(id)
 	case "n":
+		return m, openNotebookCmd()
+	case "c":
 		m.mode = modeNewTicket
 		m.newFocus = 0
 		m.titleInput.Focus()
@@ -98,6 +100,30 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.stopTicketCmd(id)
+	case "K":
+		plan, ok, denied := m.planBacklogReorder(-1)
+		if !ok {
+			if denied != "" {
+				m.status = denied
+				m.errMsg = ""
+			}
+			return m, nil
+		}
+		m.status = fmt.Sprintf("上移中 t%d...", plan.ticketID)
+		m.errMsg = ""
+		return m, m.reorderBacklogCmd(plan)
+	case "J":
+		plan, ok, denied := m.planBacklogReorder(+1)
+		if !ok {
+			if denied != "" {
+				m.status = denied
+				m.errMsg = ""
+			}
+			return m, nil
+		}
+		m.status = fmt.Sprintf("下移中 t%d...", plan.ticketID)
+		m.errMsg = ""
+		return m, m.reorderBacklogCmd(plan)
 	case "a":
 		sel := m.selectedRow()
 		switch sel.kind {

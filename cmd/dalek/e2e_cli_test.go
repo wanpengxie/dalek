@@ -106,7 +106,7 @@ func TestCLI_E2E_BasicWorkflow(t *testing.T) {
 
 	// 4) list ticket
 	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "ls")
-	if !strings.Contains(out, "first ticket") || !strings.Contains(out, "ID") || !strings.Contains(out, "STATUS") {
+	if !strings.Contains(out, "first ticket") || !strings.Contains(out, "ID") || !strings.Contains(out, "PRIORITY") || !strings.Contains(out, "STATUS") {
 		t.Fatalf("ticket ls output missing expected columns:\n%s", out)
 	}
 
@@ -198,6 +198,61 @@ func TestCLI_TicketEdit_E2E(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "已归档") {
 		t.Fatalf("archived ticket edit hint missing:\n%s", stderr)
+	}
+}
+
+func TestCLI_TicketSetPriority_AndListOrder(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+	home := filepath.Join(t.TempDir(), "home")
+
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "init", "-name", "demo")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "t1", "-desc", "d1")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "t2", "-desc", "d2")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "t3", "-desc", "d3")
+
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "set-priority", "--ticket", "3", "--priority", "high")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "set-priority", "--ticket", "1", "--priority", "medium")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "set-priority", "--ticket", "2", "--priority", "low")
+
+	out, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "ls", "-o", "json")
+	var payload struct {
+		Tickets []struct {
+			ID            uint   `json:"id"`
+			Priority      int    `json:"priority"`
+			PriorityLabel string `json:"priority_label"`
+		} `json:"tickets"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("unmarshal ticket ls json failed: %v\nraw=%s", err, out)
+	}
+	if len(payload.Tickets) != 3 {
+		t.Fatalf("expected 3 tickets, got %d", len(payload.Tickets))
+	}
+
+	gotIDs := []uint{payload.Tickets[0].ID, payload.Tickets[1].ID, payload.Tickets[2].ID}
+	wantIDs := []uint{3, 1, 2}
+	for i := range wantIDs {
+		if gotIDs[i] != wantIDs[i] {
+			t.Fatalf("unexpected order: got=%v want=%v", gotIDs, wantIDs)
+		}
+	}
+	if payload.Tickets[0].Priority != contracts.TicketPriorityHigh || payload.Tickets[0].PriorityLabel != "high" {
+		t.Fatalf("unexpected high priority payload: %+v", payload.Tickets[0])
+	}
+	if payload.Tickets[1].Priority != contracts.TicketPriorityMedium || payload.Tickets[1].PriorityLabel != "medium" {
+		t.Fatalf("unexpected medium priority payload: %+v", payload.Tickets[1])
+	}
+	if payload.Tickets[2].Priority != contracts.TicketPriorityLow || payload.Tickets[2].PriorityLabel != "low" {
+		t.Fatalf("unexpected low priority payload: %+v", payload.Tickets[2])
+	}
+
+	_, stderr, err := runCLI(t, bin, repo, "-home", home, "-project", "demo", "ticket", "set-priority", "--ticket", "1", "--priority", "p0")
+	if err == nil {
+		t.Fatalf("set-priority should fail on invalid value")
+	}
+	if !strings.Contains(stderr, "只支持 high、medium、low、none") {
+		t.Fatalf("invalid priority hint missing:\n%s", stderr)
 	}
 }
 

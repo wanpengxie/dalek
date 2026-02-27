@@ -177,3 +177,75 @@ func TestUpdateEvents_RKeepsRefreshSemantics(t *testing.T) {
 		t.Fatalf("unexpected events status: %q", got.status)
 	}
 }
+
+func TestPlanBacklogReorder_MoveUp(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.applyViews([]app.TicketView{
+		{Ticket: contracts.Ticket{ID: 1, WorkflowStatus: contracts.TicketBacklog, Priority: 3}},
+		{Ticket: contracts.Ticket{ID: 2, WorkflowStatus: contracts.TicketBacklog, Priority: 2}},
+	})
+	m.table.SetCursor(2)
+
+	plan, ok, denied := m.planBacklogReorder(-1)
+	if !ok {
+		t.Fatalf("expected reorder plan, denied=%q", denied)
+	}
+	if plan.ticketID != 2 || plan.targetTicketID != 1 {
+		t.Fatalf("unexpected pair: %+v", plan)
+	}
+	if plan.ticketPriority != 3 || plan.targetPriority != 2 {
+		t.Fatalf("unexpected priority swap: %+v", plan)
+	}
+}
+
+func TestPlanBacklogReorder_EqualPriorityMoveDown(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.applyViews([]app.TicketView{
+		{Ticket: contracts.Ticket{ID: 1, WorkflowStatus: contracts.TicketBacklog, Priority: 2}},
+		{Ticket: contracts.Ticket{ID: 2, WorkflowStatus: contracts.TicketBacklog, Priority: 2}},
+	})
+	m.table.SetCursor(1)
+
+	plan, ok, denied := m.planBacklogReorder(+1)
+	if !ok {
+		t.Fatalf("expected reorder plan, denied=%q", denied)
+	}
+	if plan.ticketPriority != 1 || plan.targetPriority != 2 {
+		t.Fatalf("unexpected equal-priority move plan: %+v", plan)
+	}
+}
+
+func TestUpdateTable_BacklogReorderBoundary(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.applyViews([]app.TicketView{
+		{Ticket: contracts.Ticket{ID: 1, WorkflowStatus: contracts.TicketBacklog, Priority: 2}},
+	})
+	m.table.SetCursor(1)
+
+	gotModel, cmd := m.updateTable(keyRune('K'))
+	if cmd != nil {
+		t.Fatalf("top boundary should not return cmd")
+	}
+	got := gotModel.(model)
+	if !strings.Contains(got.status, "顶部") {
+		t.Fatalf("unexpected status: %q", got.status)
+	}
+}
+
+func TestUpdateTable_BacklogReorderAllowed(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.applyViews([]app.TicketView{
+		{Ticket: contracts.Ticket{ID: 1, WorkflowStatus: contracts.TicketBacklog, Priority: 3}},
+		{Ticket: contracts.Ticket{ID: 2, WorkflowStatus: contracts.TicketBacklog, Priority: 2}},
+	})
+	m.table.SetCursor(2)
+
+	gotModel, cmd := m.updateTable(keyRune('K'))
+	if cmd == nil {
+		t.Fatalf("allowed backlog reorder should return cmd")
+	}
+	got := gotModel.(model)
+	if !strings.Contains(got.status, "上移中 t2") {
+		t.Fatalf("unexpected status: %q", got.status)
+	}
+}

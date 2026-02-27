@@ -43,7 +43,7 @@ func (s *Service) CreateWithDescription(ctx context.Context, title, description 
 		Title:          title,
 		Description:    description,
 		WorkflowStatus: contracts.TicketBacklog,
-		Priority:       0,
+		Priority:       contracts.TicketPriorityNone,
 	}
 	if err := db.WithContext(ctx).Create(&t).Error; err != nil {
 		return nil, err
@@ -71,7 +71,11 @@ func (s *Service) List(ctx context.Context, includeArchived bool) ([]contracts.T
 	if err != nil {
 		return nil, err
 	}
-	q := db.WithContext(ctx).Model(&contracts.Ticket{}).Order("priority desc").Order("updated_at desc").Order("id desc")
+	q := db.WithContext(ctx).
+		Model(&contracts.Ticket{}).
+		Order("priority desc").
+		Order("created_at asc").
+		Order("id asc")
 	if !includeArchived {
 		q = q.Where("workflow_status != ?", contracts.TicketArchived)
 	}
@@ -80,6 +84,31 @@ func (s *Service) List(ctx context.Context, includeArchived bool) ([]contracts.T
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *Service) SetPriority(ctx context.Context, ticketID uint, priority int) error {
+	db, err := s.requireDB()
+	if err != nil {
+		return err
+	}
+	if ticketID == 0 {
+		return fmt.Errorf("ticket id 不能为空")
+	}
+	now := time.Now()
+	res := db.WithContext(ctx).
+		Model(&contracts.Ticket{}).
+		Where("id = ?", ticketID).
+		Updates(map[string]any{
+			"priority":   priority,
+			"updated_at": now,
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (s *Service) BumpPriority(ctx context.Context, ticketID uint, delta int) (int, error) {
