@@ -104,6 +104,31 @@ func TestRunMigrations_FailureStopsAtVersion(t *testing.T) {
 	}
 }
 
+func TestOpenAndMigrate_WorkerZombieRetryColumnsPresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	type columnRow struct {
+		Name string `gorm:"column:name"`
+	}
+	var cols []columnRow
+	if err := db.Raw("PRAGMA table_info(workers);").Scan(&cols).Error; err != nil {
+		t.Fatalf("query workers columns failed: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, col := range cols {
+		seen[col.Name] = true
+	}
+	for _, want := range []string{"retry_count", "last_retry_at", "last_error_hash"} {
+		if !seen[want] {
+			t.Fatalf("workers missing expected column: %s", want)
+		}
+	}
+}
+
 type migrationRow struct {
 	Version   int    `gorm:"column:version"`
 	Name      string `gorm:"column:name"`

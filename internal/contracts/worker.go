@@ -19,6 +19,10 @@ type Worker struct {
 	StoppedAt *time.Time `gorm:""`
 	LastError string     `gorm:"type:text;not null;default:''"`
 
+	RetryCount    int        `gorm:"not null;default:0"`
+	LastRetryAt   *time.Time `gorm:""`
+	LastErrorHash string     `gorm:"type:text;not null;default:''"`
+
 	WorktreeGCRequestedAt *time.Time `gorm:""`
 	WorktreeGCCleanedAt   *time.Time `gorm:""`
 	WorktreeCleanupError  string     `gorm:"type:text;not null;default:''"`

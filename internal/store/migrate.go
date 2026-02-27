@@ -53,6 +53,11 @@ func storeMigrations() []Migration {
 			Name:    "ensure_channel_message_dedup_index",
 			Up:      ensureChannelMessageDedupIndex,
 		},
+		{
+			Version: 8,
+			Name:    "add_worker_zombie_retry_fields",
+			Up:      migrateAddWorkerZombieRetryFields,
+		},
 	}
 }
 
@@ -124,6 +129,24 @@ func migrateDropWorkersLegacyRuntimeColumns(db *gorm.DB) error {
 			if !strings.Contains(msg, "no such column") {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func migrateAddWorkerZombieRetryFields(db *gorm.DB) error {
+	statements := []string{
+		`ALTER TABLE workers ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE workers ADD COLUMN last_retry_at TEXT DEFAULT NULL;`,
+		`ALTER TABLE workers ADD COLUMN last_error_hash TEXT NOT NULL DEFAULT '';`,
+	}
+	for _, stmt := range statements {
+		if err := db.Exec(stmt).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if strings.Contains(msg, "duplicate column name") {
+				continue
+			}
+			return err
 		}
 	}
 	return nil
