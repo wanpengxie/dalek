@@ -354,7 +354,9 @@ func (h *Home) openProject(rp RegisteredProject) (*Project, error) {
 	if err != nil {
 		return nil, err
 	}
-	return assembleProject(cp), nil
+	p := assembleProject(cp)
+	h.wireStatusChangeHook(p, name)
+	return p, nil
 }
 
 func (h *Home) initProjectFiles(name, repoRoot string, cfg ProjectConfig) (*Project, error) {
