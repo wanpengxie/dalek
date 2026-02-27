@@ -307,7 +307,7 @@ func runDaemonForeground(paths app.DaemonPaths) error {
 		writer = io.MultiWriter(os.Stderr, logFile)
 	}
 	logger := slog.New(slog.NewTextHandler(writer, &slog.HandlerOptions{Level: slog.LevelInfo})).With("proc", "daemon")
-	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	return app.RunDaemon(sigCtx, paths, logger)
 }
@@ -431,7 +431,7 @@ func printDaemonLogs(path string, lines int, follow bool) error {
 		return err
 	}
 
-	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()

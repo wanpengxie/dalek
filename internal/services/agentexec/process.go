@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"sync"
@@ -143,6 +144,11 @@ func (h *processHandle) Wait(ctx context.Context) (AgentRunResult, error) {
 	case <-h.doneCh:
 		return h.waitRes, h.waitErr
 	case <-ctx.Done():
+		slog.Info("process_handle: context canceled during wait, canceling process",
+			"run_id", h.runID, "err", ctx.Err())
+		if h.cancel != nil {
+			h.cancel()
+		}
 		return AgentRunResult{}, ctx.Err()
 	}
 }
@@ -207,7 +213,10 @@ func markProcessRunFailed(rt core.TaskRuntime, runID uint, code, msg string) err
 	if rt == nil || runID == 0 {
 		return nil
 	}
-	return rt.MarkRunFailed(context.Background(), runID, strings.TrimSpace(code), strings.TrimSpace(msg), time.Now())
+	slog.Warn("process: marking run as failed", "run_id", runID, "code", code, "msg", msg)
+	writeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return rt.MarkRunFailed(writeCtx, runID, strings.TrimSpace(code), strings.TrimSpace(msg), time.Now())
 }
 
 func errStringWithOutput(err error, stdout, stderr string) string {

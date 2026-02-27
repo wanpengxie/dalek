@@ -4,8 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"dalek/internal/app"
@@ -246,9 +249,21 @@ func trimOneLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// projectCtx 创建一个监听 SIGINT/SIGTERM/SIGHUP 的根 context。
+// 当父 shell 退出（发送 SIGHUP）或用户中断（SIGINT/SIGTERM）时，context 会被 cancel，
+// 确保下游所有资源清理逻辑（tmux session、worktree、DB 状态回写）能被正确触发。
 func projectCtx(timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout <= 0 {
-		return context.WithCancel(context.Background())
+	sigCtx, sigStop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	cleanup := func() {
+		sigStop()
+		slog.Debug("projectCtx: context canceled, signal listener stopped")
 	}
-	return context.WithTimeout(context.Background(), timeout)
+	if timeout <= 0 {
+		return sigCtx, cleanup
+	}
+	tCtx, tCancel := context.WithTimeout(sigCtx, timeout)
+	return tCtx, func() {
+		tCancel()
+		cleanup()
+	}
 }
