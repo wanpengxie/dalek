@@ -27,6 +27,8 @@ func cmdTicket(args []string) {
 		cmdTicketCreate(args[1:])
 	case "edit":
 		cmdTicketEdit(args[1:])
+	case "set-priority":
+		cmdTicketSetPriority(args[1:])
 	case "show":
 		cmdTicketShow(args[1:])
 	case "start":
@@ -66,6 +68,7 @@ func printTicketUsage() {
 	fmt.Fprintln(out, "  ls          列出 tickets（默认不含归档）")
 	fmt.Fprintln(out, "  create      创建新 ticket")
 	fmt.Fprintln(out, "  edit        编辑 ticket 标题/描述")
+	fmt.Fprintln(out, "  set-priority 设置 ticket 优先级（high/medium/low/none）")
 	fmt.Fprintln(out, "  show        查看 ticket 详情")
 	fmt.Fprintln(out, "  start       启动 ticket（创建 worktree + tmux session）")
 	fmt.Fprintln(out, "  dispatch    派发任务给 worker agent")
@@ -139,17 +142,18 @@ func cmdTicketList(args []string) {
 		viewByID[v.Ticket.ID] = v
 	}
 
-	sort.Slice(tickets, func(i, j int) bool { return tickets[i].ID < tickets[j].ID })
 	type ticketItem struct {
-		ID        uint   `json:"id"`
-		Title     string `json:"title"`
-		Status    string `json:"status"`
-		Runtime   string `json:"runtime"`
-		NeedsUser bool   `json:"needs_user"`
-		Session   string `json:"session"`
-		WorkerID  *uint  `json:"worker_id,omitempty"`
-		Worktree  string `json:"worktree,omitempty"`
-		Branch    string `json:"branch,omitempty"`
+		ID            uint   `json:"id"`
+		Title         string `json:"title"`
+		Priority      int    `json:"priority"`
+		PriorityLabel string `json:"priority_label"`
+		Status        string `json:"status"`
+		Runtime       string `json:"runtime"`
+		NeedsUser     bool   `json:"needs_user"`
+		Session       string `json:"session"`
+		WorkerID      *uint  `json:"worker_id,omitempty"`
+		Worktree      string `json:"worktree,omitempty"`
+		Branch        string `json:"branch,omitempty"`
 	}
 	items := make([]ticketItem, 0, len(tickets))
 	for _, tk := range tickets {
@@ -184,15 +188,17 @@ func cmdTicketList(args []string) {
 			}
 		}
 		items = append(items, ticketItem{
-			ID:        tk.ID,
-			Title:     strings.TrimSpace(tk.Title),
-			Status:    status,
-			Runtime:   runtime,
-			NeedsUser: needsUser,
-			Session:   session,
-			WorkerID:  workerID,
-			Worktree:  worktree,
-			Branch:    branch,
+			ID:            tk.ID,
+			Title:         strings.TrimSpace(tk.Title),
+			Priority:      tk.Priority,
+			PriorityLabel: contracts.TicketPriorityLabel(tk.Priority),
+			Status:        status,
+			Runtime:       runtime,
+			NeedsUser:     needsUser,
+			Session:       session,
+			WorkerID:      workerID,
+			Worktree:      worktree,
+			Branch:        branch,
 		})
 	}
 
@@ -208,12 +214,20 @@ func cmdTicketList(args []string) {
 		return
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tSTATUS\tRUNTIME\tNEEDS_USER\tSESSION\tTITLE")
+	fmt.Fprintln(tw, "ID\tPRIORITY\tSTATUS\tRUNTIME\tNEEDS_USER\tSESSION\tTITLE")
 	for _, it := range items {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%v\t%s\t%s\n",
-			it.ID, it.Status, it.Runtime, it.NeedsUser, it.Session, it.Title)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%v\t%s\t%s\n",
+			it.ID, formatTicketPriority(it.Priority), it.Status, it.Runtime, it.NeedsUser, it.Session, it.Title)
 	}
 	_ = tw.Flush()
+}
+
+func formatTicketPriority(priority int) string {
+	label := contracts.TicketPriorityLabel(priority)
+	if label == fmt.Sprintf("%d", priority) {
+		return label
+	}
+	return fmt.Sprintf("%s(%d)", label, priority)
 }
 
 func cmdTicketCreate(args []string) {
@@ -420,6 +434,87 @@ func cmdTicketEdit(args []string) {
 	fmt.Printf("t%d updated\n", *ticketID)
 }
 
+func cmdTicketSetPriority(args []string) {
+	fs := flag.NewFlagSet("ticket set-priority", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() {
+		printSubcommandUsage(
+			fs,
+			"设置 ticket 优先级",
+			"dalek ticket set-priority --ticket <id> --priority <high|medium|low|none> [--timeout 2s] [--output text|json]",
+			"dalek ticket set-priority --ticket 1 --priority high",
+			"dalek ticket set-priority --ticket 1 --priority low -o json",
+		)
+	}
+	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
+	proj := fs.String("project", globalProject, "项目名（可选）")
+	projShort := fs.String("p", globalProject, "项目名（可选）")
+	ticketID := fs.Uint("ticket", 0, "ticket ID (required)")
+	priorityName := fs.String("priority", "", "优先级（high|medium|low|none）")
+	timeout := fs.Duration("timeout", 2*time.Second, "超时（默认 2s）")
+	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
+	parseFlagSetOrExit(fs, args, globalOutput, "ticket set-priority 参数解析失败", "运行 dalek ticket set-priority --help 查看参数")
+	if strings.TrimSpace(*projShort) != "" {
+		*proj = strings.TrimSpace(*projShort)
+	}
+	out := parseOutputOrExit(*output, true)
+	if *ticketID == 0 {
+		exitUsageError(out,
+			"缺少必填参数 --ticket",
+			"ticket set-priority 需要 ticket ID",
+			"dalek ticket set-priority --ticket 1 --priority high",
+		)
+	}
+	priorityRaw := strings.TrimSpace(*priorityName)
+	if priorityRaw == "" {
+		exitUsageError(out,
+			"缺少必填参数 --priority",
+			"ticket set-priority 需要优先级",
+			"可选值：high、medium、low、none",
+		)
+	}
+	priority, ok := contracts.ParseTicketPriority(priorityRaw)
+	if !ok {
+		exitUsageError(out,
+			fmt.Sprintf("非法参数 --priority: %s", priorityRaw),
+			"只支持 high、medium、low、none",
+			"例如: dalek ticket set-priority --ticket 1 --priority high",
+		)
+	}
+	if *timeout <= 0 {
+		exitUsageError(out,
+			"非法参数 --timeout",
+			"--timeout 必须大于 0",
+			"例如: dalek ticket set-priority --ticket 1 --timeout 2s",
+		)
+	}
+
+	p := mustOpenProjectWithOutput(out, *home, *proj)
+	ctx, cancel := projectCtx(*timeout)
+	defer cancel()
+
+	if err := p.SetTicketPriority(ctx, uint(*ticketID), priority); err != nil {
+		exitRuntimeError(out,
+			"设置 ticket 优先级失败",
+			err.Error(),
+			"检查 ticket 是否存在，以及 --priority 参数是否正确",
+		)
+	}
+
+	label := contracts.TicketPriorityLabel(priority)
+	if out == outputJSON {
+		printJSONOrExit(map[string]any{
+			"schema":         "dalek.ticket.set_priority.v1",
+			"ticket_id":      uint(*ticketID),
+			"priority":       priority,
+			"priority_label": label,
+			"status":         "updated",
+		})
+		return
+	}
+	fmt.Printf("t%d priority => %s(%d)\n", *ticketID, label, priority)
+}
+
 func cmdTicketShow(args []string) {
 	fs := flag.NewFlagSet("ticket show", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -550,13 +645,15 @@ func cmdTicketShow(args []string) {
 
 	if out == outputJSON {
 		printJSONOrExit(map[string]any{
-			"schema":      "dalek.ticket.show.v1",
-			"id":          tk.ID,
-			"title":       strings.TrimSpace(tk.Title),
-			"description": strings.TrimSpace(tk.Description),
-			"status":      status,
-			"created_at":  tk.CreatedAt.Local().Format(time.RFC3339),
-			"worker":      workerPayload,
+			"schema":         "dalek.ticket.show.v1",
+			"id":             tk.ID,
+			"title":          strings.TrimSpace(tk.Title),
+			"description":    strings.TrimSpace(tk.Description),
+			"priority":       tk.Priority,
+			"priority_label": contracts.TicketPriorityLabel(tk.Priority),
+			"status":         status,
+			"created_at":     tk.CreatedAt.Local().Format(time.RFC3339),
+			"worker":         workerPayload,
 		})
 		return
 	}
@@ -564,6 +661,7 @@ func cmdTicketShow(args []string) {
 	fmt.Printf("ticket:\t#%d\n", tk.ID)
 	fmt.Printf("title:\t%s\n", strings.TrimSpace(tk.Title))
 	fmt.Printf("desc:\t%s\n", strings.TrimSpace(tk.Description))
+	fmt.Printf("priority:\t%s\n", formatTicketPriority(tk.Priority))
 	fmt.Printf("status:\t%s\n", status)
 	fmt.Printf("created_at:\t%s\n", tk.CreatedAt.Local().Format("2006-01-02 15:04:05"))
 	fmt.Println()

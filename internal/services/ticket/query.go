@@ -127,8 +127,8 @@ func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData,
 	if err := db.WithContext(ctx).
 		Where("workflow_status != ?", contracts.TicketArchived).
 		Order("priority desc").
-		Order("updated_at desc").
-		Order("id desc").
+		Order("created_at asc").
+		Order("id asc").
 		Find(&data.tickets).Error; err != nil {
 		return ticketViewData{}, err
 	}

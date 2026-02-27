@@ -141,6 +141,15 @@ type ticketPriorityMsg struct {
 	Err      error
 }
 
+type ticketReorderMsg struct {
+	TicketID       uint
+	TargetTicketID uint
+	TicketPriority int
+	TargetPriority int
+	Direction      int
+	Err            error
+}
+
 type ticketTextMsg struct {
 	TicketID uint
 	Err      error
@@ -264,7 +273,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		showArchiveRows: false,
 		mergeErr:        "",
 		archiveErr:      "",
-		helpMsg:         "g 管理员  n 新建  s 启动  p 派发  i 中断  a attach  k 停止  d 归档  r 重新跑  e 编辑  v 事件  +/- 优先级  0-4 状态  t 配色  q 退出",
+		helpMsg:         "g 管理员  n 新建  s 启动  p 派发  i 中断  a attach  k 停止  d 归档  r 重新跑  e 编辑  v 事件  Shift+K/J backlog排序  +/- 优先级  0-4 状态  t 配色  q 退出",
 		status:          "就绪",
 		errMsg:          "",
 		titleInput:      ti,
@@ -451,6 +460,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sign = ""
 		}
 		m.status = fmt.Sprintf("t%d 优先级 %s%d => %d", msg.TicketID, sign, msg.Delta, msg.Priority)
+		m.refreshInFlight = true
+		m.refreshManual = false
+		m.refreshTicketID = 0
+		m.refreshStarted = time.Now()
+		return m, m.refreshCmd()
+
+	case ticketReorderMsg:
+		if msg.Err != nil {
+			m.errMsg = msg.Err.Error()
+			return m, nil
+		}
+		m.errMsg = ""
+		action := "下移"
+		if msg.Direction < 0 {
+			action = "上移"
+		}
+		m.status = fmt.Sprintf("%s t%d（与 t%d 交换）", action, msg.TicketID, msg.TargetTicketID)
 		m.refreshInFlight = true
 		m.refreshManual = false
 		m.refreshTicketID = 0
