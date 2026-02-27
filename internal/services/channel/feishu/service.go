@@ -442,6 +442,10 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			senderID = "feishu.user"
 		}
 
+		if handled := tryHandleDaemonFeishuHelpCommand(reqCtx, sender, chatID, text); handled {
+			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
+			return
+		}
 		if handled := tryHandleDaemonFeishuBindCommand(reqCtx, gateway, resolver, sender, opt.Adapter, chatID, text); handled {
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
@@ -1376,6 +1380,28 @@ func tryHandleDaemonFeishuNewCommand(ctx context.Context, gateway *channelsvc.Ga
 		return true
 	}
 	_ = sender.SendText(ctx, chatID, "当前没有可重置的会话")
+	return true
+}
+
+var daemonFeishuHelpCommandLines = []string{
+	"/help         显示此帮助",
+	"/bind <项目名> 绑定当前群到项目",
+	"/unbind       解绑当前群项目绑定",
+	"/new          重置会话，下条消息开启新 session",
+	"/interrupt    中断当前任务",
+	"/stop         /interrupt 的别名",
+	"/quiet        查看安静模式状态",
+	"/quiet on     开启安静模式（只有被 @ 才回复）",
+	"/quiet off    关闭安静模式",
+}
+
+var daemonFeishuHelpText = "支持的命令：\n" + strings.Join(daemonFeishuHelpCommandLines, "\n")
+
+func tryHandleDaemonFeishuHelpCommand(ctx context.Context, sender daemonFeishuMessageSender, chatID, text string) bool {
+	if strings.ToLower(strings.TrimSpace(text)) != "/help" {
+		return false
+	}
+	_ = sender.SendText(ctx, chatID, daemonFeishuHelpText)
 	return true
 }
 
