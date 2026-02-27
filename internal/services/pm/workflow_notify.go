@@ -40,6 +40,13 @@ type GatewayStatusNotifier struct {
 	now         func() time.Time
 }
 
+type OutboxEnqueueStatusNotifier struct {
+	projectName string
+	projectDB   *gorm.DB
+	gatewayDB   *gorm.DB
+	logger      *slog.Logger
+}
+
 func NewGatewayStatusNotifier(
 	projectName string,
 	projectDB, gatewayDB *gorm.DB,
@@ -58,6 +65,23 @@ func NewGatewayStatusNotifier(
 		sendService: gatewaysendsvc.NewServiceWithDB(gatewayDB, resolver, sender, logger),
 		logger:      logger,
 		now:         time.Now,
+	}
+}
+
+func NewOutboxEnqueueStatusNotifier(
+	projectName string,
+	projectDB, gatewayDB *gorm.DB,
+	loggers ...*slog.Logger,
+) *OutboxEnqueueStatusNotifier {
+	logger := core.DiscardLogger()
+	if len(loggers) > 0 && loggers[0] != nil {
+		logger = loggers[0]
+	}
+	return &OutboxEnqueueStatusNotifier{
+		projectName: strings.TrimSpace(projectName),
+		projectDB:   projectDB,
+		gatewayDB:   gatewayDB,
+		logger:      logger,
 	}
 }
 
@@ -86,20 +110,10 @@ func (n *GatewayStatusNotifier) OnStatusChange(ctx context.Context, event Status
 	if n.sendService == nil {
 		return fmt.Errorf("gateway status notifier 缺少 gateway send service")
 	}
-	title, err := n.loadTicketTitle(ctx, event.TicketID)
+	text, err := n.buildNotifyText(ctx, event)
 	if err != nil {
 		return err
 	}
-	if event.ToStatus == contracts.TicketDone {
-		if mergeDetail, merr := n.loadMergeDetail(ctx, event.TicketID); merr == nil && strings.TrimSpace(mergeDetail) != "" {
-			if cur := strings.TrimSpace(event.Detail); cur != "" {
-				event.Detail = strings.TrimSpace(mergeDetail) + "\n" + cur
-			} else {
-				event.Detail = strings.TrimSpace(mergeDetail)
-			}
-		}
-	}
-	text := buildStatusChangeNotifyText(event, title)
 	_, err = n.sendService.Send(ctx, projectName, text)
 	if err != nil {
 		if errors.Is(err, gatewaysendsvc.ErrBindingNotFound) {
@@ -110,22 +124,79 @@ func (n *GatewayStatusNotifier) OnStatusChange(ctx context.Context, event Status
 	return nil
 }
 
+func (n *OutboxEnqueueStatusNotifier) OnStatusChange(ctx context.Context, event StatusChangeEvent) error {
+	if n == nil {
+		return nil
+	}
+	event.FromStatus = contracts.CanonicalTicketWorkflowStatus(event.FromStatus)
+	event.ToStatus = contracts.CanonicalTicketWorkflowStatus(event.ToStatus)
+	if event.TicketID == 0 || event.FromStatus == "" || event.ToStatus == "" || event.FromStatus == event.ToStatus {
+		return nil
+	}
+	if !shouldNotifyTicketStatusChange(event) {
+		return nil
+	}
+	projectName := strings.TrimSpace(n.projectName)
+	if projectName == "" {
+		return fmt.Errorf("outbox enqueue notifier 缺少 project name")
+	}
+	if n.projectDB == nil {
+		return fmt.Errorf("outbox enqueue notifier 缺少 project db")
+	}
+	if n.gatewayDB == nil {
+		return fmt.Errorf("outbox enqueue notifier 缺少 gateway db")
+	}
+
+	text, err := n.buildNotifyText(ctx, event)
+	if err != nil {
+		return err
+	}
+
+	repo := gatewaysendsvc.NewGormRepository(n.gatewayDB)
+	logger := core.EnsureLogger(n.logger)
+	bindings, err := repo.FindEnabledBindings(ctx, projectName, contracts.ChannelTypeIM, gatewaysendsvc.AdapterFeishu)
+	if err != nil {
+		return err
+	}
+	if len(bindings) == 0 {
+		return nil
+	}
+
+	var enqueueErrs []error
+	enqueued := 0
+	for _, binding := range bindings {
+		chatID := strings.TrimSpace(binding.PeerProjectKey)
+		if chatID == "" {
+			logger.Warn("skip outbox enqueue: empty chat_id", "project", projectName, "binding_id", binding.ID)
+			continue
+		}
+		if _, duplicated, dupErr := repo.FindRecentDuplicateDelivery(ctx, binding, text); dupErr != nil {
+			enqueueErrs = append(enqueueErrs, fmt.Errorf("binding=%d dedup failed: %w", binding.ID, dupErr))
+			continue
+		} else if duplicated {
+			logger.Info("skip outbox enqueue: dedup hit", "project", projectName, "binding_id", binding.ID)
+			continue
+		}
+		if _, createErr := repo.CreatePending(ctx, binding, projectName, text); createErr != nil {
+			enqueueErrs = append(enqueueErrs, fmt.Errorf("binding=%d enqueue failed: %w", binding.ID, createErr))
+			continue
+		}
+		enqueued++
+	}
+	if enqueued == 0 && len(enqueueErrs) == 0 {
+		return nil
+	}
+	if len(enqueueErrs) > 0 {
+		return errors.Join(enqueueErrs...)
+	}
+	return nil
+}
+
 func (n *GatewayStatusNotifier) loadTicketTitle(ctx context.Context, ticketID uint) (string, error) {
-	if n == nil || n.projectDB == nil || ticketID == 0 {
+	if n == nil {
 		return fmt.Sprintf("t%d", ticketID), nil
 	}
-	var t contracts.Ticket
-	if err := n.projectDB.WithContext(ctx).Select("id", "title").First(&t, ticketID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Sprintf("t%d", ticketID), nil
-		}
-		return "", err
-	}
-	title := strings.TrimSpace(t.Title)
-	if title == "" {
-		title = fmt.Sprintf("t%d", ticketID)
-	}
-	return title, nil
+	return loadTicketTitleForDB(ctx, n.projectDB, ticketID)
 }
 
 func shouldNotifyTicketStatusChange(event StatusChangeEvent) bool {
@@ -138,11 +209,76 @@ func shouldNotifyTicketStatusChange(event StatusChangeEvent) bool {
 }
 
 func (n *GatewayStatusNotifier) loadMergeDetail(ctx context.Context, ticketID uint) (string, error) {
-	if n == nil || n.projectDB == nil || ticketID == 0 {
+	if n == nil {
+		return "", nil
+	}
+	return loadMergeDetailForDB(ctx, n.projectDB, ticketID)
+}
+
+func (n *GatewayStatusNotifier) buildNotifyText(ctx context.Context, event StatusChangeEvent) (string, error) {
+	title, err := n.loadTicketTitle(ctx, event.TicketID)
+	if err != nil {
+		return "", err
+	}
+	enriched, err := enrichDoneStatusDetail(ctx, n.projectDB, event)
+	if err != nil {
+		return "", err
+	}
+	return buildStatusChangeNotifyText(enriched, title), nil
+}
+
+func (n *OutboxEnqueueStatusNotifier) buildNotifyText(ctx context.Context, event StatusChangeEvent) (string, error) {
+	title, err := loadTicketTitleForDB(ctx, n.projectDB, event.TicketID)
+	if err != nil {
+		return "", err
+	}
+	enriched, err := enrichDoneStatusDetail(ctx, n.projectDB, event)
+	if err != nil {
+		return "", err
+	}
+	return buildStatusChangeNotifyText(enriched, title), nil
+}
+
+func enrichDoneStatusDetail(ctx context.Context, projectDB *gorm.DB, event StatusChangeEvent) (StatusChangeEvent, error) {
+	if contracts.CanonicalTicketWorkflowStatus(event.ToStatus) != contracts.TicketDone {
+		return event, nil
+	}
+	mergeDetail, err := loadMergeDetailForDB(ctx, projectDB, event.TicketID)
+	if err != nil || strings.TrimSpace(mergeDetail) == "" {
+		return event, err
+	}
+	if cur := strings.TrimSpace(event.Detail); cur != "" {
+		event.Detail = strings.TrimSpace(mergeDetail) + "\n" + cur
+		return event, nil
+	}
+	event.Detail = strings.TrimSpace(mergeDetail)
+	return event, nil
+}
+
+func loadTicketTitleForDB(ctx context.Context, projectDB *gorm.DB, ticketID uint) (string, error) {
+	if projectDB == nil || ticketID == 0 {
+		return fmt.Sprintf("t%d", ticketID), nil
+	}
+	var t contracts.Ticket
+	if err := projectDB.WithContext(ctx).Select("id", "title").First(&t, ticketID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Sprintf("t%d", ticketID), nil
+		}
+		return "", err
+	}
+	title := strings.TrimSpace(t.Title)
+	if title == "" {
+		title = fmt.Sprintf("t%d", ticketID)
+	}
+	return title, nil
+}
+
+func loadMergeDetailForDB(ctx context.Context, projectDB *gorm.DB, ticketID uint) (string, error) {
+	if projectDB == nil || ticketID == 0 {
 		return "", nil
 	}
 	var mi contracts.MergeItem
-	err := n.projectDB.WithContext(ctx).
+	err := projectDB.WithContext(ctx).
 		Where("ticket_id = ? AND status != ?", ticketID, contracts.MergeMerged).
 		Order("id desc").
 		First(&mi).Error

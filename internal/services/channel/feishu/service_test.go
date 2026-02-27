@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -28,6 +29,57 @@ func TestNewSenderReturnsNoopWhenCredentialMissing(t *testing.T) {
 	sender := NewSender(SenderConfig{Enabled: true, AppID: "", AppSecret: "secret"})
 	if _, ok := sender.(*daemonFeishuNoopSender); !ok {
 		t.Fatalf("expected noop sender, got %T", sender)
+	}
+}
+
+func TestNewSender_DefaultDisablesSystemProxy(t *testing.T) {
+	sender := NewSender(SenderConfig{
+		Enabled:   true,
+		AppID:     "app-id",
+		AppSecret: "app-secret",
+	})
+	httpSender, ok := sender.(*daemonFeishuHTTPSender)
+	if !ok {
+		t.Fatalf("expected daemonFeishuHTTPSender, got %T", sender)
+	}
+	transport, ok := httpSender.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", httpSender.client.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Fatalf("default proxy resolver should be nil")
+	}
+}
+
+func TestNewSender_UseSystemProxy(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:8999")
+	sender := NewSender(SenderConfig{
+		Enabled:        true,
+		AppID:          "app-id",
+		AppSecret:      "app-secret",
+		UseSystemProxy: true,
+	})
+	httpSender, ok := sender.(*daemonFeishuHTTPSender)
+	if !ok {
+		t.Fatalf("expected daemonFeishuHTTPSender, got %T", sender)
+	}
+	transport, ok := httpSender.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", httpSender.client.Transport)
+	}
+	if transport.Proxy == nil {
+		t.Fatalf("proxy resolver should not be nil when use_system_proxy=true")
+	}
+	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "open.feishu.cn"}}
+	proxyURL, err := transport.Proxy(req)
+	if err != nil {
+		t.Fatalf("proxy resolver returned error: %v", err)
+	}
+	if proxyURL == nil {
+		t.Fatalf("proxy resolver should return proxy URL")
+	}
+	if proxyURL.String() != "http://127.0.0.1:8999" {
+		t.Fatalf("unexpected proxy URL: %s", proxyURL.String())
 	}
 }
 

@@ -52,12 +52,13 @@ type daemonFeishuWebhookOptions struct {
 type HandlerOptions = daemonFeishuWebhookOptions
 
 type SenderConfig struct {
-	Enabled     bool
-	AppID       string
-	AppSecret   string
-	BaseURL     string
-	UserNameTTL time.Duration
-	Logger      *slog.Logger
+	Enabled        bool
+	AppID          string
+	AppSecret      string
+	BaseURL        string
+	UseSystemProxy bool
+	UserNameTTL    time.Duration
+	Logger         *slog.Logger
 }
 
 type daemonFeishuMentionID struct {
@@ -223,13 +224,36 @@ func NewSender(cfg SenderConfig) MessageSender {
 		baseURL = "https://open.feishu.cn"
 	}
 	return &daemonFeishuHTTPSender{
-		client:      &http.Client{Timeout: 12 * time.Second},
+		client:      newDaemonFeishuHTTPClient(cfg.UseSystemProxy),
 		baseURL:     baseURL,
 		appID:       appID,
 		appSecret:   appSecret,
 		logger:      logger,
 		userNameTTL: cfg.UserNameTTL,
 	}
+}
+
+func newDaemonFeishuHTTPClient(useSystemProxy bool) *http.Client {
+	return &http.Client{
+		Timeout:   12 * time.Second,
+		Transport: newDaemonFeishuTransport(useSystemProxy),
+	}
+}
+
+func newDaemonFeishuTransport(useSystemProxy bool) *http.Transport {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	var transport *http.Transport
+	if ok && base != nil {
+		transport = base.Clone()
+	} else {
+		transport = &http.Transport{}
+	}
+	if useSystemProxy {
+		transport.Proxy = http.ProxyFromEnvironment
+	} else {
+		transport.Proxy = nil
+	}
+	return transport
 }
 
 func NewWebhookHandler(gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender MessageSender, rawOpt HandlerOptions) http.HandlerFunc {

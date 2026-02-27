@@ -167,6 +167,7 @@ type Repository interface {
 	MarkFailedRetryable(ctx context.Context, state persistState, cause error, nextRetryAt time.Time) error
 	MarkFailed(ctx context.Context, state persistState, cause error) error
 	MarkDead(ctx context.Context, state persistState, cause error) error
+	FindPendingOutbox(ctx context.Context, limit int) ([]retryableOutbox, error)
 	FindRetryableOutbox(ctx context.Context, now time.Time, limit int) ([]retryableOutbox, error)
 }
 

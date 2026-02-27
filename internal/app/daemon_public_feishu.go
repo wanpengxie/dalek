@@ -19,11 +19,12 @@ type daemonFeishuWebhookOptions = feishusvc.HandlerOptions
 
 func newDaemonFeishuSender(cfg HomeDaemonPublicFeishuConfig, logger *slog.Logger) daemonFeishuMessageSender {
 	return feishusvc.NewSender(feishusvc.SenderConfig{
-		Enabled:   cfg.Enabled,
-		AppID:     cfg.AppID,
-		AppSecret: cfg.AppSecret,
-		BaseURL:   cfg.BaseURL,
-		Logger:    logger,
+		Enabled:        cfg.Enabled,
+		AppID:          cfg.AppID,
+		AppSecret:      cfg.AppSecret,
+		BaseURL:        cfg.BaseURL,
+		UseSystemProxy: cfg.UseSystemProxy,
+		Logger:         logger,
 	})
 }
 

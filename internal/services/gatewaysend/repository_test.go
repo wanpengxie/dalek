@@ -298,3 +298,45 @@ func TestRepository_FindRetryableOutbox(t *testing.T) {
 		t.Fatalf("retryable text mismatch: %q", got.text)
 	}
 }
+
+func TestRepository_FindPendingOutbox(t *testing.T) {
+	db := openGatewayDBForRepositoryTest(t)
+	repo := NewGormRepository(db)
+	binding := createRepositoryTestBinding(t, db, "demo", "chat-repo-find-pending")
+
+	pending, err := repo.CreatePending(context.Background(), binding, "demo", "pending message")
+	if err != nil {
+		t.Fatalf("CreatePending pending failed: %v", err)
+	}
+	sent, err := repo.CreatePending(context.Background(), binding, "demo", "sent message")
+	if err != nil {
+		t.Fatalf("CreatePending sent failed: %v", err)
+	}
+	if err := repo.MarkSending(context.Background(), sent.outbox.ID); err != nil {
+		t.Fatalf("MarkSending sent failed: %v", err)
+	}
+	if err := repo.MarkSent(context.Background(), sent); err != nil {
+		t.Fatalf("MarkSent sent failed: %v", err)
+	}
+
+	items, err := repo.FindPendingOutbox(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("FindPendingOutbox failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 pending outbox, got=%d", len(items))
+	}
+	got := items[0]
+	if got.state.outbox.ID != pending.outbox.ID {
+		t.Fatalf("pending outbox id mismatch: got=%d want=%d", got.state.outbox.ID, pending.outbox.ID)
+	}
+	if got.binding.ID != binding.ID {
+		t.Fatalf("pending binding id mismatch: got=%d want=%d", got.binding.ID, binding.ID)
+	}
+	if got.project != "demo" {
+		t.Fatalf("pending project mismatch: %q", got.project)
+	}
+	if got.text != "pending message" {
+		t.Fatalf("pending text mismatch: %q", got.text)
+	}
+}
