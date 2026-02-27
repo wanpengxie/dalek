@@ -10,7 +10,7 @@ import (
 
 func TestEnsureRepoAgentEntryPoints_LinkingAndRef(t *testing.T) {
 	repoRoot := t.TempDir()
-	ref := "@.dalek/AGENTS.md"
+	refs := []string{agentKernelRefLine, agentUserRefLine}
 
 	// both missing: create AGENTS.md + link CLAUDE.md -> AGENTS.md
 	if err := EnsureRepoAgentEntryPoints(repoRoot); err != nil {
@@ -37,12 +37,16 @@ func TestEnsureRepoAgentEntryPoints_LinkingAndRef(t *testing.T) {
 	}
 	if b, err := os.ReadFile(agentsPath); err != nil {
 		t.Fatalf("read AGENTS.md failed: %v", err)
-	} else if !strings.Contains(string(b), ref) {
-		t.Fatalf("AGENTS.md should include ref line %q", ref)
 	} else if !strings.Contains(string(b), injectBlockBegin) || !strings.Contains(string(b), injectBlockEnd) {
 		t.Fatalf("AGENTS.md should include dalek inject block")
 	} else if strings.Count(string(b), injectBlockBegin) != 1 || strings.Count(string(b), injectBlockEnd) != 1 {
 		t.Fatalf("AGENTS.md inject block should appear exactly once")
+	} else {
+		for _, ref := range refs {
+			if !strings.Contains(string(b), ref) {
+				t.Fatalf("AGENTS.md should include ref line %q", ref)
+			}
+		}
 	}
 }
 
@@ -77,8 +81,10 @@ func TestEnsureRepoAgentEntryPoints_PreserveUserContentAndInjectIdempotent(t *te
 		if !strings.Contains(s, strings.TrimSpace(original)) {
 			t.Fatalf("%s should preserve original user content", path)
 		}
-		if !strings.Contains(s, agentsRefLine) {
-			t.Fatalf("%s should include %q", path, agentsRefLine)
+		for _, ref := range []string{agentKernelRefLine, agentUserRefLine} {
+			if !strings.Contains(s, ref) {
+				t.Fatalf("%s should include %q", path, ref)
+			}
 		}
 		if strings.Count(s, injectBlockBegin) != 1 || strings.Count(s, injectBlockEnd) != 1 {
 			t.Fatalf("%s inject block should appear exactly once", path)

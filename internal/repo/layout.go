@@ -9,20 +9,21 @@ type Layout struct {
 	RepoRoot   string
 	ProjectDir string
 
-	ControlDir              string
-	ControlWorkerDir        string
-	ControlSkillsDir        string
-	ControlKnowledgeDir     string
-	ControlToolsDir         string
-	RuntimeDir              string
-	RuntimeWorkersDir       string
-	ConfigPath              string
-	DBPath                  string
-	ProjectGitignorePath    string
-	ProjectAgentKernelPath  string
-	ProjectAgentUserPath    string
-	ProjectBootstrapPath    string
-	ProjectLegacyAgentsPath string
+	ControlDir                 string
+	ControlWorkerDir           string
+	ControlSkillsDir           string
+	ControlKnowledgeDir        string
+	ControlToolsDir            string
+	RuntimeDir                 string
+	RuntimeWorkersDir          string
+	ConfigPath                 string
+	DBPath                     string
+	ProjectGitignorePath       string
+	ProjectAgentKernelPath     string
+	ProjectAgentUserPath       string
+	ProjectBootstrapPath       string
+	ProjectLegacyBootstrapPath string
+	ProjectLegacyAgentsPath    string
 }
 
 func NewLayout(repoRoot string) Layout {
@@ -43,12 +44,13 @@ func NewLayout(repoRoot string) Layout {
 		RuntimeDir:        runtimeDir,
 		RuntimeWorkersDir: filepath.Join(runtimeDir, "workers"),
 
-		ConfigPath:              filepath.Join(projectDir, "config.json"),
-		DBPath:                  filepath.Join(runtimeDir, "dalek.sqlite3"),
-		ProjectGitignorePath:    filepath.Join(projectDir, ".gitignore"),
-		ProjectAgentKernelPath:  filepath.Join(projectDir, "agent-kernel.md"),
-		ProjectAgentUserPath:    filepath.Join(projectDir, "agent-user.md"),
-		ProjectBootstrapPath:    filepath.Join(projectDir, "bootstrap.sh"),
-		ProjectLegacyAgentsPath: filepath.Join(projectDir, "AGENTS.md"),
+		ConfigPath:                 filepath.Join(projectDir, "config.json"),
+		DBPath:                     filepath.Join(runtimeDir, "dalek.sqlite3"),
+		ProjectGitignorePath:       filepath.Join(projectDir, ".gitignore"),
+		ProjectAgentKernelPath:     filepath.Join(projectDir, "agent-kernel.md"),
+		ProjectAgentUserPath:       filepath.Join(projectDir, "agent-user.md"),
+		ProjectBootstrapPath:       filepath.Join(projectDir, "bootstrap.sh"),
+		ProjectLegacyBootstrapPath: filepath.Join(controlDir, "worker", "bootstrap.sh"),
+		ProjectLegacyAgentsPath:    filepath.Join(projectDir, "AGENTS.md"),
 	}
 }

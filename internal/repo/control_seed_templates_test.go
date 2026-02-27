@@ -21,6 +21,7 @@ func TestControlSeed_SkillTemplatesAvailableForTests(t *testing.T) {
 		"templates/project/control/skills/dispatch-new-ticket/assets/worker-agents.md.template",
 		"templates/project/control/skills/dispatch-new-ticket/scripts/initialize_copy.py",
 		"templates/project/control/skills/notebook-shaping/SKILL.md",
+		"templates/project/control/skills/project-init/SKILL.md",
 	}
 	for _, p := range paths {
 		got := MustReadSeedTemplate(p)
@@ -30,7 +31,7 @@ func TestControlSeed_SkillTemplatesAvailableForTests(t *testing.T) {
 	}
 }
 
-func TestEnsureControlPlaneSeed_RenderProjectIdentityInAgentsTemplate(t *testing.T) {
+func TestEnsureControlPlaneSeed_RenderProjectIdentityInAgentUserTemplate(t *testing.T) {
 	repoRoot := t.TempDir()
 	layout := NewLayout(repoRoot)
 
@@ -38,22 +39,26 @@ func TestEnsureControlPlaneSeed_RenderProjectIdentityInAgentsTemplate(t *testing
 	if err := EnsureControlPlaneSeed(layout, projectName); err != nil {
 		t.Fatalf("EnsureControlPlaneSeed failed: %v", err)
 	}
-	b, err := os.ReadFile(layout.ProjectAgentsPath)
+	b, err := os.ReadFile(layout.ProjectAgentUserPath)
 	if err != nil {
-		t.Fatalf("read AGENTS.md failed: %v", err)
+		t.Fatalf("read agent-user.md failed: %v", err)
 	}
 	got := string(b)
-	if !strings.Contains(got, "<project_name>alpha</project_name>") {
-		t.Fatalf("AGENTS.md should include rendered project_name, got: %s", got)
+	if !strings.Contains(got, "<name>alpha</name>") {
+		t.Fatalf("agent-user.md should include rendered project_name, got: %s", got)
 	}
 	if !strings.Contains(got, "<project_key>"+ProjectKey(repoRoot)+"</project_key>") {
-		t.Fatalf("AGENTS.md should include rendered project_key")
+		t.Fatalf("agent-user.md should include rendered project_key")
 	}
 	if !strings.Contains(got, "<repo_root>"+repoRoot+"</repo_root>") {
-		t.Fatalf("AGENTS.md should include rendered repo_root")
+		t.Fatalf("agent-user.md should include rendered repo_root")
 	}
 	if strings.Contains(got, "{{.ProjectName}}") || strings.Contains(got, "{{.ProjectKey}}") || strings.Contains(got, "{{.RepoRoot}}") {
-		t.Fatalf("AGENTS.md should not contain unresolved template placeholders")
+		t.Fatalf("agent-user.md should not contain unresolved template placeholders")
+	}
+
+	if _, err := os.Stat(layout.ProjectAgentKernelPath); err != nil {
+		t.Fatalf("agent-kernel.md should exist, err=%v", err)
 	}
 
 	bootstrapPath := layout.ProjectBootstrapPath

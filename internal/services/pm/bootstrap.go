@@ -19,12 +19,25 @@ func (s *Service) executePMBootstrapEntrypoint(ctx context.Context, t contracts.
 		ctx = context.Background()
 	}
 
-	scriptPath := p.Layout.ProjectBootstrapPath
-	if _, err := os.Stat(scriptPath); err != nil {
-		if os.IsNotExist(err) {
-			return nil
+	scriptPath := ""
+	for _, candidate := range []string{
+		strings.TrimSpace(p.Layout.ProjectBootstrapPath),
+		strings.TrimSpace(p.Layout.ProjectLegacyBootstrapPath),
+	} {
+		if candidate == "" {
+			continue
 		}
-		return fmt.Errorf("读取 bootstrap 脚本失败: %w", err)
+		if st, err := os.Stat(candidate); err == nil {
+			if !st.IsDir() {
+				scriptPath = candidate
+				break
+			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("读取 bootstrap 脚本失败(%s): %w", candidate, err)
+		}
+	}
+	if scriptPath == "" {
+		return nil
 	}
 
 	workDir := strings.TrimSpace(w.WorktreePath)

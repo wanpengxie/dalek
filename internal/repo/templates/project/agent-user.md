@@ -8,8 +8,11 @@ version: "4.0"
 <name>{{.ProjectName}}</name>
 <project_key>{{.ProjectKey}}</project_key>
 <repo_root>{{.RepoRoot}}</repo_root>
-<user_init_state>uninitialized</user_init_state>
 </project_identity>
+
+<user_state>
+<user_init_state>uninitialized</user_init_state>
+</user_state>
 
 <definition>
 本文档是 Dalek 的工作空间——描述当前管理的项目的基础面。

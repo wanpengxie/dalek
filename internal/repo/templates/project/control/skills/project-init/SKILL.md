@@ -47,7 +47,7 @@ version: "2.0"
    - 保持幂等、快速、静默成功三原则
    - 无明确需求则保留默认模板
 
-3. 将 `<user_init_state>` 更新为 `ready`
+3. 将 `<user_state>/<user_init_state>` 更新为 `ready`
 
 ### Phase 3: Validate（校验初始化结果）
 
@@ -61,7 +61,7 @@ version: "2.0"
 ## 硬约束
 1. 先 explore 再 edit，不跳步
 2. explore 阶段只读，不改文件
-3. `<project_identity>` 和 `<definition>` 由 Go 模板渲染，**禁止修改**
+3. `<project_identity>` 和 `<definition>` 由 Go 模板渲染，**禁止修改**；初始化状态仅允许修改 `<user_state>` 区块
 4. 每个 section 基于代码库实证填写，信息不足标注"待补充"而非编造
 5. validate 失败必须回到 edit 修复
 6. agent-user.md 注入到每次对话——保持精简，细节下沉到 .dalek/control/knowledge/
