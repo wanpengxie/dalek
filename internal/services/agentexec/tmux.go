@@ -2,14 +2,15 @@ package agentexec
 
 import (
 	"context"
-	"dalek/internal/contracts"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"dalek/internal/agent/provider"
+	"dalek/internal/contracts"
 	"dalek/internal/infra"
 	"dalek/internal/services/core"
 )
@@ -230,11 +231,14 @@ func (h *TmuxHandle) Wait(ctx context.Context) (AgentRunResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	slog.Debug("tmux_handle: starting wait poll", "run_id", h.runID, "target", h.target)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			slog.Info("tmux_handle: context canceled during wait, exiting poll",
+				"run_id", h.runID, "target", h.target, "err", ctx.Err())
 			return AgentRunResult{}, ctx.Err()
 		default:
 		}
@@ -242,6 +246,8 @@ func (h *TmuxHandle) Wait(ctx context.Context) (AgentRunResult, error) {
 		run, err := h.runtime.FindRunByID(ctx, h.runID)
 		if err != nil {
 			if ctx.Err() != nil {
+				slog.Info("tmux_handle: context canceled during FindRunByID",
+					"run_id", h.runID, "err", ctx.Err())
 				return AgentRunResult{}, ctx.Err()
 			}
 			return AgentRunResult{}, err
@@ -249,15 +255,20 @@ func (h *TmuxHandle) Wait(ctx context.Context) (AgentRunResult, error) {
 		if run != nil {
 			switch run.OrchestrationState {
 			case contracts.TaskSucceeded:
+				slog.Debug("tmux_handle: run succeeded", "run_id", h.runID)
 				return AgentRunResult{ExitCode: 0}, nil
 			case contracts.TaskFailed:
+				slog.Info("tmux_handle: run failed", "run_id", h.runID, "msg", strings.TrimSpace(run.ErrorMessage))
 				return AgentRunResult{ExitCode: 1}, fmt.Errorf("%s", strings.TrimSpace(run.ErrorMessage))
 			case contracts.TaskCanceled:
+				slog.Info("tmux_handle: run canceled", "run_id", h.runID, "msg", strings.TrimSpace(run.ErrorMessage))
 				return AgentRunResult{ExitCode: 1}, fmt.Errorf("%s", strings.TrimSpace(run.ErrorMessage))
 			}
 		}
 		select {
 		case <-ctx.Done():
+			slog.Info("tmux_handle: context canceled during tick wait",
+				"run_id", h.runID, "target", h.target, "err", ctx.Err())
 			return AgentRunResult{}, ctx.Err()
 		case <-ticker.C:
 		}

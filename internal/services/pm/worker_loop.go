@@ -3,6 +3,7 @@ package pm
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -134,11 +135,24 @@ func (s *Service) readWorkerNextActionFromRun(ctx context.Context, runID uint) s
 
 // markWorkerLoopExit 在 worker loop 退出时标记 worker 状态。
 // lastError 非空表示异常退出（标记 failed），空表示正常退出（标记 stopped）。
+// 使用独立短超时 context 确保即使调用方 context 已 cancel，状态也能写入。
 func (s *Service) markWorkerLoopExit(ctx context.Context, w contracts.Worker, lastError string) {
+	// 如果调用方 context 已被 cancel（如 SIGHUP 信号导致），使用独立 context 完成状态写入。
+	writeCtx := ctx
+	if ctx.Err() != nil {
+		var cancel context.CancelFunc
+		writeCtx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		slog.Info("worker_loop: parent context canceled, using independent context for cleanup",
+			"worker_id", w.ID, "parent_err", ctx.Err())
+	}
+
 	now := time.Now()
 	if strings.TrimSpace(lastError) != "" {
-		_ = s.worker.MarkWorkerFailed(ctx, w.ID, now, lastError)
+		slog.Warn("worker_loop: marking worker as failed on exit", "worker_id", w.ID, "error", lastError)
+		_ = s.worker.MarkWorkerFailed(writeCtx, w.ID, now, lastError)
 	} else {
-		_ = s.worker.MarkWorkerSessionNotAlive(ctx, w, now)
+		slog.Info("worker_loop: marking worker session as stopped on exit", "worker_id", w.ID)
+		_ = s.worker.MarkWorkerSessionNotAlive(writeCtx, w, now)
 	}
 }

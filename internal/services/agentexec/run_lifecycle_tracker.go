@@ -2,10 +2,13 @@ package agentexec
 
 import (
 	"context"
-	"dalek/internal/contracts"
-	"errors"
+	"log/slog"
 	"strings"
 	"time"
+
+	"dalek/internal/contracts"
+
+	"errors"
 )
 
 // RunLifecycleTracker 统一管理 TaskRun 生命周期：create -> running -> terminal state。
@@ -75,14 +78,26 @@ func (t *RunLifecycleTracker) MarkRunning(ctx context.Context, runnerID string, 
 	return nil
 }
 
+// finishWriteTimeout 是 Finish 方法中 DB 写入的最大超时时间。
+// 使用短超时替代 context.Background()，确保即使进程正在退出，
+// 清理写入也能在有限时间内完成或超时，不会阻塞进程退出。
+const finishWriteTimeout = 10 * time.Second
+
 func (t *RunLifecycleTracker) Finish(ctx context.Context, result AgentRunResult, execErr error, successNote string) {
 	if t == nil || t.base.Runtime == nil || t.runID == 0 {
 		return
 	}
-	writeCtx := context.Background()
+	// 使用独立的短超时 context 而非 context.Background()：
+	// 保证清理写入不会被调用方 cancel 打断（不继承 parent），
+	// 但也不会无限阻塞（有 finishWriteTimeout 兜底）。
+	writeCtx, writeCancel := context.WithTimeout(context.Background(), finishWriteTimeout)
+	defer writeCancel()
+
 	now := time.Now()
 	if execErr == nil && result.ExitCode == 0 {
-		_ = t.base.Runtime.MarkRunSucceeded(writeCtx, t.runID, marshalJSON(result), now)
+		if err := t.base.Runtime.MarkRunSucceeded(writeCtx, t.runID, marshalJSON(result), now); err != nil {
+			slog.Warn("lifecycle_tracker: MarkRunSucceeded failed during cleanup", "run_id", t.runID, "err", err)
+		}
 		_ = t.base.Runtime.AppendEvent(writeCtx, contracts.TaskEventInput{
 			TaskRunID: t.runID,
 			EventType: "task_succeeded",
@@ -91,6 +106,7 @@ func (t *RunLifecycleTracker) Finish(ctx context.Context, result AgentRunResult,
 			Note:      strings.TrimSpace(successNote),
 			CreatedAt: now,
 		})
+		slog.Debug("lifecycle_tracker: run finished successfully", "run_id", t.runID)
 		return
 	}
 
@@ -99,7 +115,9 @@ func (t *RunLifecycleTracker) Finish(ctx context.Context, result AgentRunResult,
 		msg = "agent 执行失败"
 	}
 	if isCanceledError(execErr) || isCanceledError(contextErr(ctx)) {
-		_ = t.base.Runtime.MarkRunCanceled(writeCtx, t.runID, "agent_canceled", msg, now)
+		if err := t.base.Runtime.MarkRunCanceled(writeCtx, t.runID, "agent_canceled", msg, now); err != nil {
+			slog.Warn("lifecycle_tracker: MarkRunCanceled failed during cleanup", "run_id", t.runID, "err", err)
+		}
 		_ = t.base.Runtime.AppendEvent(writeCtx, contracts.TaskEventInput{
 			TaskRunID: t.runID,
 			EventType: "task_canceled",
@@ -108,10 +126,13 @@ func (t *RunLifecycleTracker) Finish(ctx context.Context, result AgentRunResult,
 			Note:      msg,
 			CreatedAt: now,
 		})
+		slog.Info("lifecycle_tracker: run canceled", "run_id", t.runID, "msg", msg)
 		return
 	}
 
-	_ = t.base.Runtime.MarkRunFailed(writeCtx, t.runID, "agent_exit_failed", msg, now)
+	if err := t.base.Runtime.MarkRunFailed(writeCtx, t.runID, "agent_exit_failed", msg, now); err != nil {
+		slog.Warn("lifecycle_tracker: MarkRunFailed failed during cleanup", "run_id", t.runID, "err", err)
+	}
 	_ = t.base.Runtime.AppendEvent(writeCtx, contracts.TaskEventInput{
 		TaskRunID: t.runID,
 		EventType: "task_failed",
@@ -120,6 +141,7 @@ func (t *RunLifecycleTracker) Finish(ctx context.Context, result AgentRunResult,
 		Note:      msg,
 		CreatedAt: now,
 	})
+	slog.Info("lifecycle_tracker: run failed", "run_id", t.runID, "msg", msg)
 }
 
 func ensureContext(ctx context.Context) context.Context {
