@@ -71,5 +71,16 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 		}
 		return s.syncTaskRuntimeFromReportWithRuntime(ctx, rt, workerSnapshot, r, runtimeHealth, needs, summary, source, now)
 	})
+
+	if workerSnapshot.ID != 0 && (workerSnapshot.RetryCount > 0 || workerSnapshot.LastRetryAt != nil || strings.TrimSpace(workerSnapshot.LastErrorHash) != "") {
+		if err := db.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", workerSnapshot.ID).Updates(map[string]any{
+			"retry_count":     0,
+			"last_retry_at":   nil,
+			"last_error_hash": "",
+			"updated_at":      now,
+		}).Error; err != nil {
+			return err
+		}
+	}
 	return nil
 }

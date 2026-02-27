@@ -27,6 +27,8 @@ type ManagerTickResult struct {
 	MaxRunning       int
 	Running          int
 	RunningBlocked   int
+	ZombieRecovered  int
+	ZombieBlocked    int
 	Capacity         int
 
 	EventsConsumed int
@@ -142,6 +144,9 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		return res, err
 	}
 
+	zombieResult := s.checkZombieWorkers(ctx, db, taskRuntime)
+	res.applyZombieCheckResult(zombieResult)
+
 	eventsResult := s.consumeTaskEvents(ctx, taskRuntime, st.LastEventID)
 	lastEventID := res.applyConsumeEventsResult(eventsResult)
 
@@ -183,6 +188,12 @@ func (res *ManagerTickResult) applyConsumeEventsResult(step consumeEventsResult)
 	res.InboxUpserts += step.InboxUpserts
 	res.Errors = append(res.Errors, step.Errors...)
 	return step.NewLastEventID
+}
+
+func (res *ManagerTickResult) applyZombieCheckResult(step zombieCheckResult) {
+	res.ZombieRecovered += step.Recovered
+	res.ZombieBlocked += step.Blocked
+	res.Errors = append(res.Errors, step.Errors...)
 }
 
 func (res *ManagerTickResult) applyScanWorkersResult(step scanWorkersResult) {

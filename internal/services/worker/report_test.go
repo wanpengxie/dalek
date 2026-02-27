@@ -2,7 +2,9 @@ package worker
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"dalek/internal/contracts"
 )
@@ -138,5 +140,52 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 	}
 	if taskRuns != 0 {
 		t.Fatalf("runtime sync transaction should rollback partial task runs, got=%d", taskRuns)
+	}
+}
+
+func TestApplyWorkerReport_ResetsZombieRetryState(t *testing.T) {
+	svc, p, _, _ := newServiceForTest(t)
+
+	root := t.TempDir()
+	tk := createTicket(t, p.DB, "report-reset-zombie-retry")
+	lastRetryAt := time.Now().Add(-5 * time.Minute)
+	w := contracts.Worker{
+		TicketID:      tk.ID,
+		Status:        contracts.WorkerRunning,
+		WorktreePath:  root,
+		Branch:        "ts/demo-ticket-5",
+		TmuxSocket:    "dalek",
+		TmuxSession:   "s-ticket-5",
+		RetryCount:    2,
+		LastRetryAt:   &lastRetryAt,
+		LastErrorHash: "deadbeef",
+	}
+	if err := p.DB.Create(&w).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+
+	r := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		Summary:    "恢复正常继续执行",
+		NextAction: string(contracts.NextContinue),
+	}
+	if err := svc.ApplyWorkerReport(context.Background(), r, "test"); err != nil {
+		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	}
+
+	var got contracts.Worker
+	if err := p.DB.First(&got, w.ID).Error; err != nil {
+		t.Fatalf("load worker failed: %v", err)
+	}
+	if got.RetryCount != 0 {
+		t.Fatalf("expected retry_count reset to 0, got=%d", got.RetryCount)
+	}
+	if got.LastRetryAt != nil {
+		t.Fatalf("expected last_retry_at cleared, got=%v", got.LastRetryAt)
+	}
+	if strings.TrimSpace(got.LastErrorHash) != "" {
+		t.Fatalf("expected last_error_hash cleared, got=%q", got.LastErrorHash)
 	}
 }
