@@ -35,7 +35,10 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 		return err
 	}
 
-	if _, err := writeFileIfMissing(layout.ProjectAgentsPath, defaultControlProjectAgentsTemplate(layout, projectName), 0o644); err != nil {
+	if _, err := writeFileIfMissing(layout.ProjectAgentKernelPath, defaultControlProjectAgentKernelTemplate(layout, projectName), 0o644); err != nil {
+		return err
+	}
+	if _, err := writeFileIfMissing(layout.ProjectAgentUserPath, defaultControlProjectAgentUserTemplate(layout, projectName), 0o644); err != nil {
 		return err
 	}
 	bootstrapPath := filepath.Join(layout.ControlWorkerDir, "bootstrap.sh")
@@ -85,7 +88,7 @@ func CurrentControlVersion(ctx context.Context, repoRoot string) string {
 	return sha
 }
 
-func defaultControlProjectAgentsTemplate(layout Layout, projectName string) string {
+func defaultControlProjectAgentKernelTemplate(layout Layout, projectName string) string {
 	name := strings.TrimSpace(projectName)
 	if name == "" {
 		name = DeriveProjectName(layout.RepoRoot)
@@ -101,7 +104,30 @@ func defaultControlProjectAgentsTemplate(layout Layout, projectName string) stri
 	if strings.TrimSpace(layout.RepoRoot) != "" {
 		projectKey = ProjectKey(layout.RepoRoot)
 	}
-	return mustRenderSeedTemplate("templates/project/AGENTS.md", map[string]string{
+	return mustRenderSeedTemplate("templates/project/agent-kernel.md", map[string]string{
+		"ProjectName": name,
+		"ProjectKey":  projectKey,
+		"RepoRoot":    repoRoot,
+	})
+}
+
+func defaultControlProjectAgentUserTemplate(layout Layout, projectName string) string {
+	name := strings.TrimSpace(projectName)
+	if name == "" {
+		name = DeriveProjectName(layout.RepoRoot)
+	}
+	if name == "" {
+		name = "-"
+	}
+	repoRoot := strings.TrimSpace(layout.RepoRoot)
+	if repoRoot == "" {
+		repoRoot = "-"
+	}
+	projectKey := "-"
+	if strings.TrimSpace(layout.RepoRoot) != "" {
+		projectKey = ProjectKey(layout.RepoRoot)
+	}
+	return mustRenderSeedTemplate("templates/project/agent-user.md", map[string]string{
 		"ProjectName": name,
 		"ProjectKey":  projectKey,
 		"RepoRoot":    repoRoot,

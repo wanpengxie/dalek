@@ -9,17 +9,19 @@ type Layout struct {
 	RepoRoot   string
 	ProjectDir string
 
-	ControlDir           string
-	ControlWorkerDir     string
-	ControlSkillsDir     string
-	ControlKnowledgeDir  string
-	ControlToolsDir      string
-	RuntimeDir           string
-	RuntimeWorkersDir    string
-	ConfigPath           string
-	DBPath               string
-	ProjectGitignorePath string
-	ProjectAgentsPath    string
+	ControlDir              string
+	ControlWorkerDir        string
+	ControlSkillsDir        string
+	ControlKnowledgeDir     string
+	ControlToolsDir         string
+	RuntimeDir              string
+	RuntimeWorkersDir       string
+	ConfigPath              string
+	DBPath                  string
+	ProjectGitignorePath    string
+	ProjectAgentKernelPath  string
+	ProjectAgentUserPath    string
+	ProjectLegacyAgentsPath string
 }
 
 func NewLayout(repoRoot string) Layout {
@@ -40,10 +42,11 @@ func NewLayout(repoRoot string) Layout {
 		RuntimeDir:        runtimeDir,
 		RuntimeWorkersDir: filepath.Join(runtimeDir, "workers"),
 
-		ConfigPath:           filepath.Join(projectDir, "config.json"),
-		DBPath:               filepath.Join(runtimeDir, "dalek.sqlite3"),
-		ProjectGitignorePath: filepath.Join(projectDir, ".gitignore"),
-
-		ProjectAgentsPath: filepath.Join(projectDir, "AGENTS.md"),
+		ConfigPath:              filepath.Join(projectDir, "config.json"),
+		DBPath:                  filepath.Join(runtimeDir, "dalek.sqlite3"),
+		ProjectGitignorePath:    filepath.Join(projectDir, ".gitignore"),
+		ProjectAgentKernelPath:  filepath.Join(projectDir, "agent-kernel.md"),
+		ProjectAgentUserPath:    filepath.Join(projectDir, "agent-user.md"),
+		ProjectLegacyAgentsPath: filepath.Join(projectDir, "AGENTS.md"),
 	}
 }

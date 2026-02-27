@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	agentsRefLine    = "@.dalek/AGENTS.md"
-	injectBlockBegin = "<!-- DALEK:INJECT:BEGIN -->"
-	injectBlockEnd   = "<!-- DALEK:INJECT:END -->"
+	agentKernelRefLine = "@.dalek/agent-kernel.md"
+	agentUserRefLine   = "@.dalek/agent-user.md"
+	injectBlockBegin   = "<!-- DALEK:INJECT:BEGIN -->"
+	injectBlockEnd     = "<!-- DALEK:INJECT:END -->"
 )
 
 // EnsureRepoAgentEntryPoints 在 repo root 里确保入口文件存在且两者都能工作：
@@ -84,8 +85,10 @@ func EnsureRepoAgentEntryPoints(repoRoot string) error {
 }
 
 func ensureEntryInjection(path string) error {
-	if err := infra.EnsureLineInFile(path, agentsRefLine); err != nil {
-		return err
+	for _, ref := range []string{agentKernelRefLine, agentUserRefLine} {
+		if err := infra.EnsureLineInFile(path, ref); err != nil {
+			return err
+		}
 	}
 	return ensureInjectedBlock(path, defaultRepoEntrypointInjectBlock())
 }
