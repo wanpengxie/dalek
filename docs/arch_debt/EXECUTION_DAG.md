@@ -32,7 +32,7 @@
 - W10C 已完成票：`T08(15)`（Channel CLI/SDK 执行入口统一到 services/agentexec）
 - W11A 已完成票：`T09(16)`（生命周期去重 + config 拆分 + Wait 可取消）
 - W12A 已完成票：`T50`（Task/Core 运行态模型统一与状态机归一）`T51`（PM DispatchQueue 分层拆解：queue/completion/workflow）`T52`（Channel 并发语义+依赖边界+context 传播收口）
-- W12B 已完成票：`T53`（Facade 类型边界强化与 Project 组件瘦身）
+- W12B 已完成票：`T53`（Facade 类型边界强化与 Project 组件瘦身）`T54`（Store JSON 字段类型化与约束治理）
 - 下游强制约束：
   - 状态机相关改造必须复用 `internal/fsm/*`（`T20/T27/T34` 不得再写隐式转换）。
   - 迁移相关改造必须复用 migration runner + `schema_migrations`（`T25` 直接沿用）。
@@ -660,6 +660,28 @@ Tickets: <T.. T.. T..>
   - context 传播策略统一：调用者必须提供有效 context，nil 时返回明确错误而非静默降级。
   - ActionExecutor 不再持有 Project 引用，后续不得回退到 DB 直连。
 - 已解锁：T53（若存在）可基于清洗后的 channel 执行边界继续推进。
+
+## W12B 回写（T54 ARCH-DEBT 收口E：Store JSON 字段类型化与约束治理）
+
+- 状态：`T54` 已完成（2026-02-27）。
+- 关键产物：
+  - 新增 `internal/contracts/json_types.go`，定义三个 GORM Value/Scan 统一封装类型：
+    - `JSONMap`（map[string]any 封装，实现 driver.Valuer/sql.Scanner/json.Marshaler/Unmarshaler）
+    - `JSONStringSlice`（[]string 封装）
+    - `JSONUintSlice`（[]uint 封装）
+  - `JSONMapFromAny`、`JSONStringSliceFromAny`、`JSONUintSliceFromAny` 工厂函数支持多源归一化。
+  - `PMDispatchJobResult` 升级为 Value/Scan 类型，直接替代 PMDispatchJob.ResultJSON 的 string 存储。
+  - 15+ JSON 字段从 string 升级为强类型：TaskEvent (3), TaskRuntimeSample (1), TaskSemanticReport (1), TicketWorkflowEvent (1), WorkerStatusEvent (1), PMDispatchJob (1), ChannelBinding (1), ChannelMessage (1), ChannelOutbox (1), ChannelTurnJob (1), MergeItem (1), ShapedItem (2), NoteItem (1)。
+  - 移除/简化散落的 helper：`toJSON()` 中 map 分支、`marshalJSON()`、`marshalWorkflowEventPayload()`、`parseJSONMap()`。
+  - 新增 `internal/contracts/json_types_test.go`，覆盖 Value/Scan/Marshal/Unmarshal/边界情况（12 个测试）。
+- 回归验证：
+  - `go test ./internal/...` 全部通过（26 个测试包 + 2 个 no test files）。
+  - `go vet ./...` 通过。
+  - `go build ./...` 通过。
+- 依赖变化说明：
+  - 无 DB schema 变更——所有列仍为 TEXT 类型，纯 Go 层类型化。
+  - 新增约束：后续 JSON 字段操作统一使用 contracts.JSONMap 等类型，禁止回退为 string + 手动 marshal/unmarshal。
+  - TaskRun.RequestPayloadJSON / ResultPayloadJSON 未覆盖（多 owner schema 差异大），后续可独立拆票。
 
 ## 每批执行建议
 
