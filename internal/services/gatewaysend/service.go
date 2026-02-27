@@ -23,6 +23,19 @@ type Service struct {
 	now      func() time.Time
 }
 
+type chatReplySender interface {
+	SendCardInteractive(ctx context.Context, chatID, cardJSON string) (string, error)
+}
+
+type createPendingWithPayloadRepo interface {
+	CreatePendingWithPayload(ctx context.Context, binding contracts.ChannelBinding, projectName, text string, payloadExtra contracts.JSONMap) (persistState, error)
+}
+
+type sendContent struct {
+	text     string
+	cardJSON string
+}
+
 func NewService(repo Repository, sender MessageSender, resolver contracts.ProjectMetaResolver, logger *slog.Logger) *Service {
 	if sender == nil {
 		sender = &NoopSender{}
@@ -90,8 +103,9 @@ func (s *Service) Send(ctx context.Context, projectName, text string) (Response,
 	results := make([]Delivery, 0, len(bindings))
 	delivered := 0
 	failed := 0
+	content := sendContent{text: text}
 	for _, binding := range bindings {
-		delivery, err := s.sendOneBinding(ctx, binding, projectName, cardProjectName, text)
+		delivery, err := s.sendOneBinding(ctx, binding, projectName, cardProjectName, content, true)
 		if err != nil {
 			delivery.Status = string(contracts.ChannelOutboxFailed)
 			delivery.Error = strings.TrimSpace(err.Error())
@@ -113,7 +127,53 @@ func (s *Service) Send(ctx context.Context, projectName, text string) (Response,
 	}, nil
 }
 
-func (s *Service) sendOneBinding(ctx context.Context, binding contracts.ChannelBinding, projectName, cardProjectName, text string) (Delivery, error) {
+func (s *Service) SendChatReply(ctx context.Context, projectName, chatID, text, cardJSON string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	projectName = strings.TrimSpace(projectName)
+	chatID = strings.TrimSpace(chatID)
+	text = strings.TrimSpace(text)
+	cardJSON = strings.TrimSpace(cardJSON)
+	if projectName == "" {
+		return fmt.Errorf("project 不能为空")
+	}
+	if chatID == "" {
+		return fmt.Errorf("chat_id 不能为空")
+	}
+	if text == "" && cardJSON == "" {
+		return fmt.Errorf("text 与 card_json 不能同时为空")
+	}
+	if s == nil || s.repo == nil {
+		return fmt.Errorf("gateway repository 为空")
+	}
+
+	binding, err := s.findBindingByChatID(ctx, projectName, chatID)
+	if err != nil {
+		return err
+	}
+	cardProjectName := resolveCardProjectName(projectName, s.resolver)
+	_, err = s.sendOneBinding(ctx, binding, projectName, cardProjectName, sendContent{
+		text:     text,
+		cardJSON: cardJSON,
+	}, false)
+	return err
+}
+
+func (s *Service) findBindingByChatID(ctx context.Context, projectName, chatID string) (contracts.ChannelBinding, error) {
+	bindings, err := s.repo.FindEnabledBindings(ctx, projectName, contracts.ChannelTypeIM, AdapterFeishu)
+	if err != nil {
+		return contracts.ChannelBinding{}, err
+	}
+	for _, binding := range bindings {
+		if strings.TrimSpace(binding.PeerProjectKey) == chatID {
+			return binding, nil
+		}
+	}
+	return contracts.ChannelBinding{}, fmt.Errorf("%w: project=%s chat_id=%s", ErrBindingNotFound, projectName, chatID)
+}
+
+func (s *Service) sendOneBinding(ctx context.Context, binding contracts.ChannelBinding, projectName, cardProjectName string, content sendContent, enableDedup bool) (Delivery, error) {
 	repo := s.repo
 	logger := core.EnsureLogger(s.logger)
 
@@ -125,23 +185,30 @@ func (s *Service) sendOneBinding(ctx context.Context, binding contracts.ChannelB
 	if chatID == "" {
 		return out, fmt.Errorf("binding %d 缺少 chat_id", binding.ID)
 	}
-	if reused, ok, err := repo.FindRecentDuplicateDelivery(ctx, binding, text); err != nil {
-		return out, err
-	} else if ok {
-		logger.Info("gateway send dedup",
-			"dedup_type", "send_content",
-			"binding_id", reused.BindingID,
-			"conversation_id", reused.ConversationID,
-			"message_id", reused.MessageID,
-			"outbox_id", reused.OutboxID,
-			"action", "skip",
-			"window", sendDedupWindow.String(),
-			"text_len", len(strings.TrimSpace(text)),
-		)
-		return reused, nil
+	content.text = strings.TrimSpace(content.text)
+	content.cardJSON = strings.TrimSpace(content.cardJSON)
+	if content.text == "" {
+		return out, fmt.Errorf("text 不能为空")
+	}
+	if enableDedup {
+		if reused, ok, err := repo.FindRecentDuplicateDelivery(ctx, binding, content.text); err != nil {
+			return out, err
+		} else if ok {
+			logger.Info("gateway send dedup",
+				"dedup_type", "send_content",
+				"binding_id", reused.BindingID,
+				"conversation_id", reused.ConversationID,
+				"message_id", reused.MessageID,
+				"outbox_id", reused.OutboxID,
+				"action", "skip",
+				"window", sendDedupWindow.String(),
+				"text_len", len(content.text),
+			)
+			return reused, nil
+		}
 	}
 
-	state, err := repo.CreatePending(ctx, binding, projectName, text)
+	state, err := s.createPending(ctx, binding, projectName, content)
 	if err != nil {
 		return out, err
 	}
@@ -149,13 +216,23 @@ func (s *Service) sendOneBinding(ctx context.Context, binding contracts.ChannelB
 	out.MessageID = state.message.ID
 	out.OutboxID = state.outbox.ID
 
-	if err := s.sendPersistedOutbox(ctx, binding, state, cardProjectName, text); err != nil {
+	if err := s.sendPersistedOutbox(ctx, binding, state, cardProjectName, content); err != nil {
 		return out, err
 	}
 	return out, nil
 }
 
-func (s *Service) sendPersistedOutbox(ctx context.Context, binding contracts.ChannelBinding, state persistState, cardProjectName, text string) error {
+func (s *Service) createPending(ctx context.Context, binding contracts.ChannelBinding, projectName string, content sendContent) (persistState, error) {
+	if payloadRepo, ok := s.repo.(createPendingWithPayloadRepo); ok && content.cardJSON != "" {
+		return payloadRepo.CreatePendingWithPayload(ctx, binding, projectName, content.text, contracts.JSONMap{
+			payloadKeyCardJSON: content.cardJSON,
+			payloadKeySendMode: payloadSendModeInteractive,
+		})
+	}
+	return s.repo.CreatePending(ctx, binding, projectName, content.text)
+}
+
+func (s *Service) sendPersistedOutbox(ctx context.Context, binding contracts.ChannelBinding, state persistState, cardProjectName string, content sendContent) error {
 	repo := s.repo
 	if repo == nil {
 		return fmt.Errorf("gateway repository 为空")
@@ -176,7 +253,7 @@ func (s *Service) sendPersistedOutbox(ctx context.Context, binding contracts.Cha
 	state.outbox.RetryCount++
 
 	sendCtx := persistCtx
-	if err := s.sendCardWithTextFallback(sendCtx, binding, cardProjectName, text); err != nil {
+	if err := s.sendContentWithFallback(sendCtx, binding, cardProjectName, content); err != nil {
 		if markErr := s.markFailedWithRetryPolicy(state, err); markErr != nil {
 			return fmt.Errorf("%w; persist retry state failed: %v", err, markErr)
 		}
@@ -187,6 +264,29 @@ func (s *Service) sendPersistedOutbox(ctx context.Context, binding contracts.Cha
 		return err
 	}
 	return nil
+}
+
+func (s *Service) sendContentWithFallback(ctx context.Context, binding contracts.ChannelBinding, cardProjectName string, content sendContent) error {
+	content.text = strings.TrimSpace(content.text)
+	content.cardJSON = strings.TrimSpace(content.cardJSON)
+	if content.cardJSON != "" {
+		if sender, ok := s.sender.(chatReplySender); ok {
+			chatID := strings.TrimSpace(binding.PeerProjectKey)
+			resultMid, err := sender.SendCardInteractive(ctx, chatID, content.cardJSON)
+			if err == nil && strings.TrimSpace(resultMid) != "" {
+				return nil
+			}
+			if err == nil {
+				err = fmt.Errorf("feishu send interactive failed: empty message_id")
+			}
+			core.EnsureLogger(s.logger).Warn("gateway send interactive card failed, fallback to card/text",
+				"binding_id", binding.ID,
+				"chat_id", chatID,
+				"error", err,
+			)
+		}
+	}
+	return s.sendCardWithTextFallback(ctx, binding, cardProjectName, content.text)
 }
 
 func (s *Service) sendCardWithTextFallback(ctx context.Context, binding contracts.ChannelBinding, cardProjectName, text string) error {
@@ -227,7 +327,10 @@ func (s *Service) markFailedWithRetryPolicy(state persistState, cause error) err
 func (s *Service) sendRetryableOutbox(ctx context.Context, item retryableOutbox) error {
 	projectName := strings.TrimSpace(item.project)
 	cardProjectName := resolveCardProjectName(projectName, s.resolver)
-	return s.sendPersistedOutbox(ctx, item.binding, item.state, cardProjectName, item.text)
+	return s.sendPersistedOutbox(ctx, item.binding, item.state, cardProjectName, sendContent{
+		text:     item.text,
+		cardJSON: item.cardJSON,
+	})
 }
 
 func (s *Service) nowOrDefault() time.Time {

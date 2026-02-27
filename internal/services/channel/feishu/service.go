@@ -43,6 +43,7 @@ const DefaultAdapter = defaultDaemonFeishuAdapter
 type daemonFeishuWebhookOptions struct {
 	Adapter           string
 	VerifyToken       string
+	ChatReplySender   ChatReplySender
 	EventDeduplicator *channelsvc.EventDeduplicator
 	Logger            *slog.Logger
 	RelayTimeout      time.Duration
@@ -145,6 +146,10 @@ type daemonFeishuMessageSender interface {
 }
 
 type MessageSender = daemonFeishuMessageSender
+
+type ChatReplySender interface {
+	SendChatReply(ctx context.Context, projectName, chatID, text, cardJSON string) error
+}
 
 type daemonFeishuNoopSender struct{}
 
@@ -323,6 +328,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 	if sender == nil {
 		sender = &daemonFeishuNoopSender{}
 	}
+	replySender := opt.ChatReplySender
 	dedup := opt.EventDeduplicator
 	if dedup == nil {
 		dedup = channelsvc.NewEventDeduplicator(daemonFeishuEventDedupTTL, daemonFeishuEventDedupCap)
@@ -537,6 +543,9 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			logDaemonFeishuInfo(logger, message, fields...)
 		}
 		markOutbox := func(outboxID uint, delivered bool, cause error) {
+			if replySender != nil {
+				return
+			}
 			if gateway == nil || outboxID == 0 {
 				return
 			}
@@ -658,6 +667,27 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			)
 
 			cardJSON := buildDaemonFeishuResultCardJSON(reply)
+			if replySender != nil {
+				sendCtx, sendCancel := context.WithTimeout(context.Background(), 8*time.Second)
+				sendErr := replySender.SendChatReply(sendCtx, boundProject, chatID, reply, cardJSON)
+				sendCancel()
+				finalSent = true
+				relayCancel()
+				if sendErr != nil {
+					logFinal("gateway reply enqueue failed",
+						"attempt", attempt,
+						"source", source,
+						"error", sendErr,
+					)
+					return
+				}
+				logFinal("gateway reply enqueue success",
+					"attempt", attempt,
+					"source", source,
+				)
+				return
+			}
+
 			var lastErr error
 			for i := 0; i < 2; i++ {
 				sendCtx, sendCancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -743,6 +773,27 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			writeMu.Unlock()
 
 			cardJSON := buildDaemonFeishuApprovalCardJSON(reply, result.PendingActions)
+			if replySender != nil {
+				sendCtx, sendCancel := context.WithTimeout(context.Background(), 8*time.Second)
+				sendErr := replySender.SendChatReply(sendCtx, boundProject, chatID, fallback, cardJSON)
+				sendCancel()
+				finalSent = true
+				relayCancel()
+				if sendErr != nil {
+					logFinal("gateway approval enqueue failed",
+						"attempt", attempt,
+						"source", source,
+						"error", sendErr,
+					)
+					return
+				}
+				logFinal("gateway approval enqueue success",
+					"attempt", attempt,
+					"source", source,
+				)
+				return
+			}
+
 			var lastErr error
 			for i := 0; i < 2; i++ {
 				sendCtx, sendCancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -1012,7 +1063,9 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 					return
 				}
 				if alreadySent {
-					markOutbox(outboxID, true, nil)
+					if replySender == nil {
+						markOutbox(outboxID, true, nil)
+					}
 					return
 				}
 				go sendFinalReply("callback", reply)

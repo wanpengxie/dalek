@@ -15,6 +15,10 @@ const (
 	payloadSchemaV1  = "dalek.gateway_send.payload.v1"
 	sendDedupWindow  = 30 * time.Second
 
+	payloadKeyCardJSON         = "card_json"
+	payloadKeySendMode         = "send_mode"
+	payloadSendModeInteractive = "interactive"
+
 	defaultRetryMaxRetries     = 5
 	defaultRetryInitialBackoff = 10 * time.Second
 	defaultRetryMaxBackoff     = 5 * time.Minute
@@ -152,10 +156,11 @@ type persistState struct {
 }
 
 type retryableOutbox struct {
-	binding contracts.ChannelBinding
-	state   persistState
-	project string
-	text    string
+	binding  contracts.ChannelBinding
+	state    persistState
+	project  string
+	text     string
+	cardJSON string
 }
 
 type Repository interface {

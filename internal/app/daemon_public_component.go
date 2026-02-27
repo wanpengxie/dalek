@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	"dalek/internal/contracts"
 	channelsvc "dalek/internal/services/channel"
 	"dalek/internal/services/core"
 	daemonsvc "dalek/internal/services/daemon"
+	gatewaysendsvc "dalek/internal/services/gatewaysend"
 	"dalek/internal/store"
 
 	"gorm.io/gorm"
@@ -128,9 +130,15 @@ func (c *daemonPublicGatewayComponent) Start(ctx context.Context) error {
 		webhookPath = "/feishu/webhook"
 	}
 	if c.feishuEnabled {
+		var gatewaySendResolver contracts.ProjectMetaResolver
+		if resolved, ok := any(c.resolver).(contracts.ProjectMetaResolver); ok {
+			gatewaySendResolver = resolved
+		}
+		chatReplySender := gatewaysendsvc.NewServiceWithDB(gatewayDB, gatewaySendResolver, c.sender, c.logger)
 		mux.HandleFunc(webhookPath, newDaemonFeishuWebhookHandler(gateway, c.resolver, c.sender, daemonFeishuWebhookOptions{
-			Adapter:     c.adapter,
-			VerifyToken: c.verifyToken,
+			Adapter:         c.adapter,
+			VerifyToken:     c.verifyToken,
+			ChatReplySender: chatReplySender,
 		}, c.logger))
 	} else {
 		mux.HandleFunc(webhookPath, func(w http.ResponseWriter, r *http.Request) {

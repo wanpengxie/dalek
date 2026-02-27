@@ -124,6 +124,14 @@ func (r *GormRepository) FindRecentDuplicateDelivery(ctx context.Context, bindin
 }
 
 func (r *GormRepository) CreatePending(ctx context.Context, binding contracts.ChannelBinding, projectName, text string) (persistState, error) {
+	return r.createPendingWithExtras(ctx, binding, projectName, text, nil)
+}
+
+func (r *GormRepository) CreatePendingWithPayload(ctx context.Context, binding contracts.ChannelBinding, projectName, text string, payloadExtra contracts.JSONMap) (persistState, error) {
+	return r.createPendingWithExtras(ctx, binding, projectName, text, payloadExtra)
+}
+
+func (r *GormRepository) createPendingWithExtras(ctx context.Context, binding contracts.ChannelBinding, projectName, text string, payloadExtra contracts.JSONMap) (persistState, error) {
 	db, err := r.dbOrErr()
 	if err != nil {
 		return persistState{}, err
@@ -145,6 +153,13 @@ func (r *GormRepository) CreatePending(ctx context.Context, binding contracts.Ch
 			"chat_id":         strings.TrimSpace(binding.PeerProjectKey),
 			"text":            strings.TrimSpace(text),
 			"created_at":      now.Format(time.RFC3339),
+		}
+		for key, value := range payloadExtra {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			payload[key] = value
 		}
 		payloadJSON := marshalPayload(payload)
 		peerMessageID := fmt.Sprintf("send-%d-%s", now.UnixNano(), randomHex(2))
@@ -434,9 +449,10 @@ func (r *GormRepository) findOutboxesByQuery(ctx context.Context, query *gorm.DB
 		}
 
 		items = append(items, retryableOutbox{
-			binding: binding,
-			project: projectName,
-			text:    text,
+			binding:  binding,
+			project:  projectName,
+			text:     text,
+			cardJSON: strings.TrimSpace(stringValue(payload[payloadKeyCardJSON])),
 			state: persistState{
 				conversation: conversation,
 				message:      message,
@@ -445,4 +461,11 @@ func (r *GormRepository) findOutboxesByQuery(ctx context.Context, query *gorm.DB
 		})
 	}
 	return items, nil
+}
+
+func stringValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }

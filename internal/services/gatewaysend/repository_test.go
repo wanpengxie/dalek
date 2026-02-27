@@ -340,3 +340,33 @@ func TestRepository_FindPendingOutbox(t *testing.T) {
 		t.Fatalf("pending text mismatch: %q", got.text)
 	}
 }
+
+func TestRepository_CreatePendingWithPayload_PreservesCardJSON(t *testing.T) {
+	db := openGatewayDBForRepositoryTest(t)
+	repo := NewGormRepository(db)
+	binding := createRepositoryTestBinding(t, db, "demo", "chat-repo-card-json")
+
+	cardJSON := `{"type":"template","data":{"foo":"bar"}}`
+	_, err := repo.CreatePendingWithPayload(context.Background(), binding, "demo", "fallback text", contracts.JSONMap{
+		payloadKeyCardJSON: cardJSON,
+		payloadKeySendMode: payloadSendModeInteractive,
+	})
+	if err != nil {
+		t.Fatalf("CreatePendingWithPayload failed: %v", err)
+	}
+
+	items, err := repo.FindPendingOutbox(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("FindPendingOutbox failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 pending outbox, got=%d", len(items))
+	}
+	got := items[0]
+	if got.cardJSON != cardJSON {
+		t.Fatalf("cardJSON mismatch: got=%q want=%q", got.cardJSON, cardJSON)
+	}
+	if got.text != "fallback text" {
+		t.Fatalf("text mismatch: got=%q", got.text)
+	}
+}
