@@ -2,7 +2,10 @@ package channel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -227,7 +230,7 @@ func TestClaudeChatRunner_CanUseTool_HighRiskRequiresManualApproval(t *testing.T
 	defer r.setToolApproval(nil)
 
 	result, err := r.canUseTool(context.Background(), "Bash", map[string]any{
-		"command": "git push origin main",
+		"command": "docker ps",
 	}, claude.ToolPermissionContext{})
 	if err != nil {
 		t.Fatalf("canUseTool should not return error, got=%v", err)
@@ -237,6 +240,52 @@ func TestClaudeChatRunner_CanUseTool_HighRiskRequiresManualApproval(t *testing.T
 	}
 	if !called {
 		t.Fatalf("high-risk command should invoke manual approval callback")
+	}
+}
+
+func TestChatRunnerClaudeSettingsJSON_DeniesGitPushAndRM(t *testing.T) {
+	rules := func(raw any) []string {
+		arr, _ := raw.([]any)
+		out := make([]string, 0, len(arr))
+		for _, item := range arr {
+			s := strings.TrimSpace(fmt.Sprint(item))
+			if s != "" && s != "<nil>" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+
+	raw := chatRunnerClaudeSettingsJSON()
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		t.Fatalf("chat settings should be valid json: %v", err)
+	}
+	perms, _ := parsed["permissions"].(map[string]any)
+	if perms == nil {
+		t.Fatalf("permissions missing")
+	}
+	deny := rules(perms["deny"])
+	ask := rules(perms["ask"])
+
+	denySet := map[string]bool{}
+	for _, item := range deny {
+		denySet[strings.ToLower(strings.TrimSpace(item))] = true
+	}
+	if !denySet["bash(git push*)"] {
+		t.Fatalf("deny should include git push, got=%v", deny)
+	}
+	if !denySet["bash(rm *)"] {
+		t.Fatalf("deny should include rm, got=%v", deny)
+	}
+	for _, item := range ask {
+		low := strings.ToLower(strings.TrimSpace(item))
+		if strings.HasPrefix(low, "bash(git push") {
+			t.Fatalf("ask should not include git push rule, got=%v", ask)
+		}
+		if strings.HasPrefix(low, "bash(rm") {
+			t.Fatalf("ask should not include rm rule, got=%v", ask)
+		}
 	}
 }
 

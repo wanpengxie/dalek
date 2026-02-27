@@ -82,7 +82,7 @@ func newClaudeChatRunner(ctx context.Context, req ChatRunRequest) (ChatRunner, e
 	if addDirs := sdkrunner.SDKAdditionalDirectories(req.WorkDir); len(addDirs) > 0 {
 		opts = append(opts, claude.WithAddDirs(addDirs...))
 	}
-	if settings := sdkrunner.ClaudeRunnerSettingsJSON(); settings != "" {
+	if settings := chatRunnerClaudeSettingsJSON(); settings != "" {
 		opts = append(opts, claude.WithSettings(settings))
 	}
 	opts = append(opts, claude.WithIncludePartialMessages())
