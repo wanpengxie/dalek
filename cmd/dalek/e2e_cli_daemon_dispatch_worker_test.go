@@ -347,6 +347,45 @@ func TestCLI_TicketDispatch_DepthGuardBlocksNestedDispatch(t *testing.T) {
 	}
 }
 
+func TestCLI_AgentRun_DepthGuardBlocksNestedDispatch(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+	home := filepath.Join(t.TempDir(), "home")
+	prepareDemoProjectWithOneTicket(t, bin, repo, home)
+	t.Setenv("DALEK_DISPATCH_DEPTH", "1")
+
+	stdout, stderr, err := runCLI(
+		t,
+		bin,
+		repo,
+		"-home", home,
+		"-project", "demo",
+		"agent", "run",
+		"--prompt", "do something",
+		"-o", "json",
+	)
+	if err == nil {
+		t.Fatalf("expected agent run blocked by dispatch depth\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "禁止在二次派发上下文执行 dalek agent run") {
+		t.Fatalf("stderr should contain dispatch-depth guard error:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "daemon 不在线") {
+		t.Fatalf("guard should stop before daemon fallback branch:\n%s", stderr)
+	}
+
+	var payload cliErrorJSON
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &payload); err != nil {
+		t.Fatalf("decode json error payload failed: %v\nraw=%s", err, stdout)
+	}
+	if payload.Schema != "dalek.error.v1" || payload.ExitCode != 1 {
+		t.Fatalf("unexpected error payload: %+v", payload)
+	}
+	if !strings.Contains(payload.Cause, "DALEK_DISPATCH_DEPTH=1") {
+		t.Fatalf("json cause should contain dispatch depth detail: %+v", payload)
+	}
+}
+
 func TestCLI_WorkerRun_AsyncAccepted(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
