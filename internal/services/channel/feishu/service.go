@@ -23,7 +23,8 @@ import (
 )
 
 const (
-	defaultDaemonFeishuAdapter = "im.feishu"
+	defaultDaemonFeishuAdapter   = "im.feishu"
+	daemonFeishuInvalidTokenCode = 99991663
 
 	daemonFeishuCardDefaultTitle    = "dalek"
 	daemonFeishuCardTitleMaxRunes   = 64
@@ -1929,45 +1930,69 @@ func (s *daemonFeishuHTTPSender) PatchCard(ctx context.Context, messageID, cardJ
 	if messageID == "" || cardJSON == "" {
 		return nil
 	}
-	token, err := s.getTenantToken(ctx)
-	if err != nil {
-		return err
-	}
 	payload, err := json.Marshal(map[string]string{"content": cardJSON})
 	if err != nil {
 		return err
 	}
 	u := strings.TrimRight(s.baseURL, "/") + "/open-apis/im/v1/messages/" + url.PathEscape(messageID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, u, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		token, tokenErr := s.getTenantToken(ctx)
+		if tokenErr != nil {
+			return tokenErr
+		}
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPatch, u, bytes.NewReader(payload))
+		if reqErr != nil {
+			return reqErr
+		}
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, doErr := s.client.Do(req)
+		if doErr != nil {
+			return doErr
+		}
+		raw, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("feishu patch card failed: http=%d body=%s", resp.StatusCode, string(raw))
+			if attempt == 1 && isDaemonFeishuInvalidTokenBody(raw) {
+				s.invalidateTenantToken()
+				s.logInfo("feishu token invalid, retry patch card",
+					"message_id", messageID,
+				)
+				continue
+			}
+			return lastErr
+		}
+		if readErr != nil {
+			return fmt.Errorf("feishu patch card failed: read body: %w", readErr)
+		}
+		var ack struct {
+			Code int    `json:"code"`
+			Msg  string `json:"msg"`
+		}
+		if unmarshalErr := json.Unmarshal(raw, &ack); unmarshalErr != nil {
+			return fmt.Errorf("feishu patch card failed: invalid json: %v body=%s", unmarshalErr, string(raw))
+		}
+		if ack.Code != 0 {
+			lastErr = fmt.Errorf("feishu patch card failed: code=%d msg=%s", ack.Code, ack.Msg)
+			if attempt == 1 && ack.Code == daemonFeishuInvalidTokenCode {
+				s.invalidateTenantToken()
+				s.logInfo("feishu token invalid, retry patch card",
+					"message_id", messageID,
+				)
+				continue
+			}
+			return lastErr
+		}
+		return nil
 	}
-	defer resp.Body.Close()
-	raw, readErr := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("feishu patch card failed: http=%d body=%s", resp.StatusCode, string(raw))
+	if lastErr != nil {
+		return lastErr
 	}
-	if readErr != nil {
-		return fmt.Errorf("feishu patch card failed: read body: %w", readErr)
-	}
-	var ack struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	if err := json.Unmarshal(raw, &ack); err != nil {
-		return fmt.Errorf("feishu patch card failed: invalid json: %v body=%s", err, string(raw))
-	}
-	if ack.Code != 0 {
-		return fmt.Errorf("feishu patch card failed: code=%d msg=%s", ack.Code, ack.Msg)
-	}
-	return nil
+	return fmt.Errorf("feishu patch card failed: invalid token retry exhausted")
 }
 
 func (s *daemonFeishuHTTPSender) GetUserName(ctx context.Context, userID string) (string, error) {
@@ -1981,10 +2006,6 @@ func (s *daemonFeishuHTTPSender) GetUserName(ctx context.Context, userID string)
 	if cachedName, ok := s.getCachedUserName(userID); ok {
 		return cachedName, nil
 	}
-	token, err := s.getTenantToken(ctx)
-	if err != nil {
-		return "", err
-	}
 
 	u, err := url.Parse(strings.TrimRight(s.baseURL, "/") + "/open-apis/contact/v3/users/" + url.PathEscape(userID))
 	if err != nil {
@@ -1994,49 +2015,76 @@ func (s *daemonFeishuHTTPSender) GetUserName(ctx context.Context, userID string)
 	query.Set("user_id_type", "open_id")
 	u.RawQuery = query.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		token, tokenErr := s.getTenantToken(ctx)
+		if tokenErr != nil {
+			return "", tokenErr
+		}
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if reqErr != nil {
+			return "", reqErr
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return "", err
+		resp, doErr := s.client.Do(req)
+		if doErr != nil {
+			return "", doErr
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("feishu get user failed: http=%d body=%s", resp.StatusCode, string(raw))
+			if attempt == 1 && isDaemonFeishuInvalidTokenBody(raw) {
+				s.invalidateTenantToken()
+				s.logInfo("feishu token invalid, retry get user",
+					"user_id", userID,
+				)
+				continue
+			}
+			return "", lastErr
+		}
+		var out struct {
+			Code int    `json:"code"`
+			Msg  string `json:"msg"`
+			Data struct {
+				User struct {
+					Name string `json:"name"`
+				} `json:"user"`
+			} `json:"data"`
+		}
+		if unmarshalErr := json.Unmarshal(raw, &out); unmarshalErr != nil {
+			return "", unmarshalErr
+		}
+		if out.Code != 0 {
+			lastErr = fmt.Errorf("feishu get user failed: code=%d msg=%s", out.Code, out.Msg)
+			if attempt == 1 && out.Code == daemonFeishuInvalidTokenCode {
+				s.invalidateTenantToken()
+				s.logInfo("feishu token invalid, retry get user",
+					"user_id", userID,
+				)
+				continue
+			}
+			return "", lastErr
+		}
+		name := out.Data.User.Name
+		if name == "" {
+			return "", nil
+		}
+		cacheTTL := s.userNameTTL
+		if cacheTTL <= 0 {
+			cacheTTL = daemonFeishuUserNameCacheTTL
+		}
+		s.userNames.Store(userID, daemonFeishuUserNameCacheEntry{
+			name:      name,
+			expiresAt: time.Now().Add(cacheTTL),
+		})
+		return name, nil
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("feishu get user failed: http=%d body=%s", resp.StatusCode, string(raw))
+	if lastErr != nil {
+		return "", lastErr
 	}
-	var out struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			User struct {
-				Name string `json:"name"`
-			} `json:"user"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", err
-	}
-	if out.Code != 0 {
-		return "", fmt.Errorf("feishu get user failed: code=%d msg=%s", out.Code, out.Msg)
-	}
-	name := out.Data.User.Name
-	if name == "" {
-		return "", nil
-	}
-	cacheTTL := s.userNameTTL
-	if cacheTTL <= 0 {
-		cacheTTL = daemonFeishuUserNameCacheTTL
-	}
-	s.userNames.Store(userID, daemonFeishuUserNameCacheEntry{
-		name:      name,
-		expiresAt: time.Now().Add(cacheTTL),
-	})
-	return name, nil
+	return "", fmt.Errorf("feishu get user failed: invalid token retry exhausted")
 }
 
 func (s *daemonFeishuHTTPSender) getCachedUserName(userID string) (string, bool) {
@@ -2074,10 +2122,6 @@ func (s *daemonFeishuHTTPSender) sendMessage(ctx context.Context, chatID, msgTyp
 	if chatID == "" || msgType == "" || content == "" {
 		return "", nil
 	}
-	token, err := s.getTenantToken(ctx)
-	if err != nil {
-		return "", err
-	}
 	payload := map[string]any{
 		"receive_id": chatID,
 		"msg_type":   msgType,
@@ -2096,39 +2140,68 @@ func (s *daemonFeishuHTTPSender) sendMessage(ctx context.Context, chatID, msgTyp
 	q.Set("receive_id_type", "chat_id")
 	u.RawQuery = q.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	req.Header.Set("Authorization", "Bearer "+token)
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		token, tokenErr := s.getTenantToken(ctx)
+		if tokenErr != nil {
+			return "", tokenErr
+		}
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
+		if reqErr != nil {
+			return "", reqErr
+		}
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return "", err
+		resp, doErr := s.client.Do(req)
+		if doErr != nil {
+			return "", doErr
+		}
+		raw, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("feishu send message failed: http=%d body=%s", resp.StatusCode, string(raw))
+			if attempt == 1 && isDaemonFeishuInvalidTokenBody(raw) {
+				s.invalidateTenantToken()
+				s.logInfo("feishu token invalid, retry send message",
+					"chat", chatID,
+					"msg_type", msgType,
+				)
+				continue
+			}
+			return "", lastErr
+		}
+		if readErr != nil {
+			return "", fmt.Errorf("feishu send message failed: read body: %w", readErr)
+		}
+		var ack struct {
+			Code int    `json:"code"`
+			Msg  string `json:"msg"`
+			Data struct {
+				MessageID string `json:"message_id"`
+			} `json:"data"`
+		}
+		if unmarshalErr := json.Unmarshal(raw, &ack); unmarshalErr != nil {
+			return "", fmt.Errorf("feishu send message failed: invalid json: %v body=%s", unmarshalErr, string(raw))
+		}
+		if ack.Code != 0 {
+			lastErr = fmt.Errorf("feishu send message failed: code=%d msg=%s", ack.Code, ack.Msg)
+			if attempt == 1 && ack.Code == daemonFeishuInvalidTokenCode {
+				s.invalidateTenantToken()
+				s.logInfo("feishu token invalid, retry send message",
+					"chat", chatID,
+					"msg_type", msgType,
+				)
+				continue
+			}
+			return "", lastErr
+		}
+		return ack.Data.MessageID, nil
 	}
-	defer resp.Body.Close()
-	raw, readErr := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("feishu send message failed: http=%d body=%s", resp.StatusCode, string(raw))
+	if lastErr != nil {
+		return "", lastErr
 	}
-	if readErr != nil {
-		return "", fmt.Errorf("feishu send message failed: read body: %w", readErr)
-	}
-	var ack struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			MessageID string `json:"message_id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &ack); err != nil {
-		return "", fmt.Errorf("feishu send message failed: invalid json: %v body=%s", err, string(raw))
-	}
-	if ack.Code != 0 {
-		return "", fmt.Errorf("feishu send message failed: code=%d msg=%s", ack.Code, ack.Msg)
-	}
-	return ack.Data.MessageID, nil
+	return "", fmt.Errorf("feishu send message failed: invalid token retry exhausted")
 }
 
 func (s *daemonFeishuHTTPSender) getTenantToken(ctx context.Context) (string, error) {
@@ -2191,6 +2264,30 @@ func (s *daemonFeishuHTTPSender) getTenantToken(ctx context.Context) (string, er
 	s.tokenUntil = until
 	s.mu.Unlock()
 	return token, nil
+}
+
+func (s *daemonFeishuHTTPSender) invalidateTenantToken() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.token = ""
+	s.tokenUntil = time.Time{}
+	s.mu.Unlock()
+}
+
+func isDaemonFeishuInvalidTokenBody(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var ack struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(raw, &ack); err == nil && ack.Code == daemonFeishuInvalidTokenCode {
+		return true
+	}
+	msg := strings.ToLower(string(raw))
+	return strings.Contains(msg, "99991663") && strings.Contains(msg, "access token")
 }
 
 func sanitizeDaemonFeishuCardTitle(title string) string {
