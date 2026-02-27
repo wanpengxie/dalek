@@ -231,6 +231,17 @@ func (h *TmuxHandle) Wait(ctx context.Context) (AgentRunResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// 无论正常完成还是 context 取消，退出时停止 pipe-pane，
+	// 防止 "cat >> stream.log" 进程因 pipe 未关闭而持续泄漏。
+	defer func() {
+		if strings.TrimSpace(h.target) != "" {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := h.tmux.StopPipePane(stopCtx, h.socket, h.target); err != nil {
+				slog.Debug("tmux_handle: stop pipe-pane on exit", "run_id", h.runID, "target", h.target, "err", err)
+			}
+		}
+	}()
 	slog.Debug("tmux_handle: starting wait poll", "run_id", h.runID, "target", h.target)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
