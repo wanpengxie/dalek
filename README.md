@@ -62,7 +62,7 @@ TUI 里的两列分别对应：
 - `a` attach 进入会话（detach 后回到 TUI）
 - `k` 停止（kill 对应 tmux session）
 - `d` 归档（archive：不删除记录，默认列表不显示）
-- `r` 观测（对选中 ticket 运行一次 watcher，并刷新列表）
+- `r` 重新跑（对选中 ticket 触发一次 worker run，固定 prompt：`根据当前状态，继续执行任务`）
 - `e` 编辑标题/描述（`Ctrl+S` 保存，`Esc` 返回）
 - `v` 查看事件时间线（`r` 刷新，`Esc` 返回）
 - `+/-` 调整优先级
@@ -264,7 +264,7 @@ cheap sampler 每轮对每个 running worker 会做：
 
 补充：
 
-- 手动观测（TUI `r`）会把 watcher 的 `prompt/input/output`（截断）写进 `worker_events`，方便你 debug “为什么会被判成某个状态”。
+- TUI `r` 现为“重新跑”，不再触发手动观测；watcher 由调度事件与后台采样按既有机制驱动。
 
 ## 配置
 

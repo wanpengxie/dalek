@@ -188,6 +188,7 @@ type ticketAction string
 const (
 	ticketActionStart     ticketAction = "start"
 	ticketActionDispatch  ticketAction = "dispatch"
+	ticketActionWorkerRun ticketAction = "worker_run"
 	ticketActionInterrupt ticketAction = "interrupt"
 	ticketActionStop      ticketAction = "stop"
 	ticketActionAttach    ticketAction = "attach"
@@ -204,6 +205,8 @@ func actionLabel(action ticketAction) string {
 		return "启动(s)"
 	case ticketActionDispatch:
 		return "派发(p)"
+	case ticketActionWorkerRun:
+		return "重新跑(r)"
 	case ticketActionInterrupt:
 		return "中断(i)"
 	case ticketActionStop:
@@ -247,6 +250,8 @@ func (m model) selectedTicketForAction(action ticketAction) (uint, bool, string)
 			allowed = cap.CanStart
 		case ticketActionDispatch:
 			allowed = cap.CanDispatch
+		case ticketActionWorkerRun:
+			allowed = cap.CanDispatch
 		case ticketActionInterrupt:
 			// interrupt 需要 session 可用，复用 stop 的 capability。
 			allowed = cap.CanStop
@@ -273,7 +278,7 @@ func (m model) selectedTicketForAction(action ticketAction) (uint, bool, string)
 			return 0, false, actionDeniedStatus(action, "已归档")
 		}
 	}
-	return 0, false, actionDeniedStatus(action, "详情尚未加载（按 r 刷新）")
+	return 0, false, actionDeniedStatus(action, "详情尚未加载")
 }
 
 func (m model) ticketCount() int {
@@ -490,6 +495,26 @@ func (m model) dispatchTicketCmd(id uint) tea.Cmd {
 			return dispatchedMsg{TicketID: id, Err: err}
 		}
 		return dispatchedMsg{TicketID: id, Receipt: r, Err: nil}
+	}
+}
+
+func (m model) workerRunTicketCmd(id uint) tea.Cmd {
+	return func() tea.Msg {
+		client, err := app.NewDaemonAPIClientFromHome(m.home)
+		if err != nil {
+			return workerRunMsg{TicketID: id, Err: fmt.Errorf("daemon 不在线: %w", err)}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		r, err := client.SubmitWorkerRun(ctx, app.DaemonWorkerRunSubmitRequest{
+			Project:  m.projectName,
+			TicketID: id,
+			Prompt:   "根据当前状态，继续执行任务",
+		})
+		if err != nil {
+			return workerRunMsg{TicketID: id, Err: err}
+		}
+		return workerRunMsg{TicketID: id, Receipt: r, Err: nil}
 	}
 }
 

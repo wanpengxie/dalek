@@ -108,6 +108,12 @@ type dispatchedMsg struct {
 	Err      error
 }
 
+type workerRunMsg struct {
+	TicketID uint
+	Receipt  app.DaemonWorkerRunSubmitReceipt
+	Err      error
+}
+
 type interruptedMsg struct {
 	TicketID uint
 	Result   app.InterruptResult
@@ -258,7 +264,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		showArchiveRows: false,
 		mergeErr:        "",
 		archiveErr:      "",
-		helpMsg:         "g 管理员  n 新建  s 启动  p 派发  i 中断  a attach  k 停止  d 归档  r 刷新  e 编辑  v 事件  +/- 优先级  0-4 状态  t 配色  q 退出",
+		helpMsg:         "g 管理员  n 新建  s 启动  p 派发  i 中断  a attach  k 停止  d 归档  r 重新跑  e 编辑  v 事件  +/- 优先级  0-4 状态  t 配色  q 退出",
 		status:          "就绪",
 		errMsg:          "",
 		titleInput:      ti,
@@ -507,7 +513,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.errMsg = ""
-		m.status = fmt.Sprintf("已启动 ticket #%d（按 r 刷新）", msg.TicketID)
+		m.status = fmt.Sprintf("已启动 ticket #%d", msg.TicketID)
 		m.refreshInFlight = true
 		m.refreshManual = false
 		m.refreshTicketID = 0
@@ -564,6 +570,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.errMsg = ""
 			m.status = fmt.Sprintf("已派发 t%d", msg.TicketID)
+		}
+		m.refreshInFlight = true
+		m.refreshManual = false
+		m.refreshTicketID = 0
+		m.refreshStarted = time.Now()
+		return m, m.refreshCmd()
+
+	case workerRunMsg:
+		if msg.Err != nil {
+			m.errMsg = msg.Err.Error()
+			m.status = fmt.Sprintf("重新跑失败 t%d：%v", msg.TicketID, msg.Err)
+		} else {
+			m.errMsg = ""
+			worker := "-"
+			if msg.Receipt.WorkerID != 0 {
+				worker = fmt.Sprintf("w%d", msg.Receipt.WorkerID)
+			}
+			m.status = fmt.Sprintf("重新跑已提交 t%d（worker=%s stages=待回传 next_action=待回传）", msg.TicketID, worker)
 		}
 		m.refreshInFlight = true
 		m.refreshManual = false
@@ -679,7 +703,7 @@ func (m model) helpForMode() string {
 
 func (m model) tablePanelView(width int) string {
 	head := panelTitle(fmt.Sprintf("Tickets (%d)", m.ticketCount()))
-	sub := faint("↑↓ 选择  |  g 管理员  |  r 刷新")
+	sub := faint("↑↓ 选择  |  g 管理员  |  r 重新跑")
 	left := head + "  " + sub
 
 	content := left + "\n" + colorizePartitionColumn(m.table.View())
@@ -997,7 +1021,7 @@ func (m model) inspectorLeftView(panelW int) string {
 			return strings.Join(lines, "\n")
 		}
 		title := panelTitle(fmt.Sprintf("检查器  t%d", id))
-		return title + "\n" + faint("详情尚未加载（等一下自动刷新，或按 r）")
+		return title + "\n" + faint("详情尚未加载（等一下自动刷新）")
 	}
 	t := v.Ticket
 	a := v.LatestWorker
