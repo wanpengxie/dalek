@@ -208,6 +208,48 @@ func TestSweeper_RunOnce_PickupAndRetry(t *testing.T) {
 	}
 }
 
+func TestSweeper_RunOnce_PickupPending(t *testing.T) {
+	db := openGatewayDBForRepositoryTest(t)
+	binding := createRepositoryTestBinding(t, db, "demo", "chat-sweeper-pending")
+	repo := NewGormRepository(db)
+	state, err := repo.CreatePending(context.Background(), binding, "demo", "pending once")
+	if err != nil {
+		t.Fatalf("CreatePending failed: %v", err)
+	}
+
+	sender := &flakySender{}
+	sw := NewSweeper(repo, sender, nil, nil, SweeperOptions{
+		RetryPolicy: RetryPolicy{
+			MaxRetries:     5,
+			InitialBackoff: time.Second,
+			MaxBackoff:     time.Minute,
+			BackoffFactor:  2,
+		},
+	})
+	n, err := sw.RunOnce(context.Background())
+	if err != nil {
+		t.Fatalf("RunOnce failed: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("RunOnce should process 1 item, got=%d", n)
+	}
+	cardCalls, textCalls := sender.snapshot()
+	if cardCalls != 1 || textCalls != 0 {
+		t.Fatalf("unexpected sender calls: card=%d text=%d", cardCalls, textCalls)
+	}
+
+	var outbox contracts.ChannelOutbox
+	if err := db.First(&outbox, state.outbox.ID).Error; err != nil {
+		t.Fatalf("query outbox failed: %v", err)
+	}
+	if outbox.Status != contracts.ChannelOutboxSent {
+		t.Fatalf("outbox status should be sent, got=%s", outbox.Status)
+	}
+	if outbox.RetryCount != 1 {
+		t.Fatalf("retry_count should be 1 after first delivery, got=%d", outbox.RetryCount)
+	}
+}
+
 func TestSweeper_RunOnce_ExhaustedToDead(t *testing.T) {
 	db := openGatewayDBForRepositoryTest(t)
 	binding := createRepositoryTestBinding(t, db, "demo", "chat-sweeper-dead")

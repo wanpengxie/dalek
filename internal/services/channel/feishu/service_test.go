@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,6 +33,57 @@ func TestNewSenderReturnsNoopWhenCredentialMissing(t *testing.T) {
 	}
 }
 
+func TestNewSender_DefaultDisablesSystemProxy(t *testing.T) {
+	sender := NewSender(SenderConfig{
+		Enabled:   true,
+		AppID:     "app-id",
+		AppSecret: "app-secret",
+	})
+	httpSender, ok := sender.(*daemonFeishuHTTPSender)
+	if !ok {
+		t.Fatalf("expected daemonFeishuHTTPSender, got %T", sender)
+	}
+	transport, ok := httpSender.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", httpSender.client.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Fatalf("default proxy resolver should be nil")
+	}
+}
+
+func TestNewSender_UseSystemProxy(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:8999")
+	sender := NewSender(SenderConfig{
+		Enabled:        true,
+		AppID:          "app-id",
+		AppSecret:      "app-secret",
+		UseSystemProxy: true,
+	})
+	httpSender, ok := sender.(*daemonFeishuHTTPSender)
+	if !ok {
+		t.Fatalf("expected daemonFeishuHTTPSender, got %T", sender)
+	}
+	transport, ok := httpSender.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", httpSender.client.Transport)
+	}
+	if transport.Proxy == nil {
+		t.Fatalf("proxy resolver should not be nil when use_system_proxy=true")
+	}
+	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "open.feishu.cn"}}
+	proxyURL, err := transport.Proxy(req)
+	if err != nil {
+		t.Fatalf("proxy resolver returned error: %v", err)
+	}
+	if proxyURL == nil {
+		t.Fatalf("proxy resolver should return proxy URL")
+	}
+	if proxyURL.String() != "http://127.0.0.1:8999" {
+		t.Fatalf("unexpected proxy URL: %s", proxyURL.String())
+	}
+}
+
 func TestBuildWebhookPath(t *testing.T) {
 	if got := BuildWebhookPath(""); got != "/feishu/webhook" {
 		t.Fatalf("unexpected default path: %s", got)
@@ -47,6 +100,101 @@ func TestNewWebhookHandlerRejectNonPost(t *testing.T) {
 	handler(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+}
+
+type captureChatReplySender struct {
+	calls chan chatReplyCall
+}
+
+type chatReplyCall struct {
+	project  string
+	chatID   string
+	text     string
+	cardJSON string
+}
+
+func (s *captureChatReplySender) SendChatReply(ctx context.Context, projectName, chatID, text, cardJSON string) error {
+	_ = ctx
+	select {
+	case s.calls <- chatReplyCall{
+		project:  strings.TrimSpace(projectName),
+		chatID:   strings.TrimSpace(chatID),
+		text:     strings.TrimSpace(text),
+		cardJSON: strings.TrimSpace(cardJSON),
+	}:
+	default:
+	}
+	return nil
+}
+
+func TestNewWebhookHandler_UsesChatReplySenderWhenConfigured(t *testing.T) {
+	gateway, resolver := newFeishuQuietTestGateway(t)
+	if _, err := gateway.BindProject(context.Background(), contracts.ChannelTypeIM, defaultDaemonFeishuAdapter, "chat-reply", "alpha"); err != nil {
+		t.Fatalf("bind project failed: %v", err)
+	}
+
+	sender := &captureFeishuSender{}
+	replySender := &captureChatReplySender{calls: make(chan chatReplyCall, 1)}
+	handler := NewWebhookHandler(gateway, resolver, sender, HandlerOptions{
+		VerifyToken:      "token-ok",
+		RelayTimeout:     5 * time.Second,
+		RelayIdleTimeout: 5 * time.Second,
+		ChatReplySender:  replySender,
+	})
+
+	body := map[string]any{
+		"header": map[string]any{
+			"event_type": "im.message.receive_v1",
+			"token":      "token-ok",
+			"event_id":   "evt-reply-1",
+		},
+		"event": map[string]any{
+			"sender": map[string]any{
+				"sender_type": "user",
+				"sender_id": map[string]any{
+					"open_id": "ou_reply_1",
+				},
+			},
+			"message": map[string]any{
+				"message_id":   "om-reply-1",
+				"chat_id":      "chat-reply",
+				"message_type": "text",
+				"content":      "{\"text\":\"hello\"}",
+			},
+		},
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal webhook body failed: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/feishu/webhook", strings.NewReader(string(raw)))
+	rr := httptest.NewRecorder()
+	handler(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d", rr.Code)
+	}
+
+	select {
+	case call := <-replySender.calls:
+		if call.project != "alpha" {
+			t.Fatalf("project mismatch: %q", call.project)
+		}
+		if call.chatID != "chat-reply" {
+			t.Fatalf("chat id mismatch: %q", call.chatID)
+		}
+		if call.text == "" {
+			t.Fatalf("reply text should not be empty")
+		}
+		if call.cardJSON == "" {
+			t.Fatalf("reply card json should not be empty")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("wait chat reply sender timeout")
+	}
+
+	if sender.InteractiveCalls() != 0 {
+		t.Fatalf("configured chat reply sender should bypass direct interactive sender")
 	}
 }
 
@@ -323,13 +471,17 @@ func TestHasDaemonFeishuMention(t *testing.T) {
 }
 
 type captureFeishuSender struct {
-	texts []string
+	mu               sync.Mutex
+	texts            []string
+	interactiveCalls int
 }
 
 func (s *captureFeishuSender) SendText(ctx context.Context, chatID, text string) error {
 	_ = ctx
 	_ = chatID
+	s.mu.Lock()
 	s.texts = append(s.texts, text)
+	s.mu.Unlock()
 	return nil
 }
 
@@ -345,6 +497,9 @@ func (s *captureFeishuSender) SendCardInteractive(ctx context.Context, chatID, c
 	_ = ctx
 	_ = chatID
 	_ = cardJSON
+	s.mu.Lock()
+	s.interactiveCalls++
+	s.mu.Unlock()
 	return "", nil
 }
 
@@ -362,10 +517,18 @@ func (s *captureFeishuSender) GetUserName(ctx context.Context, userID string) (s
 }
 
 func (s *captureFeishuSender) LastText() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if len(s.texts) == 0 {
 		return ""
 	}
 	return s.texts[len(s.texts)-1]
+}
+
+func (s *captureFeishuSender) InteractiveCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.interactiveCalls
 }
 
 type feishuQuietTestRuntime struct{}

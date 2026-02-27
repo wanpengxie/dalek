@@ -85,6 +85,9 @@ func TestLoadHomeConfig_MissingUsesDefaults(t *testing.T) {
 	if cfg.Daemon.Public.Feishu.BaseURL != "https://open.feishu.cn" {
 		t.Fatalf("unexpected default daemon.public.feishu.base_url: %q", cfg.Daemon.Public.Feishu.BaseURL)
 	}
+	if cfg.Daemon.Public.Feishu.UseSystemProxy {
+		t.Fatalf("unexpected default daemon.public.feishu.use_system_proxy: true")
+	}
 	if cfg.Daemon.Public.Ingress.Provider != "cloudflare_tunnel" {
 		t.Fatalf("unexpected default daemon.public.ingress.provider: %q", cfg.Daemon.Public.Ingress.Provider)
 	}
@@ -134,7 +137,10 @@ func TestLoadHomeConfig_ExistingConfigWithDefaults(t *testing.T) {
       "listen": " 0.0.0.0:18081 "
     },
     "public": {
-      "listen": " 0.0.0.0:18080 "
+      "listen": " 0.0.0.0:18080 ",
+      "feishu": {
+        "use_system_proxy": true
+      }
     }
   }
 }
@@ -229,6 +235,9 @@ func TestLoadHomeConfig_ExistingConfigWithDefaults(t *testing.T) {
 	}
 	if cfg.Daemon.Public.Feishu.BaseURL != "https://feishu.example.com" {
 		t.Fatalf("daemon.public.feishu.base_url should be migrated: got=%q", cfg.Daemon.Public.Feishu.BaseURL)
+	}
+	if !cfg.Daemon.Public.Feishu.UseSystemProxy {
+		t.Fatalf("daemon.public.feishu.use_system_proxy should keep explicit value")
 	}
 	if cfg.Daemon.Public.Ingress.Provider != "cloudflare_tunnel" {
 		t.Fatalf("daemon.public.ingress.provider should fallback to default: got=%q", cfg.Daemon.Public.Ingress.Provider)

@@ -57,6 +57,29 @@ func (s *captureSender) snapshot() []capturedCall {
 	return append([]capturedCall(nil), s.calls...)
 }
 
+type interactiveCaptureSender struct {
+	captureSender
+	mu               sync.Mutex
+	interactiveCalls int
+	lastCardJSON     string
+}
+
+func (s *interactiveCaptureSender) SendCardInteractive(ctx context.Context, chatID, cardJSON string) (string, error) {
+	_ = ctx
+	_ = chatID
+	s.mu.Lock()
+	s.interactiveCalls++
+	s.lastCardJSON = strings.TrimSpace(cardJSON)
+	s.mu.Unlock()
+	return "om_interactive_1", nil
+}
+
+func (s *interactiveCaptureSender) interactiveSnapshot() (int, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.interactiveCalls, s.lastCardJSON
+}
+
 type failingSender struct {
 	err     error
 	textErr error
@@ -408,5 +431,87 @@ func TestHandler_SenderFailed_MarksOutboxFailed(t *testing.T) {
 	}
 	if outbox.Status != contracts.ChannelOutboxFailed {
 		t.Fatalf("outbox status should be failed, got=%s", outbox.Status)
+	}
+}
+
+func TestService_SendChatReply_DisablesDedup(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	db, err := store.OpenGatewayDB(dbPath)
+	if err != nil {
+		t.Fatalf("OpenGatewayDB failed: %v", err)
+	}
+
+	binding := contracts.ChannelBinding{
+		ProjectName:    "demo",
+		ChannelType:    contracts.ChannelTypeIM,
+		Adapter:        AdapterFeishu,
+		PeerProjectKey: "chat-demo-reply",
+		RolePolicyJSON: contracts.JSONMap{},
+		Enabled:        true,
+	}
+	if err := db.Create(&binding).Error; err != nil {
+		t.Fatalf("create binding failed: %v", err)
+	}
+
+	sender := &captureSender{}
+	svc := NewServiceWithDB(db, nil, sender, nil)
+	if err := svc.SendChatReply(context.Background(), "demo", "chat-demo-reply", "same reply", ""); err != nil {
+		t.Fatalf("first SendChatReply failed: %v", err)
+	}
+	if err := svc.SendChatReply(context.Background(), "demo", "chat-demo-reply", "same reply", ""); err != nil {
+		t.Fatalf("second SendChatReply failed: %v", err)
+	}
+
+	calls := sender.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("chat reply should not dedup by content, got calls=%d", len(calls))
+	}
+}
+
+func TestService_SendChatReply_UsesInteractiveCardAndPersistsPayload(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	db, err := store.OpenGatewayDB(dbPath)
+	if err != nil {
+		t.Fatalf("OpenGatewayDB failed: %v", err)
+	}
+
+	binding := contracts.ChannelBinding{
+		ProjectName:    "demo",
+		ChannelType:    contracts.ChannelTypeIM,
+		Adapter:        AdapterFeishu,
+		PeerProjectKey: "chat-demo-interactive",
+		RolePolicyJSON: contracts.JSONMap{},
+		Enabled:        true,
+	}
+	if err := db.Create(&binding).Error; err != nil {
+		t.Fatalf("create binding failed: %v", err)
+	}
+
+	sender := &interactiveCaptureSender{}
+	svc := NewServiceWithDB(db, nil, sender, nil)
+	cardJSON := `{"type":"template","data":{"x":"y"}}`
+	if err := svc.SendChatReply(context.Background(), "demo", "chat-demo-interactive", "fallback text", cardJSON); err != nil {
+		t.Fatalf("SendChatReply failed: %v", err)
+	}
+
+	interactiveCalls, gotCardJSON := sender.interactiveSnapshot()
+	if interactiveCalls != 1 {
+		t.Fatalf("interactive sender calls mismatch: %d", interactiveCalls)
+	}
+	if gotCardJSON != cardJSON {
+		t.Fatalf("interactive card json mismatch: got=%q want=%q", gotCardJSON, cardJSON)
+	}
+	if calls := sender.snapshot(); len(calls) != 0 {
+		t.Fatalf("interactive success should not fallback to SendCard/SendText, got=%d", len(calls))
+	}
+
+	var message contracts.ChannelMessage
+	if err := db.Where("sender_id = ?", "gateway.send").Order("id DESC").First(&message).Error; err != nil {
+		t.Fatalf("query outbound message failed: %v", err)
+	}
+	payload := contracts.JSONMapFromAny(message.PayloadJSON)
+	gotPayloadCardJSON, _ := payload[payloadKeyCardJSON].(string)
+	if strings.TrimSpace(gotPayloadCardJSON) != cardJSON {
+		t.Fatalf("persisted payload card_json mismatch: got=%q want=%q", gotPayloadCardJSON, cardJSON)
 	}
 }

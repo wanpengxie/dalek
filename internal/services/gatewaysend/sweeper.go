@@ -154,16 +154,36 @@ func (sw *Sweeper) RunOnce(ctx context.Context) (int, error) {
 		ctx = context.Background()
 	}
 	sw.service.now = sw.nowOrDefault
-	items, err := sw.repo.FindRetryableOutbox(ctx, sw.nowOrDefault(), sw.batch)
+	pendingItems, err := sw.repo.FindPendingOutbox(ctx, sw.batch)
 	if err != nil {
 		return 0, err
 	}
+	if err := sw.processItems(ctx, pendingItems, "pending"); err != nil {
+		return len(pendingItems), err
+	}
+
+	remaining := sw.batch - len(pendingItems)
+	if remaining <= 0 {
+		return len(pendingItems), nil
+	}
+	retryableItems, err := sw.repo.FindRetryableOutbox(ctx, sw.nowOrDefault(), remaining)
+	if err != nil {
+		return len(pendingItems), err
+	}
+	if err := sw.processItems(ctx, retryableItems, "retry"); err != nil {
+		return len(pendingItems) + len(retryableItems), err
+	}
+	return len(pendingItems) + len(retryableItems), nil
+}
+
+func (sw *Sweeper) processItems(ctx context.Context, items []retryableOutbox, source string) error {
 	for _, item := range items {
 		if err := sw.service.sendRetryableOutbox(ctx, item); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return len(items), err
+				return err
 			}
 			sw.logger.Warn("gateway send retry failed",
+				"source", source,
 				"outbox_id", item.state.outbox.ID,
 				"binding_id", item.binding.ID,
 				"retry_count", item.state.outbox.RetryCount,
@@ -172,12 +192,13 @@ func (sw *Sweeper) RunOnce(ctx context.Context) (int, error) {
 			continue
 		}
 		sw.logger.Info("gateway send retry success",
+			"source", source,
 			"outbox_id", item.state.outbox.ID,
 			"binding_id", item.binding.ID,
 			"retry_count", item.state.outbox.RetryCount+1,
 		)
 	}
-	return len(items), nil
+	return nil
 }
 
 func (sw *Sweeper) loop(ctx context.Context) {

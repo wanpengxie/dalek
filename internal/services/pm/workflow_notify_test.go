@@ -434,6 +434,60 @@ func TestGatewayStatusNotifier_OnStatusChange_SendsMessage(t *testing.T) {
 	}
 }
 
+func TestOutboxEnqueueStatusNotifier_OnStatusChange_EnqueuesPending(t *testing.T) {
+	_, p, _, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "outbox enqueue notify")
+
+	gatewayDBPath := filepath.Join(t.TempDir(), "gateway.db")
+	gatewayDB, err := store.OpenGatewayDB(gatewayDBPath)
+	if err != nil {
+		t.Fatalf("OpenGatewayDB failed: %v", err)
+	}
+	if err := gatewayDB.Create(&contracts.ChannelBinding{
+		ProjectName:    strings.TrimSpace(p.Name),
+		ChannelType:    contracts.ChannelTypeIM,
+		Adapter:        gatewaysendsvc.AdapterFeishu,
+		PeerProjectKey: "chat_enqueue_demo",
+		Enabled:        true,
+	}).Error; err != nil {
+		t.Fatalf("create channel binding failed: %v", err)
+	}
+	notifier := NewOutboxEnqueueStatusNotifier(p.Name, p.DB, gatewayDB)
+
+	event := StatusChangeEvent{
+		TicketID:   tk.ID,
+		FromStatus: contracts.TicketActive,
+		ToStatus:   contracts.TicketDone,
+		Source:     "pm.apply_worker_report(worker.report)",
+		OccurredAt: time.Date(2026, 2, 25, 22, 30, 0, 0, time.Local),
+	}
+	if err := notifier.OnStatusChange(context.Background(), event); err != nil {
+		t.Fatalf("OnStatusChange failed: %v", err)
+	}
+
+	var outbox contracts.ChannelOutbox
+	if err := gatewayDB.Last(&outbox).Error; err != nil {
+		t.Fatalf("query outbox failed: %v", err)
+	}
+	if outbox.Status != contracts.ChannelOutboxPending {
+		t.Fatalf("outbox status should be pending, got=%s", outbox.Status)
+	}
+
+	var msg contracts.ChannelMessage
+	if err := gatewayDB.First(&msg, outbox.MessageID).Error; err != nil {
+		t.Fatalf("query message failed: %v", err)
+	}
+	if msg.Status != contracts.ChannelMessageProcessed {
+		t.Fatalf("message status should be processed, got=%s", msg.Status)
+	}
+	if !strings.Contains(msg.ContentText, fmt.Sprintf("t%d", tk.ID)) {
+		t.Fatalf("message text missing ticket id: %q", msg.ContentText)
+	}
+	if !strings.Contains(msg.ContentText, "active -> done") {
+		t.Fatalf("message text missing transition: %q", msg.ContentText)
+	}
+}
+
 func TestGatewayStatusNotifier_IgnoresNonImportantTransition(t *testing.T) {
 	_, p, _, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-filter")

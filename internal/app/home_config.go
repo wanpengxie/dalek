@@ -107,6 +107,7 @@ type HomeDaemonPublicFeishuConfig struct {
 	WebhookSecretPath string `json:"webhook_secret_path,omitempty"`
 	WebhookPath       string `json:"webhook_path,omitempty"`
 	BaseURL           string `json:"base_url,omitempty"`
+	UseSystemProxy    bool   `json:"use_system_proxy,omitempty"`
 }
 
 type HomeDaemonPublicIngressConfig struct {

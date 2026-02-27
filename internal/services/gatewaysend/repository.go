@@ -124,6 +124,14 @@ func (r *GormRepository) FindRecentDuplicateDelivery(ctx context.Context, bindin
 }
 
 func (r *GormRepository) CreatePending(ctx context.Context, binding contracts.ChannelBinding, projectName, text string) (persistState, error) {
+	return r.createPendingWithExtras(ctx, binding, projectName, text, nil)
+}
+
+func (r *GormRepository) CreatePendingWithPayload(ctx context.Context, binding contracts.ChannelBinding, projectName, text string, payloadExtra contracts.JSONMap) (persistState, error) {
+	return r.createPendingWithExtras(ctx, binding, projectName, text, payloadExtra)
+}
+
+func (r *GormRepository) createPendingWithExtras(ctx context.Context, binding contracts.ChannelBinding, projectName, text string, payloadExtra contracts.JSONMap) (persistState, error) {
 	db, err := r.dbOrErr()
 	if err != nil {
 		return persistState{}, err
@@ -145,6 +153,13 @@ func (r *GormRepository) CreatePending(ctx context.Context, binding contracts.Ch
 			"chat_id":         strings.TrimSpace(binding.PeerProjectKey),
 			"text":            strings.TrimSpace(text),
 			"created_at":      now.Format(time.RFC3339),
+		}
+		for key, value := range payloadExtra {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			payload[key] = value
 		}
 		payloadJSON := marshalPayload(payload)
 		peerMessageID := fmt.Sprintf("send-%d-%s", now.UnixNano(), randomHex(2))
@@ -359,6 +374,21 @@ func (r *GormRepository) MarkDead(ctx context.Context, state persistState, cause
 	})
 }
 
+func (r *GormRepository) FindPendingOutbox(ctx context.Context, limit int) ([]retryableOutbox, error) {
+	db, err := r.dbOrErr()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	query := db.WithContext(ctx).
+		Where("status = ?", contracts.ChannelOutboxPending).
+		Order("id ASC").
+		Limit(limit)
+	return r.findOutboxesByQuery(ctx, query)
+}
+
 func (r *GormRepository) FindRetryableOutbox(ctx context.Context, now time.Time, limit int) ([]retryableOutbox, error) {
 	db, err := r.dbOrErr()
 	if err != nil {
@@ -370,12 +400,23 @@ func (r *GormRepository) FindRetryableOutbox(ctx context.Context, now time.Time,
 	if limit <= 0 {
 		limit = 20
 	}
-	var outboxes []contracts.ChannelOutbox
-	if err := db.WithContext(ctx).
+	query := db.WithContext(ctx).
 		Where("status = ? AND next_retry_at IS NOT NULL AND next_retry_at <= ?", contracts.ChannelOutboxFailed, now).
 		Order("next_retry_at ASC, id ASC").
-		Limit(limit).
-		Find(&outboxes).Error; err != nil {
+		Limit(limit)
+	return r.findOutboxesByQuery(ctx, query)
+}
+
+func (r *GormRepository) findOutboxesByQuery(ctx context.Context, query *gorm.DB) ([]retryableOutbox, error) {
+	if query == nil {
+		return nil, fmt.Errorf("query 不能为空")
+	}
+	db, err := r.dbOrErr()
+	if err != nil {
+		return nil, err
+	}
+	var outboxes []contracts.ChannelOutbox
+	if err := query.Find(&outboxes).Error; err != nil {
 		return nil, err
 	}
 	items := make([]retryableOutbox, 0, len(outboxes))
@@ -408,9 +449,10 @@ func (r *GormRepository) FindRetryableOutbox(ctx context.Context, now time.Time,
 		}
 
 		items = append(items, retryableOutbox{
-			binding: binding,
-			project: projectName,
-			text:    text,
+			binding:  binding,
+			project:  projectName,
+			text:     text,
+			cardJSON: strings.TrimSpace(stringValue(payload[payloadKeyCardJSON])),
 			state: persistState{
 				conversation: conversation,
 				message:      message,
@@ -419,4 +461,11 @@ func (r *GormRepository) FindRetryableOutbox(ctx context.Context, now time.Time,
 		})
 	}
 	return items, nil
+}
+
+func stringValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
 }

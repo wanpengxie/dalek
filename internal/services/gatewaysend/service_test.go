@@ -19,6 +19,7 @@ type serviceMockRepo struct {
 	markRetryable  func(ctx context.Context, state persistState, cause error, nextRetryAt time.Time) error
 	markFailed     func(ctx context.Context, state persistState, cause error) error
 	markDead       func(ctx context.Context, state persistState, cause error) error
+	findPending    func(ctx context.Context, limit int) ([]retryableOutbox, error)
 	findRetryable  func(ctx context.Context, now time.Time, limit int) ([]retryableOutbox, error)
 }
 
@@ -81,6 +82,13 @@ func (m *serviceMockRepo) MarkDead(ctx context.Context, state persistState, caus
 func (m *serviceMockRepo) FindRetryableOutbox(ctx context.Context, now time.Time, limit int) ([]retryableOutbox, error) {
 	if m != nil && m.findRetryable != nil {
 		return m.findRetryable(ctx, now, limit)
+	}
+	return nil, nil
+}
+
+func (m *serviceMockRepo) FindPendingOutbox(ctx context.Context, limit int) ([]retryableOutbox, error) {
+	if m != nil && m.findPending != nil {
+		return m.findPending(ctx, limit)
 	}
 	return nil, nil
 }
