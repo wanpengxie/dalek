@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -14,6 +15,7 @@ const (
 	defaultNotebookPollGap     = 2 * time.Second
 	defaultNotebookShapeGap    = 60 * time.Second
 	defaultNotebookWakeQueue   = 64
+	defaultNotebookOpenBackoff = 5 * time.Minute
 )
 
 type daemonNotebookComponent struct {
@@ -26,6 +28,10 @@ type daemonNotebookComponent struct {
 	lastShapeMu sync.Mutex
 	lastShapeAt map[string]time.Time
 	wakeCh      chan string
+
+	openBackoffMu  sync.Mutex
+	openBackoffAt  map[string]time.Time
+	openBackoffGap time.Duration
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -41,14 +47,16 @@ func newDaemonNotebookComponent(home *Home, logger *slog.Logger, workerCount int
 		registry = NewProjectRegistry(home)
 	}
 	return &daemonNotebookComponent{
-		home:        home,
-		registry:    registry,
-		logger:      logger,
-		workerCount: workerCount,
-		pollGap:     defaultNotebookPollGap,
-		lastShapeAt: make(map[string]time.Time),
-		wakeCh:      make(chan string, defaultNotebookWakeQueue),
-		stopCh:      make(chan struct{}),
+		home:           home,
+		registry:       registry,
+		logger:         logger,
+		workerCount:    workerCount,
+		pollGap:        defaultNotebookPollGap,
+		lastShapeAt:    make(map[string]time.Time),
+		wakeCh:         make(chan string, defaultNotebookWakeQueue),
+		openBackoffAt:  make(map[string]time.Time),
+		openBackoffGap: defaultNotebookOpenBackoff,
+		stopCh:         make(chan struct{}),
 	}
 }
 
@@ -153,11 +161,21 @@ func (c *daemonNotebookComponent) processProject(ctx context.Context, idx int, p
 	if name == "" {
 		return false
 	}
+	now := time.Now()
+	if c.shouldSkipProjectOpen(name, now) {
+		return false
+	}
 	p, err := c.registry.Open(name)
 	if err != nil {
+		if errors.Is(err, ErrNotInitialized) {
+			retryAt := c.deferProjectOpen(name, now)
+			c.logf("notebook worker open project deferred: project=%s err=%v retry_at=%s", name, err, retryAt.Format(time.RFC3339))
+			return false
+		}
 		c.logf("notebook worker open project failed: project=%s err=%v", name, err)
 		return false
 	}
+	c.clearProjectOpenBackoff(name)
 	notebookCfg := p.core.Config.WithDefaults().Notebook
 	if !notebookCfg.Enabled || !notebookCfg.AutoShape {
 		return false
@@ -178,11 +196,15 @@ func (c *daemonNotebookComponent) processProject(ctx context.Context, idx int, p
 }
 
 func (c *daemonNotebookComponent) NotifyProject(projectName string) {
-	if c == nil || c.wakeCh == nil {
+	if c == nil {
 		return
 	}
 	projectName = strings.TrimSpace(projectName)
 	if projectName == "" {
+		return
+	}
+	c.clearProjectOpenBackoff(projectName)
+	if c.wakeCh == nil {
 		return
 	}
 	select {
@@ -224,5 +246,71 @@ func (c *daemonNotebookComponent) shouldShapeProject(project string, gap time.Du
 		return false
 	}
 	c.lastShapeAt[project] = now
+	return true
+}
+
+func (c *daemonNotebookComponent) shouldSkipProjectOpen(project string, now time.Time) bool {
+	if c == nil {
+		return false
+	}
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return false
+	}
+	c.openBackoffMu.Lock()
+	defer c.openBackoffMu.Unlock()
+	if c.openBackoffAt == nil {
+		c.openBackoffAt = make(map[string]time.Time)
+	}
+	retryAt, ok := c.openBackoffAt[project]
+	if !ok || retryAt.IsZero() {
+		return false
+	}
+	if now.Before(retryAt) {
+		return true
+	}
+	delete(c.openBackoffAt, project)
+	return false
+}
+
+func (c *daemonNotebookComponent) deferProjectOpen(project string, now time.Time) time.Time {
+	if c == nil {
+		return time.Time{}
+	}
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return time.Time{}
+	}
+	gap := c.openBackoffGap
+	if gap <= 0 {
+		gap = defaultNotebookOpenBackoff
+	}
+	retryAt := now.Add(gap)
+	c.openBackoffMu.Lock()
+	if c.openBackoffAt == nil {
+		c.openBackoffAt = make(map[string]time.Time)
+	}
+	c.openBackoffAt[project] = retryAt
+	c.openBackoffMu.Unlock()
+	return retryAt
+}
+
+func (c *daemonNotebookComponent) clearProjectOpenBackoff(project string) bool {
+	if c == nil {
+		return false
+	}
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return false
+	}
+	c.openBackoffMu.Lock()
+	defer c.openBackoffMu.Unlock()
+	if c.openBackoffAt == nil {
+		return false
+	}
+	if _, ok := c.openBackoffAt[project]; !ok {
+		return false
+	}
+	delete(c.openBackoffAt, project)
 	return true
 }
