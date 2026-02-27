@@ -281,6 +281,35 @@ func TestTryHandleDaemonFeishuQuietCommand(t *testing.T) {
 	}
 }
 
+func TestTryHandleDaemonFeishuHelpCommand(t *testing.T) {
+	sender := &captureFeishuSender{}
+	ctx := context.Background()
+
+	if handled := tryHandleDaemonFeishuHelpCommand(ctx, sender, "chat-help", "hello"); handled {
+		t.Fatalf("non-help message should not be handled")
+	}
+	if handled := tryHandleDaemonFeishuHelpCommand(ctx, sender, "chat-help", "/help more"); handled {
+		t.Fatalf("/help with args should not be handled")
+	}
+	if handled := tryHandleDaemonFeishuHelpCommand(ctx, sender, "chat-help", "/HELP"); !handled {
+		t.Fatalf("/HELP should be handled case-insensitively")
+	}
+
+	got := sender.LastText()
+	wantLines := []string{
+		"支持的命令：",
+		"/help         显示此帮助",
+		"/quiet        查看安静模式状态",
+		"/quiet on     开启安静模式（只有被 @ 才回复）",
+		"/quiet off    关闭安静模式",
+	}
+	for _, line := range wantLines {
+		if !strings.Contains(got, line) {
+			t.Fatalf("help text missing line %q, got: %q", line, got)
+		}
+	}
+}
+
 func TestHasDaemonFeishuMention(t *testing.T) {
 	if hasDaemonFeishuMention(nil) {
 		t.Fatalf("nil mentions should be false")
