@@ -2,9 +2,11 @@ package gatewaysend
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
@@ -17,6 +19,8 @@ type Service struct {
 	sender   MessageSender
 	resolver contracts.ProjectMetaResolver
 	logger   *slog.Logger
+	policy   RetryPolicy
+	now      func() time.Time
 }
 
 func NewService(repo Repository, sender MessageSender, resolver contracts.ProjectMetaResolver, logger *slog.Logger) *Service {
@@ -28,6 +32,8 @@ func NewService(repo Repository, sender MessageSender, resolver contracts.Projec
 		sender:   sender,
 		resolver: resolver,
 		logger:   core.EnsureLogger(logger),
+		policy:   DefaultRetryPolicy(),
+		now:      time.Now,
 	}
 }
 
@@ -57,6 +63,9 @@ func SendProjectTextWithLogger(ctx context.Context, db *gorm.DB, resolver contra
 }
 
 func (s *Service) Send(ctx context.Context, projectName, text string) (Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	projectName = strings.TrimSpace(projectName)
 	text = strings.TrimSpace(text)
 	if projectName == "" {
@@ -107,10 +116,6 @@ func (s *Service) Send(ctx context.Context, projectName, text string) (Response,
 func (s *Service) sendOneBinding(ctx context.Context, binding contracts.ChannelBinding, projectName, cardProjectName, text string) (Delivery, error) {
 	repo := s.repo
 	logger := core.EnsureLogger(s.logger)
-	sender := s.sender
-	if sender == nil {
-		sender = &NoopSender{}
-	}
 
 	chatID := strings.TrimSpace(binding.PeerProjectKey)
 	out := Delivery{
@@ -144,22 +149,90 @@ func (s *Service) sendOneBinding(ctx context.Context, binding contracts.ChannelB
 	out.MessageID = state.message.ID
 	out.OutboxID = state.outbox.ID
 
-	if err := repo.MarkSending(ctx, state.outbox.ID); err != nil {
-		_ = repo.MarkFailed(context.Background(), state, err)
-		return out, err
-	}
-
-	sendCtx := ctx
-	if sendCtx == nil {
-		sendCtx = context.Background()
-	}
-	if err := sender.SendCard(sendCtx, chatID, buildCardTitle(cardProjectName), text); err != nil {
-		_ = repo.MarkFailed(context.Background(), state, err)
-		return out, err
-	}
-
-	if err := repo.MarkSent(ctx, state); err != nil {
+	if err := s.sendPersistedOutbox(ctx, binding, state, cardProjectName, text); err != nil {
 		return out, err
 	}
 	return out, nil
+}
+
+func (s *Service) sendPersistedOutbox(ctx context.Context, binding contracts.ChannelBinding, state persistState, cardProjectName, text string) error {
+	repo := s.repo
+	if repo == nil {
+		return fmt.Errorf("gateway repository 为空")
+	}
+	persistCtx := ctx
+	if persistCtx == nil {
+		persistCtx = context.Background()
+	}
+	if err := repo.MarkSending(persistCtx, state.outbox.ID); err != nil {
+		if errors.Is(err, ErrOutboxNotSendable) {
+			return err
+		}
+		if markErr := repo.MarkFailed(context.Background(), state, err); markErr != nil {
+			return fmt.Errorf("%w; mark failed error: %v", err, markErr)
+		}
+		return err
+	}
+	state.outbox.RetryCount++
+
+	sendCtx := persistCtx
+	if err := s.sendCardWithTextFallback(sendCtx, binding, cardProjectName, text); err != nil {
+		if markErr := s.markFailedWithRetryPolicy(state, err); markErr != nil {
+			return fmt.Errorf("%w; persist retry state failed: %v", err, markErr)
+		}
+		return err
+	}
+
+	if err := repo.MarkSent(persistCtx, state); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Service) sendCardWithTextFallback(ctx context.Context, binding contracts.ChannelBinding, cardProjectName, text string) error {
+	sender := s.sender
+	if sender == nil {
+		sender = &NoopSender{}
+	}
+	chatID := strings.TrimSpace(binding.PeerProjectKey)
+	if err := sender.SendCard(ctx, chatID, buildCardTitle(cardProjectName), text); err == nil {
+		return nil
+	} else {
+		core.EnsureLogger(s.logger).Warn("gateway send card failed, fallback to text",
+			"binding_id", binding.ID,
+			"chat_id", chatID,
+			"error", err,
+		)
+		if textErr := sender.SendText(ctx, chatID, text); textErr == nil {
+			return nil
+		} else {
+			return fmt.Errorf("send card failed: %w; text fallback failed: %v", err, textErr)
+		}
+	}
+}
+
+func (s *Service) markFailedWithRetryPolicy(state persistState, cause error) error {
+	if s == nil || s.repo == nil {
+		return fmt.Errorf("gateway repository 为空")
+	}
+	policy := s.policy.normalize()
+	attempt := state.outbox.RetryCount
+	if policy.IsExhausted(attempt) {
+		return s.repo.MarkDead(context.Background(), state, cause)
+	}
+	nextRetryAt := policy.NextRetryAt(attempt, s.nowOrDefault())
+	return s.repo.MarkFailedRetryable(context.Background(), state, cause, nextRetryAt)
+}
+
+func (s *Service) sendRetryableOutbox(ctx context.Context, item retryableOutbox) error {
+	projectName := strings.TrimSpace(item.project)
+	cardProjectName := resolveCardProjectName(projectName, s.resolver)
+	return s.sendPersistedOutbox(ctx, item.binding, item.state, cardProjectName, item.text)
+}
+
+func (s *Service) nowOrDefault() time.Time {
+	if s != nil && s.now != nil {
+		return s.now()
+	}
+	return time.Now()
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"dalek/internal/contracts"
 )
@@ -15,7 +16,10 @@ type serviceMockRepo struct {
 	createPending  func(ctx context.Context, binding contracts.ChannelBinding, projectName, text string) (persistState, error)
 	markSending    func(ctx context.Context, outboxID uint) error
 	markSent       func(ctx context.Context, state persistState) error
+	markRetryable  func(ctx context.Context, state persistState, cause error, nextRetryAt time.Time) error
 	markFailed     func(ctx context.Context, state persistState, cause error) error
+	markDead       func(ctx context.Context, state persistState, cause error) error
+	findRetryable  func(ctx context.Context, now time.Time, limit int) ([]retryableOutbox, error)
 }
 
 func (m *serviceMockRepo) FindEnabledBindings(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]contracts.ChannelBinding, error) {
@@ -53,11 +57,32 @@ func (m *serviceMockRepo) MarkSent(ctx context.Context, state persistState) erro
 	return nil
 }
 
+func (m *serviceMockRepo) MarkFailedRetryable(ctx context.Context, state persistState, cause error, nextRetryAt time.Time) error {
+	if m != nil && m.markRetryable != nil {
+		return m.markRetryable(ctx, state, cause, nextRetryAt)
+	}
+	return nil
+}
+
 func (m *serviceMockRepo) MarkFailed(ctx context.Context, state persistState, cause error) error {
 	if m != nil && m.markFailed != nil {
 		return m.markFailed(ctx, state, cause)
 	}
 	return nil
+}
+
+func (m *serviceMockRepo) MarkDead(ctx context.Context, state persistState, cause error) error {
+	if m != nil && m.markDead != nil {
+		return m.markDead(ctx, state, cause)
+	}
+	return nil
+}
+
+func (m *serviceMockRepo) FindRetryableOutbox(ctx context.Context, now time.Time, limit int) ([]retryableOutbox, error) {
+	if m != nil && m.findRetryable != nil {
+		return m.findRetryable(ctx, now, limit)
+	}
+	return nil, nil
 }
 
 func TestService_Send_UsesRepositoryAndSender(t *testing.T) {
@@ -108,6 +133,14 @@ func TestService_Send_UsesRepositoryAndSender(t *testing.T) {
 		},
 		markFailed: func(ctx context.Context, state persistState, cause error) error {
 			t.Fatalf("markFailed should not be called, state=%+v cause=%v", state, cause)
+			return nil
+		},
+		markRetryable: func(ctx context.Context, state persistState, cause error, nextRetryAt time.Time) error {
+			t.Fatalf("markFailedRetryable should not be called, state=%+v cause=%v next=%s", state, cause, nextRetryAt)
+			return nil
+		},
+		markDead: func(ctx context.Context, state persistState, cause error) error {
+			t.Fatalf("markDead should not be called, state=%+v cause=%v", state, cause)
 			return nil
 		},
 	}
@@ -193,14 +226,14 @@ func TestService_Send_DedupSkipsSender(t *testing.T) {
 	}
 }
 
-func TestService_Send_SenderFailureMarksFailed(t *testing.T) {
+func TestService_Send_SenderFailureMarksRetryable(t *testing.T) {
 	binding := contracts.ChannelBinding{ID: 13, Adapter: AdapterFeishu, PeerProjectKey: "chat-service-fail"}
 	state := persistState{
 		conversation: contracts.ChannelConversation{ID: 23},
 		message:      contracts.ChannelMessage{ID: 33},
 		outbox:       contracts.ChannelOutbox{ID: 43},
 	}
-	markFailedCalled := false
+	markRetryableCalled := false
 	repo := &serviceMockRepo{
 		findBindingsFn: func(ctx context.Context, projectName string, channelType contracts.ChannelType, adapter string) ([]contracts.ChannelBinding, error) {
 			return []contracts.ChannelBinding{binding}, nil
@@ -218,14 +251,25 @@ func TestService_Send_SenderFailureMarksFailed(t *testing.T) {
 			t.Fatalf("markSent should not be called when sender failed")
 			return nil
 		},
-		markFailed: func(ctx context.Context, gotState persistState, cause error) error {
-			markFailedCalled = true
+		markRetryable: func(ctx context.Context, gotState persistState, cause error, nextRetryAt time.Time) error {
+			markRetryableCalled = true
 			if gotState.outbox.ID != state.outbox.ID {
-				t.Fatalf("unexpected markFailed state: %+v", gotState)
+				t.Fatalf("unexpected markFailedRetryable state: %+v", gotState)
 			}
 			if !strings.Contains(fmt.Sprint(cause), "mock send failed") {
 				t.Fatalf("unexpected cause: %v", cause)
 			}
+			if nextRetryAt.IsZero() {
+				t.Fatalf("nextRetryAt should be set")
+			}
+			return nil
+		},
+		markFailed: func(ctx context.Context, gotState persistState, cause error) error {
+			t.Fatalf("markFailed should not be called, state=%+v cause=%v", gotState, cause)
+			return nil
+		},
+		markDead: func(ctx context.Context, gotState persistState, cause error) error {
+			t.Fatalf("markDead should not be called, state=%+v cause=%v", gotState, cause)
 			return nil
 		},
 	}
@@ -244,7 +288,7 @@ func TestService_Send_SenderFailureMarksFailed(t *testing.T) {
 	if !strings.Contains(resp.Results[0].Error, "mock send failed") {
 		t.Fatalf("unexpected result error: %q", resp.Results[0].Error)
 	}
-	if !markFailedCalled {
-		t.Fatalf("expected markFailed called")
+	if !markRetryableCalled {
+		t.Fatalf("expected markFailedRetryable called")
 	}
 }

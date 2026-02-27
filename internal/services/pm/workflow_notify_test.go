@@ -82,6 +82,10 @@ func (s *testMessageSender) SendCard(ctx context.Context, chatID, title, markdow
 	return nil
 }
 
+func (s *testMessageSender) SendText(ctx context.Context, chatID, text string) error {
+	return s.SendCard(ctx, chatID, "", text)
+}
+
 func (s *testMessageSender) snapshotCalls() []sendCardCall {
 	s.mu.Lock()
 	defer s.mu.Unlock()

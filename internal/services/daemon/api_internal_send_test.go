@@ -39,6 +39,18 @@ func (s *internalSendCaptureSender) SendCard(ctx context.Context, chatID, title,
 	return nil
 }
 
+func (s *internalSendCaptureSender) SendText(ctx context.Context, chatID, text string) error {
+	_ = ctx
+	s.mu.Lock()
+	s.calls = append(s.calls, internalSendCapturedCall{
+		chatID: strings.TrimSpace(chatID),
+		title:  "",
+		text:   strings.TrimSpace(text),
+	})
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *internalSendCaptureSender) snapshot() []internalSendCapturedCall {
 	s.mu.Lock()
 	defer s.mu.Unlock()
