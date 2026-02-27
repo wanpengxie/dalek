@@ -239,7 +239,7 @@ func (r *GormRepository) MarkSending(ctx context.Context, outboxID uint) error {
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		return fmt.Errorf("outbox 状态不可发送: id=%d", outboxID)
+		return fmt.Errorf("%w: id=%d", ErrOutboxNotSendable, outboxID)
 	}
 	return nil
 }
@@ -300,4 +300,123 @@ func (r *GormRepository) MarkFailed(ctx context.Context, state persistState, cau
 			Where("id = ?", state.message.ID).
 			Update("status", contracts.ChannelMessageFailed).Error
 	})
+}
+
+func (r *GormRepository) MarkFailedRetryable(ctx context.Context, state persistState, cause error, nextRetryAt time.Time) error {
+	db, err := r.dbOrErr()
+	if err != nil {
+		return err
+	}
+	errMsg := strings.TrimSpace(fmt.Sprint(cause))
+	if errMsg == "" || errMsg == "<nil>" {
+		errMsg = "gateway send failed"
+	}
+	if nextRetryAt.IsZero() {
+		nextRetryAt = r.nowOrDefault()
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := r.nowOrDefault()
+		if err := tx.WithContext(ctx).Model(&contracts.ChannelOutbox{}).
+			Where("id = ?", state.outbox.ID).
+			Updates(map[string]any{
+				"status":        contracts.ChannelOutboxFailed,
+				"last_error":    errMsg,
+				"next_retry_at": &nextRetryAt,
+				"updated_at":    now,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.WithContext(ctx).Model(&contracts.ChannelMessage{}).
+			Where("id = ?", state.message.ID).
+			Update("status", contracts.ChannelMessageFailed).Error
+	})
+}
+
+func (r *GormRepository) MarkDead(ctx context.Context, state persistState, cause error) error {
+	db, err := r.dbOrErr()
+	if err != nil {
+		return err
+	}
+	errMsg := strings.TrimSpace(fmt.Sprint(cause))
+	if errMsg == "" || errMsg == "<nil>" {
+		errMsg = "gateway send failed"
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := r.nowOrDefault()
+		if err := tx.WithContext(ctx).Model(&contracts.ChannelOutbox{}).
+			Where("id = ?", state.outbox.ID).
+			Updates(map[string]any{
+				"status":        contracts.ChannelOutboxDead,
+				"last_error":    errMsg,
+				"next_retry_at": nil,
+				"updated_at":    now,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.WithContext(ctx).Model(&contracts.ChannelMessage{}).
+			Where("id = ?", state.message.ID).
+			Update("status", contracts.ChannelMessageFailed).Error
+	})
+}
+
+func (r *GormRepository) FindRetryableOutbox(ctx context.Context, now time.Time, limit int) ([]retryableOutbox, error) {
+	db, err := r.dbOrErr()
+	if err != nil {
+		return nil, err
+	}
+	if now.IsZero() {
+		now = r.nowOrDefault()
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	var outboxes []contracts.ChannelOutbox
+	if err := db.WithContext(ctx).
+		Where("status = ? AND next_retry_at IS NOT NULL AND next_retry_at <= ?", contracts.ChannelOutboxFailed, now).
+		Order("next_retry_at ASC, id ASC").
+		Limit(limit).
+		Find(&outboxes).Error; err != nil {
+		return nil, err
+	}
+	items := make([]retryableOutbox, 0, len(outboxes))
+	for _, outbox := range outboxes {
+		var message contracts.ChannelMessage
+		if err := db.WithContext(ctx).First(&message, outbox.MessageID).Error; err != nil {
+			return nil, err
+		}
+		var conversation contracts.ChannelConversation
+		if err := db.WithContext(ctx).First(&conversation, message.ConversationID).Error; err != nil {
+			return nil, err
+		}
+		var binding contracts.ChannelBinding
+		if err := db.WithContext(ctx).First(&binding, conversation.BindingID).Error; err != nil {
+			return nil, err
+		}
+
+		projectName := strings.TrimSpace(binding.ProjectName)
+		text := strings.TrimSpace(message.ContentText)
+		payload := contracts.JSONMapFromAny(message.PayloadJSON)
+		if projectName == "" {
+			if p, ok := payload["project"].(string); ok {
+				projectName = strings.TrimSpace(p)
+			}
+		}
+		if text == "" {
+			if t, ok := payload["text"].(string); ok {
+				text = strings.TrimSpace(t)
+			}
+		}
+
+		items = append(items, retryableOutbox{
+			binding: binding,
+			project: projectName,
+			text:    text,
+			state: persistState{
+				conversation: conversation,
+				message:      message,
+				outbox:       outbox,
+			},
+		})
+	}
+	return items, nil
 }

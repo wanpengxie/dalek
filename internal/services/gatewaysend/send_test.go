@@ -39,6 +39,18 @@ func (s *captureSender) SendCard(ctx context.Context, chatID, title, markdown st
 	return nil
 }
 
+func (s *captureSender) SendText(ctx context.Context, chatID, text string) error {
+	_ = ctx
+	s.mu.Lock()
+	s.calls = append(s.calls, capturedCall{
+		chatID: strings.TrimSpace(chatID),
+		title:  "",
+		text:   strings.TrimSpace(text),
+	})
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *captureSender) snapshot() []capturedCall {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -46,7 +58,8 @@ func (s *captureSender) snapshot() []capturedCall {
 }
 
 type failingSender struct {
-	err error
+	err     error
+	textErr error
 }
 
 func (s *failingSender) SendCard(ctx context.Context, chatID, title, markdown string) error {
@@ -55,6 +68,22 @@ func (s *failingSender) SendCard(ctx context.Context, chatID, title, markdown st
 	_ = title
 	_ = markdown
 	if s == nil || s.err == nil {
+		return fmt.Errorf("send failed")
+	}
+	return s.err
+}
+
+func (s *failingSender) SendText(ctx context.Context, chatID, text string) error {
+	_ = ctx
+	_ = chatID
+	_ = text
+	if s == nil {
+		return fmt.Errorf("send failed")
+	}
+	if s.textErr != nil {
+		return s.textErr
+	}
+	if s.err == nil {
 		return fmt.Errorf("send failed")
 	}
 	return s.err

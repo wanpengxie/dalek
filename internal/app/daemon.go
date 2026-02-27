@@ -8,6 +8,7 @@ import (
 
 	"dalek/internal/services/core"
 	daemonsvc "dalek/internal/services/daemon"
+	gatewaysendsvc "dalek/internal/services/gatewaysend"
 	pmsvc "dalek/internal/services/pm"
 )
 
@@ -99,6 +100,7 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *slog.Logger) erro
 		_ = closeDaemonGatewayDB(internalSendDB)
 		return err
 	}
+	sendSweeper := gatewaysendsvc.NewSweeperWithDB(internalSendDB, gatewayResolver, gatewaySender, logger, gatewaysendsvc.SweeperOptions{})
 
 	d, err := daemonsvc.New(paths, daemonsvc.Options{
 		Logger: logger,
@@ -106,6 +108,7 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *slog.Logger) erro
 			newProjectRegistryComponent(registry),
 			host,
 			internalAPI,
+			sendSweeper,
 			newDaemonPublicGatewayComponent(home, logger, gatewayResolver),
 			manager,
 			notebook,

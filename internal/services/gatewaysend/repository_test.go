@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"dalek/internal/contracts"
 	"dalek/internal/store"
@@ -175,5 +176,125 @@ func TestRepository_MarkFailed(t *testing.T) {
 	}
 	if !strings.Contains(outbox.LastError, "sender down") {
 		t.Fatalf("failed outbox last_error mismatch: %q", outbox.LastError)
+	}
+}
+
+func TestRepository_MarkFailedRetryable(t *testing.T) {
+	db := openGatewayDBForRepositoryTest(t)
+	binding := createRepositoryTestBinding(t, db, "demo", "chat-repo-retryable")
+	repo := NewGormRepository(db)
+
+	state, err := repo.CreatePending(context.Background(), binding, "demo", "will retry")
+	if err != nil {
+		t.Fatalf("CreatePending failed: %v", err)
+	}
+	nextRetryAt := time.Now().Add(2 * time.Minute).Round(time.Second)
+	if err := repo.MarkFailedRetryable(context.Background(), state, fmt.Errorf("temporary dns error"), nextRetryAt); err != nil {
+		t.Fatalf("MarkFailedRetryable failed: %v", err)
+	}
+
+	var msg contracts.ChannelMessage
+	if err := db.First(&msg, state.message.ID).Error; err != nil {
+		t.Fatalf("query message failed: %v", err)
+	}
+	if msg.Status != contracts.ChannelMessageFailed {
+		t.Fatalf("message status should be failed, got=%s", msg.Status)
+	}
+	var outbox contracts.ChannelOutbox
+	if err := db.First(&outbox, state.outbox.ID).Error; err != nil {
+		t.Fatalf("query outbox failed: %v", err)
+	}
+	if outbox.Status != contracts.ChannelOutboxFailed {
+		t.Fatalf("outbox status should be failed, got=%s", outbox.Status)
+	}
+	if outbox.NextRetryAt == nil || !outbox.NextRetryAt.Round(time.Second).Equal(nextRetryAt) {
+		t.Fatalf("next_retry_at mismatch: got=%v want=%v", outbox.NextRetryAt, nextRetryAt)
+	}
+	if !strings.Contains(outbox.LastError, "temporary dns error") {
+		t.Fatalf("outbox last_error mismatch: %q", outbox.LastError)
+	}
+}
+
+func TestRepository_MarkDead(t *testing.T) {
+	db := openGatewayDBForRepositoryTest(t)
+	binding := createRepositoryTestBinding(t, db, "demo", "chat-repo-dead")
+	repo := NewGormRepository(db)
+
+	state, err := repo.CreatePending(context.Background(), binding, "demo", "dead letter")
+	if err != nil {
+		t.Fatalf("CreatePending failed: %v", err)
+	}
+	if err := repo.MarkDead(context.Background(), state, fmt.Errorf("retry exhausted")); err != nil {
+		t.Fatalf("MarkDead failed: %v", err)
+	}
+
+	var msg contracts.ChannelMessage
+	if err := db.First(&msg, state.message.ID).Error; err != nil {
+		t.Fatalf("query message failed: %v", err)
+	}
+	if msg.Status != contracts.ChannelMessageFailed {
+		t.Fatalf("message status should be failed, got=%s", msg.Status)
+	}
+	var outbox contracts.ChannelOutbox
+	if err := db.First(&outbox, state.outbox.ID).Error; err != nil {
+		t.Fatalf("query outbox failed: %v", err)
+	}
+	if outbox.Status != contracts.ChannelOutboxDead {
+		t.Fatalf("outbox status should be dead, got=%s", outbox.Status)
+	}
+	if outbox.NextRetryAt != nil {
+		t.Fatalf("dead outbox should clear next_retry_at, got=%v", outbox.NextRetryAt)
+	}
+	if !strings.Contains(outbox.LastError, "retry exhausted") {
+		t.Fatalf("outbox last_error mismatch: %q", outbox.LastError)
+	}
+}
+
+func TestRepository_FindRetryableOutbox(t *testing.T) {
+	db := openGatewayDBForRepositoryTest(t)
+	repo := NewGormRepository(db)
+	binding := createRepositoryTestBinding(t, db, "demo", "chat-repo-find-retryable")
+
+	due, err := repo.CreatePending(context.Background(), binding, "demo", "due message")
+	if err != nil {
+		t.Fatalf("CreatePending due failed: %v", err)
+	}
+	if err := repo.MarkSending(context.Background(), due.outbox.ID); err != nil {
+		t.Fatalf("MarkSending due failed: %v", err)
+	}
+	if err := repo.MarkFailedRetryable(context.Background(), due, fmt.Errorf("due"), time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("MarkFailedRetryable due failed: %v", err)
+	}
+
+	future, err := repo.CreatePending(context.Background(), binding, "demo", "future message")
+	if err != nil {
+		t.Fatalf("CreatePending future failed: %v", err)
+	}
+	if err := repo.MarkSending(context.Background(), future.outbox.ID); err != nil {
+		t.Fatalf("MarkSending future failed: %v", err)
+	}
+	if err := repo.MarkFailedRetryable(context.Background(), future, fmt.Errorf("future"), time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("MarkFailedRetryable future failed: %v", err)
+	}
+
+	items, err := repo.FindRetryableOutbox(context.Background(), time.Now(), 10)
+	if err != nil {
+		t.Fatalf("FindRetryableOutbox failed: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 retryable outbox, got=%d", len(items))
+	}
+	got := items[0]
+	if got.state.outbox.ID != due.outbox.ID {
+		t.Fatalf("retryable outbox id mismatch: got=%d want=%d", got.state.outbox.ID, due.outbox.ID)
+	}
+	if got.binding.ID != binding.ID {
+		t.Fatalf("retryable binding id mismatch: got=%d want=%d", got.binding.ID, binding.ID)
+	}
+	if got.project != "demo" {
+		t.Fatalf("retryable project mismatch: %q", got.project)
+	}
+	if got.text != "due message" {
+		t.Fatalf("retryable text mismatch: %q", got.text)
 	}
 }
