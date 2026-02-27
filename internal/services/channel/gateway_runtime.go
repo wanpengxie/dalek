@@ -18,6 +18,8 @@ import (
 
 var ErrGatewayStopped = errors.New("gateway stopped")
 
+const channelBindingPolicyQuietModeKey = "quiet_mode"
+
 type ProjectRuntime interface {
 	ProcessInbound(ctx context.Context, env contracts.InboundEnvelope) (ProcessResult, error)
 	GatewayTurnTimeout() time.Duration
@@ -965,11 +967,16 @@ func (g *Gateway) ResetBoundConversationSession(ctx context.Context, channelType
 }
 
 func (g *Gateway) LookupBoundProject(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey string) (string, error) {
+	projectName, _, err := g.LookupBindingDetail(ctx, channelType, adapter, peerProjectKey)
+	return projectName, err
+}
+
+func (g *Gateway) LookupBindingDetail(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey string) (string, bool, error) {
 	if g == nil || g.db == nil {
-		return "", fmt.Errorf("gateway db 为空")
+		return "", false, fmt.Errorf("gateway db 为空")
 	}
 	if ctx == nil {
-		return "", fmt.Errorf("context 不能为空")
+		return "", false, fmt.Errorf("context 不能为空")
 	}
 	adapter = strings.TrimSpace(adapter)
 	peerProjectKey = strings.TrimSpace(peerProjectKey)
@@ -982,11 +989,84 @@ func (g *Gateway) LookupBoundProject(ctx context.Context, channelType contracts.
 		First(&binding).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", nil
+			return "", false, nil
 		}
-		return "", err
+		return "", false, err
 	}
-	return binding.ProjectName, nil
+	return binding.ProjectName, readChannelBindingQuietMode(binding.RolePolicyJSON), nil
+}
+
+func (g *Gateway) GetBindingQuietMode(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey string) (bool, error) {
+	_, quietMode, err := g.LookupBindingDetail(ctx, channelType, adapter, peerProjectKey)
+	if err != nil {
+		return false, err
+	}
+	return quietMode, nil
+}
+
+func (g *Gateway) SetBindingQuietMode(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey string, quiet bool) error {
+	if g == nil || g.db == nil {
+		return fmt.Errorf("gateway db 为空")
+	}
+	if ctx == nil {
+		return fmt.Errorf("context 不能为空")
+	}
+	adapter = strings.TrimSpace(adapter)
+	peerProjectKey = strings.TrimSpace(peerProjectKey)
+
+	var binding contracts.ChannelBinding
+	err := g.db.WithContext(ctx).
+		Where("channel_type = ? AND adapter = ? AND peer_project_key = ? AND enabled = 1",
+			toStoreChannelType(channelType),
+			adapter,
+			peerProjectKey).
+		First(&binding).Error
+	if err != nil {
+		return err
+	}
+
+	policy := contracts.JSONMapFromAny(binding.RolePolicyJSON)
+	policy[channelBindingPolicyQuietModeKey] = quiet
+
+	return g.db.WithContext(ctx).Model(&contracts.ChannelBinding{}).
+		Where("id = ?", binding.ID).
+		Update("role_policy_json", policy).Error
+}
+
+func readChannelBindingQuietMode(policy contracts.JSONMap) bool {
+	raw, ok := policy[channelBindingPolicyQuietModeKey]
+	if !ok {
+		return false
+	}
+	switch x := raw.(type) {
+	case bool:
+		return x
+	case string:
+		s := strings.ToLower(strings.TrimSpace(x))
+		if s == "1" || s == "true" || s == "yes" || s == "y" || s == "on" {
+			return true
+		}
+		if s == "0" || s == "false" || s == "no" || s == "n" || s == "off" {
+			return false
+		}
+	case float64:
+		return x != 0
+	case float32:
+		return x != 0
+	case int:
+		return x != 0
+	case int64:
+		return x != 0
+	case int32:
+		return x != 0
+	case uint:
+		return x != 0
+	case uint64:
+		return x != 0
+	case uint32:
+		return x != 0
+	}
+	return false
 }
 
 func (g *Gateway) BindProject(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey, projectName string) (string, error) {
