@@ -14,6 +14,8 @@ import (
 	"dalek/internal/contracts"
 )
 
+const workerReportStatusHookWaitTimeout = 12 * time.Second
+
 func cmdWorker(args []string) {
 	if len(args) == 0 {
 		cmdWorkerHelp()
@@ -316,6 +318,16 @@ func cmdWorkerReport(args []string) {
 			"检查数据库状态后重试",
 		)
 	}
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), workerReportStatusHookWaitTimeout)
+	if err := p.WaitStatusChangeHooks(waitCtx); err != nil {
+		waitCancel()
+		exitRuntimeError(out,
+			"worker report 通知回调未完成",
+			err.Error(),
+			"检查 PM 状态通知链路（hook / gateway / feishu）后重试",
+		)
+	}
+	waitCancel()
 
 	if out == outputJSON {
 		printJSONOrExit(map[string]any{

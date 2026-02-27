@@ -164,6 +164,8 @@ func buildStatusChangeNotifyText(event StatusChangeEvent, ticketTitle string) st
 	if ticketTitle == "" {
 		ticketTitle = fmt.Sprintf("t%d", event.TicketID)
 	}
+	from := contracts.CanonicalTicketWorkflowStatus(event.FromStatus)
+	to := contracts.CanonicalTicketWorkflowStatus(event.ToStatus)
 	source := strings.TrimSpace(event.Source)
 	if source == "" {
 		source = "unknown"
@@ -174,26 +176,28 @@ func buildStatusChangeNotifyText(event StatusChangeEvent, ticketTitle string) st
 	}
 
 	lines := []string{
-		fmt.Sprintf(
-			"[ticket] t%d %s -> %s",
-			event.TicketID,
-			contracts.CanonicalTicketWorkflowStatus(event.FromStatus),
-			contracts.CanonicalTicketWorkflowStatus(event.ToStatus),
-		),
-		ticketTitle,
+		fmt.Sprintf("[ticket] t%d %s -> %s", event.TicketID, from, to),
+		fmt.Sprintf("**%s**", ticketTitle),
+		"",
+		fmt.Sprintf("- 状态: `%s -> %s`", from, to),
 	}
-	details := make([]string, 0, 2)
 	if event.WorkerID > 0 {
-		details = append(details, fmt.Sprintf("worker: w%d", event.WorkerID))
+		lines = append(lines, fmt.Sprintf("- Worker: `w%d`", event.WorkerID))
 	}
 	if d := strings.TrimSpace(event.Detail); d != "" {
-		details = append(details, d)
+		lines = append(lines, "- 详情:")
+		for _, detailLine := range strings.Split(d, "\n") {
+			detailLine = strings.TrimSpace(detailLine)
+			if detailLine == "" {
+				continue
+			}
+			lines = append(lines, "  "+detailLine)
+		}
 	}
-	if len(details) > 0 {
-		lines = append(lines, "详情:")
-		lines = append(lines, strings.Join(details, "\n"))
-	}
-	lines = append(lines, fmt.Sprintf("来源: %s | 时间: %s", source, occurredAt.Local().Format("2006-01-02 15:04:05")))
+	lines = append(lines,
+		fmt.Sprintf("- 来源: `%s`", source),
+		fmt.Sprintf("- 时间: `%s`", occurredAt.Local().Format("2006-01-02 15:04:05")),
+	)
 	return strings.Join(lines, "\n")
 }
 
@@ -224,7 +228,9 @@ func (s *Service) emitStatusChangeHookAsync(event *StatusChangeEvent) {
 		return
 	}
 	ev := *event
+	s.statusHookWG.Add(1)
 	go func() {
+		defer s.statusHookWG.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				s.slog().Error("pm workflow status notify panic",
@@ -247,4 +253,27 @@ func (s *Service) emitStatusChangeHookAsync(event *StatusChangeEvent) {
 			)
 		}
 	}()
+}
+
+// WaitStatusChangeHooks 等待当前进程内已触发的状态通知回调执行完成。
+// 用于短生命周期 CLI 场景，避免进程退出导致异步通知丢失。
+func (s *Service) WaitStatusChangeHooks(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	done := make(chan struct{})
+	go func() {
+		s.statusHookWG.Wait()
+		close(done)
+	}()
+	if ctx == nil {
+		<-done
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

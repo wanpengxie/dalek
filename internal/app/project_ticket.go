@@ -66,3 +66,10 @@ func (p *Project) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 	}
 	return p.pm.ApplyWorkerReport(ctx, r, source)
 }
+
+func (p *Project) WaitStatusChangeHooks(ctx context.Context) error {
+	if p == nil || p.pm == nil {
+		return nil
+	}
+	return p.pm.WaitStatusChangeHooks(ctx)
+}
