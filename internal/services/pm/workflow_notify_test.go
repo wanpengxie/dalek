@@ -33,6 +33,32 @@ func (h *testStatusChangeHook) OnStatusChange(ctx context.Context, event StatusC
 	return h.err
 }
 
+type testBlockingStatusChangeHook struct {
+	delay time.Duration
+	done  chan struct{}
+}
+
+func (h *testBlockingStatusChangeHook) OnStatusChange(ctx context.Context, event StatusChangeEvent) error {
+	_ = event
+	if h == nil {
+		return nil
+	}
+	if h.delay > 0 {
+		select {
+		case <-time.After(h.delay):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if h.done != nil {
+		select {
+		case h.done <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
 type sendCardCall struct {
 	chatID   string
 	title    string
@@ -81,6 +107,53 @@ func assertNoStatusEvent(t *testing.T, ch <-chan StatusChangeEvent) {
 	case ev := <-ch:
 		t.Fatalf("不期望收到状态通知: %+v", ev)
 	case <-time.After(250 * time.Millisecond):
+	}
+}
+
+func TestWaitStatusChangeHooks_WaitsForAsyncHook(t *testing.T) {
+	svc, p, _, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "notify-wait-hooks")
+	hook := &testBlockingStatusChangeHook{
+		delay: 120 * time.Millisecond,
+		done:  make(chan struct{}, 1),
+	}
+	svc.SetStatusChangeHook(hook)
+
+	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, contracts.TicketActive); err != nil {
+		t.Fatalf("SetTicketWorkflowStatus failed: %v", err)
+	}
+
+	start := time.Now()
+	if err := svc.WaitStatusChangeHooks(context.Background()); err != nil {
+		t.Fatalf("WaitStatusChangeHooks failed: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond {
+		t.Fatalf("WaitStatusChangeHooks returned too early: %s", elapsed)
+	}
+	select {
+	case <-hook.done:
+	default:
+		t.Fatalf("hook not finished")
+	}
+}
+
+func TestWaitStatusChangeHooks_RespectsContextTimeout(t *testing.T) {
+	svc, p, _, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "notify-wait-timeout")
+	hook := &testBlockingStatusChangeHook{
+		delay: 500 * time.Millisecond,
+		done:  make(chan struct{}, 1),
+	}
+	svc.SetStatusChangeHook(hook)
+
+	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, contracts.TicketActive); err != nil {
+		t.Fatalf("SetTicketWorkflowStatus failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := svc.WaitStatusChangeHooks(ctx); err == nil {
+		t.Fatalf("expected timeout error, got nil")
 	}
 }
 

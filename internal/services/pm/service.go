@@ -25,6 +25,7 @@ type Service struct {
 	mu                sync.RWMutex
 	dispatchSubmitter DispatchSubmitter
 	statusChangeHook  WorkflowStatusChangeHook
+	statusHookWG      sync.WaitGroup
 
 	workerReadyTimeout      time.Duration
 	workerReadyPollInterval time.Duration
