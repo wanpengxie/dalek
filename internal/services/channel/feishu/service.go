@@ -543,9 +543,6 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			logDaemonFeishuInfo(logger, message, fields...)
 		}
 		markOutbox := func(outboxID uint, delivered bool, cause error) {
-			if replySender != nil {
-				return
-			}
 			if gateway == nil || outboxID == 0 {
 				return
 			}
@@ -679,12 +676,14 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 						"source", source,
 						"error", sendErr,
 					)
+					markOutbox(outboxID, false, sendErr)
 					return
 				}
 				logFinal("gateway reply enqueue success",
 					"attempt", attempt,
 					"source", source,
 				)
+				markOutbox(outboxID, true, nil)
 				return
 			}
 
@@ -785,12 +784,14 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 						"source", source,
 						"error", sendErr,
 					)
+					markOutbox(outboxID, false, sendErr)
 					return
 				}
 				logFinal("gateway approval enqueue success",
 					"attempt", attempt,
 					"source", source,
 				)
+				markOutbox(outboxID, true, nil)
 				return
 			}
 
@@ -1063,9 +1064,11 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 					return
 				}
 				if alreadySent {
-					if replySender == nil {
-						markOutbox(outboxID, true, nil)
-					}
+					// 无论 replySender 是否设置，都必须 mark outbox 为已投递。
+					// 若 relay goroutine 先发送了 final reply，此时 outboxID 由 callback 的
+					// result.OutboxID 设置，需要在这里 mark，否则 pm outbox 会一直是 pending
+					// 被 sweeper 重复发送（造成重复消息）。
+					markOutbox(outboxID, true, nil)
 					return
 				}
 				go sendFinalReply("callback", reply)
