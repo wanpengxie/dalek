@@ -27,6 +27,8 @@ type ticketViewData struct {
 	tickets                    []contracts.Ticket
 	defaultSocket              string
 	latestWorkerByTicket       map[uint]contracts.Worker
+	runtimeAliveByWorker       map[uint]bool
+	runtimeProbeFailedByWorker map[uint]bool
 	sessionsBySocket           map[string]map[string]bool
 	sessionProbeFailedBySocket map[string]bool
 	latestTaskByTicket         map[uint]store.TaskStatusView
@@ -42,6 +44,9 @@ func (s *QueryService) require() (*core.Project, error) {
 	}
 	if s.p.Tmux == nil {
 		return nil, fmt.Errorf("ticket query service 缺少 tmux client")
+	}
+	if s.p.WorkerRuntime == nil {
+		return nil, fmt.Errorf("ticket query service 缺少 worker runtime")
 	}
 	if s.p.TaskRuntime == nil {
 		return nil, fmt.Errorf("ticket query service 缺少 task runtime")
@@ -71,6 +76,14 @@ func (s *QueryService) tmux() (infra.TmuxClient, error) {
 		return nil, err
 	}
 	return p.Tmux, nil
+}
+
+func (s *QueryService) runtime() (infra.WorkerRuntime, error) {
+	p, err := s.require()
+	if err != nil {
+		return nil, err
+	}
+	return p.WorkerRuntime, nil
 }
 
 func (s *QueryService) taskRuntimeForDB(db *gorm.DB) (core.TaskRuntime, error) {
@@ -114,10 +127,16 @@ func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData,
 	if err != nil {
 		return ticketViewData{}, err
 	}
+	runtime, err := s.runtime()
+	if err != nil {
+		return ticketViewData{}, err
+	}
 
 	data := ticketViewData{
 		defaultSocket:              strings.TrimSpace(cfg.TmuxSocket),
 		latestWorkerByTicket:       map[uint]contracts.Worker{},
+		runtimeAliveByWorker:       map[uint]bool{},
+		runtimeProbeFailedByWorker: map[uint]bool{},
 		sessionsBySocket:           map[string]map[string]bool{},
 		sessionProbeFailedBySocket: map[string]bool{},
 		latestTaskByTicket:         map[uint]store.TaskStatusView{},
@@ -160,6 +179,17 @@ func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData,
 
 	socketSet := map[string]struct{}{}
 	for _, w := range data.latestWorkerByTicket {
+		if hasTicketWorkerRuntimeHandle(w) {
+			alive, aerr := runtime.IsAlive(ctx, ticketWorkerRuntimeHandle(w))
+			if aerr != nil {
+				data.runtimeProbeFailedByWorker[w.ID] = true
+			} else {
+				data.runtimeAliveByWorker[w.ID] = alive
+				if alive {
+					continue
+				}
+			}
+		}
 		if strings.TrimSpace(w.TmuxSession) == "" {
 			continue
 		}
@@ -250,7 +280,13 @@ func buildTicketView(t contracts.Ticket, data ticketViewData) TicketView {
 	if w, ok := data.latestWorkerByTicket[t.ID]; ok {
 		ww := w
 		lw = &ww
-		if strings.TrimSpace(ww.TmuxSession) != "" {
+		if data.runtimeProbeFailedByWorker[ww.ID] {
+			sessionProbeFailed = true
+		}
+		if data.runtimeAliveByWorker[ww.ID] {
+			alive = true
+		}
+		if !alive && strings.TrimSpace(ww.TmuxSession) != "" {
 			socket := strings.TrimSpace(ww.TmuxSocket)
 			if socket == "" {
 				socket = data.defaultSocket
@@ -307,4 +343,19 @@ func buildTicketView(t contracts.Ticket, data ticketViewData) TicketView {
 		LastEventNote:      lastEventNote,
 		LastEventAt:        lastEventAt,
 	}
+}
+
+func hasTicketWorkerRuntimeHandle(w contracts.Worker) bool {
+	return w.ProcessPID > 0
+}
+
+func ticketWorkerRuntimeHandle(w contracts.Worker) infra.WorkerProcessHandle {
+	h := infra.WorkerProcessHandle{
+		PID:     w.ProcessPID,
+		LogPath: strings.TrimSpace(w.LogPath),
+	}
+	if w.StartedAt != nil {
+		h.StartedAt = *w.StartedAt
+	}
+	return h
 }

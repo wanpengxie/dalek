@@ -94,15 +94,28 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 		}
 
 		deadReason := ""
-		switch {
-		case sessionName == "":
-			deadReason = "tmux_session 为空"
-		default:
-			sessions, serr := loadSessions(socket)
-			if serr != nil {
-				out.Errors = append(out.Errors, fmt.Sprintf("zombie dead 检查失败：t%d w%d: %v", w.TicketID, w.ID, serr))
-			} else if !sessions[sessionName] {
-				deadReason = fmt.Sprintf("tmux session 不存在：%s", sessionName)
+		runtimeAlive := false
+		if hasWorkerRuntimeHandle(w) {
+			alive, aerr := p.WorkerRuntime.IsAlive(ctx, workerRuntimeHandle(w))
+			if aerr != nil {
+				out.Errors = append(out.Errors, fmt.Sprintf("zombie runtime 检查失败：t%d w%d: %v", w.TicketID, w.ID, aerr))
+			} else if alive {
+				runtimeAlive = true
+			} else {
+				deadReason = fmt.Sprintf("worker 进程不存活：pid=%d", w.ProcessPID)
+			}
+		}
+		if deadReason == "" && !runtimeAlive {
+			switch {
+			case sessionName == "":
+				deadReason = "tmux_session 为空"
+			default:
+				sessions, serr := loadSessions(socket)
+				if serr != nil {
+					out.Errors = append(out.Errors, fmt.Sprintf("zombie dead 检查失败：t%d w%d: %v", w.TicketID, w.ID, serr))
+				} else if !sessions[sessionName] {
+					deadReason = fmt.Sprintf("tmux session 不存在：%s", sessionName)
+				}
 			}
 		}
 		if deadReason != "" {

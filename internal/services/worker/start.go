@@ -134,15 +134,20 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 
 	worktreeCreated := false
 	sessionRollbackNeeded := false
+	runtimeRollbackNeeded := false
 	rollbackWorktree := ""
 	rollbackSocket := ""
 	rollbackSession := ""
+	rollbackRuntime := infra.WorkerProcessHandle{}
 	defer func() {
 		if err == nil {
 			return
 		}
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if runtimeRollbackNeeded && rollbackRuntime.PID > 0 {
+			_ = p.WorkerRuntime.StopProcess(cleanupCtx, rollbackRuntime, defaultWorkerProcessStopTimeout)
+		}
 		if sessionRollbackNeeded && strings.TrimSpace(rollbackSession) != "" {
 			socket := strings.TrimSpace(rollbackSocket)
 			if socket == "" {
@@ -394,6 +399,81 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 			parts = append(parts, "export PATH="+infra.ShellQuote(strings.TrimSpace(tsBinDir))+":$PATH")
 		}
 	}
+	workerEnv := map[string]string{
+		"DALEK_WORKER_ID":     fmt.Sprintf("%d", w.ID),
+		"DALEK_TICKET_ID":     fmt.Sprintf("%d", t.ID),
+		"DALEK_PROJECT_KEY":   strings.TrimSpace(p.Key),
+		"DALEK_WORKTREE_PATH": strings.TrimSpace(worktreePath),
+		"DALEK_DB_PATH":       strings.TrimSpace(p.DBPath()),
+		"DALEK_CONTRACT_DIR":  strings.TrimSpace(contractDir),
+	}
+	if strings.TrimSpace(tsBinPath) != "" {
+		workerEnv["DALEK_BIN_PATH"] = strings.TrimSpace(tsBinPath)
+		if strings.TrimSpace(tsBinDir) != "" {
+			basePath := os.Getenv("PATH")
+			if strings.TrimSpace(basePath) != "" {
+				workerEnv["PATH"] = strings.TrimSpace(tsBinDir) + ":" + basePath
+			} else {
+				workerEnv["PATH"] = strings.TrimSpace(tsBinDir)
+			}
+		}
+	}
+	runtimeHandle, runtimeErr := p.WorkerRuntime.StartProcess(ctx, infra.WorkerProcessSpec{
+		Command: "bash",
+		Args: []string{
+			"-lc",
+			"trap '' INT; while true; do sleep 3600; done",
+		},
+		WorkDir: strings.TrimSpace(worktreePath),
+		Env:     workerEnv,
+		LogPath: strings.TrimSpace(logPath),
+	})
+	if runtimeErr == nil {
+		runtimeRollbackNeeded = true
+		rollbackRuntime = runtimeHandle
+		startedAt := runtimeHandle.StartedAt
+		if startedAt.IsZero() {
+			startedAt = time.Now()
+		}
+		persistLogPath := strings.TrimSpace(runtimeHandle.LogPath)
+		if persistLogPath == "" {
+			persistLogPath = strings.TrimSpace(logPath)
+		}
+		if uerr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+				"process_pid":  runtimeHandle.PID,
+				"log_path":     persistLogPath,
+				"tmux_socket":  socket,
+				"tmux_session": session,
+				"started_at":   &startedAt,
+				"stopped_at":   nil,
+				"last_error":   "",
+			}).Error; err != nil {
+				return err
+			}
+			return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, contracts.WorkerCreating, contracts.WorkerCreating, "worker.start", "runtime 进程已启动", map[string]any{
+				"ticket_id":   w.TicketID,
+				"process_pid": runtimeHandle.PID,
+				"log_path":    strings.TrimSpace(persistLogPath),
+			}, startedAt)
+		}); uerr != nil {
+			return nil, uerr
+		}
+		w.WorktreePath = worktreePath
+		w.Branch = branch
+		w.ProcessPID = runtimeHandle.PID
+		w.LogPath = persistLogPath
+		w.TmuxSocket = socket
+		w.TmuxSession = session
+		runtimeRollbackNeeded = false
+
+		var out contracts.Worker
+		if err := db.First(&out, w.ID).Error; err != nil {
+			return w, nil
+		}
+		return &out, nil
+	}
+
 	parts = append(parts, "exec ${SHELL:-bash} -l")
 	injected := strings.Join(parts, "; ")
 	sessionRollbackNeeded = true

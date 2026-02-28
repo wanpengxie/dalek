@@ -91,9 +91,15 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		return nil, fmt.Errorf("更新 ticket workflow 失败（t%d w%d）：%w", ticketID, w.ID, err)
 	}
 
-	// 已经是 running 则直接返回。
-	if w.Status == contracts.WorkerRunning && strings.TrimSpace(w.TmuxSession) != "" {
-		return w, nil
+	// 已经是 running 且执行资源可探测则直接返回。
+	if w.Status == contracts.WorkerRunning {
+		ready, rerr := s.workerDispatchReady(ctx, w)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if ready {
+			return w, nil
+		}
 	}
 
 	// 2) start 初始化 hook（当前 no-op，仅保留接口）。

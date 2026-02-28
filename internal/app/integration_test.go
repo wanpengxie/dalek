@@ -158,8 +158,11 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession(t *testing.T) {
 	}
 
 	missingSession := fmt.Sprintf("missing-session-%d", time.Now().UnixNano())
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Update("tmux_session", missingSession).Error; err != nil {
-		t.Fatalf("update tmux_session failed: %v", err)
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"tmux_session": missingSession,
+		"process_pid":  0,
+	}).Error; err != nil {
+		t.Fatalf("update worker runtime/session failed: %v", err)
 	}
 
 	views, err := p.ListTicketViews(ctx)
@@ -239,8 +242,11 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession_ArchivedTicket(t 
 	}
 
 	missingSession := fmt.Sprintf("missing-archived-session-%d", time.Now().UnixNano())
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Update("tmux_session", missingSession).Error; err != nil {
-		t.Fatalf("update tmux_session failed: %v", err)
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"tmux_session": missingSession,
+		"process_pid":  0,
+	}).Error; err != nil {
+		t.Fatalf("update worker runtime/session failed: %v", err)
 	}
 
 	manager := newDaemonManagerComponent(h, nil)

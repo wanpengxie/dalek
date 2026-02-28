@@ -32,6 +32,9 @@ func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
 	if w.Status != contracts.WorkerCreating {
 		t.Fatalf("unexpected worker status: %s", w.Status)
 	}
+	if w.ProcessPID <= 0 {
+		t.Fatalf("expected runtime pid > 0, got %d", w.ProcessPID)
+	}
 
 	var cnt int64
 	if err := p.DB.Model(&contracts.Worker{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
@@ -48,8 +51,8 @@ func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
 	if ticket.WorkflowStatus != contracts.TicketBacklog {
 		t.Fatalf("expected ticket backlog, got %s", ticket.WorkflowStatus)
 	}
-	if fTmux.NewSessionCalls != 1 {
-		t.Fatalf("expected one tmux new-session call, got %d", fTmux.NewSessionCalls)
+	if fTmux.NewSessionCalls != 0 {
+		t.Fatalf("expected runtime-primary start without tmux new-session, got %d", fTmux.NewSessionCalls)
 	}
 	if fGit.AddCalls != 1 {
 		t.Fatalf("expected one git worktree add call, got %d", fGit.AddCalls)
@@ -138,35 +141,38 @@ func TestStartTicket_RollbackWorktreeWhenEnsureContractFails(t *testing.T) {
 	}
 }
 
-func TestStartTicket_RollbackSessionAndWorktreeWhenNewSessionFails(t *testing.T) {
+func TestStartTicket_RuntimePrimaryIgnoresTmuxNewSessionFailure(t *testing.T) {
 	svc, p, fTmux, fGit := newServiceForTest(t)
 	fTmux.NewSessionErr = errors.New("tmux new-session failed")
 
 	tk := createTicket(t, p.DB, "ticket-rollback-session")
-	_, err := svc.StartTicketResources(context.Background(), tk.ID)
-	if err == nil || !strings.Contains(err.Error(), "tmux new-session failed") {
-		t.Fatalf("StartTicketResources should return tmux error, got=%v", err)
+	w, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicketResources should succeed via runtime path, got=%v", err)
 	}
-	if fTmux.KillSessionCalls < 1 {
-		t.Fatalf("expected rollback kill session, got=%d", fTmux.KillSessionCalls)
+	if w.ProcessPID <= 0 {
+		t.Fatalf("expected runtime pid > 0, got %d", w.ProcessPID)
 	}
-	if fGit.RemoveCalls != 1 {
-		t.Fatalf("expected rollback remove worktree once, got=%d", fGit.RemoveCalls)
+	if fGit.RemoveCalls != 0 {
+		t.Fatalf("worktree should not be rolled back on successful runtime start, got=%d", fGit.RemoveCalls)
 	}
 }
 
-func TestStartTicket_RollbackCleanupFailureDoesNotOverrideMainError(t *testing.T) {
+func TestStartTicket_RuntimePrimarySkipsRollbackCleanupOnTmuxFailure(t *testing.T) {
 	svc, p, fTmux, fGit := newServiceForTest(t)
 	fTmux.NewSessionErr = errors.New("tmux new-session failed")
 	fGit.RemoveErr = errors.New("remove worktree failed")
 
 	tk := createTicket(t, p.DB, "ticket-rollback-best-effort")
-	_, err := svc.StartTicketResources(context.Background(), tk.ID)
-	if err == nil || !strings.Contains(err.Error(), "tmux new-session failed") {
-		t.Fatalf("main error should remain tmux failure, got=%v", err)
+	w, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("runtime-primary start should not fail due tmux fallback error, got=%v", err)
 	}
-	if fGit.RemoveCalls != 1 {
-		t.Fatalf("expected rollback remove attempt once, got=%d", fGit.RemoveCalls)
+	if w.ProcessPID <= 0 {
+		t.Fatalf("expected runtime pid > 0, got %d", w.ProcessPID)
+	}
+	if fGit.RemoveCalls != 0 {
+		t.Fatalf("unexpected rollback remove attempt, got=%d", fGit.RemoveCalls)
 	}
 }
 
@@ -187,8 +193,8 @@ func TestStartTicket_FreshWorkerCleansStaleSameNameSession(t *testing.T) {
 	if fTmux.KillSessionCalls < 1 {
 		t.Fatalf("expected stale session cleanup before start, killSessionCalls=%d", fTmux.KillSessionCalls)
 	}
-	if !fTmux.Sessions[staleSession] {
-		t.Fatalf("expected session recreated after cleanup")
+	if fTmux.Sessions[staleSession] {
+		t.Fatalf("runtime-primary path should not recreate tmux session")
 	}
 }
 
@@ -224,8 +230,8 @@ func TestStartTicket_RestartReusesWorkerRecord(t *testing.T) {
 	if cnt != 1 {
 		t.Fatalf("expected single worker record after restart, got %d", cnt)
 	}
-	if fTmux.NewSessionCalls != 2 {
-		t.Fatalf("expected tmux new-session called twice after restart, got %d", fTmux.NewSessionCalls)
+	if fTmux.NewSessionCalls != 0 {
+		t.Fatalf("runtime-primary restart should not create tmux session, got %d", fTmux.NewSessionCalls)
 	}
 }
 
@@ -312,8 +318,8 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	if ticket.WorkflowStatus != contracts.TicketBacklog {
 		t.Fatalf("expected ticket workflow backlog, got %s", ticket.WorkflowStatus)
 	}
-	if fTmux.KillSessionCalls != 1 {
-		t.Fatalf("expected one kill-session call, got %d", fTmux.KillSessionCalls)
+	if fTmux.KillSessionCalls != 0 {
+		t.Fatalf("runtime-primary stop should not require kill-session, got %d", fTmux.KillSessionCalls)
 	}
 	statusRows, err := rt.ListStatus(context.Background(), contracts.TaskListStatusOptions{
 		OwnerType:       contracts.TaskOwnerWorker,

@@ -58,17 +58,24 @@ func (s *Service) workerNotRunningError(w *contracts.Worker) error {
 }
 
 func (s *Service) workerMissingSessionError() error {
-	return fmt.Errorf("该 ticket 尚未启动（没有 worker/session），请先按 s 或运行 start")
+	return fmt.Errorf("该 ticket 尚未启动（没有 worker/session），或缺少可用 runtime，请先按 s 或运行 start")
 }
 
 func (s *Service) waitWorkerReadyForDispatch(ctx context.Context, ticketID uint, initial *contracts.Worker) (*contracts.Worker, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if initial == nil || strings.TrimSpace(initial.TmuxSession) == "" {
+	if initial == nil {
 		return nil, s.workerMissingSessionError()
 	}
 	if initial.Status == contracts.WorkerRunning {
+		ready, err := s.workerDispatchReady(ctx, initial)
+		if err != nil {
+			return nil, err
+		}
+		if !ready {
+			return nil, s.workerMissingSessionError()
+		}
 		return initial, nil
 	}
 	if initial.Status != contracts.WorkerCreating {
@@ -118,11 +125,18 @@ func (s *Service) waitWorkerReadyForDispatch(ctx context.Context, ticketID uint,
 			}
 			return nil, err
 		}
-		if w == nil || strings.TrimSpace(w.TmuxSession) == "" {
+		if w == nil {
 			return nil, s.workerMissingSessionError()
 		}
 		current = w
 		if current.Status == contracts.WorkerRunning {
+			ready, err := s.workerDispatchReady(waitCtx, current)
+			if err != nil {
+				return nil, err
+			}
+			if !ready {
+				return nil, s.workerMissingSessionError()
+			}
 			return current, nil
 		}
 		if current.Status != contracts.WorkerCreating {

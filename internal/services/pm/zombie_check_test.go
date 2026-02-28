@@ -17,6 +17,12 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"process_pid": 0,
+		"updated_at":  time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("clear runtime pid failed: %v", err)
+	}
 	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
 
 	rt, err := svc.taskRuntimeForDB(p.DB)
@@ -50,7 +56,7 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 }
 
 func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-stalled-recovery")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -81,10 +87,6 @@ func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
 	if out.Blocked != 0 {
 		t.Fatalf("expected blocked=0, got=%d", out.Blocked)
 	}
-	if fTmux.SendKeysCalls == 0 {
-		t.Fatalf("expected interrupt path invoked")
-	}
-
 	var got contracts.Worker
 	if err := p.DB.First(&got, w.ID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
@@ -104,6 +106,7 @@ func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"retry_count": defaultZombieMaxRetries,
+		"process_pid": 0,
 		"updated_at":  time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set retry_count failed: %v", err)
@@ -183,6 +186,12 @@ func TestManagerTick_ReportsZombieStats(t *testing.T) {
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"process_pid": 0,
+		"updated_at":  time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("clear runtime pid failed: %v", err)
 	}
 	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
 

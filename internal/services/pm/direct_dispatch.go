@@ -36,7 +36,7 @@ type DirectDispatchResult struct {
 //
 // 与 DispatchTicket 的区别：不执行 PM dispatch agent（不生成契约文件），直接进入 worker loop。
 func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt DirectDispatchOptions) (DirectDispatchResult, error) {
-	p, db, err := s.require()
+	_, db, err := s.require()
 	if err != nil {
 		return DirectDispatchResult{}, err
 	}
@@ -62,14 +62,18 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	if err != nil {
 		return DirectDispatchResult{}, err
 	}
-	if autoStart && (w == nil || strings.TrimSpace(w.TmuxSession) == "") {
+	ready, rerr := s.workerDispatchReady(ctx, w)
+	if rerr != nil {
+		return DirectDispatchResult{}, rerr
+	}
+	if autoStart && (w == nil || !ready) {
 		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
 		if err != nil {
 			return DirectDispatchResult{}, err
 		}
 	}
-	if w == nil || strings.TrimSpace(w.TmuxSession) == "" {
-		return DirectDispatchResult{}, fmt.Errorf("该 ticket 尚未启动（没有 worker/session），请先按 s 或运行 start")
+	if w == nil {
+		return DirectDispatchResult{}, s.workerMissingSessionError()
 	}
 	if w.Status == contracts.WorkerCreating {
 		ready, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
@@ -94,33 +98,51 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	if w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
 		return DirectDispatchResult{}, fmt.Errorf("该 ticket 的最新 worker 不在 running（w%d status=%s），请重新启动", w.ID, w.Status)
 	}
+	ready, rerr = s.workerDispatchReady(ctx, w)
+	if rerr != nil {
+		return DirectDispatchResult{}, rerr
+	}
+	if !ready && w.Status == contracts.WorkerRunning {
+		if autoStart {
+			w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
+			if err != nil {
+				return DirectDispatchResult{}, err
+			}
+			ready, rerr = s.workerDispatchReady(ctx, w)
+			if rerr != nil {
+				return DirectDispatchResult{}, rerr
+			}
+		}
+		if !ready {
+			return DirectDispatchResult{}, fmt.Errorf("worker runtime/session 不在线（w%d），请先 start", w.ID)
+		}
+	}
 
 	if w.Status == contracts.WorkerStopped {
-		socket := strings.TrimSpace(w.TmuxSocket)
-		if socket == "" {
-			socket = strings.TrimSpace(p.Config.WithDefaults().TmuxSocket)
+		live, lerr := s.workerDispatchLive(ctx, w)
+		if lerr != nil {
+			return DirectDispatchResult{}, lerr
 		}
-		session := strings.TrimSpace(w.TmuxSession)
-		if p.Tmux != nil && socket != "" && session != "" {
-			listCtx, cancel := context.WithTimeout(ctx, tmuxListSessionsTimeout)
-			sessions, lerr := p.Tmux.ListSessions(listCtx, socket)
-			cancel()
-			if lerr == nil && !sessions[session] {
-				if autoStart {
-					w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
-					if err != nil {
-						return DirectDispatchResult{}, err
-					}
-					if w != nil && w.Status == contracts.WorkerCreating {
-						ready, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
-						if waitErr != nil {
-							return DirectDispatchResult{}, waitErr
-						}
-						w = ready
-					}
-				} else {
-					return DirectDispatchResult{}, fmt.Errorf("worker session 不在线（w%d session=%s），请先 start", w.ID, session)
+		if !live {
+			if autoStart {
+				w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
+				if err != nil {
+					return DirectDispatchResult{}, err
 				}
+				if w != nil && w.Status == contracts.WorkerCreating {
+					readyWorker, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
+					if waitErr != nil {
+						return DirectDispatchResult{}, waitErr
+					}
+					w = readyWorker
+				}
+				live, lerr = s.workerDispatchLive(ctx, w)
+				if lerr != nil {
+					return DirectDispatchResult{}, lerr
+				}
+			}
+			if !live {
+				return DirectDispatchResult{}, fmt.Errorf("worker runtime/session 不在线（w%d），请先 start", w.ID)
 			}
 		}
 		if w.Status == contracts.WorkerStopped {
