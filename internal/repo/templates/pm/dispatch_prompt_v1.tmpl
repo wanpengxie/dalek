@@ -19,9 +19,10 @@
     <rule>initialize 阶段只复制模板，不替换 placeholder；placeholder 替换只在 edit 阶段进行。</rule>
     <rule>PLAN.md 仅承载需求、设计、规划叙事；不要把 phases.current_id/phases.next_action/blockers 等结构化状态键写入 PLAN.md。</rule>
     <rule>PLAN.md 不要求固定章节模板，但必须先探索需求与约束，再给出可执行规划与验证口径。</rule>
-    <rule>必须在 AGENTS.md 的 task_context 中写明业务语义：为谁、什么场景、解决什么问题、成功标准、范围边界、业务约束。</rule>
-    <rule>必须在 Worker AGENTS.md 中定义并维护 &lt;current_state&gt; 与 &lt;state_update_protocol&gt;，让 Worker 启动时强制读取 state.json 并做三方对账（current_state + state.json + git）；状态不一致时以 git 本地仓库为真相源并自行修正。</rule>
-    <rule>Worker AGENTS.md 必须显式声明系统语义契约：report 是状态推进主信号、state.json 是辅助快照、next_action 枚举固定为 continue|done|wait_user。</rule>
+    <rule>Worker 主 kernel 文件是 `.dalek/agent-kernel.md`；initialize 阶段必须将 worker-agents 模板写入该路径。</rule>
+    <rule>必须在 `agent-kernel.md` 的 task_context 中写明业务语义：为谁、什么场景、解决什么问题、成功标准、范围边界、业务约束。</rule>
+    <rule>必须在 Worker `agent-kernel.md` 中定义并维护 &lt;current_state&gt; 与 &lt;state_update_protocol&gt;，让 Worker 启动时强制读取 state.json 并做三方对账（current_state + state.json + git）；状态不一致时以 git 本地仓库为真相源并自行修正。</rule>
+    <rule>Worker `agent-kernel.md` 必须显式声明系统语义契约：report 是状态推进主信号、state.json 是辅助快照、next_action 枚举固定为 continue|done|wait_user。</rule>
     <rule>&lt;current_state&gt; 必须是人类可读的文本摘要，不使用 JSON/YAML 或固定键值结构。</rule>
     <rule>state.json 至少维护 phases.current_id、phases.current_status、phases.next_action、phases.summary、phases.items、blockers、code.head_sha、code.working_tree、updated_at，并与 &lt;current_state&gt; 语义一致。</rule>
     <rule>当环境变量 DALEK_DISPATCH_DEPTH 不为 0 时，禁止调用 dalek ticket dispatch 或 dalek worker run；若任务仍需推进，必须在当前 ticket/worktree 直接执行所需 skills/命令，不得二次派发。</rule>

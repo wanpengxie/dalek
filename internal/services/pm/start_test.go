@@ -26,7 +26,6 @@ func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(w.WorktreePath, ".dalek")); err != nil {
 		t.Fatalf("expected .dalek dir exists: %v", err)
 	}
-
 	var got contracts.Ticket
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)

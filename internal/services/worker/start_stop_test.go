@@ -30,7 +30,6 @@ func TestStartTicket_CreatesWorkerAndRuntime(t *testing.T) {
 	if strings.TrimSpace(w.LogPath) == "" {
 		t.Fatalf("expected runtime log path")
 	}
-
 	var cnt int64
 	if err := p.DB.Model(&contracts.Worker{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
 		t.Fatalf("count workers failed: %v", err)

@@ -1409,7 +1409,6 @@ func TestIntegration_InitCreatesControlPlaneSeed(t *testing.T) {
 		filepath.Join(p.ProjectDir(), "control", "skills", "notebook-shaping", "SKILL.md"),
 		filepath.Join(p.ProjectDir(), "control", "skills", "dispatch-new-ticket", "references", "output-contract.md"),
 		filepath.Join(p.ProjectDir(), "control", "skills", "dispatch-new-ticket", "assets", "worker-agents.md.template"),
-		filepath.Join(p.ProjectDir(), "control", "skills", "dispatch-new-ticket", "scripts", "initialize_copy.py"),
 		filepath.Join(p.ProjectDir(), "runtime"),
 		filepath.Join(p.ProjectDir(), ".gitignore"),
 	}

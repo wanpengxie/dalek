@@ -9,19 +9,21 @@ import (
 
 // ContractPaths 描述 worktree 下 `.dalek/` 的最小运行态契约路径集合。
 // 这些路径是跨 services 的协议，不应该散落在某个具体领域包里。
-// 与 AGENTS.md file_layout 定义保持一致。
+// 与 worker `.dalek/agent-kernel.md` 主文件约定保持一致。
 type ContractPaths struct {
-	Dir       string
-	AgentsMD  string
-	StateJSON string
+	Dir           string
+	AgentKernelMD string
+	PlanMD        string
+	StateJSON     string
 }
 
 func contractPaths(worktreeRoot string) ContractPaths {
 	dir := filepath.Join(worktreeRoot, ".dalek")
 	return ContractPaths{
-		Dir:       dir,
-		AgentsMD:  filepath.Join(dir, "AGENTS.md"),
-		StateJSON: filepath.Join(dir, "state.json"),
+		Dir:           dir,
+		AgentKernelMD: filepath.Join(dir, "agent-kernel.md"),
+		PlanMD:        filepath.Join(dir, "PLAN.md"),
+		StateJSON:     filepath.Join(dir, "state.json"),
 	}
 }
 

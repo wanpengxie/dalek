@@ -19,7 +19,6 @@ func TestControlSeed_SkillTemplatesAvailableForTests(t *testing.T) {
 		"templates/project/control/skills/dispatch-new-ticket/SKILL.md",
 		"templates/project/control/skills/dispatch-new-ticket/references/output-contract.md",
 		"templates/project/control/skills/dispatch-new-ticket/assets/worker-agents.md.template",
-		"templates/project/control/skills/dispatch-new-ticket/scripts/initialize_copy.py",
 		"templates/project/control/skills/notebook-shaping/SKILL.md",
 		"templates/project/control/skills/project-init/SKILL.md",
 	}
