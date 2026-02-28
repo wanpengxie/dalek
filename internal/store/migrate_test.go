@@ -122,10 +122,54 @@ func TestOpenAndMigrate_WorkerZombieRetryColumnsPresent(t *testing.T) {
 	for _, col := range cols {
 		seen[col.Name] = true
 	}
-	for _, want := range []string{"retry_count", "last_retry_at", "last_error_hash", "process_pid", "log_path"} {
+	for _, want := range []string{"retry_count", "last_retry_at", "last_error_hash", "log_path"} {
 		if !seen[want] {
 			t.Fatalf("workers missing expected column: %s", want)
 		}
+	}
+	if seen["process_pid"] {
+		t.Fatalf("workers should not keep legacy column: process_pid")
+	}
+}
+
+func TestOpenAndMigrate_RepairWorkerLogPathWhenLegacyV9Occupied(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	if err := dropTableColumn(db, "workers", "log_path"); err != nil {
+		t.Fatalf("drop workers.log_path failed: %v", err)
+	}
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 10;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations failed: %v", err)
+	}
+	if err := db.Exec("UPDATE schema_migrations SET name = ? WHERE version = 9;", "migrate_dag_plans_schema").Error; err != nil {
+		t.Fatalf("set occupied v9 name failed: %v", err)
+	}
+
+	db2, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate (repair) failed: %v", err)
+	}
+
+	type columnRow struct {
+		Name string `gorm:"column:name"`
+	}
+	var cols []columnRow
+	if err := db2.Raw("PRAGMA table_info(workers);").Scan(&cols).Error; err != nil {
+		t.Fatalf("query workers columns failed: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, col := range cols {
+		seen[col.Name] = true
+	}
+	if !seen["log_path"] {
+		t.Fatalf("workers should restore log_path when v9 was occupied by legacy branch")
+	}
+	if seen["process_pid"] {
+		t.Fatalf("workers should not keep legacy column: process_pid")
 	}
 }
 

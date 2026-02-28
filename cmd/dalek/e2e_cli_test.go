@@ -256,7 +256,7 @@ func TestCLI_TicketSetPriority_AndListOrder(t *testing.T) {
 	}
 }
 
-func TestCLI_TicketStopAll_ClearsRuntimeProcessPID(t *testing.T) {
+func TestCLI_TicketStopAll_PreservesRuntimeLogPath(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 	home := filepath.Join(t.TempDir(), "home")
@@ -320,8 +320,8 @@ func TestCLI_TicketStopAll_ClearsRuntimeProcessPID(t *testing.T) {
 		if w.Status != contracts.WorkerStopped {
 			t.Fatalf("worker #%d should be stopped, got=%s", wid, w.Status)
 		}
-		if w.ProcessPID != 0 {
-			t.Fatalf("worker #%d process_pid should be 0 after stop --all, got=%d", wid, w.ProcessPID)
+		if strings.TrimSpace(w.LogPath) == "" {
+			t.Fatalf("worker #%d log_path should not be empty after stop --all", wid)
 		}
 	}
 }

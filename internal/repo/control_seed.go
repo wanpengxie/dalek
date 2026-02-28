@@ -107,11 +107,31 @@ func defaultControlProjectAgentUserTemplate(layout Layout, projectName string) s
 	if strings.TrimSpace(layout.RepoRoot) != "" {
 		projectKey = ProjectKey(layout.RepoRoot)
 	}
+	projectOwner := deriveProjectOwner(layout.RepoRoot)
 	return mustRenderSeedTemplate("templates/project/agent-user.md", map[string]string{
-		"ProjectName": name,
-		"ProjectKey":  projectKey,
-		"RepoRoot":    repoRoot,
+		"ProjectName":  name,
+		"ProjectKey":   projectKey,
+		"ProjectOwner": projectOwner,
+		"RepoRoot":     repoRoot,
 	})
+}
+
+func deriveProjectOwner(repoRoot string) string {
+	repoRoot = strings.TrimSpace(repoRoot)
+	if repoRoot == "" {
+		return "-"
+	}
+	clean := filepath.Clean(repoRoot)
+	parts := strings.Split(clean, string(filepath.Separator))
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] == "Users" && strings.TrimSpace(parts[i+1]) != "" {
+			return strings.TrimSpace(parts[i+1])
+		}
+	}
+	if len(parts) >= 2 && strings.TrimSpace(parts[len(parts)-2]) != "" {
+		return strings.TrimSpace(parts[len(parts)-2])
+	}
+	return "-"
 }
 
 func defaultProjectBootstrapTemplate() string {

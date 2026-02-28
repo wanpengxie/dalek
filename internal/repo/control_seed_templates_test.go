@@ -47,13 +47,16 @@ func TestEnsureControlPlaneSeed_RenderProjectIdentityInAgentUserTemplate(t *test
 	if !strings.Contains(got, "<name>alpha</name>") {
 		t.Fatalf("agent-user.md should include rendered project_name, got: %s", got)
 	}
-	if !strings.Contains(got, "<project_key>"+ProjectKey(repoRoot)+"</project_key>") {
-		t.Fatalf("agent-user.md should include rendered project_key")
-	}
 	if !strings.Contains(got, "<repo_root>"+repoRoot+"</repo_root>") {
 		t.Fatalf("agent-user.md should include rendered repo_root")
 	}
-	if strings.Contains(got, "{{.ProjectName}}") || strings.Contains(got, "{{.ProjectKey}}") || strings.Contains(got, "{{.RepoRoot}}") {
+	if !strings.Contains(got, "<owner>") {
+		t.Fatalf("agent-user.md should include owner field")
+	}
+	if strings.Contains(got, "{{.ProjectName}}") ||
+		strings.Contains(got, "{{.ProjectKey}}") ||
+		strings.Contains(got, "{{.ProjectOwner}}") ||
+		strings.Contains(got, "{{.RepoRoot}}") {
 		t.Fatalf("agent-user.md should not contain unresolved template placeholders")
 	}
 

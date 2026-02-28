@@ -1,21 +1,19 @@
 ---
 name: Agent User Space
-description: Dalek 的工作空间——当前项目的基础面。
-version: "4.0"
+description: Dalek的工作空间：当前项目是什么、怎么构建、怎么工作、当前处于什么状态。
+version: "3.0"
 ---
 
 <project_identity>
 <name>{{.ProjectName}}</name>
-<project_key>{{.ProjectKey}}</project_key>
+<owner>{{.ProjectOwner}}</owner>
 <repo_root>{{.RepoRoot}}</repo_root>
+<user_init_state>uninitialized</user_init_state>
+<bootstrap_token>DALEK-BOOT-a3f7</bootstrap_token>
 </project_identity>
 
-<user_state>
-<user_init_state>uninitialized</user_init_state>
-</user_state>
-
 <definition>
-本文档是 Dalek 的工作空间——描述当前管理的项目的基础面。
+本文档是Dalek的工作空间——当前管理的项目，这里描述你面对的是什么。
 
 内容边界：
   写什么：项目基础面——身份、技术栈、代码结构、构建方式、产品模型、架构、约定、当前状态
@@ -28,9 +26,6 @@ version: "4.0"
 
 更新触发：
   仅在项目基础面变化时更新——技术栈、架构、构建/部署方式、约定、阶段转换
-
-初始化规则：
-  user_init_state 为 uninitialized 时，必须先执行 .dalek/control/skills/project-init/ 完成初始化
 </definition>
 
 <project_overview>
@@ -60,10 +55,6 @@ version: "4.0"
 <conventions>
 待初始化
 </conventions>
-
-<environment>
-worktree 初始化脚本：.dalek/bootstrap.sh
-</environment>
 
 <current_state>
 待初始化

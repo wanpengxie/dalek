@@ -32,9 +32,8 @@ func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 	now := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
-			"status":      contracts.WorkerStopped,
-			"stopped_at":  &now,
-			"process_pid": 0,
+			"status":     contracts.WorkerStopped,
+			"stopped_at": &now,
 		}).Error; err != nil {
 			return err
 		}

@@ -252,7 +252,6 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 			Status:       contracts.WorkerStopped,
 			WorktreePath: worktreePath,
 			Branch:       branch,
-			ProcessPID:   0,
 			LogPath:      "",
 			StartedAt:    nil,
 			StoppedAt:    nil,
@@ -281,7 +280,6 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 			"status":        contracts.WorkerCreating,
 			"worktree_path": worktreePath,
 			"branch":        branch,
-			"process_pid":   0,
 			"log_path":      logPath,
 			"started_at":    nil,
 			"stopped_at":    nil,
@@ -311,11 +309,10 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	startedAt := time.Now()
 	if uerr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-			"process_pid": 0,
-			"log_path":    strings.TrimSpace(logPath),
-			"started_at":  &startedAt,
-			"stopped_at":  nil,
-			"last_error":  "",
+			"log_path":   strings.TrimSpace(logPath),
+			"started_at": &startedAt,
+			"stopped_at": nil,
+			"last_error": "",
 		}).Error; err != nil {
 			return err
 		}
@@ -328,7 +325,6 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	}
 	w.WorktreePath = worktreePath
 	w.Branch = branch
-	w.ProcessPID = 0
 	w.LogPath = strings.TrimSpace(logPath)
 
 	var out contracts.Worker

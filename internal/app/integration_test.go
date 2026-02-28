@@ -156,12 +156,6 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerRuntime(t *testing.T) {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"process_pid": 43210,
-	}).Error; err != nil {
-		t.Fatalf("update worker runtime failed: %v", err)
-	}
-
 	views, err := p.ListTicketViews(ctx)
 	if err != nil {
 		t.Fatalf("ListTicketViews before recovery failed: %v", err)
@@ -236,12 +230,6 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerRuntime_ArchivedTicket(t 
 
 	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketArchived).Error; err != nil {
 		t.Fatalf("archive ticket failed: %v", err)
-	}
-
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"process_pid": 43210,
-	}).Error; err != nil {
-		t.Fatalf("update worker runtime failed: %v", err)
 	}
 
 	manager := newDaemonManagerComponent(h, nil)

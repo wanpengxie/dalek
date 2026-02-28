@@ -10,7 +10,7 @@ import (
 
 func TestEnsureRepoAgentEntryPoints_LinkingAndRef(t *testing.T) {
 	repoRoot := t.TempDir()
-	refs := []string{agentKernelRefLine, agentUserRefLine}
+	refs := []string{agentKernelRefLine}
 
 	// both missing: create AGENTS.md + link CLAUDE.md -> AGENTS.md
 	if err := EnsureRepoAgentEntryPoints(repoRoot); err != nil {
@@ -81,7 +81,7 @@ func TestEnsureRepoAgentEntryPoints_PreserveUserContentAndInjectIdempotent(t *te
 		if !strings.Contains(s, strings.TrimSpace(original)) {
 			t.Fatalf("%s should preserve original user content", path)
 		}
-		for _, ref := range []string{agentKernelRefLine, agentUserRefLine} {
+		for _, ref := range []string{agentKernelRefLine} {
 			if !strings.Contains(s, ref) {
 				t.Fatalf("%s should include %q", path, ref)
 			}

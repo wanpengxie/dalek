@@ -40,7 +40,6 @@ func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testin
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w1",
 		Branch:       "ts/demo-ticket-1",
-		ProcessPID:   1001,
 		LogPath:      "/tmp/w1.log",
 	}
 	if err := p.DB.Create(&a).Error; err != nil {
@@ -112,7 +111,6 @@ func TestQueryService_ListTicketViews_UsesTaskRunForSessionAlive(t *testing.T) {
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w2",
 		Branch:       "ts/demo-ticket-2",
-		ProcessPID:   1002,
 		LogPath:      "/tmp/w2.log",
 	}
 	if err := p.DB.Create(&a).Error; err != nil {
@@ -166,7 +164,6 @@ func TestQueryService_ListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflow
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w3",
 		Branch:       "ts/demo-ticket-3",
-		ProcessPID:   1003,
 		LogPath:      "/tmp/w3.log",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
@@ -211,7 +208,6 @@ func TestQueryService_ListTicketViews_NoActiveRunKeepsWorkflowBacklog(t *testing
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w4",
 		Branch:       "ts/demo-ticket-4",
-		ProcessPID:   1004,
 		LogPath:      "/tmp/w4.log",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {

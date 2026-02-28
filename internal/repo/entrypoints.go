@@ -13,7 +13,6 @@ import (
 
 const (
 	agentKernelRefLine = "@.dalek/agent-kernel.md"
-	agentUserRefLine   = "@.dalek/agent-user.md"
 	injectBlockBegin   = "<!-- DALEK:INJECT:BEGIN -->"
 	injectBlockEnd     = "<!-- DALEK:INJECT:END -->"
 )
@@ -85,10 +84,8 @@ func EnsureRepoAgentEntryPoints(repoRoot string) error {
 }
 
 func ensureEntryInjection(path string) error {
-	for _, ref := range []string{agentKernelRefLine, agentUserRefLine} {
-		if err := infra.EnsureLineInFile(path, ref); err != nil {
-			return err
-		}
+	if err := infra.EnsureLineInFile(path, agentKernelRefLine); err != nil {
+		return err
 	}
 	return ensureInjectedBlock(path, defaultRepoEntrypointInjectBlock())
 }

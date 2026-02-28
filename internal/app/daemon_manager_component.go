@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"dalek/internal/contracts"
-	"dalek/internal/infra"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -279,6 +278,9 @@ func (m *daemonManagerComponent) reconcileWorkerRuntime(ctx context.Context, p *
 	if p == nil {
 		return 0, fmt.Errorf("project 为空")
 	}
+	if p.task == nil {
+		return 0, fmt.Errorf("task service 为空")
+	}
 	workers, err := p.worker.ListRunningWorkers(ctx)
 	if err != nil {
 		return 0, err
@@ -291,22 +293,14 @@ func (m *daemonManagerComponent) reconcileWorkerRuntime(ctx context.Context, p *
 	fixed := 0
 	probeFailed := 0
 	for _, w := range workers {
-		if w.ProcessPID <= 0 {
-			// runtime 去壳后，worker 允许没有 pid（按 task runtime 观测）。
+		run, rerr := p.task.LatestActiveWorkerRun(ctx, w.ID)
+		if rerr != nil {
+			probeFailed++
+			m.logf("recovery worker runtime probe failed: project=%s worker=%d err=%v", strings.TrimSpace(p.Name()), w.ID, rerr)
 			continue
-		} else {
-			alive, aerr := p.core.WorkerRuntime.IsAlive(ctx, infra.WorkerProcessHandle{
-				PID:     w.ProcessPID,
-				LogPath: strings.TrimSpace(w.LogPath),
-			})
-			if aerr != nil {
-				probeFailed++
-				m.logf("recovery worker runtime probe failed: project=%s worker=%d legacy_pid=%d err=%v", strings.TrimSpace(p.Name()), w.ID, w.ProcessPID, aerr)
-				continue
-			}
-			if alive {
-				continue
-			}
+		}
+		if run != nil {
+			continue
 		}
 		if err := p.worker.MarkWorkerRuntimeNotAlive(ctx, w, now); err != nil {
 			m.logf("recovery mark worker runtime not alive failed: worker=%d err=%v", w.ID, err)
@@ -323,7 +317,7 @@ func (m *daemonManagerComponent) reconcileWorkerRuntime(ctx context.Context, p *
 			Severity: contracts.InboxWarn,
 			Reason:   contracts.InboxIncident,
 			Title:    fmt.Sprintf("worker runtime 丢失：w%d", w.ID),
-			Body:     fmt.Sprintf("ticket=t%d worker=w%d 在 recovery 对账中发现 runtime 不在线（legacy_pid=%d log_path=%s），已自动回收状态。", w.TicketID, w.ID, w.ProcessPID, logPath),
+			Body:     fmt.Sprintf("ticket=t%d worker=w%d 在 recovery 对账中发现 runtime 不在线（log_path=%s），已自动回收状态。", w.TicketID, w.ID, logPath),
 			TicketID: w.TicketID,
 			WorkerID: w.ID,
 		}

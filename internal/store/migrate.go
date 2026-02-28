@@ -60,8 +60,13 @@ func storeMigrations() []Migration {
 		},
 		{
 			Version: 9,
-			Name:    "add_worker_process_fields",
-			Up:      migrateAddWorkerProcessFields,
+			Name:    "ensure_worker_log_path_column",
+			Up:      migrateEnsureWorkerLogPathColumn,
+		},
+		{
+			Version: 10,
+			Name:    "drop_worker_legacy_process_pid_columns",
+			Up:      migrateDropWorkerLegacyProcessPIDColumns,
 		},
 	}
 }
@@ -157,25 +162,30 @@ func migrateAddWorkerZombieRetryFields(db *gorm.DB) error {
 	return nil
 }
 
-func migrateAddWorkerProcessFields(db *gorm.DB) error {
-	statements := []string{
-		`ALTER TABLE workers ADD COLUMN process_pid INTEGER NOT NULL DEFAULT 0;`,
-		`ALTER TABLE workers ADD COLUMN log_path TEXT NOT NULL DEFAULT '';`,
+func migrateEnsureWorkerLogPathColumn(db *gorm.DB) error {
+	has, err := tableHasColumn(db, "workers", "log_path")
+	if err != nil {
+		return err
 	}
-	for _, stmt := range statements {
-		if err := db.Exec(stmt).Error; err != nil {
-			msg := strings.ToLower(strings.TrimSpace(err.Error()))
-			if strings.Contains(msg, "duplicate column name") {
-				continue
-			}
-			return err
-		}
+	if has {
+		return nil
 	}
-	// 历史兼容：早期 AutoMigrate 误将 ProcessPID 映射为 process_p_id。
-	// 当旧列存在时，把已写入的值回填到 process_pid，避免运行态句柄丢失。
-	if err := db.Exec(`UPDATE workers SET process_pid = process_p_id WHERE COALESCE(process_pid, 0) = 0 AND COALESCE(process_p_id, 0) <> 0;`).Error; err != nil {
+	if err := db.Exec(`ALTER TABLE workers ADD COLUMN log_path TEXT NOT NULL DEFAULT '';`).Error; err != nil {
 		msg := strings.ToLower(strings.TrimSpace(err.Error()))
-		if !strings.Contains(msg, "no such column") {
+		if strings.Contains(msg, "duplicate column name") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func migrateDropWorkerLegacyProcessPIDColumns(db *gorm.DB) error {
+	if err := migrateEnsureWorkerLogPathColumn(db); err != nil {
+		return err
+	}
+	for _, col := range []string{"process_pid", "process_p_id"} {
+		if err := dropTableColumn(db, "workers", col); err != nil {
 			return err
 		}
 	}
