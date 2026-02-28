@@ -20,7 +20,7 @@ type StartOptions struct {
 // StartTicket 是 PM 视角的 start：编排 worker 资源启动，并把 worker 置为可 dispatch 的 running。
 //
 // 约束：
-// - worker 只负责“资源启动”（worktree + tmux session）。
+// - worker 只负责“资源启动”（worktree + runtime 进程）。
 func (s *Service) StartTicket(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
 	return s.StartTicketWithOptions(ctx, ticketID, StartOptions{})
 }
@@ -50,7 +50,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		}
 	}
 
-	// 1) 启动 worker 资源（worktree + tmux session），不做 PM bootstrap。
+	// 1) 启动 worker 资源（worktree + runtime 进程），不做 PM bootstrap。
 	w, err := s.worker.StartTicketResourcesWithOptions(ctx, ticketID, workersvc.StartOptions{
 		BaseBranch: strings.TrimSpace(opt.BaseBranch),
 	})

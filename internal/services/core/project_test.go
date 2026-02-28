@@ -16,41 +16,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type noopTmuxClient struct{}
-
-func (noopTmuxClient) NewSession(ctx context.Context, socket, name, startDir string) error {
-	return nil
-}
-func (noopTmuxClient) NewSessionWithCommand(ctx context.Context, socket, name, startDir string, cmd []string) error {
-	return nil
-}
-func (noopTmuxClient) KillSession(ctx context.Context, socket, name string) error { return nil }
-func (noopTmuxClient) KillServer(ctx context.Context, socket string) error        { return nil }
-func (noopTmuxClient) SendKeys(ctx context.Context, socket, target, keys string) error {
-	return nil
-}
-func (noopTmuxClient) SendKeysLiteral(ctx context.Context, socket, target, text string) error {
-	return nil
-}
-func (noopTmuxClient) SendLine(ctx context.Context, socket, target, line string) error { return nil }
-func (noopTmuxClient) CapturePane(ctx context.Context, socket, target string, lines int) (string, error) {
-	return "", nil
-}
-func (noopTmuxClient) PipePaneToFile(ctx context.Context, socket, target, filePath string) error {
-	return nil
-}
-func (noopTmuxClient) StopPipePane(ctx context.Context, socket, target string) error { return nil }
-func (noopTmuxClient) ListSessions(ctx context.Context, socket string) (map[string]bool, error) {
-	return map[string]bool{}, nil
-}
-func (noopTmuxClient) ListPanes(ctx context.Context, socket, session string) ([]infra.PaneInfo, error) {
-	return []infra.PaneInfo{{PaneID: "%1", CurrentCommand: "bash"}}, nil
-}
-func (noopTmuxClient) ActivePane(ctx context.Context, socket, session string) (infra.PaneInfo, error) {
-	return infra.PaneInfo{PaneID: "%1", CurrentCommand: "bash"}, nil
-}
-func (noopTmuxClient) AttachCmd(socket, session string) *exec.Cmd { return exec.Command("true") }
-
 type noopGitClient struct{}
 
 func (noopGitClient) CurrentBranch(repoRoot string) (string, error) { return "main", nil }
@@ -148,13 +113,6 @@ func TestNewProject_ValidateRequiredFields(t *testing.T) {
 			want: "Logger",
 		},
 		{
-			name: "missing_tmux",
-			mutate: func(in *NewProjectInput) {
-				in.Tmux = nil
-			},
-			want: "Tmux",
-		},
-		{
 			name: "missing_worker_runtime",
 			mutate: func(in *NewProjectInput) {
 				in.WorkerRuntime = nil
@@ -229,7 +187,6 @@ func newValidProjectInput(t *testing.T) NewProjectInput {
 		Config:        repo.Config{}.WithDefaults(),
 		DB:            db,
 		Logger:        DiscardLogger(),
-		Tmux:          noopTmuxClient{},
 		WorkerRuntime: noopWorkerRuntime{},
 		Git:           noopGitClient{},
 		TaskRuntime:   noopTaskRuntimeFactory{},

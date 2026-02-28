@@ -22,7 +22,7 @@ func (s stubWorkerLookup) LatestWorker(ctx context.Context, ticketID uint) (*con
 }
 
 func TestCaptureTicketTail_UsesWorkerRuntimeLog(t *testing.T) {
-	p, _, _ := testutil.NewTestProject(t)
+	p, _ := testutil.NewTestProject(t)
 	fRuntime, ok := p.WorkerRuntime.(*testutil.FakeWorkerRuntime)
 	if !ok {
 		t.Fatalf("unexpected worker runtime type: %T", p.WorkerRuntime)
@@ -30,10 +30,9 @@ func TestCaptureTicketTail_UsesWorkerRuntimeLog(t *testing.T) {
 	fRuntime.CaptureText = "line-1\nline-2\nline-3\n"
 
 	w := &contracts.Worker{
-		ID:         7,
-		TicketID:   9,
-		ProcessPID: 1234,
-		LogPath:    "/tmp/w7-stream.log",
+		ID:       7,
+		TicketID: 9,
+		LogPath:  "/tmp/w7-stream.log",
 	}
 	svc := New(p, stubWorkerLookup{worker: w})
 	got, err := svc.CaptureTicketTail(context.Background(), 9, 2)
@@ -52,16 +51,13 @@ func TestCaptureTicketTail_UsesWorkerRuntimeLog(t *testing.T) {
 	if len(fRuntime.CaptureHandles) != 1 {
 		t.Fatalf("expected one capture call, got=%d", len(fRuntime.CaptureHandles))
 	}
-	if fRuntime.CaptureHandles[0].PID != w.ProcessPID {
-		t.Fatalf("unexpected pid: got=%d want=%d", fRuntime.CaptureHandles[0].PID, w.ProcessPID)
-	}
 	if strings.TrimSpace(fRuntime.CaptureHandles[0].LogPath) != w.LogPath {
 		t.Fatalf("unexpected captured log path: got=%q want=%q", fRuntime.CaptureHandles[0].LogPath, w.LogPath)
 	}
 }
 
 func TestCaptureTicketTail_FallbackToRepoWorkerLogPath(t *testing.T) {
-	p, _, _ := testutil.NewTestProject(t)
+	p, _ := testutil.NewTestProject(t)
 	fRuntime, ok := p.WorkerRuntime.(*testutil.FakeWorkerRuntime)
 	if !ok {
 		t.Fatalf("unexpected worker runtime type: %T", p.WorkerRuntime)
@@ -69,9 +65,8 @@ func TestCaptureTicketTail_FallbackToRepoWorkerLogPath(t *testing.T) {
 	fRuntime.CaptureText = "only-line\n"
 
 	w := &contracts.Worker{
-		ID:         22,
-		TicketID:   3,
-		ProcessPID: 2233,
+		ID:       22,
+		TicketID: 3,
 	}
 	svc := New(p, stubWorkerLookup{worker: w})
 	got, err := svc.CaptureTicketTail(context.Background(), 3, 20)
@@ -88,7 +83,7 @@ func TestCaptureTicketTail_FallbackToRepoWorkerLogPath(t *testing.T) {
 }
 
 func TestCaptureTicketTail_NoWorker(t *testing.T) {
-	p, _, _ := testutil.NewTestProject(t)
+	p, _ := testutil.NewTestProject(t)
 	svc := New(p, stubWorkerLookup{})
 	_, err := svc.CaptureTicketTail(context.Background(), 1, 20)
 	if err == nil || !strings.Contains(err.Error(), "没有可抓取的 worker") {

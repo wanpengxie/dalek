@@ -24,8 +24,6 @@ func buildBaseEnv(p *core.Project, t contracts.Ticket, w contracts.Worker) map[s
 		envDBPath:            strings.TrimSpace(p.DBPath()),
 		envWorktreePath:      strings.TrimSpace(w.WorktreePath),
 		envBranch:            strings.TrimSpace(w.Branch),
-		envTmuxSocket:        strings.TrimSpace(w.TmuxSocket),
-		envTmuxSession:       strings.TrimSpace(w.TmuxSession),
 		envTicketID:          fmt.Sprintf("%d", t.ID),
 		envWorkerID:          fmt.Sprintf("%d", w.ID),
 		envTicketTitle:       strings.TrimSpace(t.Title),

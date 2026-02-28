@@ -47,8 +47,6 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 			Status:       strings.TrimSpace(string(w.Status)),
 			WorktreePath: strings.TrimSpace(w.WorktreePath),
 			Branch:       strings.TrimSpace(w.Branch),
-			TmuxSocket:   strings.TrimSpace(w.TmuxSocket),
-			TmuxSession:  strings.TrimSpace(w.TmuxSession),
 		},
 		EntryPrompt: entryPrompt,
 	})
@@ -172,8 +170,6 @@ type dispatchWorkerContext struct {
 	Status       string `json:"status"`
 	WorktreePath string `json:"worktree_path"`
 	Branch       string `json:"branch"`
-	TmuxSocket   string `json:"tmux_socket"`
-	TmuxSession  string `json:"tmux_session"`
 }
 
 func buildDispatchPrompt(ctx dispatchStructuredContext) (string, error) {

@@ -25,8 +25,6 @@ type SDKConfig struct {
 	Timeout   time.Duration
 
 	StreamLogPath string
-	// TmuxLogPath 已废弃：保留兼容旧调用，内部会回退到该字段。
-	TmuxLogPath string
 
 	AppendEvent          AppendEventFunc
 	RequestSemanticWatch SemanticWatchFunc

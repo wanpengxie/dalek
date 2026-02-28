@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"dalek/internal/contracts"
+	"dalek/internal/infra"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -203,8 +204,8 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 				m.logf("recovery note shaping summary: project=%s reopened_notes=%d", name, rolled)
 			}
 		}
-		if fixed, err := m.reconcileWorkerSessions(ctx, p); err != nil {
-			m.logf("recovery worker reconcile failed: project=%s err=%v", name, err)
+		if fixed, err := m.reconcileWorkerRuntime(ctx, p); err != nil {
+			m.logf("recovery worker runtime reconcile failed: project=%s err=%v", name, err)
 		} else {
 			summary.Workers = fixed
 		}
@@ -274,7 +275,7 @@ func (m *daemonManagerComponent) warmupRunProjectIndex(ctx context.Context) {
 	}
 }
 
-func (m *daemonManagerComponent) reconcileWorkerSessions(ctx context.Context, p *Project) (int, error) {
+func (m *daemonManagerComponent) reconcileWorkerRuntime(ctx context.Context, p *Project) (int, error) {
 	if p == nil {
 		return 0, fmt.Errorf("project 为空")
 	}
@@ -286,65 +287,43 @@ func (m *daemonManagerComponent) reconcileWorkerSessions(ctx context.Context, p 
 		return 0, nil
 	}
 
-	defaultSocket := strings.TrimSpace(p.TmuxSocket())
-	sessionsBySocket := map[string]map[string]bool{}
-	probeFailedBySocket := map[string]error{}
-	for _, w := range workers {
-		socket := strings.TrimSpace(w.TmuxSocket)
-		if socket == "" {
-			socket = defaultSocket
-		}
-		if socket == "" {
-			continue
-		}
-		if _, ok := sessionsBySocket[socket]; ok {
-			continue
-		}
-		if _, failed := probeFailedBySocket[socket]; failed {
-			continue
-		}
-		sessions, serr := p.core.Tmux.ListSessions(ctx, socket)
-		if serr != nil {
-			probeFailedBySocket[socket] = serr
-			continue
-		}
-		sessionsBySocket[socket] = sessions
-	}
-
 	now := time.Now()
 	fixed := 0
+	probeFailed := 0
 	for _, w := range workers {
-		socket := strings.TrimSpace(w.TmuxSocket)
-		if socket == "" {
-			socket = defaultSocket
-		}
-		if _, failed := probeFailedBySocket[socket]; failed {
+		if w.ProcessPID <= 0 {
+			// runtime 去壳后，worker 允许没有 pid（按 task runtime 观测）。
 			continue
+		} else {
+			alive, aerr := p.core.WorkerRuntime.IsAlive(ctx, infra.WorkerProcessHandle{
+				PID:     w.ProcessPID,
+				LogPath: strings.TrimSpace(w.LogPath),
+			})
+			if aerr != nil {
+				probeFailed++
+				m.logf("recovery worker runtime probe failed: project=%s worker=%d legacy_pid=%d err=%v", strings.TrimSpace(p.Name()), w.ID, w.ProcessPID, aerr)
+				continue
+			}
+			if alive {
+				continue
+			}
 		}
-		session := strings.TrimSpace(w.TmuxSession)
-		if socket != "" && session != "" && sessionsBySocket[socket][session] {
-			continue
-		}
-		if err := p.worker.MarkWorkerSessionNotAlive(ctx, w, now); err != nil {
-			m.logf("recovery mark worker session not alive failed: worker=%d err=%v", w.ID, err)
+		if err := p.worker.MarkWorkerRuntimeNotAlive(ctx, w, now); err != nil {
+			m.logf("recovery mark worker runtime not alive failed: worker=%d err=%v", w.ID, err)
 			continue
 		}
 		fixed++
-		socketLabel := socket
-		if socketLabel == "" {
-			socketLabel = "(empty)"
-		}
-		sessionLabel := session
-		if sessionLabel == "" {
-			sessionLabel = "(empty)"
+		logPath := strings.TrimSpace(w.LogPath)
+		if logPath == "" {
+			logPath = "(empty)"
 		}
 		item := contracts.InboxItem{
-			Key:      fmt.Sprintf("worker_session_recover_%d", w.ID),
+			Key:      fmt.Sprintf("worker_runtime_recover_%d", w.ID),
 			Status:   contracts.InboxOpen,
 			Severity: contracts.InboxWarn,
 			Reason:   contracts.InboxIncident,
-			Title:    fmt.Sprintf("worker session 丢失：w%d", w.ID),
-			Body:     fmt.Sprintf("ticket=t%d worker=w%d 在 recovery 对账中发现 session 不在线（socket=%s session=%s），已自动回收状态。", w.TicketID, w.ID, socketLabel, sessionLabel),
+			Title:    fmt.Sprintf("worker runtime 丢失：w%d", w.ID),
+			Body:     fmt.Sprintf("ticket=t%d worker=w%d 在 recovery 对账中发现 runtime 不在线（legacy_pid=%d log_path=%s），已自动回收状态。", w.TicketID, w.ID, w.ProcessPID, logPath),
 			TicketID: w.TicketID,
 			WorkerID: w.ID,
 		}
@@ -352,11 +331,8 @@ func (m *daemonManagerComponent) reconcileWorkerSessions(ctx context.Context, p 
 			_, _ = p.pm.UpsertOpenInbox(ctx, item)
 		}
 	}
-	for socket, serr := range probeFailedBySocket {
-		m.logf("recovery worker session probe failed: project=%s socket=%s err=%v", strings.TrimSpace(p.Name()), socket, serr)
-	}
-	if fixed > 0 || len(probeFailedBySocket) > 0 {
-		m.logf("recovery worker reconcile summary: project=%s running_workers=%d fixed_workers=%d probe_failed_sockets=%d", strings.TrimSpace(p.Name()), len(workers), fixed, len(probeFailedBySocket))
+	if fixed > 0 || probeFailed > 0 {
+		m.logf("recovery worker runtime reconcile summary: project=%s running_workers=%d fixed_workers=%d probe_failed_workers=%d", strings.TrimSpace(p.Name()), len(workers), fixed, probeFailed)
 	}
 	return fixed, nil
 }

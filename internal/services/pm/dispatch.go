@@ -18,9 +18,6 @@ type DispatchResult struct {
 	WorkerID  uint
 	TaskRunID uint
 
-	TmuxSocket  string
-	TmuxSession string
-
 	WorkerCommand string
 	InjectedCmd   string
 }
@@ -135,11 +132,6 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 
 	payload := finalJob.ResultJSON
 
-	updatedWorker, err := s.worker.WorkerByID(ctx, finalJob.WorkerID)
-	if err != nil {
-		return DispatchResult{}, err
-	}
-
 	// dispatch 成功意味着进入 active（仅 PM reducer 写 workflow）。
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var cur contracts.Ticket
@@ -173,8 +165,6 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 		TicketID:      finalJob.TicketID,
 		WorkerID:      finalJob.WorkerID,
 		TaskRunID:     finalJob.TaskRunID,
-		TmuxSocket:    strings.TrimSpace(updatedWorker.TmuxSocket),
-		TmuxSession:   strings.TrimSpace(updatedWorker.TmuxSession),
 		WorkerCommand: workerCommandHint(cfg),
 		InjectedCmd:   strings.TrimSpace(payload.InjectedCmd),
 	}, nil
@@ -291,7 +281,7 @@ func (s *Service) ensureDispatchWorkerStarted(ctx context.Context, ticketID uint
 		if w == nil {
 			return nil, fmt.Errorf("auto-start 失败: 启动后仍无可用 worker/runtime（t%d）", ticketID)
 		}
-		return nil, fmt.Errorf("auto-start 失败: 启动后仍无可用 worker/runtime（t%d w%d status=%s pid=%d session=%s）", ticketID, w.ID, w.Status, w.ProcessPID, strings.TrimSpace(w.TmuxSession))
+		return nil, fmt.Errorf("auto-start 失败: 启动后仍无可用 worker/runtime（t%d w%d status=%s）", ticketID, w.ID, w.Status)
 	}
 	return w, nil
 }

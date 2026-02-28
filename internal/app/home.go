@@ -433,7 +433,6 @@ func buildCoreProject(name, key, repoRoot string, layout repo.Layout, cfg repo.C
 		Config:        cfg,
 		DB:            db,
 		Logger:        core.DefaultLogger(),
-		Tmux:          infra.NewTmuxExecClient(),
 		WorkerRuntime: infra.NewDaemonProcessManager(),
 		Git:           infra.NewGitExecClient(),
 		TaskRuntime:   task.NewRuntimeFactory(),

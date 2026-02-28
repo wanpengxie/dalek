@@ -3,7 +3,6 @@ package pm
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,37 +15,6 @@ import (
 	workersvc "dalek/internal/services/worker"
 	"dalek/internal/store"
 )
-
-type noopTmux struct{}
-
-func (noopTmux) NewSession(ctx context.Context, socket, name, startDir string) error { return nil }
-func (noopTmux) NewSessionWithCommand(ctx context.Context, socket, name, startDir string, cmd []string) error {
-	return nil
-}
-func (noopTmux) KillSession(ctx context.Context, socket, name string) error { return nil }
-func (noopTmux) KillServer(ctx context.Context, socket string) error        { return nil }
-func (noopTmux) SendKeys(ctx context.Context, socket, target, keys string) error {
-	return nil
-}
-func (noopTmux) SendKeysLiteral(ctx context.Context, socket, target, text string) error { return nil }
-func (noopTmux) SendLine(ctx context.Context, socket, target, line string) error        { return nil }
-func (noopTmux) CapturePane(ctx context.Context, socket, target string, lines int) (string, error) {
-	return "", nil
-}
-func (noopTmux) PipePaneToFile(ctx context.Context, socket, target, filePath string) error {
-	return nil
-}
-func (noopTmux) StopPipePane(ctx context.Context, socket, target string) error { return nil }
-func (noopTmux) ListSessions(ctx context.Context, socket string) (map[string]bool, error) {
-	return map[string]bool{}, nil
-}
-func (noopTmux) ListPanes(ctx context.Context, socket, session string) ([]infra.PaneInfo, error) {
-	return []infra.PaneInfo{{PaneID: "%1", CurrentCommand: "bash"}}, nil
-}
-func (noopTmux) ActivePane(ctx context.Context, socket, session string) (infra.PaneInfo, error) {
-	return infra.PaneInfo{PaneID: "%1", CurrentCommand: "bash"}, nil
-}
-func (noopTmux) AttachCmd(socket, session string) *exec.Cmd { return exec.Command("true") }
 
 type noopGit struct{}
 
@@ -86,10 +54,9 @@ func newPMServiceForTest(t *testing.T) (*Service, *core.Project) {
 		Layout:        layout,
 		WorktreesDir:  filepath.Join(t.TempDir(), "worktrees"),
 		WorkersDir:    layout.RuntimeWorkersDir,
-		Config:        repo.Config{TmuxSocket: "dalek"},
+		Config:        repo.Config{},
 		DB:            db,
 		Logger:        core.DiscardLogger(),
-		Tmux:          noopTmux{},
 		WorkerRuntime: infra.NewDaemonProcessManager(),
 		Git:           noopGit{},
 		TaskRuntime:   tasksvc.NewRuntimeFactory(),

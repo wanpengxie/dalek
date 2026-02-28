@@ -14,15 +14,11 @@ import (
 	"gorm.io/gorm"
 )
 
-func newQueryServiceForTest(t *testing.T) (*QueryService, *core.Project, *testutil.FakeWorkerRuntime) {
+func newQueryServiceForTest(t *testing.T) (*QueryService, *core.Project) {
 	t.Helper()
 
-	cp, _, _ := testutil.NewTestProject(t)
-	fRuntime, ok := cp.WorkerRuntime.(*testutil.FakeWorkerRuntime)
-	if !ok {
-		t.Fatalf("unexpected worker runtime type: %T", cp.WorkerRuntime)
-	}
-	return NewQueryService(cp), cp, fRuntime
+	cp, _ := testutil.NewTestProject(t)
+	return NewQueryService(cp), cp
 }
 
 func createTicketForQueryTest(t *testing.T, db *gorm.DB, title string) contracts.Ticket {
@@ -35,15 +31,8 @@ func createTicketForQueryTest(t *testing.T, db *gorm.DB, title string) contracts
 	return tk
 }
 
-func setRuntimeAlive(f *testutil.FakeWorkerRuntime, pid int, alive bool) {
-	if f.AliveByPID == nil {
-		f.AliveByPID = map[int]bool{}
-	}
-	f.AliveByPID[pid] = alive
-}
-
 func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
-	svc, p, fRuntime := newQueryServiceForTest(t)
+	svc, p := newQueryServiceForTest(t)
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-view")
 	a := contracts.Worker{
@@ -81,8 +70,6 @@ func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testin
 	}).Error; err != nil {
 		t.Fatalf("create runtime sample failed: %v", err)
 	}
-	setRuntimeAlive(fRuntime, a.ProcessPID, true)
-
 	views, err := svc.ListTicketViews(context.Background())
 	if err != nil {
 		t.Fatalf("ListTicketViews failed: %v", err)
@@ -97,10 +84,12 @@ func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testin
 		t.Fatalf("expected runtime busy, got %s", views[0].RuntimeHealthState)
 	}
 
-	// runtime 不在线 + worker stopped => 运行态派生为 dead
-	setRuntimeAlive(fRuntime, a.ProcessPID, false)
+	// active run 结束 + worker stopped => 运行态派生为 dead
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", a.ID).Update("status", contracts.WorkerStopped).Error; err != nil {
 		t.Fatalf("update worker failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.TaskRun{}).Where("id = ?", run.ID).Update("orchestration_state", contracts.TaskFailed).Error; err != nil {
+		t.Fatalf("update task run failed: %v", err)
 	}
 	views, err = svc.ListTicketViews(context.Background())
 	if err != nil {
@@ -114,8 +103,8 @@ func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testin
 	}
 }
 
-func TestQueryService_ListTicketViews_UsesWorkerRuntimeForSessionAlive(t *testing.T) {
-	svc, p, fRuntime := newQueryServiceForTest(t)
+func TestQueryService_ListTicketViews_UsesTaskRunForSessionAlive(t *testing.T) {
+	svc, p := newQueryServiceForTest(t)
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-view-runtime")
 	a := contracts.Worker{
@@ -153,8 +142,6 @@ func TestQueryService_ListTicketViews_UsesWorkerRuntimeForSessionAlive(t *testin
 	}).Error; err != nil {
 		t.Fatalf("create runtime sample failed: %v", err)
 	}
-	setRuntimeAlive(fRuntime, a.ProcessPID, true)
-
 	views, err := svc.ListTicketViews(context.Background())
 	if err != nil {
 		t.Fatalf("ListTicketViews failed: %v", err)
@@ -171,7 +158,7 @@ func TestQueryService_ListTicketViews_UsesWorkerRuntimeForSessionAlive(t *testin
 }
 
 func TestQueryService_ListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflowBacklog(t *testing.T) {
-	svc, p, fRuntime := newQueryServiceForTest(t)
+	svc, p := newQueryServiceForTest(t)
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-derived-running")
 	w := contracts.Worker{
@@ -185,7 +172,20 @@ func TestQueryService_ListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflow
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
 	}
-	setRuntimeAlive(fRuntime, w.ProcessPID, true)
+	run := contracts.TaskRun{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
+		ProjectKey:         p.Key,
+		TicketID:           tk.ID,
+		WorkerID:           w.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", tk.ID),
+		RequestID:          "test-view-run-3",
+		OrchestrationState: contracts.TaskRunning,
+	}
+	if err := p.DB.Create(&run).Error; err != nil {
+		t.Fatalf("create task run failed: %v", err)
+	}
 
 	views, err := svc.ListTicketViews(context.Background())
 	if err != nil {
@@ -202,8 +202,8 @@ func TestQueryService_ListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflow
 	}
 }
 
-func TestQueryService_ListTicketViews_SessionProbeFailureKeepsWorkflow(t *testing.T) {
-	svc, p, fRuntime := newQueryServiceForTest(t)
+func TestQueryService_ListTicketViews_NoActiveRunKeepsWorkflowBacklog(t *testing.T) {
+	svc, p := newQueryServiceForTest(t)
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-probe-failed")
 	w := contracts.Worker{
@@ -217,7 +217,6 @@ func TestQueryService_ListTicketViews_SessionProbeFailureKeepsWorkflow(t *testin
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
 	}
-	fRuntime.IsAliveErr = context.DeadlineExceeded
 
 	views, err := svc.ListTicketViews(context.Background())
 	if err != nil {
@@ -227,15 +226,18 @@ func TestQueryService_ListTicketViews_SessionProbeFailureKeepsWorkflow(t *testin
 		t.Fatalf("expected 1 view, got %d", len(views))
 	}
 	if views[0].DerivedStatus != contracts.TicketBacklog {
-		t.Fatalf("expected workflow backlog when probe failed, got %s", views[0].DerivedStatus)
+		t.Fatalf("expected workflow backlog when no active run, got %s", views[0].DerivedStatus)
 	}
-	if views[0].RuntimeHealthState == contracts.TaskHealthDead {
-		t.Fatalf("probe failure should not degrade runtime to dead")
+	if views[0].SessionAlive {
+		t.Fatalf("expected session offline when no active run")
+	}
+	if views[0].RuntimeHealthState != contracts.TaskHealthDead {
+		t.Fatalf("expected runtime dead when no active run, got=%s", views[0].RuntimeHealthState)
 	}
 }
 
 func TestQueryService_ListTicketViews_SortsByPriorityThenCreatedAtThenID(t *testing.T) {
-	svc, p, _ := newQueryServiceForTest(t)
+	svc, p := newQueryServiceForTest(t)
 
 	t1 := createTicketForQueryTest(t, p.DB, "t1")
 	t2 := createTicketForQueryTest(t, p.DB, "t2")

@@ -17,14 +17,13 @@ func cmdInit(args []string) {
 		printSubcommandUsage(
 			fs,
 			"初始化当前 git 仓库为 dalek 项目",
-			"dalek init [--name NAME] [--socket dalek] [--prefix ts/<project>/]",
+			"dalek init [--name NAME] [--prefix ts/<project>/]",
 			"dalek init",
-			"dalek init --name demo --socket dalek",
+			"dalek init --name demo",
 		)
 	}
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek；用于 registry/worktrees）")
 	name := fs.String("name", "", "project 名（可选）")
-	socket := fs.String("socket", "", "tmux socket 名（tmux -L；可选，默认 dalek）")
 	prefix := fs.String("prefix", "", "分支前缀（可选；默认 ts/<projectKey>/）")
 	parseFlagSetOrExit(fs, args, globalOutput, "init 参数解析失败", "运行 dalek init --help 查看参数")
 
@@ -33,7 +32,7 @@ func cmdInit(args []string) {
 		exitRuntimeError(globalOutput, "无法获取当前目录", err.Error(), "检查工作目录权限后重试")
 	}
 
-	cfg := app.ProjectConfig{TmuxSocket: *socket, BranchPrefix: *prefix, RefreshIntervalMS: 1000}
+	cfg := app.ProjectConfig{BranchPrefix: *prefix, RefreshIntervalMS: 1000}
 	applyGlobalAgentConfig(&cfg)
 
 	homeDir, err := app.ResolveHomeDir(*home)
@@ -181,7 +180,6 @@ func cmdProjectAdd(args []string) {
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek；用于 registry/worktrees）")
 	name := fs.String("name", "", "project 名（可选）")
 	path := fs.String("path", "", "git repo 路径（必填）")
-	socket := fs.String("socket", "", "tmux socket 名（tmux -L；可选，默认 dalek）")
 	prefix := fs.String("prefix", "", "分支前缀（可选；默认 ts/<projectKey>/）")
 	parseFlagSetOrExit(fs, args, globalOutput, "project add 参数解析失败", "运行 dalek project add --help 查看参数")
 	if strings.TrimSpace(*path) == "" {
@@ -197,7 +195,7 @@ func cmdProjectAdd(args []string) {
 		exitRuntimeError(globalOutput, "打开 Home 失败", err.Error(), "检查 Home 目录权限与文件完整性")
 	}
 
-	cfg := app.ProjectConfig{TmuxSocket: *socket, BranchPrefix: *prefix, RefreshIntervalMS: 1000}
+	cfg := app.ProjectConfig{BranchPrefix: *prefix, RefreshIntervalMS: 1000}
 	applyGlobalAgentConfig(&cfg)
 	p, err := h.InitProjectFromDir(*path, *name, cfg)
 	if err != nil {

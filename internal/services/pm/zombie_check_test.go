@@ -2,7 +2,6 @@ package pm
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +10,7 @@ import (
 )
 
 func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-dead-recovery")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -19,14 +18,11 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"process_pid": 0,
-		"updated_at":  time.Now(),
+		"log_path":   "",
+		"updated_at": time.Now(),
 	}).Error; err != nil {
-		t.Fatalf("clear runtime pid failed: %v", err)
+		t.Fatalf("clear runtime log path failed: %v", err)
 	}
-	sentinel := "tmux-list-should-not-be-used"
-	fTmux.ListErrBySocket[strings.TrimSpace(w.TmuxSocket)] = errors.New(sentinel)
-
 	rt, err := svc.taskRuntimeForDB(p.DB)
 	if err != nil {
 		t.Fatalf("taskRuntimeForDB failed: %v", err)
@@ -41,12 +37,6 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 	if out.Blocked != 0 {
 		t.Fatalf("expected blocked=0, got=%d", out.Blocked)
 	}
-	for _, msg := range out.Errors {
-		if strings.Contains(msg, sentinel) {
-			t.Fatalf("zombie check should not call tmux list sessions anymore, errors=%v", out.Errors)
-		}
-	}
-
 	var got contracts.Worker
 	if err := p.DB.First(&got, w.ID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
@@ -63,7 +53,7 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 }
 
 func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-stalled-recovery")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -104,7 +94,7 @@ func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
 }
 
 func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-max-retries")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -113,13 +103,11 @@ func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"retry_count": defaultZombieMaxRetries,
-		"process_pid": 0,
+		"log_path":    "",
 		"updated_at":  time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set retry_count failed: %v", err)
 	}
-	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
-
 	rt, err := svc.taskRuntimeForDB(p.DB)
 	if err != nil {
 		t.Fatalf("taskRuntimeForDB failed: %v", err)
@@ -151,7 +139,7 @@ func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
 }
 
 func TestCheckZombieWorkers_BackoffRespected(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-backoff")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -166,8 +154,6 @@ func TestCheckZombieWorkers_BackoffRespected(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("set backoff state failed: %v", err)
 	}
-	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
-
 	rt, err := svc.taskRuntimeForDB(p.DB)
 	if err != nil {
 		t.Fatalf("taskRuntimeForDB failed: %v", err)
@@ -187,7 +173,7 @@ func TestCheckZombieWorkers_BackoffRespected(t *testing.T) {
 }
 
 func TestManagerTick_ReportsZombieStats(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "manager-tick-zombie-stats")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -195,13 +181,11 @@ func TestManagerTick_ReportsZombieStats(t *testing.T) {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"process_pid": 0,
-		"updated_at":  time.Now(),
+		"log_path":   "",
+		"updated_at": time.Now(),
 	}).Error; err != nil {
-		t.Fatalf("clear runtime pid failed: %v", err)
+		t.Fatalf("clear runtime log path failed: %v", err)
 	}
-	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
-
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{
 		DryRun:            true,
 		MaxRunningWorkers: 1,

@@ -40,22 +40,6 @@ func TestStartSDKStreamPlayback_UsesExplicitLogPath(t *testing.T) {
 	}
 }
 
-func TestStartSDKStreamPlayback_FallbackToDeprecatedTmuxLogPath(t *testing.T) {
-	logPath := filepath.Join(t.TempDir(), "sdk-stream.log")
-	playback, err := startSDKStreamPlayback(context.Background(), SDKConfig{
-		Provider:    "codex",
-		TmuxLogPath: logPath,
-	}, 7)
-	if err != nil {
-		t.Fatalf("startSDKStreamPlayback failed: %v", err)
-	}
-	defer playback.Close(context.Background())
-
-	if got := strings.TrimSpace(playback.logFilePath()); got != logPath {
-		t.Fatalf("unexpected log path: got=%q want=%q", got, logPath)
-	}
-}
-
 func TestStartSDKStreamPlayback_FallbackToWorkDir(t *testing.T) {
 	workDir := t.TempDir()
 	playback, err := startSDKStreamPlayback(context.Background(), SDKConfig{

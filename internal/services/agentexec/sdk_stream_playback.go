@@ -31,9 +31,6 @@ func sdkStreamLogPathHint(cfg SDKConfig) string {
 	if v := strings.TrimSpace(cfg.StreamLogPath); v != "" {
 		return v
 	}
-	if v := strings.TrimSpace(cfg.TmuxLogPath); v != "" {
-		return v
-	}
 	if v := strings.TrimSpace(cfg.WorkDir); v != "" {
 		return filepath.Join(v, ".dalek", "runtime", "sdk-stream.log")
 	}

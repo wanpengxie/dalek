@@ -14,6 +14,10 @@ func keyRune(r rune) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
 }
 
+func keyEnter() tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyEnter}
+}
+
 func TestUpdateTable_DeniedActionShowsBoundaryMessage(t *testing.T) {
 	m := newModel(nil, nil, "")
 	m.rowRefs = []rowRef{{kind: rowTicket, section: "done", ticketID: 10}}
@@ -247,5 +251,94 @@ func TestUpdateTable_BacklogReorderAllowed(t *testing.T) {
 	got := gotModel.(model)
 	if !strings.Contains(got.status, "上移中 t2") {
 		t.Fatalf("unexpected status: %q", got.status)
+	}
+}
+
+func TestUpdateTable_EnterOpensTmuxForTicketRow(t *testing.T) {
+	m := newModel(nil, nil, "")
+	wt := t.TempDir()
+	m.rowRefs = []rowRef{{kind: rowTicket, section: "running", ticketID: 10}}
+	m.viewsByID = map[uint]app.TicketView{
+		10: {
+			Ticket: contracts.Ticket{ID: 10, WorkflowStatus: contracts.TicketActive},
+			LatestWorker: &contracts.Worker{
+				ID:           101,
+				WorktreePath: wt,
+			},
+		},
+	}
+
+	gotModel, cmd := m.updateTable(keyEnter())
+	if cmd == nil {
+		t.Fatalf("enter on ticket row should return cmd")
+	}
+	got := gotModel.(model)
+	if !strings.Contains(got.status, "打开 tmux t10") {
+		t.Fatalf("unexpected status: %q", got.status)
+	}
+}
+
+func TestUpdateTable_EnterRequiresExistingWorktree(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.rowRefs = []rowRef{{kind: rowTicket, section: "running", ticketID: 10}}
+	m.viewsByID = map[uint]app.TicketView{
+		10: {
+			Ticket: contracts.Ticket{ID: 10, WorkflowStatus: contracts.TicketActive},
+		},
+	}
+
+	gotModel, cmd := m.updateTable(keyEnter())
+	if cmd != nil {
+		t.Fatalf("enter without ready worktree should not return cmd")
+	}
+	got := gotModel.(model)
+	if !strings.Contains(got.status, "尚未 start") {
+		t.Fatalf("unexpected status: %q", got.status)
+	}
+}
+
+func TestUpdateTable_EnterOnManagerRowNoop(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.rowRefs = []rowRef{{kind: rowManager, section: "manager"}}
+
+	gotModel, cmd := m.updateTable(keyEnter())
+	if cmd != nil {
+		t.Fatalf("enter on manager row should not return cmd")
+	}
+	got := gotModel.(model)
+	if !strings.Contains(got.status, "Enter 仅支持 ticket 行") {
+		t.Fatalf("unexpected status: %q", got.status)
+	}
+}
+
+func TestUpdateTable_AOpensWorkerLogPage(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.rowRefs = []rowRef{{kind: rowTicket, section: "running", ticketID: 10}}
+	m.viewsByID = map[uint]app.TicketView{
+		10: {
+			Ticket: contracts.Ticket{ID: 10, WorkflowStatus: contracts.TicketActive},
+			LatestWorker: &contracts.Worker{
+				ID:      11,
+				LogPath: "/tmp/t10.log",
+			},
+		},
+	}
+	v := m.viewsByID[10]
+	v.Capability.CanAttach = true
+	m.viewsByID[10] = v
+
+	gotModel, cmd := m.updateTable(keyRune('a'))
+	if cmd == nil {
+		t.Fatalf("a on attachable ticket should return cmd")
+	}
+	got := gotModel.(model)
+	if got.mode != modeWorkerLog {
+		t.Fatalf("mode=%v, want=%v", got.mode, modeWorkerLog)
+	}
+	if !strings.Contains(got.status, "加载日志 t10") {
+		t.Fatalf("unexpected status: %q", got.status)
+	}
+	if !got.workerLogInFlight {
+		t.Fatalf("worker log should be in flight")
 	}
 }

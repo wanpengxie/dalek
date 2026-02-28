@@ -36,11 +36,9 @@ type TicketActionService interface {
 }
 
 type DispatchTicketResult struct {
-	TicketID    uint
-	WorkerID    uint
-	TaskRunID   uint
-	TmuxSocket  string
-	TmuxSession string
+	TicketID  uint
+	WorkerID  uint
+	TaskRunID uint
 }
 
 type PMActionService interface {
@@ -53,11 +51,11 @@ type PMActionService interface {
 }
 
 type InterruptTicketResult struct {
-	TicketID    uint
-	WorkerID    uint
-	TargetPane  string
-	TmuxSocket  string
-	TmuxSession string
+	TicketID  uint
+	WorkerID  uint
+	Mode      string
+	TaskRunID uint
+	LogPath   string
 }
 
 type WorkerActionService interface {
@@ -227,10 +225,10 @@ func (e *ActionExecutor) executeStartTicket(ctx context.Context, action contract
 		Message:    msg,
 		Data: map[string]any{
 			"worker": map[string]any{
-				"id":           worker.ID,
-				"ticket_id":    worker.TicketID,
-				"status":       worker.Status,
-				"tmux_session": worker.TmuxSession,
+				"id":        worker.ID,
+				"ticket_id": worker.TicketID,
+				"status":    worker.Status,
+				"log_path":  worker.LogPath,
 			},
 		},
 	}, nil
@@ -253,11 +251,9 @@ func (e *ActionExecutor) executeDispatchTicket(ctx context.Context, action contr
 		Message:    msg,
 		Data: map[string]any{
 			"dispatch": map[string]any{
-				"ticket_id":    res.TicketID,
-				"worker_id":    res.WorkerID,
-				"task_run_id":  res.TaskRunID,
-				"tmux_socket":  res.TmuxSocket,
-				"tmux_session": res.TmuxSession,
+				"ticket_id":   res.TicketID,
+				"worker_id":   res.WorkerID,
+				"task_run_id": res.TaskRunID,
 			},
 		},
 	}, nil
@@ -279,11 +275,11 @@ func (e *ActionExecutor) executeInterruptTicket(ctx context.Context, action cont
 		Message:    msg,
 		Data: map[string]any{
 			"interrupt": map[string]any{
-				"ticket_id":    res.TicketID,
-				"worker_id":    res.WorkerID,
-				"target_pane":  res.TargetPane,
-				"tmux_socket":  res.TmuxSocket,
-				"tmux_session": res.TmuxSession,
+				"ticket_id":   res.TicketID,
+				"worker_id":   res.WorkerID,
+				"mode":        res.Mode,
+				"task_run_id": res.TaskRunID,
+				"log_path":    res.LogPath,
 			},
 		},
 	}, nil

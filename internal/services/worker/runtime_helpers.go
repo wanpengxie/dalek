@@ -12,7 +12,6 @@ const defaultWorkerProcessStopTimeout = 5 * time.Second
 
 func workerRuntimeHandle(w contracts.Worker) infra.WorkerProcessHandle {
 	h := infra.WorkerProcessHandle{
-		PID:     w.ProcessPID,
 		LogPath: strings.TrimSpace(w.LogPath),
 	}
 	if w.StartedAt != nil {
@@ -22,5 +21,5 @@ func workerRuntimeHandle(w contracts.Worker) infra.WorkerProcessHandle {
 }
 
 func hasWorkerRuntimeHandle(w contracts.Worker) bool {
-	return w.ProcessPID > 0
+	return strings.TrimSpace(w.LogPath) != ""
 }

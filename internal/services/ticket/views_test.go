@@ -21,9 +21,8 @@ func TestComputeTicketCapability_DefaultBacklogNoWorker(t *testing.T) {
 
 func TestComputeTicketCapability_DispatchGateAndReason(t *testing.T) {
 	worker := &contracts.Worker{
-		Status:     contracts.WorkerRunning,
-		ProcessPID: 1234,
-		LogPath:    "/tmp/w1.log",
+		Status:  contracts.WorkerRunning,
+		LogPath: "/tmp/w1.log",
 	}
 	capability := ComputeTicketCapability(contracts.TicketActive, worker, true, false, true, false, contracts.TaskHealthBusy)
 	if capability.CanDispatch {
@@ -39,9 +38,8 @@ func TestComputeTicketCapability_DispatchGateAndReason(t *testing.T) {
 
 func TestComputeTicketCapability_ProbeFailureAllowsAttach(t *testing.T) {
 	worker := &contracts.Worker{
-		Status:     contracts.WorkerRunning,
-		ProcessPID: 2345,
-		LogPath:    "/tmp/w2.log",
+		Status:  contracts.WorkerRunning,
+		LogPath: "/tmp/w2.log",
 	}
 	capability := ComputeTicketCapability(contracts.TicketBacklog, worker, false, true, false, false, contracts.TaskHealthUnknown)
 	if !capability.CanAttach {
@@ -57,17 +55,17 @@ func TestComputeDerivedRuntimeHealth(t *testing.T) {
 		t.Fatalf("expected no worker+run => unknown, got=%s", got)
 	}
 
-	stopped := &contracts.Worker{Status: contracts.WorkerStopped, ProcessPID: 1}
+	stopped := &contracts.Worker{Status: contracts.WorkerStopped, LogPath: "/tmp/stopped.log"}
 	if got := computeDerivedRuntimeHealth(stopped, false, false, 1, contracts.TaskHealthBusy); got != contracts.TaskHealthDead {
 		t.Fatalf("expected stopped worker without session => dead, got=%s", got)
 	}
 
-	failed := &contracts.Worker{Status: contracts.WorkerFailed, ProcessPID: 2}
+	failed := &contracts.Worker{Status: contracts.WorkerFailed, LogPath: "/tmp/failed.log"}
 	if got := computeDerivedRuntimeHealth(failed, false, false, 1, contracts.TaskHealthBusy); got != contracts.TaskHealthStalled {
 		t.Fatalf("expected failed worker without session => stalled, got=%s", got)
 	}
 
-	running := &contracts.Worker{Status: contracts.WorkerRunning, ProcessPID: 3}
+	running := &contracts.Worker{Status: contracts.WorkerRunning, LogPath: "/tmp/running.log"}
 	if got := computeDerivedRuntimeHealth(running, false, true, 1, contracts.TaskHealthDead); got != contracts.TaskHealthUnknown {
 		t.Fatalf("expected probe failure to downgrade dead => unknown, got=%s", got)
 	}
@@ -76,8 +74,8 @@ func TestComputeDerivedRuntimeHealth(t *testing.T) {
 		t.Fatalf("expected alive session to keep runtime health, got=%s", got)
 	}
 
-	legacy := &contracts.Worker{Status: contracts.WorkerRunning, TmuxSession: "s-legacy"}
-	if got := computeDerivedRuntimeHealth(legacy, false, false, 1, contracts.TaskHealthBusy); got != contracts.TaskHealthBusy {
-		t.Fatalf("expected legacy worker without runtime handle keeps runtime health, got=%s", got)
+	noHandle := &contracts.Worker{Status: contracts.WorkerRunning}
+	if got := computeDerivedRuntimeHealth(noHandle, false, false, 1, contracts.TaskHealthBusy); got != contracts.TaskHealthBusy {
+		t.Fatalf("expected worker without runtime handle keeps runtime health, got=%s", got)
 	}
 }

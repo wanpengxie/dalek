@@ -10,7 +10,7 @@ import (
 )
 
 func TestApplyWorkerReport_DoesNotChangeTicketWorkflow(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	root := t.TempDir()
 
@@ -24,8 +24,6 @@ func TestApplyWorkerReport_DoesNotChangeTicketWorkflow(t *testing.T) {
 		Status:       contracts.WorkerRunning,
 		WorktreePath: root,
 		Branch:       "ts/demo-ticket-1",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-ticket-1",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -52,7 +50,7 @@ func TestApplyWorkerReport_DoesNotChangeTicketWorkflow(t *testing.T) {
 }
 
 func TestApplyWorkerReport_DoesNotRollbackDoneWorkflow(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	root := t.TempDir()
 
@@ -66,8 +64,6 @@ func TestApplyWorkerReport_DoesNotRollbackDoneWorkflow(t *testing.T) {
 		Status:       contracts.WorkerRunning,
 		WorktreePath: root,
 		Branch:       "ts/demo-ticket-2",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-ticket-2",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -94,7 +90,7 @@ func TestApplyWorkerReport_DoesNotRollbackDoneWorkflow(t *testing.T) {
 }
 
 func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	root := t.TempDir()
 	tk := createTicket(t, p.DB, "runtime-sync-best-effort")
@@ -103,8 +99,6 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 		Status:       contracts.WorkerRunning,
 		WorktreePath: root,
 		Branch:       "ts/demo-ticket-4",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-ticket-4",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -144,7 +138,7 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 }
 
 func TestApplyWorkerReport_ResetsZombieRetryState(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	root := t.TempDir()
 	tk := createTicket(t, p.DB, "report-reset-zombie-retry")
@@ -154,8 +148,6 @@ func TestApplyWorkerReport_ResetsZombieRetryState(t *testing.T) {
 		Status:        contracts.WorkerRunning,
 		WorktreePath:  root,
 		Branch:        "ts/demo-ticket-5",
-		TmuxSocket:    "dalek",
-		TmuxSession:   "s-ticket-5",
 		RetryCount:    2,
 		LastRetryAt:   &lastRetryAt,
 		LastErrorHash: "deadbeef",

@@ -12,8 +12,8 @@ import (
 	"dalek/internal/repo"
 )
 
-func TestDirectDispatchWorker_AllowsStoppedWorkerWithAliveSession(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+func TestDirectDispatchWorker_AllowsStoppedWorkerWithAliveRuntime(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
 
 	fakeWorkerCodex := filepath.Join(t.TempDir(), "worker-codex")
 	workerScript := `#!/usr/bin/env bash
@@ -41,7 +41,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-1","type":"agent_message
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 
-	// 模拟上一轮 loop 已退出：worker 状态变为 stopped，但 tmux session 仍在线。
+	// 模拟上一轮 loop 已退出：worker 状态变为 stopped，但 runtime 仍在线。
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"status": contracts.WorkerStopped,
 	}).Error; err != nil {
@@ -63,7 +63,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-1","type":"agent_message
 }
 
 func TestDirectDispatchWorker_AutoStartWhenStoppedSessionOffline(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	fakeWorkerCodex := filepath.Join(t.TempDir(), "worker-codex-stopped-offline")
 	workerScript := `#!/usr/bin/env bash
@@ -91,8 +91,8 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-stopped-offline","type":
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"status":      contracts.WorkerStopped,
-		"process_pid": 0,
+		"status":   contracts.WorkerStopped,
+		"log_path": "",
 	}).Error; err != nil {
 		t.Fatalf("mark worker stopped failed: %v", err)
 	}
@@ -110,13 +110,13 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-stopped-offline","type":
 	if err := p.DB.First(&after, out.WorkerID).Error; err != nil {
 		t.Fatalf("load worker after direct dispatch failed: %v", err)
 	}
-	if after.ProcessPID <= 0 {
-		t.Fatalf("expected auto-start to restore runtime pid, got=%d", after.ProcessPID)
+	if strings.TrimSpace(after.LogPath) == "" {
+		t.Fatalf("expected auto-start to restore runtime log path")
 	}
 }
 
 func TestDirectDispatchWorker_RollbackWorkflowOnLoopFailure(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "direct-dispatch-rollback-workflow")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
@@ -148,7 +148,7 @@ func TestDirectDispatchWorker_RollbackWorkflowOnLoopFailure(t *testing.T) {
 }
 
 func TestDirectDispatchWorker_RollbackWorkflowFallsBackToBlockedWhenPrevInvalid(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "direct-dispatch-rollback-invalid-prev")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
@@ -179,7 +179,7 @@ func TestDirectDispatchWorker_RollbackWorkflowFallsBackToBlockedWhenPrevInvalid(
 }
 
 func TestDirectDispatchWorker_WaitsCreatingWorkerReady(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	fakeWorkerCodex := filepath.Join(t.TempDir(), "worker-codex-wait")
 	workerScript := `#!/usr/bin/env bash
@@ -219,6 +219,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-wait","type":"agent_mess
 		time.Sleep(80 * time.Millisecond)
 		_ = p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 			"status":     contracts.WorkerRunning,
+			"log_path":   repo.WorkerStreamLogPath(p.WorkersDir, w.ID),
 			"updated_at": time.Now(),
 		}).Error
 	}()
@@ -235,7 +236,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-wait","type":"agent_mess
 }
 
 func TestDirectDispatchWorker_DefaultAutoStartWhenNotStarted(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	fakeWorkerCodex := filepath.Join(t.TempDir(), "worker-codex-auto-start")
 	workerScript := `#!/usr/bin/env bash
@@ -275,20 +276,17 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-auto-start","type":"agen
 	if w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
 		t.Fatalf("expected running/stopped worker after direct auto-start, got=%s", w.Status)
 	}
-	if strings.TrimSpace(w.TmuxSession) == "" {
-		t.Fatalf("expected worker session after direct auto-start")
-	}
 }
 
 func TestDirectDispatchWorker_AutoStartFalsePreservesMissingSessionError(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "direct-dispatch-auto-start-off")
 	if _, err := svc.DirectDispatchWorker(context.Background(), tk.ID, DirectDispatchOptions{
 		AutoStart: boolPtr(false),
 	}); err == nil {
 		t.Fatalf("expected direct dispatch fail when auto-start=false")
-	} else if !strings.Contains(err.Error(), "尚未启动（没有 worker/session）") {
+	} else if !strings.Contains(err.Error(), "尚未启动（没有 worker）") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -302,7 +300,7 @@ func TestDirectDispatchWorker_AutoStartFalsePreservesMissingSessionError(t *test
 }
 
 func TestManagerTick_IgnoresContinueRedispatch(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	// 与 worker mode 无关：continue 信号不应驱动 ManagerTick 再次 dispatch。
 	p.Config.WorkerAgent = repo.AgentExecConfig{

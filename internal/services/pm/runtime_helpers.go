@@ -9,12 +9,11 @@ import (
 )
 
 func hasWorkerRuntimeHandle(w contracts.Worker) bool {
-	return w.ProcessPID > 0
+	return strings.TrimSpace(w.LogPath) != ""
 }
 
 func workerRuntimeHandle(w contracts.Worker) infra.WorkerProcessHandle {
 	h := infra.WorkerProcessHandle{
-		PID:     w.ProcessPID,
 		LogPath: strings.TrimSpace(w.LogPath),
 	}
 	if w.StartedAt != nil {
@@ -27,17 +26,10 @@ func (s *Service) workerDispatchReady(ctx context.Context, w *contracts.Worker) 
 	if w == nil {
 		return false, nil
 	}
-	if hasWorkerRuntimeHandle(*w) {
-		return true, nil
-	}
-	return strings.TrimSpace(w.TmuxSession) != "", nil
+	return hasWorkerRuntimeHandle(*w), nil
 }
 
 func (s *Service) workerDispatchLive(ctx context.Context, w *contracts.Worker) (bool, error) {
-	p, _, err := s.require()
-	if err != nil {
-		return false, err
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -47,9 +39,16 @@ func (s *Service) workerDispatchLive(ctx context.Context, w *contracts.Worker) (
 	if !hasWorkerRuntimeHandle(*w) {
 		return false, nil
 	}
-	alive, err := p.WorkerRuntime.IsAlive(ctx, workerRuntimeHandle(*w))
+	if w.Status == contracts.WorkerRunning {
+		return true, nil
+	}
+	rt, err := s.taskRuntime()
 	if err != nil {
 		return false, err
 	}
-	return alive, nil
+	run, err := rt.LatestActiveWorkerRun(ctx, w.ID)
+	if err != nil {
+		return false, err
+	}
+	return run != nil, nil
 }

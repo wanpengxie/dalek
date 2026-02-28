@@ -27,7 +27,6 @@ type Project struct {
 	DB     *gorm.DB
 	Logger *slog.Logger
 
-	Tmux          infra.TmuxClient
 	WorkerRuntime infra.WorkerRuntime
 	Git           infra.GitClient
 	TaskRuntime   TaskRuntimeFactory
@@ -47,7 +46,6 @@ type NewProjectInput struct {
 	DB     *gorm.DB
 	Logger *slog.Logger
 
-	Tmux          infra.TmuxClient
 	WorkerRuntime infra.WorkerRuntime
 	Git           infra.GitClient
 	TaskRuntime   TaskRuntimeFactory
@@ -64,7 +62,6 @@ func NewProject(in NewProjectInput) (*Project, error) {
 		Config:        in.Config,
 		DB:            in.DB,
 		Logger:        in.Logger,
-		Tmux:          in.Tmux,
 		WorkerRuntime: in.WorkerRuntime,
 		Git:           in.Git,
 		TaskRuntime:   in.TaskRuntime,
@@ -106,9 +103,6 @@ func (p *Project) Validate() error {
 	}
 	if p.Logger == nil {
 		return fmt.Errorf("project Logger 不能为空")
-	}
-	if p.Tmux == nil {
-		return fmt.Errorf("project Tmux 不能为空")
 	}
 	if p.WorkerRuntime == nil {
 		return fmt.Errorf("project WorkerRuntime 不能为空")

@@ -45,16 +45,12 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 	workerStatus := contracts.WorkerStatus("")
 	hasRuntimeHandle := false
 	hasRuntimeLog := false
-	tmuxSession := ""
 	if w != nil {
 		workerStatus = w.Status
-		hasRuntimeHandle = w.ProcessPID > 0
+		hasRuntimeHandle = strings.TrimSpace(w.LogPath) != ""
 		hasRuntimeLog = strings.TrimSpace(w.LogPath) != ""
-		tmuxSession = strings.TrimSpace(w.TmuxSession)
 	}
-	hasSession := tmuxSession != ""
 	runtimeKnownDead := hasRuntimeHandle && !sessionProbeFailed && !sessionAlive
-	tmuxKnownDead := hasSession && !hasRuntimeHandle && !sessionProbeFailed && !sessionAlive
 
 	cap := contracts.TicketCapability{}
 	isDone := wf == contracts.TicketDone
@@ -68,13 +64,12 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 		!isArchived &&
 		!hasActiveDispatch
 
-	// attach：优先 runtime 日志 attach；无 runtime 句柄时回退 tmux attach。
+	// attach：只支持 runtime 日志 attach。
 	cap.CanAttach = hasWorker &&
-		((hasRuntimeHandle && hasRuntimeLog) ||
-			(hasSession && !tmuxKnownDead))
+		(hasRuntimeHandle && hasRuntimeLog)
 
-	// stop：有 runtime 句柄或 tmux 会话都允许。
-	cap.CanStop = hasWorker && (hasRuntimeHandle || hasSession)
+	// stop：仅 runtime 句柄可停止。
+	cap.CanStop = hasWorker && hasRuntimeHandle
 
 	// archive：要求没有 running worker，且没有进行中的 dispatch。
 	cap.CanArchive = !isArchived &&
@@ -97,12 +92,10 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 		cap.Reason = "将自动启动 worker"
 	case hasRuntimeHandle && !hasRuntimeLog:
 		cap.Reason = "worker 缺少日志路径（dispatch 时将自动修复）"
-	case !hasRuntimeHandle && !hasSession:
-		cap.Reason = "worker 缺少运行句柄（dispatch 时将自动修复）"
+	case !hasRuntimeHandle:
+		cap.Reason = "worker 缺少运行日志锚点（dispatch 时将自动修复）"
 	case runtimeKnownDead:
-		cap.Reason = "worker 进程不在线（dispatch 时将自动修复）"
-	case tmuxKnownDead:
-		cap.Reason = "tmux session 不在线（dispatch 时将自动修复）"
+		cap.Reason = "worker 运行通道不在线（dispatch 时将自动修复）"
 	case sessionProbeFailed:
 		cap.Reason = "运行态探测失败"
 	}
@@ -114,8 +107,7 @@ func computeDerivedRuntimeHealth(latestWorker *contracts.Worker, sessionAlive bo
 	if latestWorker == nil && taskRunID == 0 {
 		return contracts.TaskHealthUnknown
 	}
-	if latestWorker == nil || latestWorker.ProcessPID <= 0 {
-		// 历史 tmux worker：没有 runtime 句柄时不做“离线=dead”推断，避免误判。
+	if latestWorker == nil || strings.TrimSpace(latestWorker.LogPath) == "" {
 		return runtimeHealth
 	}
 	if !sessionProbeFailed && !sessionAlive {

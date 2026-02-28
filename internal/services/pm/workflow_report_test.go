@@ -9,7 +9,7 @@ import (
 )
 
 func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "workflow-report-wait-user")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 }
 
 func TestApplyWorkerReport_DoneCreatesMergeProposalAndApprovalInboxSynchronously(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "workflow-report-done")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {

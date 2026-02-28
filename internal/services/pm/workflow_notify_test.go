@@ -115,7 +115,7 @@ func assertNoStatusEvent(t *testing.T, ch <-chan StatusChangeEvent) {
 }
 
 func TestWaitStatusChangeHooks_WaitsForAsyncHook(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-wait-hooks")
 	hook := &testBlockingStatusChangeHook{
 		delay: 120 * time.Millisecond,
@@ -142,7 +142,7 @@ func TestWaitStatusChangeHooks_WaitsForAsyncHook(t *testing.T) {
 }
 
 func TestWaitStatusChangeHooks_RespectsContextTimeout(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-wait-timeout")
 	hook := &testBlockingStatusChangeHook{
 		delay: 500 * time.Millisecond,
@@ -162,7 +162,7 @@ func TestWaitStatusChangeHooks_RespectsContextTimeout(t *testing.T) {
 }
 
 func TestSetTicketWorkflowStatus_Changed_EmitsHook(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-set-workflow")
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
 	svc.SetStatusChangeHook(hook)
@@ -184,7 +184,7 @@ func TestSetTicketWorkflowStatus_Changed_EmitsHook(t *testing.T) {
 }
 
 func TestSetTicketWorkflowStatus_NoChange_DoesNotEmitHook(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-no-change")
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
 	svc.SetStatusChangeHook(hook)
@@ -196,7 +196,7 @@ func TestSetTicketWorkflowStatus_NoChange_DoesNotEmitHook(t *testing.T) {
 }
 
 func TestApplyWorkerReport_Changed_EmitsHook(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-apply-report")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
@@ -229,7 +229,7 @@ func TestApplyWorkerReport_Changed_EmitsHook(t *testing.T) {
 }
 
 func TestApplyWorkerReport_Done_EmitsHook(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-apply-report-done")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
@@ -272,7 +272,7 @@ func TestApplyWorkerReport_Done_EmitsHook(t *testing.T) {
 }
 
 func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-apply-report-wait-user")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
@@ -316,7 +316,7 @@ func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
 }
 
 func TestClaimPMDispatchJob_Promote_EmitsHook(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-dispatch-claim")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
@@ -348,7 +348,7 @@ func TestClaimPMDispatchJob_Promote_EmitsHook(t *testing.T) {
 }
 
 func TestCompletePMDispatchJobFailed_Demote_EmitsHook(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-dispatch-failed")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
@@ -383,7 +383,7 @@ func TestCompletePMDispatchJobFailed_Demote_EmitsHook(t *testing.T) {
 }
 
 func TestGatewayStatusNotifier_OnStatusChange_SendsMessage(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "恢复 ticket 状态主动通知")
 
 	gatewayDBPath := filepath.Join(t.TempDir(), "gateway.db")
@@ -435,7 +435,7 @@ func TestGatewayStatusNotifier_OnStatusChange_SendsMessage(t *testing.T) {
 }
 
 func TestOutboxEnqueueStatusNotifier_OnStatusChange_EnqueuesPending(t *testing.T) {
-	_, p, _, _ := newServiceForTest(t)
+	_, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "outbox enqueue notify")
 
 	gatewayDBPath := filepath.Join(t.TempDir(), "gateway.db")
@@ -489,7 +489,7 @@ func TestOutboxEnqueueStatusNotifier_OnStatusChange_EnqueuesPending(t *testing.T
 }
 
 func TestGatewayStatusNotifier_IgnoresNonImportantTransition(t *testing.T) {
-	_, p, _, _ := newServiceForTest(t)
+	_, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-filter")
 
 	gatewayDBPath := filepath.Join(t.TempDir(), "gateway.db")
@@ -525,7 +525,7 @@ func TestGatewayStatusNotifier_IgnoresNonImportantTransition(t *testing.T) {
 }
 
 func TestGatewayStatusNotifier_NoBinding_ReturnsNil(t *testing.T) {
-	_, p, _, _ := newServiceForTest(t)
+	_, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-no-binding")
 
 	gatewayDBPath := filepath.Join(t.TempDir(), "gateway.db")

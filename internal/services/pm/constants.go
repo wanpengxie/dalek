@@ -9,8 +9,6 @@ const (
 	envDBPath            = "DALEK_DB_PATH"
 	envWorktreePath      = "DALEK_WORKTREE_PATH"
 	envBranch            = "DALEK_BRANCH"
-	envTmuxSocket        = "DALEK_TMUX_SOCKET"
-	envTmuxSession       = "DALEK_TMUX_SESSION"
 	envTicketID          = "DALEK_TICKET_ID"
 	envWorkerID          = "DALEK_WORKER_ID"
 	envTicketTitle       = "DALEK_TICKET_TITLE"
@@ -40,10 +38,7 @@ const (
 	defaultDispatchPollInterval        = 100 * time.Millisecond
 	leaseRenewalEscalateThreshold uint = 3 // 连续失败次数达到此阈值后升级为 Error 日志
 
-	managerStartTimeout      = 5*time.Minute + 30*time.Second
-	tmuxListSessionsTimeout  = 2 * time.Second
-	tmuxNewSessionTimeout    = 5 * time.Second
-	tmuxObserveTargetTimeout = 5 * time.Second
+	managerStartTimeout = 5*time.Minute + 30*time.Second
 
 	defaultZombieStallThreshold  = 10 * time.Minute
 	defaultZombieMaxRetries      = 3

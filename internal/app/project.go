@@ -79,13 +79,6 @@ func (p *Project) ProjectDir() string {
 	return p.core.ProjectDir()
 }
 
-func (p *Project) TmuxSocket() string {
-	if p == nil || p.core == nil {
-		return ""
-	}
-	return strings.TrimSpace(p.core.Config.WithDefaults().TmuxSocket)
-}
-
 func (p *Project) RefreshInterval() time.Duration {
 	if p == nil || p.core == nil {
 		return time.Second

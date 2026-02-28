@@ -50,8 +50,6 @@ func (s *Service) launchWorkerSDKHandle(
 	}
 
 	env := buildBaseEnv(p, t, w)
-	env[envTmuxSocket] = strings.TrimSpace(w.TmuxSocket)
-	env[envTmuxSession] = strings.TrimSpace(w.TmuxSession)
 	env[dispatchDepthEnvKey] = nextDispatchDepthEnvValue()
 
 	executor := agentexec.NewSDKExecutor(agentexec.SDKConfig{

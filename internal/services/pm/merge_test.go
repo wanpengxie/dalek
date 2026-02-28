@@ -12,7 +12,7 @@ import (
 )
 
 func TestDiscardMerge_FromProposedClosesApprovalInbox(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "discard-from-proposed")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
@@ -58,7 +58,7 @@ func TestDiscardMerge_FromProposedClosesApprovalInbox(t *testing.T) {
 }
 
 func TestDiscardMerge_FromApproved(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "discard-from-approved")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
@@ -85,7 +85,7 @@ func TestDiscardMerge_FromApproved(t *testing.T) {
 }
 
 func TestDiscardMerge_Idempotent(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "discard-idempotent")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
@@ -111,7 +111,7 @@ func TestDiscardMerge_Idempotent(t *testing.T) {
 }
 
 func TestDiscardMerge_MergedCannotDiscard(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "discard-merged")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
@@ -142,7 +142,7 @@ func TestDiscardMerge_MergedCannotDiscard(t *testing.T) {
 }
 
 func TestMarkMergeMerged_DiscardedCannotMerge(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "merged-discarded")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
@@ -173,7 +173,7 @@ func TestMarkMergeMerged_DiscardedCannotMerge(t *testing.T) {
 }
 
 func TestProposeMerge_AllowsReproposeAfterDiscarded(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "propose-after-discarded")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
@@ -208,7 +208,7 @@ func TestProposeMerge_AllowsReproposeAfterDiscarded(t *testing.T) {
 }
 
 func TestApplyWorkerReport_DoneRecreatesMergeProposalAfterDiscarded(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "report-done-after-discarded")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
@@ -256,7 +256,7 @@ func TestApplyWorkerReport_DoneRecreatesMergeProposalAfterDiscarded(t *testing.T
 }
 
 func TestManagerTick_ProposesWhenOnlyDiscardedMergeExists(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-discarded-only")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StartTicket failed: %v", err)

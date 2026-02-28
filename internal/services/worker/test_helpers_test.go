@@ -12,14 +12,13 @@ import (
 	"gorm.io/gorm"
 )
 
-type fakeTmuxClient = testutil.FakeTmuxClient
 type fakeGitClient = testutil.FakeGitClient
 
-func newServiceForTest(t *testing.T) (*Service, *core.Project, *fakeTmuxClient, *fakeGitClient) {
+func newServiceForTest(t *testing.T) (*Service, *core.Project, *fakeGitClient) {
 	t.Helper()
 
-	cp, fTmux, fGit := testutil.NewTestProject(t)
-	return New(cp, ticket.New(cp.DB)), cp, fTmux, fGit
+	cp, fGit := testutil.NewTestProject(t)
+	return New(cp, ticket.New(cp.DB)), cp, fGit
 }
 
 func createTicket(t *testing.T, db *gorm.DB, title string) contracts.Ticket {

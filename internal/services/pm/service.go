@@ -91,9 +91,6 @@ func (s *Service) require() (*core.Project, *gorm.DB, error) {
 	if s.p.DB == nil {
 		return nil, nil, fmt.Errorf("pm service 缺少 DB")
 	}
-	if s.p.Tmux == nil {
-		return nil, nil, fmt.Errorf("pm service 缺少 tmux client")
-	}
 	if s.worker == nil {
 		return nil, nil, fmt.Errorf("pm service 缺少 worker service")
 	}

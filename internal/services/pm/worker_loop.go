@@ -152,7 +152,7 @@ func (s *Service) markWorkerLoopExit(ctx context.Context, w contracts.Worker, la
 		slog.Warn("worker_loop: marking worker as failed on exit", "worker_id", w.ID, "error", lastError)
 		_ = s.worker.MarkWorkerFailed(writeCtx, w.ID, now, lastError)
 	} else {
-		slog.Info("worker_loop: marking worker session as stopped on exit", "worker_id", w.ID)
-		_ = s.worker.MarkWorkerSessionNotAlive(writeCtx, w, now)
+		slog.Info("worker_loop: marking worker runtime as stopped on exit", "worker_id", w.ID)
+		_ = s.worker.MarkWorkerRuntimeNotAlive(writeCtx, w, now)
 	}
 }

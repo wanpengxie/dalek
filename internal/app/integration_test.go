@@ -36,7 +36,6 @@ func newIntegrationHomeProject(t *testing.T) (*Home, *Project) {
 		t.Fatalf("OpenHome failed: %v", err)
 	}
 	p, err := h.InitProjectFromDir(repoRoot, "demo", repo.Config{
-		TmuxSocket:   "dalek",
 		BranchPrefix: "ts/demo/",
 	})
 	if err != nil {
@@ -117,8 +116,8 @@ func TestIntegration_StartAndStopTicket(t *testing.T) {
 	if w.Status != contracts.WorkerRunning {
 		t.Fatalf("expected running worker, got %s", w.Status)
 	}
-	if strings.TrimSpace(w.TmuxSession) == "" {
-		t.Fatalf("expected tmux session for started worker")
+	if strings.TrimSpace(w.LogPath) == "" {
+		t.Fatalf("expected runtime log path for started worker")
 	}
 
 	views, err := p.ListTicketViews(context.Background())
@@ -128,8 +127,8 @@ func TestIntegration_StartAndStopTicket(t *testing.T) {
 	if len(views) != 1 {
 		t.Fatalf("expected one ticket view, got %d", len(views))
 	}
-	if !views[0].SessionAlive {
-		t.Fatalf("expected session alive after start")
+	if views[0].SessionAlive {
+		t.Fatalf("expected no active run immediately after start")
 	}
 
 	if err := p.StopTicket(context.Background(), tk.ID); err != nil {
@@ -144,11 +143,11 @@ func TestIntegration_StartAndStopTicket(t *testing.T) {
 	}
 }
 
-func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession(t *testing.T) {
+func TestIntegration_DaemonRecovery_ReconcileLostWorkerRuntime(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
 
-	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery session", "daemon recovery should reconcile worker session")
+	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery runtime", "daemon recovery should reconcile worker runtime")
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
@@ -157,12 +156,10 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession(t *testing.T) {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 
-	missingSession := fmt.Sprintf("missing-session-%d", time.Now().UnixNano())
 	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"tmux_session": missingSession,
-		"process_pid":  0,
+		"process_pid": 43210,
 	}).Error; err != nil {
-		t.Fatalf("update worker runtime/session failed: %v", err)
+		t.Fatalf("update worker runtime failed: %v", err)
 	}
 
 	views, err := p.ListTicketViews(ctx)
@@ -208,7 +205,7 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession(t *testing.T) {
 
 	var inbox []contracts.InboxItem
 	if err := mustProjectDB(t, p).WithContext(ctx).
-		Where("key = ?", fmt.Sprintf("worker_session_recover_%d", w.ID)).
+		Where("key = ?", fmt.Sprintf("worker_runtime_recover_%d", w.ID)).
 		Order("id desc").
 		Find(&inbox).Error; err != nil {
 		t.Fatalf("query recovery inbox failed: %v", err)
@@ -224,11 +221,11 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession(t *testing.T) {
 	}
 }
 
-func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession_ArchivedTicket(t *testing.T) {
+func TestIntegration_DaemonRecovery_ReconcileLostWorkerRuntime_ArchivedTicket(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
 
-	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery archived session", "daemon recovery should reconcile archived ticket worker session")
+	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery archived runtime", "daemon recovery should reconcile archived ticket worker runtime")
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
@@ -241,12 +238,10 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession_ArchivedTicket(t 
 		t.Fatalf("archive ticket failed: %v", err)
 	}
 
-	missingSession := fmt.Sprintf("missing-archived-session-%d", time.Now().UnixNano())
 	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"tmux_session": missingSession,
-		"process_pid":  0,
+		"process_pid": 43210,
 	}).Error; err != nil {
-		t.Fatalf("update worker runtime/session failed: %v", err)
+		t.Fatalf("update worker runtime failed: %v", err)
 	}
 
 	manager := newDaemonManagerComponent(h, nil)
@@ -268,7 +263,7 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerSession_ArchivedTicket(t 
 
 	var inbox []contracts.InboxItem
 	if err := mustProjectDB(t, p).WithContext(ctx).
-		Where("key = ?", fmt.Sprintf("worker_session_recover_%d", w.ID)).
+		Where("key = ?", fmt.Sprintf("worker_runtime_recover_%d", w.ID)).
 		Order("id desc").
 		Find(&inbox).Error; err != nil {
 		t.Fatalf("query recovery inbox failed: %v", err)
@@ -1464,7 +1459,6 @@ func TestIntegration_OpenProject_BackfillsSchemaVersion(t *testing.T) {
 		t.Fatalf("OpenHome failed: %v", err)
 	}
 	p, err := h.InitProjectFromDir(repoRoot, "demo", repo.Config{
-		TmuxSocket:   "dalek",
 		BranchPrefix: "ts/demo/",
 	})
 	if err != nil {
@@ -1525,7 +1519,6 @@ func TestIntegration_AddOrUpdateProject_ExistingDoesNotAutoCommitEntryPoints(t *
 		t.Fatalf("OpenHome failed: %v", err)
 	}
 	p, err := h.InitProjectFromDir(repoRoot, "demo", repo.Config{
-		TmuxSocket:   "dalek",
 		BranchPrefix: "ts/demo/",
 	})
 	if err != nil {
@@ -1579,7 +1572,6 @@ func TestIntegration_InitFailOnControlSeed_NoConfigAnchor(t *testing.T) {
 		t.Fatalf("OpenHome failed: %v", err)
 	}
 	if _, err := h.InitProjectFromDir(repoRoot, "demo", repo.Config{
-		TmuxSocket:   "dalek",
 		BranchPrefix: "ts/demo/",
 	}); err == nil {
 		t.Fatalf("expected init failed when control seed cannot create directories")

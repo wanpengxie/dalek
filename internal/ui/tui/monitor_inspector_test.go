@@ -24,7 +24,6 @@ func TestInspectorLeftView_ShowsDispatchRunningProcess(t *testing.T) {
 			ID:                 11,
 			Status:             contracts.WorkerRunning,
 			WorktreePath:       "/tmp/worktree/t1",
-			TmuxSession:        "ts-demo-t1-w11",
 			RuntimePaneCommand: "codex exec",
 			RuntimePaneMode:    "normal",
 		},
@@ -75,9 +74,8 @@ func TestInspectorRightView_SimplifiesTailToRecentLines(t *testing.T) {
 			Title: "tail 简化",
 		},
 		LatestWorker: &contracts.Worker{
-			ID:          22,
-			Status:      contracts.WorkerRunning,
-			TmuxSession: "ts-demo-t2-w22",
+			ID:     22,
+			Status: contracts.WorkerRunning,
 		},
 		SessionAlive: true,
 	}
@@ -91,9 +89,7 @@ func TestInspectorRightView_SimplifiesTailToRecentLines(t *testing.T) {
 	m.tailRef = rowRef{kind: rowTicket, ticketID: view.Ticket.ID}
 	m.tailUpdatedAt = now
 	m.tailPreview = contracts.TailPreview{
-		TmuxSession: "ts-demo-t2-w22",
-		PaneID:      "%1",
-		Lines:       []string{"line-1", "line-2", "line-3", "line-4", "line-5", "line-6"},
+		Lines: []string{"line-1", "line-2", "line-3", "line-4", "line-5", "line-6"},
 	}
 
 	got := ansi.Strip(m.inspectorRightView(120))

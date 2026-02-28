@@ -12,10 +12,9 @@ type Worker struct {
 
 	WorktreePath string `gorm:"type:text;not null"`
 	Branch       string `gorm:"type:text;not null"`
-	ProcessPID   int    `gorm:"column:process_pid;not null;default:0"`
-	LogPath      string `gorm:"type:text;not null;default:''"`
-	TmuxSocket   string `gorm:"type:text;not null"`
-	TmuxSession  string `gorm:"type:text;not null;default:''"`
+	// ProcessPID 仅用于历史兼容；worker runtime 主标识已切换为 LogPath。
+	ProcessPID int    `gorm:"column:process_pid;not null;default:0"`
+	LogPath    string `gorm:"type:text;not null;default:''"`
 
 	StartedAt *time.Time `gorm:""`
 	StoppedAt *time.Time `gorm:""`

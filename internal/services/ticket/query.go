@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/infra"
 	"dalek/internal/services/core"
 	"dalek/internal/store"
 
@@ -38,9 +37,6 @@ func (s *QueryService) require() (*core.Project, error) {
 	if s.p.DB == nil {
 		return nil, fmt.Errorf("ticket query service 缺少 DB")
 	}
-	if s.p.WorkerRuntime == nil {
-		return nil, fmt.Errorf("ticket query service 缺少 worker runtime")
-	}
 	if s.p.TaskRuntime == nil {
 		return nil, fmt.Errorf("ticket query service 缺少 task runtime")
 	}
@@ -53,14 +49,6 @@ func (s *QueryService) db() (*gorm.DB, error) {
 		return nil, err
 	}
 	return p.DB, nil
-}
-
-func (s *QueryService) runtime() (infra.WorkerRuntime, error) {
-	p, err := s.require()
-	if err != nil {
-		return nil, err
-	}
-	return p.WorkerRuntime, nil
 }
 
 func (s *QueryService) taskRuntimeForDB(db *gorm.DB) (core.TaskRuntime, error) {
@@ -93,10 +81,6 @@ func (s *QueryService) ListTicketViews(ctx context.Context) ([]TicketView, error
 
 func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData, error) {
 	db, err := s.db()
-	if err != nil {
-		return ticketViewData{}, err
-	}
-	runtime, err := s.runtime()
 	if err != nil {
 		return ticketViewData{}, err
 	}
@@ -143,18 +127,6 @@ func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData,
 		}
 	}
 
-	for _, w := range data.latestWorkerByTicket {
-		if !hasTicketWorkerRuntimeHandle(w) {
-			continue
-		}
-		alive, aerr := runtime.IsAlive(ctx, ticketWorkerRuntimeHandle(w))
-		if aerr != nil {
-			data.runtimeProbeFailedByWorker[w.ID] = true
-			continue
-		}
-		data.runtimeAliveByWorker[w.ID] = alive
-	}
-
 	taskRuntime, err := s.taskRuntimeForDB(db)
 	if err != nil {
 		return ticketViewData{}, err
@@ -175,6 +147,12 @@ func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData,
 			continue
 		}
 		data.latestTaskByTicket[tv.TicketID] = tv
+		if tv.WorkerID != 0 {
+			state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
+			if state == string(contracts.TaskPending) || state == string(contracts.TaskRunning) {
+				data.runtimeAliveByWorker[tv.WorkerID] = true
+			}
+		}
 	}
 
 	if len(ticketIDs) > 0 {
@@ -272,19 +250,4 @@ func buildTicketView(t contracts.Ticket, data ticketViewData) TicketView {
 		LastEventNote:      lastEventNote,
 		LastEventAt:        lastEventAt,
 	}
-}
-
-func hasTicketWorkerRuntimeHandle(w contracts.Worker) bool {
-	return w.ProcessPID > 0
-}
-
-func ticketWorkerRuntimeHandle(w contracts.Worker) infra.WorkerProcessHandle {
-	h := infra.WorkerProcessHandle{
-		PID:     w.ProcessPID,
-		LogPath: strings.TrimSpace(w.LogPath),
-	}
-	if w.StartedAt != nil {
-		h.StartedAt = *w.StartedAt
-	}
-	return h
 }

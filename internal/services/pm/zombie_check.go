@@ -36,8 +36,7 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 		return out
 	}
 
-	p, _, err := s.require()
-	if err != nil {
+	if _, _, err := s.require(); err != nil {
 		out.Errors = append(out.Errors, err.Error())
 		return out
 	}
@@ -63,18 +62,24 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 	for _, w := range running {
 		out.Checked++
 
+		tv, hasTV := runtimeByWorker[w.ID]
 		deadReason := ""
 		runtimeAlive := false
 		if !hasWorkerRuntimeHandle(w) {
-			deadReason = fmt.Sprintf("worker 缺少 process handle：pid=%d", w.ProcessPID)
+			deadReason = "worker 缺少运行日志锚点"
 		} else {
-			alive, aerr := p.WorkerRuntime.IsAlive(ctx, workerRuntimeHandle(w))
-			if aerr != nil {
-				out.Errors = append(out.Errors, fmt.Sprintf("zombie runtime 检查失败：t%d w%d: %v", w.TicketID, w.ID, aerr))
-			} else if alive {
+			switch {
+			case !hasTV:
+				// 允许 running worker 暂无活跃 run（例如刚 start 尚未 dispatch）。
 				runtimeAlive = true
-			} else {
-				deadReason = fmt.Sprintf("worker 进程不存活：pid=%d", w.ProcessPID)
+			case isWorkerTaskRunActive(tv):
+				runtimeAlive = true
+			default:
+				state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
+				if state == "" {
+					state = "unknown"
+				}
+				deadReason = fmt.Sprintf("worker 无活跃 task run：run=%d state=%s", tv.RunID, state)
 			}
 		}
 		if deadReason != "" {
@@ -94,9 +99,7 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 			// runtime 探测异常时不做 stalled 判定，避免误判触发恢复链路。
 			continue
 		}
-
-		tv, ok := runtimeByWorker[w.ID]
-		if !ok {
+		if !hasTV {
 			continue
 		}
 		lastActiveAt, ok := latestZombieActivityAt(tv)
@@ -165,6 +168,11 @@ func latestZombieActivityAt(tv contracts.TaskStatusView) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return latest, true
+}
+
+func isWorkerTaskRunActive(tv contracts.TaskStatusView) bool {
+	state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
+	return state == string(contracts.TaskPending) || state == string(contracts.TaskRunning)
 }
 
 func zombieRetryBackoff(retryCount int) time.Duration {

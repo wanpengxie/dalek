@@ -58,7 +58,7 @@ func (s *Service) workerNotRunningError(w *contracts.Worker) error {
 }
 
 func (s *Service) workerMissingSessionError() error {
-	return fmt.Errorf("该 ticket 尚未启动（没有 worker/session），或缺少可用 runtime，请先按 s 或运行 start")
+	return fmt.Errorf("该 ticket 尚未启动（没有 worker），或缺少可用 runtime，请先按 s 或运行 start")
 }
 
 func (s *Service) waitWorkerReadyForDispatch(ctx context.Context, ticketID uint, initial *contracts.Worker) (*contracts.Worker, error) {

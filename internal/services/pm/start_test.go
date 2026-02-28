@@ -10,7 +10,7 @@ import (
 )
 
 func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "bootstrap-run")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -20,8 +20,8 @@ func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
 	if w.Status != contracts.WorkerRunning {
 		t.Fatalf("expected worker status running, got=%s", w.Status)
 	}
-	if strings.TrimSpace(w.TmuxSession) == "" {
-		t.Fatalf("expected tmux session non-empty")
+	if strings.TrimSpace(w.LogPath) == "" {
+		t.Fatalf("expected runtime log path")
 	}
 	if _, err := os.Stat(filepath.Join(w.WorktreePath, ".dalek")); err != nil {
 		t.Fatalf("expected .dalek dir exists: %v", err)
@@ -45,7 +45,7 @@ func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
 }
 
 func TestStartTicketWithOptions_PassesBaseBranch(t *testing.T) {
-	svc, p, _, fGit := newServiceForTest(t)
+	svc, p, fGit := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "start-options-base")
 	if _, err := svc.StartTicketWithOptions(context.Background(), tk.ID, StartOptions{
@@ -59,7 +59,7 @@ func TestStartTicketWithOptions_PassesBaseBranch(t *testing.T) {
 }
 
 func TestStartTicket_RunsBootstrapScript(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	bootstrapPath := p.Layout.ProjectBootstrapPath
 	bootstrapScript := `#!/usr/bin/env bash

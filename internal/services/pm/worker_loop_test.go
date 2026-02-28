@@ -58,8 +58,6 @@ func createWorkerLoopTestFixture(t *testing.T, svc *Service, nextAction string) 
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/worker-loop-test",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-worker-loop-test",
 	}
 	if err := db.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -88,7 +86,7 @@ func createWorkerLoopTestFixture(t *testing.T, svc *Service, nextAction string) 
 }
 
 func TestExecuteWorkerLoop_StopsOnDone(t *testing.T) {
-	svc, _, _, _ := newServiceForTest(t)
+	svc, _, _ := newServiceForTest(t)
 	tk, w, runID := createWorkerLoopTestFixture(t, svc, "done")
 
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
@@ -108,7 +106,7 @@ func TestExecuteWorkerLoop_StopsOnDone(t *testing.T) {
 }
 
 func TestExecuteWorkerLoop_StopsOnWaitUser(t *testing.T) {
-	svc, _, _, _ := newServiceForTest(t)
+	svc, _, _ := newServiceForTest(t)
 	tk, w, runID := createWorkerLoopTestFixture(t, svc, "wait_user")
 
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
@@ -128,7 +126,7 @@ func TestExecuteWorkerLoop_StopsOnWaitUser(t *testing.T) {
 }
 
 func TestExecuteWorkerLoop_StopsOnEmptyNextAction(t *testing.T) {
-	svc, _, _, _ := newServiceForTest(t)
+	svc, _, _ := newServiceForTest(t)
 	tk, w, runID := createWorkerLoopTestFixture(t, svc, "")
 
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
@@ -148,7 +146,7 @@ func TestExecuteWorkerLoop_StopsOnEmptyNextAction(t *testing.T) {
 }
 
 func TestExecuteWorkerLoop_ContinuesThenStops(t *testing.T) {
-	svc, _, _, _ := newServiceForTest(t)
+	svc, _, _ := newServiceForTest(t)
 	_, db, err := svc.require()
 	if err != nil {
 		t.Fatalf("require failed: %v", err)
@@ -160,8 +158,6 @@ func TestExecuteWorkerLoop_ContinuesThenStops(t *testing.T) {
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/worker-loop-multi",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-worker-loop-multi",
 	}
 	if err := db.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -215,7 +211,7 @@ func TestExecuteWorkerLoop_ContinuesThenStops(t *testing.T) {
 }
 
 func TestExecuteWorkerLoop_LaunchError(t *testing.T) {
-	svc, _, _, _ := newServiceForTest(t)
+	svc, _, _ := newServiceForTest(t)
 	tk, w, _ := createWorkerLoopTestFixture(t, svc, "done")
 
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
@@ -235,7 +231,7 @@ func TestExecuteWorkerLoop_LaunchError(t *testing.T) {
 }
 
 func TestExecuteWorkerLoop_WaitError(t *testing.T) {
-	svc, _, _, _ := newServiceForTest(t)
+	svc, _, _ := newServiceForTest(t)
 	tk, w, runID := createWorkerLoopTestFixture(t, svc, "done")
 
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
@@ -259,7 +255,7 @@ func TestExecuteWorkerLoop_WaitError(t *testing.T) {
 }
 
 func TestExecuteWorkerLoop_DefaultPromptOnEmpty(t *testing.T) {
-	svc, _, _, _ := newServiceForTest(t)
+	svc, _, _ := newServiceForTest(t)
 	tk, w, runID := createWorkerLoopTestFixture(t, svc, "done")
 
 	var receivedPrompt string
@@ -278,7 +274,7 @@ func TestExecuteWorkerLoop_DefaultPromptOnEmpty(t *testing.T) {
 }
 
 func TestExecuteWorkerLoop_ContextCancellation(t *testing.T) {
-	svc, _, _, _ := newServiceForTest(t)
+	svc, _, _ := newServiceForTest(t)
 	tk, w, _ := createWorkerLoopTestFixture(t, svc, "continue")
 
 	ctx, cancel := context.WithCancel(context.Background())

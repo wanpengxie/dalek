@@ -14,7 +14,6 @@ import (
 
 // Service 是 worker 相关业务流程的权威实现：
 // - worktree + worker runtime 生命周期（start/stop/interrupt）
-// - 历史 tmux 会话兼容收口（可选）
 // - report 融合、runtime watcher 状态写回、事件审计
 //
 // 注意：Service 不负责“项目初始化/播种”，这属于 internal/repo + internal/app。
@@ -75,17 +74,6 @@ func (s *Service) cfg() (repo.Config, error) {
 		return repo.Config{}, err
 	}
 	return p.Config.WithDefaults(), nil
-}
-
-func (s *Service) tmux() (infra.TmuxClient, error) {
-	p, err := s.require()
-	if err != nil {
-		return nil, err
-	}
-	if p.Tmux == nil {
-		return nil, fmt.Errorf("worker service 缺少 tmux client")
-	}
-	return p.Tmux, nil
 }
 
 func (s *Service) runtime() (infra.WorkerRuntime, error) {

@@ -40,11 +40,9 @@ func (a channelPMActionAdapter) DispatchTicket(ctx context.Context, ticketID uin
 		return channelsvc.DispatchTicketResult{}, err
 	}
 	return channelsvc.DispatchTicketResult{
-		TicketID:    res.TicketID,
-		WorkerID:    res.WorkerID,
-		TaskRunID:   res.TaskRunID,
-		TmuxSocket:  res.TmuxSocket,
-		TmuxSession: res.TmuxSession,
+		TicketID:  res.TicketID,
+		WorkerID:  res.WorkerID,
+		TaskRunID: res.TaskRunID,
 	}, nil
 }
 
@@ -77,11 +75,11 @@ func (a channelWorkerActionAdapter) InterruptTicket(ctx context.Context, ticketI
 		return channelsvc.InterruptTicketResult{}, err
 	}
 	return channelsvc.InterruptTicketResult{
-		TicketID:    res.TicketID,
-		WorkerID:    res.WorkerID,
-		TargetPane:  res.TargetPane,
-		TmuxSocket:  res.TmuxSocket,
-		TmuxSession: res.TmuxSession,
+		TicketID:  res.TicketID,
+		WorkerID:  res.WorkerID,
+		Mode:      res.Mode,
+		TaskRunID: res.TaskRunID,
+		LogPath:   res.LogPath,
 	}, nil
 }
 

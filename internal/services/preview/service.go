@@ -65,7 +65,6 @@ func (s *Service) CaptureTicketTail(ctx context.Context, ticketID uint, lastLine
 		lastLines = 20
 	}
 	handle := infra.WorkerProcessHandle{
-		PID:     a.ProcessPID,
 		LogPath: logPath,
 	}
 	if a.StartedAt != nil {
