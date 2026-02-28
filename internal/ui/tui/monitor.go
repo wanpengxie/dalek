@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ const (
 	modeNewTicket
 	modeEditTicket
 	modeEvents
+	modeWorkerLog
 )
 
 type rowKind int
@@ -49,6 +51,9 @@ const (
 	tailCaptureLines = 60
 	tailShowLines    = 8
 	ticketTailLines  = 4
+
+	workerLogRefreshEvery = 1 * time.Second
+	workerLogCaptureLines = 240
 )
 
 type tableLayout struct {
@@ -58,7 +63,7 @@ type tableLayout struct {
 	status   int
 	runtime  int
 	title    int
-	tmux     int
+	output   int
 }
 
 type tickMsg struct{}
@@ -162,6 +167,13 @@ type eventsLoadedMsg struct {
 	Err      error
 }
 
+type workerLogLoadedMsg struct {
+	TicketID uint
+	WorkerID uint
+	Preview  contracts.TailPreview
+	Err      error
+}
+
 type model struct {
 	p           *app.Project
 	home        *app.Home
@@ -216,6 +228,15 @@ type model struct {
 	eventsErr      string
 	eventsLoadedAt time.Time
 
+	workerLogViewport viewport.Model
+	workerLogTicketID uint
+	workerLogWorkerID uint
+	workerLogLogPath  string
+	workerLogSource   string
+	workerLogInFlight bool
+	workerLogErr      string
+	workerLogLoadedAt time.Time
+
 	dispatchTicketID uint
 }
 
@@ -257,6 +278,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 	ed.SetHeight(8)
 
 	vp := viewport.New(0, 0)
+	lvp := viewport.New(0, 0)
 
 	return model{
 		p:               p,
@@ -273,7 +295,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		showArchiveRows: false,
 		mergeErr:        "",
 		archiveErr:      "",
-		helpMsg:         "g 管理员  n notebook  c 新建  s 启动  p 派发  i 中断  a attach  k 停止  d 归档  r 重新跑  e 编辑  v 事件  Shift+K/J backlog排序  +/- 优先级  0-4 状态  t 配色  q 退出",
+		helpMsg:         "g 管理员  n notebook  c 新建  Enter tmux  s 启动  p 派发  i 中断  a 日志  k 停止  d 归档  r 重新跑  e 编辑  v 事件  Shift+K/J backlog排序  +/- 优先级  0-4 状态  t 配色  q 退出",
 		status:          "就绪",
 		errMsg:          "",
 		titleInput:      ti,
@@ -299,6 +321,15 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		eventsInFlight: false,
 		eventsErr:      "",
 		eventsLoadedAt: time.Time{},
+
+		workerLogViewport: lvp,
+		workerLogTicketID: 0,
+		workerLogWorkerID: 0,
+		workerLogLogPath:  "",
+		workerLogSource:   "",
+		workerLogInFlight: false,
+		workerLogErr:      "",
+		workerLogLoadedAt: time.Time{},
 
 		dispatchTicketID: 0,
 	}
@@ -326,11 +357,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.eventsViewport.Width = max(30, msg.Width-10)
 		m.eventsViewport.Height = max(8, msg.Height-8)
+		m.workerLogViewport.Width = max(30, msg.Width-10)
+		m.workerLogViewport.Height = max(8, msg.Height-8)
 		return m, nil
 
 	case tickMsg:
 		// 每秒 tick 用于两件事：
-		// 1) 自动刷新列表（只读 DB + tmux list-sessions，不跑 watcher）
+		// 1) 自动刷新列表（只读 DB，不跑 watcher）
 		// 2) 刷新中显示耗时，让用户有可观测性
 		now := time.Now()
 		cmds := []tea.Cmd{m.tickCmd()}
@@ -366,6 +399,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshTicketID = 0
 			m.refreshStarted = now
 			cmds = append(cmds, m.refreshCmd())
+		}
+		if m.mode == modeWorkerLog && m.workerLogTicketID != 0 && !m.workerLogInFlight {
+			if m.workerLogLoadedAt.IsZero() || now.Sub(m.workerLogLoadedAt) >= workerLogRefreshEvery {
+				m.workerLogInFlight = true
+				cmds = append(cmds, m.loadWorkerLogCmd(m.workerLogTicketID))
+			}
 		}
 		// 避免自动刷新导致“就绪 <-> 自动刷新中”快速切换引起视觉闪烁：
 		// 只在手动刷新时显示耗时。
@@ -515,6 +554,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("事件已加载：t%d w%d (%d 条)", msg.TicketID, msg.WorkerID, len(msg.Events))
 		return m, nil
 
+	case workerLogLoadedMsg:
+		m.workerLogInFlight = false
+		if msg.Err != nil {
+			m.workerLogErr = msg.Err.Error()
+			m.status = fmt.Sprintf("日志加载失败 t%d：%v", msg.TicketID, msg.Err)
+			return m, nil
+		}
+		m.workerLogErr = ""
+		m.workerLogTicketID = msg.TicketID
+		m.workerLogWorkerID = msg.WorkerID
+		m.workerLogLoadedAt = time.Now()
+		m.workerLogLogPath = strings.TrimSpace(msg.Preview.LogPath)
+		m.workerLogSource = strings.TrimSpace(msg.Preview.Source)
+		m.workerLogViewport.SetContent(renderWorkerLog(msg.Preview))
+		m.workerLogViewport.GotoBottom()
+		m.status = fmt.Sprintf("日志已加载：t%d w%d (%d 行)", msg.TicketID, msg.WorkerID, len(msg.Preview.Lines))
+		return m, nil
+
 	case createdMsg:
 		if msg.Err != nil {
 			m.errMsg = msg.Err.Error()
@@ -643,6 +700,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateEditTicket(msg)
 		case modeEvents:
 			return m.updateEvents(msg)
+		case modeWorkerLog:
+			return m.updateWorkerLog(msg)
 		default:
 			return m.updateTable(msg)
 		}
@@ -670,6 +729,8 @@ func (m model) View() string {
 		main = m.editTicketView(innerW)
 	case modeEvents:
 		main = m.eventsView(innerW)
+	case modeWorkerLog:
+		main = m.workerLogView(innerW)
 	default:
 		main = lipgloss.JoinVertical(lipgloss.Left,
 			m.tablePanelView(innerW),
@@ -688,7 +749,7 @@ func (m model) headerView(width int) string {
 	name := lipgloss.NewStyle().Bold(true).Render("dalek")
 	repo := trimCell(m.p.RepoRoot(), max(10, width-20))
 	meta := faint("repo: " + repo)
-	right := faint("socket: " + strings.TrimSpace(m.p.TmuxSocket()))
+	right := faint("runtime: process")
 	left := name + "  " + meta
 	if lipgloss.Width(left)+1+lipgloss.Width(right) > width {
 		return headerStyle().Width(width).Render(left)
@@ -722,6 +783,8 @@ func (m model) helpForMode() string {
 		return "Tab 切换  Ctrl+S 保存  Esc 返回  Ctrl+C 退出"
 	case modeEvents:
 		return "↑↓ 滚动  r 刷新  Esc 返回  Ctrl+C 退出"
+	case modeWorkerLog:
+		return "↑↓ 滚动  r 刷新  Esc 返回  Ctrl+C 退出"
 	default:
 		return m.helpMsg
 	}
@@ -729,7 +792,7 @@ func (m model) helpForMode() string {
 
 func (m model) tablePanelView(width int) string {
 	head := panelTitle(fmt.Sprintf("Tickets (%d)", m.ticketCount()))
-	sub := faint("↑↓ 选择  |  g 管理员  |  r 重新跑")
+	sub := faint("↑↓ 选择  |  Enter tmux  |  g 管理员  |  r 重新跑")
 	left := head + "  " + sub
 
 	content := left + "\n" + colorizePartitionColumn(m.table.View())
@@ -766,10 +829,6 @@ func (m *model) applyViews(views []app.TicketView) {
 		}
 	}
 
-	mgrSession := ""
-	if m.p != nil {
-		mgrSession = strings.TrimSpace(m.p.ManagerSessionName())
-	}
 	rows = append(rows, table.Row{
 		partitionCell("manager"),
 		trimCell("mgr", m.tableLayout.id),
@@ -777,7 +836,7 @@ func (m *model) applyViews(views []app.TicketView) {
 		trimCell("manager", m.tableLayout.status),
 		trimCell("就绪", m.tableLayout.runtime),
 		trimCell("项目管理员", m.tableLayout.title),
-		trimCell(mgrSession, m.tableLayout.tmux),
+		trimCell("-", m.tableLayout.output),
 	})
 	refs = append(refs, rowRef{kind: rowManager, section: "manager"})
 
@@ -786,9 +845,11 @@ func (m *model) applyViews(views []app.TicketView) {
 			t := v.Ticket
 			a := v.LatestWorker
 
-			session := ""
-			if a != nil && a.TmuxSession != "" {
-				session = a.TmuxSession
+			outputRef := "-"
+			if a != nil {
+				if strings.TrimSpace(a.LogPath) != "" {
+					outputRef = filepath.Base(strings.TrimSpace(a.LogPath))
+				}
 			}
 
 			status := "待办"
@@ -814,7 +875,7 @@ func (m *model) applyViews(views []app.TicketView) {
 				trimCell(status, m.tableLayout.status),
 				trimCell(runtime, m.tableLayout.runtime),
 				trimCell(t.Title, m.tableLayout.title),
-				trimCell(session, m.tableLayout.tmux),
+				trimCell(outputRef, m.tableLayout.output),
 			})
 			refs = append(refs, rowRef{kind: rowTicket, section: sectionKey, ticketID: t.ID})
 		}
@@ -826,7 +887,7 @@ func (m *model) applyViews(views []app.TicketView) {
 
 	mergeItems := m.activeMergeItems()
 	for _, mi := range mergeItems {
-		branch := trimCell(strings.TrimSpace(mi.Branch), m.tableLayout.tmux)
+		branch := trimCell(strings.TrimSpace(mi.Branch), m.tableLayout.output)
 		if branch == "" {
 			branch = "-"
 		}
@@ -1061,7 +1122,7 @@ func (m model) inspectorLeftView(panelW int) string {
 	runtimeB := runtimeStatusBadge(v)
 	processB := badge(m.dispatchProcessState(v), cInfo)
 
-	session := "-"
+	runtimeRef := "-"
 	worker := "-"
 	lifecycle := "-"
 	cmd := "-"
@@ -1081,8 +1142,8 @@ func (m model) inspectorLeftView(panelW int) string {
 	}
 
 	if a != nil {
-		if strings.TrimSpace(a.TmuxSession) != "" {
-			session = strings.TrimSpace(a.TmuxSession)
+		if strings.TrimSpace(a.LogPath) != "" {
+			runtimeRef = trimLeft(strings.TrimSpace(a.LogPath), 48)
 		}
 		worker = fmt.Sprintf("w%d", a.ID)
 		lifecycle = string(a.Status)
@@ -1137,8 +1198,8 @@ func (m model) inspectorLeftView(panelW int) string {
 		kvLine("last_event:", eventType+"  @ "+timeAndAge(v.LastEventAt), innerW),
 		kvLine("event_note:", eventNote, innerW),
 		kvLine("runtime_observed:", timeAndAge(v.RuntimeObservedAt)+"  result="+summary, innerW),
-		kvLine("worker:", worker+"  "+lifecycle+"  "+session+"  "+sessionState, innerW),
-		kvLine("pane/worktree:", "cmd="+cmd+"  mode="+mode+"  "+worktree, innerW),
+		kvLine("worker:", worker+"  "+lifecycle+"  "+runtimeRef+"  "+sessionState, innerW),
+		kvLine("runtime/worktree:", "cmd="+cmd+"  mode="+mode+"  "+worktree, innerW),
 	}
 	lines = padBottom(lines, 4+tailShowLines)
 	return strings.Join(lines, "\n")
@@ -1147,14 +1208,10 @@ func (m model) inspectorLeftView(panelW int) string {
 func (m model) managerInspectorLeftView(panelW int) string {
 	innerW := max(10, panelW-4) // border(2) + padding(2)
 
-	sess := "-"
 	repo := "-"
 	cwd := "-"
 	stateDir := "-"
 	if m.p != nil {
-		if s := strings.TrimSpace(m.p.ManagerSessionName()); s != "" {
-			sess = s
-		}
 		if r := strings.TrimSpace(m.p.RepoRoot()); r != "" {
 			repo = trimLeft(r, 60)
 			cwd = trimLeft(r, 60)
@@ -1164,13 +1221,6 @@ func (m model) managerInspectorLeftView(panelW int) string {
 		}
 	}
 
-	lastCap := "-"
-	lastAge := "-"
-	if m.tailRef.kind == rowManager && !m.tailUpdatedAt.IsZero() {
-		lastCap = m.tailUpdatedAt.Format("15:04:05")
-		lastAge = shortDuration(time.Since(m.tailUpdatedAt))
-	}
-
 	views := m.orderedViews()
 	summary := summarizeQueueStatus(views)
 	issueTotal := len(collectPendingIssues(views, len(views)+1))
@@ -1178,29 +1228,16 @@ func (m model) managerInspectorLeftView(panelW int) string {
 	mergeItems := m.activeMergeItems()
 	mergeSummary := summarizeMergeQueue(mergeItems)
 
-	pane := "-"
-	target := "-"
-	if m.tailRef.kind == rowManager {
-		if s := strings.TrimSpace(m.tailPreview.PaneID); s != "" {
-			pane = s
-		}
-		if s := strings.TrimSpace(m.tailPreview.Target); s != "" {
-			target = s
-		}
-	}
-
 	lines := []string{
 		panelTitle("检查器  manager"),
-		badge("manager", cInfo) + " " + badge("session", cNeutral),
-		kvLine("session:", sess, innerW),
+		badge("manager", cInfo) + " " + badge("runtime", cNeutral),
 		kvLine("repo:", repo, innerW),
 		kvLine("state:", stateDir, innerW),
-		kvLine("pane:", "pane="+pane+"  target="+target, innerW),
-		kvLine("上次抓取:", lastCap+"  ("+lastAge+"前)", innerW),
+		kvLine("交互:", "manager attach 已移除", innerW),
 		kvLine("队列:", fmt.Sprintf("待办%d 排队%d 阻塞%d 运行%d 完成%d", summary.Backlog, summary.Queued, summary.Blocked, summary.Running, summary.Done), innerW),
 		kvLine("merge:", fmt.Sprintf("总%d proposed%d checks%d ready%d approved%d blocked%d", mergeSummary.Total, mergeSummary.Proposed, mergeSummary.ChecksRunning, mergeSummary.Ready, mergeSummary.Approved, mergeSummary.Blocked), innerW),
 		kvLine("待处理:", fmt.Sprintf("%d 项", issueTotal), innerW),
-		kvLine("提示:", "按 a attach 进入管理员 session", innerW),
+		kvLine("提示:", "使用 manager tick/status 查看状态", innerW),
 	}
 	if strings.TrimSpace(cwd) != "" && cwd != repo {
 		lines = append(lines, kvLine("cwd:", cwd, innerW))
@@ -1244,18 +1281,25 @@ func (m model) inspectorRightView(panelW int) string {
 	id := sel.ticketID
 	view, viewOK := m.viewsByID[id]
 
-	// session/pane 元信息：优先 tailPreview（最贴近实时 pane）。
-	session := "-"
-	pane := "-"
+	// 输出元信息：优先 tailPreview（最贴近实时输出）。
+	source := "-"
+	logPath := "-"
 	isTail := m.tailRef.kind == rowTicket && m.tailRef.ticketID == id
-	if viewOK && view.LatestWorker != nil && strings.TrimSpace(view.LatestWorker.TmuxSession) != "" {
-		session = strings.TrimSpace(view.LatestWorker.TmuxSession)
+	if viewOK && view.LatestWorker != nil {
+		if strings.TrimSpace(view.LatestWorker.LogPath) != "" {
+			source = "worker_log"
+		}
+		if s := strings.TrimSpace(view.LatestWorker.LogPath); s != "" {
+			logPath = trimLeft(s, 48)
+		}
 	}
-	if isTail && strings.TrimSpace(m.tailPreview.TmuxSession) != "" {
-		session = strings.TrimSpace(m.tailPreview.TmuxSession)
-	}
-	if isTail && strings.TrimSpace(m.tailPreview.PaneID) != "" {
-		pane = strings.TrimSpace(m.tailPreview.PaneID)
+	if isTail {
+		if s := strings.TrimSpace(m.tailPreview.Source); s != "" {
+			source = s
+		}
+		if s := strings.TrimSpace(m.tailPreview.LogPath); s != "" {
+			logPath = trimLeft(s, 48)
+		}
 	}
 
 	metaTime := "-"
@@ -1269,18 +1313,18 @@ func (m model) inspectorRightView(panelW int) string {
 	if m.tailInFlight && isTail && !m.tailStartedAt.IsZero() {
 		state = badge(fmt.Sprintf("抓取中 %.0fs", time.Since(m.tailStartedAt).Seconds()), cInfo)
 	} else if strings.TrimSpace(m.tailErr) != "" && isTail {
-		state = badge("抓屏失败", cDanger)
-	} else if viewOK && view.LatestWorker != nil && strings.TrimSpace(view.LatestWorker.TmuxSession) != "" && !view.SessionAlive {
+		state = badge("抓取失败", cDanger)
+	} else if viewOK && view.LatestWorker != nil && strings.TrimSpace(view.LatestWorker.LogPath) != "" && !view.SessionAlive {
 		state = badge("已停止", cNeutral)
 	}
 
 	head := panelTitle("检查器 · 实时输出(简版)") + "  " + state
 	meta := kvLine("更新:", metaTime+"  ("+metaAge+"前)", innerW)
-	where := kvLine("来源:", "session="+session+"  pane="+pane, innerW)
+	where := kvLine("来源:", "source="+source+"  log="+logPath, innerW)
 
 	tailLines := []string{}
 	if strings.TrimSpace(m.tailErr) != "" && isTail {
-		tailLines = []string{"抓屏失败: " + m.tailErr}
+		tailLines = []string{"抓取失败: " + m.tailErr}
 	} else if isTail && len(m.tailPreview.Lines) > 0 {
 		tailLines = m.tailPreview.Lines
 	} else if isTail && m.tailInFlight {
@@ -1289,10 +1333,12 @@ func (m model) inspectorRightView(panelW int) string {
 		switch {
 		case !viewOK:
 			tailLines = []string{"(等待刷新...)"}
-		case view.LatestWorker == nil || strings.TrimSpace(view.LatestWorker.TmuxSession) == "":
+		case view.LatestWorker == nil:
 			tailLines = []string{"(尚未启动)"}
+		case strings.TrimSpace(view.LatestWorker.LogPath) == "":
+			tailLines = []string{"(暂无可读日志)"}
 		case !view.SessionAlive:
-			tailLines = []string{"(session 已停止)"}
+			tailLines = []string{"(进程已停止)"}
 		case m.tailUpdatedAt.IsZero():
 			tailLines = []string{"(等待抓取...)"}
 		default:
@@ -1318,62 +1364,13 @@ func (m model) inspectorRightView(panelW int) string {
 func (m model) managerInspectorRightView(panelW int) string {
 	innerW := max(10, panelW-4) // border(2) + padding(2)
 
-	session := "-"
-	if m.p != nil {
-		if s := strings.TrimSpace(m.p.ManagerSessionName()); s != "" {
-			session = s
-		}
-	}
-
-	pane := "-"
-	target := "-"
-	isTail := m.tailRef.kind == rowManager
-	if isTail {
-		if s := strings.TrimSpace(m.tailPreview.TmuxSession); s != "" {
-			session = s
-		}
-		if s := strings.TrimSpace(m.tailPreview.PaneID); s != "" {
-			pane = s
-		}
-		if s := strings.TrimSpace(m.tailPreview.Target); s != "" {
-			target = s
-		}
-	}
-
-	metaTime := "-"
-	metaAge := "-"
-	if !m.tailUpdatedAt.IsZero() {
-		metaTime = m.tailUpdatedAt.Format("15:04:05")
-		metaAge = shortDuration(time.Since(m.tailUpdatedAt))
-	}
-
-	state := badge("就绪", cOk)
-	if m.tailInFlight && isTail && !m.tailStartedAt.IsZero() {
-		state = badge(fmt.Sprintf("抓取中 %.0fs", time.Since(m.tailStartedAt).Seconds()), cInfo)
-	} else if strings.TrimSpace(m.tailErr) != "" && isTail {
-		state = badge("抓屏失败", cDanger)
-	}
-
-	head := panelTitle("输出尾部") + faint("  (10s)") + "  " + state
-	meta := kvLine("上次抓取:", metaTime+"  ("+metaAge+"前)", innerW)
-	where := kvLine("位置:", "session="+session+"  pane="+pane, innerW)
-	where2 := kvLine("target:", target, innerW)
-
-	tailLines := []string{}
-	if strings.TrimSpace(m.tailErr) != "" && isTail {
-		tailLines = []string{"抓屏失败: " + m.tailErr}
-	} else if isTail && len(m.tailPreview.Lines) > 0 {
-		tailLines = m.tailPreview.Lines
-	} else if isTail && m.tailInFlight {
-		tailLines = []string{"(抓取中...)"}
-	} else {
-		if m.tailUpdatedAt.IsZero() {
-			tailLines = []string{"(等待抓取...)"}
-		} else {
-			tailLines = []string{"(暂无输出)"}
-		}
-	}
-	tailLines = tailTail(tailLines, tailShowLines)
+	head := panelTitle("输出尾部") + "  " + badge("已移除", cNeutral)
+	meta := kvLine("说明:", "manager 交互入口已移除", innerW)
+	where := kvLine("建议:", "如需观测请使用 manager status / manager tick", innerW)
+	tailLines := tailTail([]string{
+		"manager 交互入口已简化为无 session 模式。",
+		"worker 与调度状态请看上方队列与 ticket 行。",
+	}, tailShowLines)
 	for i := range tailLines {
 		line := cutANSI(tailLines[i], innerW)
 		switch {
@@ -1384,7 +1381,7 @@ func (m model) managerInspectorRightView(panelW int) string {
 		}
 	}
 
-	lines := []string{head, meta, where, where2}
+	lines := []string{head, meta, where}
 	lines = append(lines, tailLines...)
 	lines = padBottom(lines, 4+tailShowLines)
 	return strings.Join(lines, "\n")

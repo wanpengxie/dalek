@@ -10,7 +10,7 @@ import (
 )
 
 func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "pm-task-runtime")
 	w := contracts.Worker{
@@ -18,8 +18,6 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/demo-ticket-21",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-ticket-21",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)

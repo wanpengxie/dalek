@@ -38,8 +38,7 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 		return out
 	}
 
-	p, _, err := s.require()
-	if err != nil {
+	if _, _, err := s.require(); err != nil {
 		out.Errors = append(out.Errors, err.Error())
 		return out
 	}
@@ -61,50 +60,28 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 		}
 	}
 
-	defaultSocket := strings.TrimSpace(p.Config.WithDefaults().TmuxSocket)
-	sessionCache := map[string]map[string]bool{}
-	sessionErrs := map[string]error{}
-	loadSessions := func(socket string) (map[string]bool, error) {
-		socket = strings.TrimSpace(socket)
-		if socket == "" {
-			socket = defaultSocket
-		}
-		if sess, ok := sessionCache[socket]; ok {
-			return sess, nil
-		}
-		if err, ok := sessionErrs[socket]; ok {
-			return nil, err
-		}
-		listCtx, cancel := context.WithTimeout(ctx, tmuxListSessionsTimeout)
-		defer cancel()
-		sess, err := p.Tmux.ListSessions(listCtx, socket)
-		if err != nil {
-			sessionErrs[socket] = err
-			return nil, err
-		}
-		sessionCache[socket] = sess
-		return sess, nil
-	}
-
 	now := time.Now()
 	for _, w := range running {
 		out.Checked++
-		sessionName := strings.TrimSpace(w.TmuxSession)
-		socket := strings.TrimSpace(w.TmuxSocket)
-		if socket == "" {
-			socket = defaultSocket
-		}
 
+		tv, hasTV := runtimeByWorker[w.ID]
 		deadReason := ""
-		switch {
-		case sessionName == "":
-			deadReason = "tmux_session 为空"
-		default:
-			sessions, serr := loadSessions(socket)
-			if serr != nil {
-				out.Errors = append(out.Errors, fmt.Sprintf("zombie dead 检查失败：t%d w%d: %v", w.TicketID, w.ID, serr))
-			} else if !sessions[sessionName] {
-				deadReason = fmt.Sprintf("tmux session 不存在：%s", sessionName)
+		runtimeAlive := false
+		if !hasWorkerRuntimeHandle(w) {
+			deadReason = "worker 缺少运行日志锚点"
+		} else {
+			switch {
+			case !hasTV:
+				// 允许 running worker 暂无活跃 run（例如刚 start 尚未 dispatch）。
+				runtimeAlive = true
+			case isWorkerTaskRunActive(tv):
+				runtimeAlive = true
+			default:
+				state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
+				if state == "" {
+					state = "unknown"
+				}
+				deadReason = fmt.Sprintf("worker 无活跃 task run：run=%d state=%s", tv.RunID, state)
 			}
 		}
 		if deadReason != "" {
@@ -120,9 +97,11 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 			}
 			continue
 		}
-
-		tv, ok := runtimeByWorker[w.ID]
-		if !ok {
+		if !runtimeAlive {
+			// runtime 探测异常时不做 stalled 判定，避免误判触发恢复链路。
+			continue
+		}
+		if !hasTV {
 			continue
 		}
 		lastActiveAt, ok := latestZombieActivityAt(tv)
@@ -379,6 +358,11 @@ func latestZombieActivityAt(tv contracts.TaskStatusView) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return latest, true
+}
+
+func isWorkerTaskRunActive(tv contracts.TaskStatusView) bool {
+	state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
+	return state == string(contracts.TaskPending) || state == string(contracts.TaskRunning)
 }
 
 func zombieRetryBackoff(retryCount int) time.Duration {

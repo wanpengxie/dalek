@@ -122,28 +122,20 @@ func (s *Service) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt 
 		return result, fmt.Errorf("worker 仍在 running，拒绝清理")
 	}
 
-	socket := strings.TrimSpace(w.TmuxSocket)
-	if socket == "" {
-		cfg, err := s.cfg()
-		if err != nil {
-			return result, err
-		}
-		socket = strings.TrimSpace(cfg.TmuxSocket)
+	rt, terr := s.taskRuntime()
+	if terr != nil {
+		return result, terr
 	}
-	session := strings.TrimSpace(w.TmuxSession)
-	if socket != "" && session != "" {
-		sessions, err := p.Tmux.ListSessions(ctx, socket)
-		if err != nil && !opt.Force {
-			return result, err
+	if run, rerr := rt.LatestActiveWorkerRun(ctx, w.ID); rerr != nil {
+		return result, rerr
+	} else if run != nil {
+		result.SessionLive = true
+		if !opt.Force {
+			return result, fmt.Errorf("worker 仍有活跃 task run：r%d（可用 --force）", run.ID)
 		}
-		if err == nil && sessions[session] {
-			result.SessionLive = true
-			if !opt.Force {
-				return result, fmt.Errorf("tmux session 仍存活：%s（可用 --force）", session)
-			}
-			if err := p.Tmux.KillSession(ctx, socket, session); err != nil {
-				return result, err
-			}
+		reason := fmt.Sprintf("cleanup worktree force: w%d", w.ID)
+		if err := rt.CancelActiveWorkerRuns(ctx, w.ID, reason, now); err != nil {
+			return result, err
 		}
 	}
 

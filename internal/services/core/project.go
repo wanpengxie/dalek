@@ -27,9 +27,9 @@ type Project struct {
 	DB     *gorm.DB
 	Logger *slog.Logger
 
-	Tmux        infra.TmuxClient
-	Git         infra.GitClient
-	TaskRuntime TaskRuntimeFactory
+	WorkerRuntime infra.WorkerRuntime
+	Git           infra.GitClient
+	TaskRuntime   TaskRuntimeFactory
 }
 
 type NewProjectInput struct {
@@ -46,25 +46,25 @@ type NewProjectInput struct {
 	DB     *gorm.DB
 	Logger *slog.Logger
 
-	Tmux        infra.TmuxClient
-	Git         infra.GitClient
-	TaskRuntime TaskRuntimeFactory
+	WorkerRuntime infra.WorkerRuntime
+	Git           infra.GitClient
+	TaskRuntime   TaskRuntimeFactory
 }
 
 func NewProject(in NewProjectInput) (*Project, error) {
 	p := &Project{
-		Name:         strings.TrimSpace(in.Name),
-		Key:          strings.TrimSpace(in.Key),
-		RepoRoot:     strings.TrimSpace(in.RepoRoot),
-		Layout:       in.Layout,
-		WorktreesDir: strings.TrimSpace(in.WorktreesDir),
-		WorkersDir:   strings.TrimSpace(in.WorkersDir),
-		Config:       in.Config,
-		DB:           in.DB,
-		Logger:       in.Logger,
-		Tmux:         in.Tmux,
-		Git:          in.Git,
-		TaskRuntime:  in.TaskRuntime,
+		Name:          strings.TrimSpace(in.Name),
+		Key:           strings.TrimSpace(in.Key),
+		RepoRoot:      strings.TrimSpace(in.RepoRoot),
+		Layout:        in.Layout,
+		WorktreesDir:  strings.TrimSpace(in.WorktreesDir),
+		WorkersDir:    strings.TrimSpace(in.WorkersDir),
+		Config:        in.Config,
+		DB:            in.DB,
+		Logger:        in.Logger,
+		WorkerRuntime: in.WorkerRuntime,
+		Git:           in.Git,
+		TaskRuntime:   in.TaskRuntime,
 	}
 	p.Layout = normalizeLayout(p.Layout, p.RepoRoot)
 	if strings.TrimSpace(p.RepoRoot) == "" {
@@ -104,8 +104,8 @@ func (p *Project) Validate() error {
 	if p.Logger == nil {
 		return fmt.Errorf("project Logger 不能为空")
 	}
-	if p.Tmux == nil {
-		return fmt.Errorf("project Tmux 不能为空")
+	if p.WorkerRuntime == nil {
+		return fmt.Errorf("project WorkerRuntime 不能为空")
 	}
 	if p.Git == nil {
 		return fmt.Errorf("project Git 不能为空")

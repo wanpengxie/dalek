@@ -20,7 +20,7 @@ type StartOptions struct {
 // StartTicket 是 PM 视角的 start：编排 worker 资源启动，并把 worker 置为可 dispatch 的 running。
 //
 // 约束：
-// - worker 只负责“资源启动”（worktree + tmux session）。
+// - worker 只负责“资源启动”（worktree + runtime 进程）。
 func (s *Service) StartTicket(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
 	return s.StartTicketWithOptions(ctx, ticketID, StartOptions{})
 }
@@ -50,7 +50,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		}
 	}
 
-	// 1) 启动 worker 资源（worktree + tmux session），不做 PM bootstrap。
+	// 1) 启动 worker 资源（worktree + runtime 进程），不做 PM bootstrap。
 	w, err := s.worker.StartTicketResourcesWithOptions(ctx, ticketID, workersvc.StartOptions{
 		BaseBranch: strings.TrimSpace(opt.BaseBranch),
 	})
@@ -91,9 +91,15 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		return nil, fmt.Errorf("更新 ticket workflow 失败（t%d w%d）：%w", ticketID, w.ID, err)
 	}
 
-	// 已经是 running 则直接返回。
-	if w.Status == contracts.WorkerRunning && strings.TrimSpace(w.TmuxSession) != "" {
-		return w, nil
+	// 已经是 running 且执行资源可探测则直接返回。
+	if w.Status == contracts.WorkerRunning {
+		ready, rerr := s.workerDispatchReady(ctx, w)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if ready {
+			return w, nil
+		}
 	}
 
 	// 2) start 初始化 hook（当前 no-op，仅保留接口）。

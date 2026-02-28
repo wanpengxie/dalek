@@ -137,41 +137,12 @@ func TestLifecycleFinish_FailedRun_WithActiveCtx(t *testing.T) {
 	}
 }
 
-// TestTmuxHandle_Wait_SignalCancel 验证 TmuxHandle.Wait 在 context cancel 时能快速退出。
-func TestTmuxHandle_Wait_SignalCancel(t *testing.T) {
-	rt := &fakeLifecycleRuntime{
-		findRunFn: func(ctx context.Context, runID uint) (*contracts.TaskRun, error) {
-			// 模拟 run 一直是 running 状态
-			return &contracts.TaskRun{
-				ID:                 runID,
-				OrchestrationState: contracts.TaskRunning,
-			}, nil
-		},
-	}
-	h := &TmuxHandle{runID: 42, runtime: rt}
-
-	// 创建一个很快会被 cancel 的 context，模拟 SIGHUP
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	started := time.Now()
-	_, err := h.Wait(ctx)
-	elapsed := time.Since(started)
-
-	if err == nil {
-		t.Fatal("expected error from Wait when context is canceled")
-	}
-	if elapsed > 500*time.Millisecond {
-		t.Fatalf("Wait should exit quickly on context cancel, took=%s", elapsed)
-	}
-}
-
 // TestProcessHandle_Wait_SignalCancel 验证 processHandle.Wait 在 context cancel 时能快速退出并取消进程。
 func TestProcessHandle_Wait_SignalCancel(t *testing.T) {
 	h := &processHandle{
 		runID:  42,
 		doneCh: make(chan struct{}), // 永不关闭，模拟进程永不结束
-		cancel: func() {},          // no-op cancel
+		cancel: func() {},           // no-op cancel
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

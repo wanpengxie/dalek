@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
-	"dalek/internal/infra"
-	"dalek/internal/repo"
 	"dalek/internal/services/core"
 	"dalek/internal/store"
 
@@ -25,10 +23,9 @@ func NewQueryService(p *core.Project) *QueryService {
 
 type ticketViewData struct {
 	tickets                    []contracts.Ticket
-	defaultSocket              string
 	latestWorkerByTicket       map[uint]contracts.Worker
-	sessionsBySocket           map[string]map[string]bool
-	sessionProbeFailedBySocket map[string]bool
+	runtimeAliveByWorker       map[uint]bool
+	runtimeProbeFailedByWorker map[uint]bool
 	latestTaskByTicket         map[uint]store.TaskStatusView
 	activeDispatchByTicket     map[uint]contracts.PMDispatchJob
 }
@@ -39,9 +36,6 @@ func (s *QueryService) require() (*core.Project, error) {
 	}
 	if s.p.DB == nil {
 		return nil, fmt.Errorf("ticket query service 缺少 DB")
-	}
-	if s.p.Tmux == nil {
-		return nil, fmt.Errorf("ticket query service 缺少 tmux client")
 	}
 	if s.p.TaskRuntime == nil {
 		return nil, fmt.Errorf("ticket query service 缺少 task runtime")
@@ -55,22 +49,6 @@ func (s *QueryService) db() (*gorm.DB, error) {
 		return nil, err
 	}
 	return p.DB, nil
-}
-
-func (s *QueryService) cfg() (repo.Config, error) {
-	p, err := s.require()
-	if err != nil {
-		return repo.Config{}, err
-	}
-	return p.Config.WithDefaults(), nil
-}
-
-func (s *QueryService) tmux() (infra.TmuxClient, error) {
-	p, err := s.require()
-	if err != nil {
-		return nil, err
-	}
-	return p.Tmux, nil
 }
 
 func (s *QueryService) taskRuntimeForDB(db *gorm.DB) (core.TaskRuntime, error) {
@@ -106,20 +84,11 @@ func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData,
 	if err != nil {
 		return ticketViewData{}, err
 	}
-	cfg, err := s.cfg()
-	if err != nil {
-		return ticketViewData{}, err
-	}
-	tmuxc, err := s.tmux()
-	if err != nil {
-		return ticketViewData{}, err
-	}
 
 	data := ticketViewData{
-		defaultSocket:              strings.TrimSpace(cfg.TmuxSocket),
 		latestWorkerByTicket:       map[uint]contracts.Worker{},
-		sessionsBySocket:           map[string]map[string]bool{},
-		sessionProbeFailedBySocket: map[string]bool{},
+		runtimeAliveByWorker:       map[uint]bool{},
+		runtimeProbeFailedByWorker: map[uint]bool{},
 		latestTaskByTicket:         map[uint]store.TaskStatusView{},
 		activeDispatchByTicket:     map[uint]contracts.PMDispatchJob{},
 	}
@@ -158,31 +127,6 @@ func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData,
 		}
 	}
 
-	socketSet := map[string]struct{}{}
-	for _, w := range data.latestWorkerByTicket {
-		if strings.TrimSpace(w.TmuxSession) == "" {
-			continue
-		}
-		socket := strings.TrimSpace(w.TmuxSocket)
-		if socket == "" {
-			socket = data.defaultSocket
-		}
-		if socket == "" {
-			continue
-		}
-		socketSet[socket] = struct{}{}
-	}
-	for socket := range socketSet {
-		sessions, err := tmuxc.ListSessions(ctx, socket)
-		if err != nil {
-			// tmux 探测失败时不能直接当作“不在线”，否则会把活跃 session 误判为 backlog/dead。
-			// 记录失败标记，后续走保守降级（unknown），避免误伤调度操作。
-			data.sessionProbeFailedBySocket[socket] = true
-			sessions = map[string]bool{}
-		}
-		data.sessionsBySocket[socket] = sessions
-	}
-
 	taskRuntime, err := s.taskRuntimeForDB(db)
 	if err != nil {
 		return ticketViewData{}, err
@@ -203,6 +147,12 @@ func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData,
 			continue
 		}
 		data.latestTaskByTicket[tv.TicketID] = tv
+		if tv.WorkerID != 0 {
+			state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
+			if state == string(contracts.TaskPending) || state == string(contracts.TaskRunning) {
+				data.runtimeAliveByWorker[tv.WorkerID] = true
+			}
+		}
 	}
 
 	if len(ticketIDs) > 0 {
@@ -250,18 +200,11 @@ func buildTicketView(t contracts.Ticket, data ticketViewData) TicketView {
 	if w, ok := data.latestWorkerByTicket[t.ID]; ok {
 		ww := w
 		lw = &ww
-		if strings.TrimSpace(ww.TmuxSession) != "" {
-			socket := strings.TrimSpace(ww.TmuxSocket)
-			if socket == "" {
-				socket = data.defaultSocket
-			}
-			if socket != "" {
-				if data.sessionProbeFailedBySocket[socket] {
-					sessionProbeFailed = true
-				} else {
-					alive = data.sessionsBySocket[socket][strings.TrimSpace(ww.TmuxSession)]
-				}
-			}
+		if data.runtimeProbeFailedByWorker[ww.ID] {
+			sessionProbeFailed = true
+		}
+		if data.runtimeAliveByWorker[ww.ID] {
+			alive = true
 		}
 	}
 

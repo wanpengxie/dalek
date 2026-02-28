@@ -12,7 +12,6 @@ import (
 
 type Config struct {
 	SchemaVersion       int                `json:"schema_version"`
-	TmuxSocket          string             `json:"tmux_socket"`
 	BranchPrefix        string             `json:"branch_prefix"`
 	RefreshIntervalMS   int                `json:"refresh_interval_ms"`
 	WorkerAgent         AgentExecConfig    `json:"worker_agent"`
@@ -109,9 +108,6 @@ func (c Config) WithDefaults() Config {
 	out := c
 	if out.SchemaVersion <= 0 || out.SchemaVersion < CurrentProjectSchemaVersion {
 		out.SchemaVersion = CurrentProjectSchemaVersion
-	}
-	if out.TmuxSocket == "" {
-		out.TmuxSocket = "dalek"
 	}
 	if out.RefreshIntervalMS <= 0 {
 		out.RefreshIntervalMS = 1000
@@ -303,9 +299,6 @@ func WriteConfigAtomic(path string, cfg Config) error {
 
 func MergeConfig(oldCfg, override Config) Config {
 	out := oldCfg
-	if strings.TrimSpace(override.TmuxSocket) != "" {
-		out.TmuxSocket = strings.TrimSpace(override.TmuxSocket)
-	}
 	if strings.TrimSpace(override.BranchPrefix) != "" {
 		out.BranchPrefix = strings.TrimSpace(override.BranchPrefix)
 	}

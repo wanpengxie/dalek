@@ -31,7 +31,7 @@ func (s *stubDispatchSubmitter) CallIDs() []uint {
 }
 
 func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-submitter")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
@@ -76,7 +76,7 @@ func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
 }
 
 func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-fallback")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
@@ -121,7 +121,7 @@ func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 }
 
 func TestManagerTick_DryRunSkipsDispatchSubmitter(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-dry-run")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
@@ -146,7 +146,7 @@ func TestManagerTick_DryRunSkipsDispatchSubmitter(t *testing.T) {
 }
 
 func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-sync-dispatch")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
@@ -182,7 +182,7 @@ func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 }
 
 func TestManagerTick_SyncDispatchHonorsDispatchTimeout(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-sync-timeout")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
@@ -211,7 +211,7 @@ func TestManagerTick_SyncDispatchHonorsDispatchTimeout(t *testing.T) {
 }
 
 func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-worker-ready-timeout")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,

@@ -12,7 +12,7 @@ import (
 )
 
 func TestStartLeaseRenewal_LogsOnFailure(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	// Install a buffer-backed logger to capture log output.
 	var logBuf bytes.Buffer
@@ -24,8 +24,6 @@ func TestStartLeaseRenewal_LogsOnFailure(t *testing.T) {
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/lease-renewal-test",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-lease-renewal-test",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -62,7 +60,7 @@ func TestStartLeaseRenewal_LogsOnFailure(t *testing.T) {
 }
 
 func TestStartLeaseRenewal_EscalatesAfterThreshold(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	var logBuf bytes.Buffer
 	svc.logger = slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -73,8 +71,6 @@ func TestStartLeaseRenewal_EscalatesAfterThreshold(t *testing.T) {
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/lease-escalate-test",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-lease-escalate-test",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -108,15 +104,13 @@ func TestStartLeaseRenewal_EscalatesAfterThreshold(t *testing.T) {
 }
 
 func TestStartLeaseRenewal_StopsOnClose(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "lease-renewal-stop-test")
 	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/lease-stop-test",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-lease-stop-test",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -144,15 +138,13 @@ func TestStartLeaseRenewal_StopsOnClose(t *testing.T) {
 }
 
 func TestStartLeaseRenewal_StopsOnContextCancel(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "lease-renewal-ctx-test")
 	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/lease-ctx-test",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-lease-ctx-test",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -181,15 +173,13 @@ func TestStartLeaseRenewal_StopsOnContextCancel(t *testing.T) {
 }
 
 func TestStartLeaseRenewal_RecordsEvent(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "lease-renewal-event-test")
 	w := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/lease-event-test",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-lease-event-test",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)

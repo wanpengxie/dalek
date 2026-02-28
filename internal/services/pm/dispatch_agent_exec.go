@@ -47,8 +47,6 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 			Status:       strings.TrimSpace(string(w.Status)),
 			WorktreePath: strings.TrimSpace(w.WorktreePath),
 			Branch:       strings.TrimSpace(w.Branch),
-			TmuxSocket:   strings.TrimSpace(w.TmuxSocket),
-			TmuxSession:  strings.TrimSpace(w.TmuxSession),
 		},
 		EntryPrompt: entryPrompt,
 	})
@@ -101,11 +99,8 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 				WorkDir:     strings.TrimSpace(p.RepoRoot),
 				Env:         env,
 			},
-			Timeout:     timeout,
-			Tmux:        p.Tmux,
-			TmuxSocket:  strings.TrimSpace(w.TmuxSocket),
-			TmuxSession: strings.TrimSpace(w.TmuxSession),
-			TmuxLogPath: repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID),
+			Timeout:       timeout,
+			StreamLogPath: repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID),
 			AppendEvent: func(evtCtx context.Context, eventType, note string, payload any, createdAt time.Time) {
 				_ = s.worker.AppendWorkerTaskEvent(evtCtx, w.ID, eventType, note, payload, createdAt)
 			},
@@ -175,8 +170,6 @@ type dispatchWorkerContext struct {
 	Status       string `json:"status"`
 	WorktreePath string `json:"worktree_path"`
 	Branch       string `json:"branch"`
-	TmuxSocket   string `json:"tmux_socket"`
-	TmuxSession  string `json:"tmux_session"`
 }
 
 func buildDispatchPrompt(ctx dispatchStructuredContext) (string, error) {

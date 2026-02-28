@@ -93,8 +93,6 @@ func main() {
 		cmdProject(rest[1:])
 	case "config":
 		cmdConfig(rest[1:])
-	case "tmux":
-		cmdTmux(rest[1:])
 	case "gateway":
 		cmdGateway(rest[1:])
 	case "daemon":
@@ -119,7 +117,7 @@ func main() {
 
 func usage(code int) {
 	out := os.Stderr
-	fmt.Fprintln(out, "dalek - Agent-driven parallel development runtime (git worktree + tmux + sqlite)")
+	fmt.Fprintln(out, "dalek - Agent-driven parallel development runtime (git worktree + runtime + sqlite)")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  dalek <command> [flags]")
@@ -136,7 +134,6 @@ func usage(code int) {
 	fmt.Fprintln(out, "  agent      Agent 子任务运行（run/ls/show/cancel/logs/finish）")
 	fmt.Fprintln(out, "  project    项目注册管理（添加/删除/列表）")
 	fmt.Fprintln(out, "  config     统一配置管理（ls/get/set）")
-	fmt.Fprintln(out, "  tmux       Tmux 基础设施管理（socket/session）")
 	fmt.Fprintln(out, "  gateway    Channel Gateway（对话/通知/绑定）")
 	fmt.Fprintln(out, "  daemon     Daemon 进程管理（start/stop/status/logs）")
 	fmt.Fprintln(out, "  init       初始化项目（注册当前 git repo）")
@@ -251,7 +248,7 @@ func trimOneLine(s string) string {
 
 // projectCtx 创建一个监听 SIGINT/SIGTERM/SIGHUP 的根 context。
 // 当父 shell 退出（发送 SIGHUP）或用户中断（SIGINT/SIGTERM）时，context 会被 cancel，
-// 确保下游所有资源清理逻辑（tmux session、worktree、DB 状态回写）能被正确触发。
+// 确保下游所有资源清理逻辑（runtime 进程、worktree、DB 状态回写）能被正确触发。
 func projectCtx(timeout time.Duration) (context.Context, context.CancelFunc) {
 	sigCtx, sigStop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	cleanup := func() {

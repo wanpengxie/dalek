@@ -27,8 +27,6 @@ func TestBuildBaseEnvConsistency(t *testing.T) {
 		ID:           34,
 		WorktreePath: " /tmp/worktree/t12 ",
 		Branch:       " feat/t12 ",
-		TmuxSocket:   " dalek-sock ",
-		TmuxSession:  " ts-pm-w34 ",
 	}
 
 	got := buildBaseEnv(p, ticket, worker)
@@ -38,8 +36,6 @@ func TestBuildBaseEnvConsistency(t *testing.T) {
 		envDBPath:            "/tmp/repo/dalek.db",
 		envWorktreePath:      "/tmp/worktree/t12",
 		envBranch:            "feat/t12",
-		envTmuxSocket:        "dalek-sock",
-		envTmuxSession:       "ts-pm-w34",
 		envTicketID:          "12",
 		envWorkerID:          "34",
 		envTicketTitle:       "fix t12",

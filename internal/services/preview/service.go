@@ -8,6 +8,7 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/infra"
+	"dalek/internal/repo"
 	"dalek/internal/services/core"
 )
 
@@ -16,11 +17,7 @@ type WorkerLookup interface {
 	LatestWorker(ctx context.Context, ticketID uint) (*contracts.Worker, error)
 }
 
-// Service 提供 tmux pane 输出尾部预览能力。
-//
-// 说明：
-// - 当前实现仍以 tmux capture-pane 作为最小可用的 tail 预览来源（用于 TUI 快速查看输出）。
-// - 后续将替换为 SDK executor 的结构化日志流（见 docs/STATUS_MODEL_V2.md、docs/WATCHER_REMOVAL_AND_SDK_EXECUTOR.md）。
+// Service 提供 ticket worker 输出尾部预览能力。
 type Service struct {
 	p      *core.Project
 	worker WorkerLookup
@@ -34,8 +31,8 @@ func (s *Service) require() (*core.Project, error) {
 	if s == nil || s.p == nil {
 		return nil, fmt.Errorf("preview service 缺少 project 上下文")
 	}
-	if s.p.Tmux == nil {
-		return nil, fmt.Errorf("preview service 缺少 tmux client")
+	if s.p.WorkerRuntime == nil {
+		return nil, fmt.Errorf("preview service 缺少 worker runtime")
 	}
 	if s.worker == nil {
 		return nil, fmt.Errorf("preview service 缺少 worker lookup")
@@ -43,9 +40,7 @@ func (s *Service) require() (*core.Project, error) {
 	return s.p, nil
 }
 
-// CaptureTicketTail 抓取该 ticket 最新 worker 对应 tmux session 的活动 pane 输出尾部。
-//
-// 用途：UI 在不 attach 的情况下，让用户快速了解该 session 正在输出什么。
+// CaptureTicketTail 抓取该 ticket 最新 worker 的日志尾部输出。
 func (s *Service) CaptureTicketTail(ctx context.Context, ticketID uint, lastLines int) (contracts.TailPreview, error) {
 	p, err := s.require()
 	if err != nil {
@@ -55,33 +50,27 @@ func (s *Service) CaptureTicketTail(ctx context.Context, ticketID uint, lastLine
 	if err != nil {
 		return contracts.TailPreview{}, err
 	}
-	if a == nil || strings.TrimSpace(a.TmuxSession) == "" {
-		return contracts.TailPreview{}, fmt.Errorf("该 ticket 没有可抓取的 tmux session")
+	if a == nil {
+		return contracts.TailPreview{}, fmt.Errorf("该 ticket 没有可抓取的 worker")
 	}
-
-	socket := strings.TrimSpace(a.TmuxSocket)
-	if socket == "" {
-		socket = strings.TrimSpace(p.Config.WithDefaults().TmuxSocket)
+	logPath := strings.TrimSpace(a.LogPath)
+	if logPath == "" && strings.TrimSpace(p.WorkersDir) != "" && a.ID != 0 {
+		logPath = repo.WorkerStreamLogPath(p.WorkersDir, a.ID)
 	}
-	if socket == "" {
-		socket = "dalek"
-	}
-
-	session := strings.TrimSpace(a.TmuxSession)
-	target := session + ":0.0"
-	paneID := ""
-
-	// 尽量选中当前“人眼看到”的 pane（活动 pane）。
-	if t, pinfo, err := infra.PickObservationTarget(p.Tmux, ctx, socket, session); err == nil && strings.TrimSpace(t) != "" {
-		target = strings.TrimSpace(t)
-		paneID = strings.TrimSpace(pinfo.PaneID)
+	if logPath == "" {
+		return contracts.TailPreview{}, fmt.Errorf("该 ticket 没有可抓取的日志路径")
 	}
 
 	if lastLines <= 0 {
 		lastLines = 20
 	}
-
-	out, err := p.Tmux.CapturePane(ctx, socket, target, lastLines)
+	handle := infra.WorkerProcessHandle{
+		LogPath: logPath,
+	}
+	if a.StartedAt != nil {
+		handle.StartedAt = *a.StartedAt
+	}
+	out, err := p.WorkerRuntime.CaptureOutput(ctx, handle, lastLines)
 	if err != nil {
 		return contracts.TailPreview{}, err
 	}
@@ -92,13 +81,11 @@ func (s *Service) CaptureTicketTail(ctx context.Context, ticketID uint, lastLine
 	}
 
 	return contracts.TailPreview{
-		TicketID:    ticketID,
-		WorkerID:    a.ID,
-		TmuxSocket:  socket,
-		TmuxSession: session,
-		PaneID:      paneID,
-		Target:      target,
-		CapturedAt:  time.Now(),
-		Lines:       lines,
+		TicketID:   ticketID,
+		WorkerID:   a.ID,
+		Source:     "worker_log",
+		LogPath:    logPath,
+		CapturedAt: time.Now(),
+		Lines:      lines,
 	}, nil
 }

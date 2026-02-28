@@ -18,7 +18,6 @@ func TestCLI_HelpShouldExitZero(t *testing.T) {
 		{"merge", "ls", "--help"},
 		{"merge", "discard", "--help"},
 		{"gateway", "send", "--help"},
-		{"tmux", "sessions", "--help"},
 	}
 
 	for _, args := range cases {
@@ -60,14 +59,6 @@ func TestCLI_LegacyCommandShowsMigrationHint(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "旧命令已移除") || !strings.Contains(stderr, "dalek ticket create") {
 		t.Fatalf("legacy hint missing for create:\n%s", stderr)
-	}
-
-	_, stderr, err = runCLI(t, bin, repo, "tmux", "ls")
-	if err == nil {
-		t.Fatalf("legacy tmux ls should fail")
-	}
-	if !strings.Contains(stderr, "旧命令已移除") || !strings.Contains(stderr, "dalek tmux sessions") {
-		t.Fatalf("legacy hint missing for tmux ls:\n%s", stderr)
 	}
 
 	_, stderr, err = runCLI(t, bin, repo, "agent", "start")

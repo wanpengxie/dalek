@@ -10,7 +10,7 @@ import (
 )
 
 func TestEnqueuePMDispatchJob_RejectsActiveJobOnDifferentWorker(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-enqueue-worker-mismatch")
 	active := contracts.PMDispatchJob{
 		RequestID:       "dsp_active_other_worker",
@@ -34,7 +34,7 @@ func TestEnqueuePMDispatchJob_RejectsActiveJobOnDifferentWorker(t *testing.T) {
 }
 
 func TestEnqueuePMDispatchJob_IdempotentByRequestID(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-enqueue-idempotent-request-id")
 	w := createDispatchWorker(t, p.DB, tk.ID)
 
@@ -73,8 +73,6 @@ func createDispatchWorker(t *testing.T, db *gorm.DB, ticketID uint) contracts.Wo
 		Status:       contracts.WorkerRunning,
 		WorktreePath: t.TempDir(),
 		Branch:       "ts/test-dispatch-worker",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-dispatch-test",
 	}
 	if err := db.Create(&w).Error; err != nil {
 		t.Fatalf("create dispatch worker failed: %v", err)

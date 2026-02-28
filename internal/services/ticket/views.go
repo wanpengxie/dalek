@@ -11,7 +11,7 @@ type TicketView struct {
 	Ticket       contracts.Ticket
 	LatestWorker *contracts.Worker
 	SessionAlive bool
-	// SessionProbeFailed=true 表示 tmux 探测失败（不是“离线”）。
+	// SessionProbeFailed=true 表示运行态探测失败（不是“离线”）。
 	SessionProbeFailed bool
 
 	DerivedStatus contracts.TicketWorkflowStatus
@@ -43,13 +43,14 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 
 	hasWorker := w != nil
 	workerStatus := contracts.WorkerStatus("")
-	session := ""
+	hasRuntimeHandle := false
+	hasRuntimeLog := false
 	if w != nil {
 		workerStatus = w.Status
-		session = strings.TrimSpace(w.TmuxSession)
+		hasRuntimeHandle = strings.TrimSpace(w.LogPath) != ""
+		hasRuntimeLog = strings.TrimSpace(w.LogPath) != ""
 	}
-	hasSession := session != ""
-	tmuxKnownDead := hasSession && !sessionProbeFailed && !sessionAlive
+	runtimeKnownDead := hasRuntimeHandle && !sessionProbeFailed && !sessionAlive
 
 	cap := contracts.TicketCapability{}
 	isDone := wf == contracts.TicketDone
@@ -63,13 +64,12 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 		!isArchived &&
 		!hasActiveDispatch
 
-	// attach：需要 session 可用（tmux 探测失败视为 unknown，允许尝试）。
+	// attach：只支持 runtime 日志 attach。
 	cap.CanAttach = hasWorker &&
-		hasSession &&
-		!tmuxKnownDead
+		(hasRuntimeHandle && hasRuntimeLog)
 
-	// stop：只要有 session 名就允许（即使 session 不在线，kill-session 也是幂等清理）。
-	cap.CanStop = hasWorker && hasSession
+	// stop：仅 runtime 句柄可停止。
+	cap.CanStop = hasWorker && hasRuntimeHandle
 
 	// archive：要求没有 running worker，且没有进行中的 dispatch。
 	cap.CanArchive = !isArchived &&
@@ -90,12 +90,14 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 		cap.Reason = "dispatch 进行中"
 	case !hasWorker:
 		cap.Reason = "将自动启动 worker"
-	case !hasSession:
-		cap.Reason = "worker 缺少 session（dispatch 时将自动修复）"
-	case tmuxKnownDead:
-		cap.Reason = "tmux session 不在线（dispatch 时将自动修复）"
+	case hasRuntimeHandle && !hasRuntimeLog:
+		cap.Reason = "worker 缺少日志路径（dispatch 时将自动修复）"
+	case !hasRuntimeHandle:
+		cap.Reason = "worker 缺少运行日志锚点（dispatch 时将自动修复）"
+	case runtimeKnownDead:
+		cap.Reason = "worker 运行通道不在线（dispatch 时将自动修复）"
 	case sessionProbeFailed:
-		cap.Reason = "tmux 探测失败"
+		cap.Reason = "运行态探测失败"
 	}
 
 	return cap
@@ -105,8 +107,11 @@ func computeDerivedRuntimeHealth(latestWorker *contracts.Worker, sessionAlive bo
 	if latestWorker == nil && taskRunID == 0 {
 		return contracts.TaskHealthUnknown
 	}
+	if latestWorker == nil || strings.TrimSpace(latestWorker.LogPath) == "" {
+		return runtimeHealth
+	}
 	if !sessionProbeFailed && !sessionAlive {
-		// session 不在时，给一个更直观的派生态。
+		// runtime 不在线时，给一个更直观的派生态。
 		if latestWorker != nil {
 			switch latestWorker.Status {
 			case contracts.WorkerStopped:
@@ -114,7 +119,7 @@ func computeDerivedRuntimeHealth(latestWorker *contracts.Worker, sessionAlive bo
 			case contracts.WorkerFailed:
 				return contracts.TaskHealthStalled
 			case contracts.WorkerRunning:
-				// session 不在线时，避免 UI 误显示“在线/运行中”。
+				// runtime 不在线时，避免 UI 误显示“在线/运行中”。
 				return contracts.TaskHealthDead
 			default:
 				return runtimeHealth
@@ -122,7 +127,7 @@ func computeDerivedRuntimeHealth(latestWorker *contracts.Worker, sessionAlive bo
 		}
 		return runtimeHealth
 	}
-	// session 探测失败：保守处理为 unknown，不降级到 dead/backlog。
+	// 运行态探测失败：保守处理为 unknown，不降级到 dead/backlog。
 	if runtimeHealth == contracts.TaskHealthDead {
 		return contracts.TaskHealthUnknown
 	}

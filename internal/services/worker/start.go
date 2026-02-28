@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"dalek/internal/infra"
 	"dalek/internal/repo"
 
 	"gorm.io/gorm"
@@ -106,7 +105,7 @@ type StartOptions struct {
 	BaseBranch string
 }
 
-// StartTicketResources 启动一个 ticket 的“执行资源”（worktree + tmux session）。
+// StartTicketResources 启动一个 ticket 的执行资源（当前默认为 worktree + worker runtime 进程）。
 //
 // 注意：
 // - worker 只负责“资源启动”，不做额外初始化脚本。
@@ -133,22 +132,10 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	}
 
 	worktreeCreated := false
-	sessionRollbackNeeded := false
 	rollbackWorktree := ""
-	rollbackSocket := ""
-	rollbackSession := ""
 	defer func() {
 		if err == nil {
 			return
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if sessionRollbackNeeded && strings.TrimSpace(rollbackSession) != "" {
-			socket := strings.TrimSpace(rollbackSocket)
-			if socket == "" {
-				socket = strings.TrimSpace(p.Config.TmuxSocket)
-			}
-			_ = p.Tmux.KillSession(cleanupCtx, socket, rollbackSession)
 		}
 		if worktreeCreated && strings.TrimSpace(rollbackWorktree) != "" {
 			_ = p.Git.RemoveWorktree(p.RepoRoot, rollbackWorktree, true)
@@ -193,16 +180,10 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	rollbackWorktree = worktreePath
 
 	// 语义收敛后：一个 ticket 只绑定一个 worker 记录。
-	// 若已在 running 且 session 存活，start 直接返回，不重复拉起。
-	if w != nil && w.Status == contracts.WorkerRunning && strings.TrimSpace(w.TmuxSession) != "" {
-		socket := strings.TrimSpace(w.TmuxSocket)
-		if socket == "" {
-			socket = strings.TrimSpace(p.Config.TmuxSocket)
-		}
-		if socket != "" {
-			if sessions, serr := p.Tmux.ListSessions(ctx, socket); serr == nil && sessions[strings.TrimSpace(w.TmuxSession)] {
-				return w, nil
-			}
+	// 若已在 running 且 runtime 句柄可用，start 直接返回，不重复初始化。
+	if w != nil && w.Status == contracts.WorkerRunning {
+		if hasWorkerRuntimeHandle(*w) {
+			return w, nil
 		}
 	}
 
@@ -271,8 +252,8 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 			Status:       contracts.WorkerStopped,
 			WorktreePath: worktreePath,
 			Branch:       branch,
-			TmuxSocket:   strings.TrimSpace(p.Config.TmuxSocket),
-			TmuxSession:  "",
+			ProcessPID:   0,
+			LogPath:      "",
 			StartedAt:    nil,
 			StoppedAt:    nil,
 			LastError:    "",
@@ -291,19 +272,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		w = &fresh
 	}
 
-	oldSession := strings.TrimSpace(w.TmuxSession)
-	oldSocket := strings.TrimSpace(w.TmuxSocket)
-
-	socket := strings.TrimSpace(p.Config.TmuxSocket)
-	if socket == "" {
-		socket = oldSocket
-	}
-
-	// 多 project 共用一个 tmux socket 时，session 名必须全局唯一。
-	session := fmt.Sprintf("ts-%s-t%d-w%d", strings.TrimSpace(p.Key), t.ID, w.ID)
-	if strings.TrimSpace(p.Key) == "" {
-		session = fmt.Sprintf("ts-t%d-w%d", t.ID, w.ID)
-	}
+	logPath := repo.WorkerStreamLogPath(p.WorkersDir, w.ID)
 
 	prevStatus := w.Status
 	statusNow := time.Now()
@@ -312,8 +281,8 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 			"status":        contracts.WorkerCreating,
 			"worktree_path": worktreePath,
 			"branch":        branch,
-			"tmux_socket":   socket,
-			"tmux_session":  session,
+			"process_pid":   0,
+			"log_path":      logPath,
 			"started_at":    nil,
 			"stopped_at":    nil,
 			"last_error":    "",
@@ -321,99 +290,46 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 			return err
 		}
 		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, prevStatus, contracts.WorkerCreating, "worker.start", "start 进入 creating", map[string]any{
-			"ticket_id":    w.TicketID,
-			"tmux_socket":  strings.TrimSpace(socket),
-			"tmux_session": strings.TrimSpace(session),
+			"ticket_id": w.TicketID,
+			"log_path":  strings.TrimSpace(logPath),
 		}, statusNow)
 	}); err != nil {
 		return nil, err
 	}
 	w.Status = contracts.WorkerCreating
 
-	if oldSession != "" {
-		if oldSocket == "" {
-			oldSocket = socket
-		}
-		_ = p.Tmux.KillSession(ctx, oldSocket, oldSession)
-	}
-	// 防御：无论 worker 记录是否 fresh，都对目标 session 名做一次 best-effort 清理。
-	// 这样可以回收“DB fresh 但 tmux socket 残留同名 session”的脏状态，避免 duplicate session。
-	if oldSession == "" || oldSocket != socket || oldSession != session {
-		shouldKill := true
-		if sessions, serr := p.Tmux.ListSessions(ctx, socket); serr == nil {
-			shouldKill = sessions[strings.TrimSpace(session)]
-		}
-		if shouldKill {
-			_ = p.Tmux.KillSession(ctx, socket, session)
-		}
-	}
-
-	// 在 tmux session 启动时注入 DALEK_* 环境变量（供 worker 内 CLI 使用）。
-	contractDir := filepath.Join(worktreePath, ".dalek")
-
-	// worker session 内必须能调用到 dalek（report 等依赖）。
-	// 在开发模式下 binary 可能不在 PATH，因此注入绝对路径并把其所在目录 prepend 到 PATH。
-	tsBinPath := ""
-	if exe, err := os.Executable(); err == nil {
-		tsBinPath = strings.TrimSpace(exe)
-	}
-	if strings.TrimSpace(tsBinPath) == "" {
-		if b, err := os.ReadFile(filepath.Join(p.Layout.ProjectDir, ".dalek_bin_path")); err == nil {
-			tsBinPath = strings.TrimSpace(string(b))
-		}
-	}
-	tsBinDir := ""
-	if strings.TrimSpace(tsBinPath) != "" {
-		tsBinDir = filepath.Dir(tsBinPath)
-	}
-
-	parts := []string{
-		"export DALEK_WORKER_ID=" + infra.ShellQuote(fmt.Sprintf("%d", w.ID)),
-		"export DALEK_TICKET_ID=" + infra.ShellQuote(fmt.Sprintf("%d", t.ID)),
-		"export DALEK_PROJECT_KEY=" + infra.ShellQuote(strings.TrimSpace(p.Key)),
-		"export DALEK_WORKTREE_PATH=" + infra.ShellQuote(strings.TrimSpace(worktreePath)),
-		"export DALEK_DB_PATH=" + infra.ShellQuote(strings.TrimSpace(p.DBPath())),
-		"export DALEK_CONTRACT_DIR=" + infra.ShellQuote(strings.TrimSpace(contractDir)),
-	}
-	if strings.TrimSpace(tsBinPath) != "" {
-		parts = append(parts, "export DALEK_BIN_PATH="+infra.ShellQuote(strings.TrimSpace(tsBinPath)))
-		if strings.TrimSpace(tsBinDir) != "" {
-			parts = append(parts, "export PATH="+infra.ShellQuote(strings.TrimSpace(tsBinDir))+":$PATH")
-		}
-	}
-	parts = append(parts, "exec ${SHELL:-bash} -l")
-	injected := strings.Join(parts, "; ")
-	sessionRollbackNeeded = true
-	rollbackSocket = socket
-	rollbackSession = session
-	if err := p.Tmux.NewSessionWithCommand(ctx, socket, session, worktreePath, []string{"bash", "-lc", injected}); err != nil {
-		failedAt := time.Now()
-		_ = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if uerr := tx.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-				"status":     contracts.WorkerFailed,
-				"last_error": err.Error(),
-				"stopped_at": &failedAt,
-			}).Error; uerr != nil {
-				return uerr
-			}
-			return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, contracts.WorkerFailed, "worker.start", "tmux session 启动失败", map[string]any{
-				"ticket_id":    w.TicketID,
-				"tmux_socket":  strings.TrimSpace(socket),
-				"tmux_session": strings.TrimSpace(session),
-				"error":        strings.TrimSpace(err.Error()),
-			}, failedAt)
-		})
+	// runtime-first：start 仅准备运行锚点（log path），不再拉起壳进程。
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return nil, err
 	}
+	f, ferr := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if ferr != nil {
+		return nil, ferr
+	}
+	_ = f.Close()
 
+	startedAt := time.Now()
+	if uerr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+			"process_pid": 0,
+			"log_path":    strings.TrimSpace(logPath),
+			"started_at":  &startedAt,
+			"stopped_at":  nil,
+			"last_error":  "",
+		}).Error; err != nil {
+			return err
+		}
+		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, contracts.WorkerCreating, contracts.WorkerCreating, "worker.start", "runtime 锚点已准备（无壳进程）", map[string]any{
+			"ticket_id": w.TicketID,
+			"log_path":  strings.TrimSpace(logPath),
+		}, startedAt)
+	}); uerr != nil {
+		return nil, uerr
+	}
 	w.WorktreePath = worktreePath
 	w.Branch = branch
-	w.TmuxSocket = socket
-	w.TmuxSession = session
-
-	logPath := repo.WorkerStreamLogPath(p.WorkersDir, w.ID)
-	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
-	_ = p.Tmux.PipePaneToFile(ctx, socket, session+":0.0", logPath)
+	w.ProcessPID = 0
+	w.LogPath = strings.TrimSpace(logPath)
 
 	var out contracts.Worker
 	if err := db.First(&out, w.ID).Error; err != nil {
@@ -423,8 +339,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 }
 
 func (s *Service) StopTicket(ctx context.Context, ticketID uint) error {
-	p, err := s.require()
-	if err != nil {
+	if _, err := s.require(); err != nil {
 		return err
 	}
 	if ctx == nil {
@@ -434,36 +349,13 @@ func (s *Service) StopTicket(ctx context.Context, ticketID uint) error {
 	if err != nil {
 		return err
 	}
-	if w == nil || strings.TrimSpace(w.TmuxSession) == "" {
-		// 防御：若用户手动清空了 .dalek/（DB）但没清理 tmux socket，
-		// 可能出现“DB 无 worker，但 tmux 里仍有旧 session”的孤儿状态。
-		// 这里做一次 best-effort 的按命名约定清理，避免 stop -ticket 永久不可用。
-		cfg, cerr := s.cfg()
-		if cerr == nil {
-			socket := strings.TrimSpace(cfg.TmuxSocket)
-			key := strings.TrimSpace(p.Key)
-			if socket != "" && key != "" && ticketID != 0 {
-				prefix := fmt.Sprintf("ts-%s-t%d-w", key, ticketID)
-				if sessions, serr := p.Tmux.ListSessions(ctx, socket); serr == nil {
-					killed := 0
-					for name := range sessions {
-						if strings.HasPrefix(name, prefix) {
-							_ = p.Tmux.KillSession(ctx, socket, name)
-							killed++
-						}
-					}
-					if killed > 0 {
-						return nil
-					}
-				}
-			}
-		}
+	if w == nil || !hasWorkerRuntimeHandle(*w) {
 		return fmt.Errorf("该 ticket 尚无可停止的 worker")
 	}
 	return s.StopWorker(ctx, w.ID)
 }
 
-// AttachCmd 返回该 ticket 最新 worker 的 tmux attach 命令（供 TUI/CLI 调起）。
+// AttachCmd 返回该 ticket 最新 worker 的 attach 命令（runtime 日志 attach）。
 func (s *Service) AttachCmd(ctx context.Context, ticketID uint) (*exec.Cmd, error) {
 	p, err := s.require()
 	if err != nil {
@@ -476,8 +368,12 @@ func (s *Service) AttachCmd(ctx context.Context, ticketID uint) (*exec.Cmd, erro
 	if err != nil {
 		return nil, err
 	}
-	if w == nil || strings.TrimSpace(w.TmuxSession) == "" {
+	if w == nil {
 		return nil, fmt.Errorf("该 ticket 尚无可 attach 的 worker session")
 	}
-	return p.Tmux.AttachCmd(w.TmuxSocket, w.TmuxSession), nil
+	logPath := strings.TrimSpace(w.LogPath)
+	if logPath == "" {
+		return nil, fmt.Errorf("该 ticket 尚无可 attach 的 worker 日志")
+	}
+	return p.WorkerRuntime.AttachCmd(workerRuntimeHandle(*w)), nil
 }

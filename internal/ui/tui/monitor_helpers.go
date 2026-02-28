@@ -2,7 +2,12 @@ package tui
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -212,7 +217,7 @@ func actionLabel(action ticketAction) string {
 	case ticketActionStop:
 		return "停止(k)"
 	case ticketActionAttach:
-		return "attach(a)"
+		return "日志(a)"
 	case ticketActionArchive:
 		return "归档(d)"
 	case ticketActionEdit:
@@ -357,16 +362,13 @@ func (m model) activeMergeItems() []contracts.MergeItem {
 func (m model) canCaptureTail(ref rowRef) bool {
 	switch ref.kind {
 	case rowManager:
-		return true
+		return false
 	case rowTicket:
 		v, ok := m.viewsByID[ref.ticketID]
 		if !ok || v.LatestWorker == nil {
 			return false
 		}
-		if strings.TrimSpace(v.LatestWorker.TmuxSession) == "" {
-			return false
-		}
-		return v.SessionAlive
+		return strings.TrimSpace(v.LatestWorker.LogPath) != ""
 	default:
 		return false
 	}
@@ -438,7 +440,15 @@ func (m model) tailCmd(ref rowRef) tea.Cmd {
 		var err error
 		switch ref.kind {
 		case rowManager:
-			pv, err = m.p.CaptureManagerTailPreview(ctx, tailCaptureLines)
+			// manager 交互已移除：保留 manager 行，提示使用状态命令观测。
+			pv = contracts.TailPreview{
+				Source:     "manager",
+				CapturedAt: time.Now(),
+				Lines: []string{
+					"manager session 交互已移除",
+					"请使用 manager tick/status 查看调度状态",
+				},
+			}
 		case rowTicket:
 			pv, err = m.p.CaptureTicketTail(ctx, ref.ticketID, tailCaptureLines)
 		default:
@@ -536,34 +546,102 @@ func (m model) stopTicketCmd(id uint) tea.Cmd {
 	}
 }
 
-func (m model) attachManagerCmd() tea.Cmd {
+func (m model) openTicketTmuxCmd(id uint) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		cmd, err := m.p.ManagerAttachCmd(ctx)
+		worktreePath, err := m.ticketWorktreePath(id)
 		if err != nil {
-			return attachedMsg{TicketID: 0, Err: err}
+			return attachedMsg{TicketID: id, Err: err}
 		}
-		// tea.ExecProcess 会接管终端；detach 后回到 TUI
+		session := tmuxSessionForWorktree(worktreePath)
+		cmd := exec.Command("tmux", "new-session", "-A", "-s", session, "-c", worktreePath)
 		return tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return attachedMsg{TicketID: 0, Err: err}
+			return attachedMsg{TicketID: id, Err: err}
 		})()
 	}
 }
 
-func (m model) attachTicketCmd(id uint) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		cmd, err := m.p.AttachCmd(ctx, id)
-		if err != nil {
-			return attachedMsg{TicketID: id, Err: err}
+func (m model) ticketWorktreePath(id uint) (string, error) {
+	if v, ok := m.viewsByID[id]; ok && v.LatestWorker != nil {
+		if path := strings.TrimSpace(v.LatestWorker.WorktreePath); path != "" {
+			if _, err := os.Stat(path); err == nil {
+				return path, nil
+			}
 		}
-		// tea.ExecProcess 会接管终端；detach 后回到 TUI
-		return tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return attachedMsg{TicketID: id, Err: err}
-		})()
 	}
+	if m.p == nil {
+		return "", fmt.Errorf("project 不可用，无法读取 worktree")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	w, err := m.p.LatestWorker(ctx, id)
+	if err != nil {
+		return "", fmt.Errorf("读取 worker 失败: %w", err)
+	}
+	if w == nil {
+		return "", fmt.Errorf("该 ticket 尚未启动 worker，请先按 s 启动")
+	}
+	path := strings.TrimSpace(w.WorktreePath)
+	if path == "" {
+		return "", fmt.Errorf("该 ticket 尚无 worktree 路径，请先按 s 启动")
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("worktree 目录不存在: %s", path)
+		}
+		return "", fmt.Errorf("检查 worktree 失败: %w", err)
+	}
+	return path, nil
+}
+
+func (m model) worktreeReadyInView(id uint) bool {
+	v, ok := m.viewsByID[id]
+	if !ok || v.LatestWorker == nil {
+		return false
+	}
+	path := strings.TrimSpace(v.LatestWorker.WorktreePath)
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
+}
+
+func tmuxSessionForWorktree(worktreePath string) string {
+	path := filepath.Clean(strings.TrimSpace(worktreePath))
+	base := sanitizeTmuxSessionToken(filepath.Base(path))
+	if base == "" {
+		base = "worktree"
+	}
+	sum := sha1.Sum([]byte(path))
+	// 使用路径 hash 保证“同一 worktree 固定 session 名”，并避免重名冲突。
+	suffix := hex.EncodeToString(sum[:4])
+	return fmt.Sprintf("wt-%s-%s", base, suffix)
+}
+
+func sanitizeTmuxSessionToken(s string) string {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_'
+		if ok {
+			_, _ = b.WriteRune(r)
+			prevDash = false
+			continue
+		}
+		if b.Len() == 0 || prevDash {
+			continue
+		}
+		_ = b.WriteByte('-')
+		prevDash = true
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 func (m model) archiveTicketCmd(id uint) tea.Cmd {
@@ -611,13 +689,13 @@ func defaultTableLayout() tableLayout {
 		status:   8,
 		runtime:  10,
 		title:    42,
-		tmux:     18,
+		output:   18,
 	}
 }
 
 func tableTotalWidth(layout tableLayout) int {
 	const gapCount = 6
-	return layout.section + layout.id + layout.priority + layout.status + layout.runtime + layout.title + layout.tmux + gapCount
+	return layout.section + layout.id + layout.priority + layout.status + layout.runtime + layout.title + layout.output + gapCount
 }
 
 func tableColumns(layout tableLayout) []table.Column {
@@ -628,7 +706,7 @@ func tableColumns(layout tableLayout) []table.Column {
 		{Title: "状态", Width: layout.status},
 		{Title: "运行", Width: layout.runtime},
 		{Title: "标题", Width: layout.title},
-		{Title: "tmux", Width: layout.tmux},
+		{Title: "输出", Width: layout.output},
 	}
 }
 
@@ -780,16 +858,19 @@ func formatExecutionState(v app.TicketView) string {
 }
 
 func formatSessionState(v app.TicketView) string {
-	if v.LatestWorker == nil || strings.TrimSpace(v.LatestWorker.TmuxSession) == "" {
-		return "无会话"
+	if v.LatestWorker == nil {
+		return "无运行体"
 	}
-	if v.SessionProbeFailed {
-		return "会话未知"
+	if strings.TrimSpace(v.LatestWorker.LogPath) != "" {
+		if v.SessionProbeFailed {
+			return "运行未知"
+		}
+		if v.SessionAlive {
+			return "运行中"
+		}
+		return "运行离线"
 	}
-	if v.SessionAlive {
-		return "会话在线"
-	}
-	return "会话离线"
+	return "无运行体"
 }
 
 func shortDuration(d time.Duration) string {

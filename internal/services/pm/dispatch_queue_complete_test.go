@@ -9,7 +9,7 @@ import (
 )
 
 func TestCompletePMDispatchJobSuccess_RollbackOnTaskRunSyncFailure(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-complete-tx-success")
 	runnerID := "runner-test-success"
 	lease := time.Now().Add(2 * time.Minute)
@@ -50,7 +50,7 @@ func TestCompletePMDispatchJobSuccess_RollbackOnTaskRunSyncFailure(t *testing.T)
 }
 
 func TestCompletePMDispatchJobFailed_RollbackOnTaskRunSyncFailure(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-complete-tx-failed")
 	runnerID := "runner-test-failed"
 	lease := time.Now().Add(2 * time.Minute)
@@ -91,7 +91,7 @@ func TestCompletePMDispatchJobFailed_RollbackOnTaskRunSyncFailure(t *testing.T) 
 }
 
 func TestForceFailActiveDispatchesForTicket_NoActiveJobs(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-force-fail-no-active")
 
 	got, err := svc.ForceFailActiveDispatchesForTicket(context.Background(), tk.ID, "ticket stop")
@@ -104,7 +104,7 @@ func TestForceFailActiveDispatchesForTicket_NoActiveJobs(t *testing.T) {
 }
 
 func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
 	tk := createTicket(t, p.DB, "dispatch-force-fail-pending")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
@@ -188,7 +188,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 }
 
 func TestForceFailActiveDispatchesForTicket_FailsRunningJobAndTaskRun(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
 	tk := createTicket(t, p.DB, "dispatch-force-fail-running")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {

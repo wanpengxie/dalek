@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"dalek/internal/infra"
 	"dalek/internal/repo"
@@ -14,166 +15,6 @@ import (
 	tasksvc "dalek/internal/services/task"
 	"dalek/internal/store"
 )
-
-type FakeTmuxClient struct {
-	Sessions         map[string]bool
-	SessionsBySocket map[string]map[string]bool
-	ListErrBySocket  map[string]error
-	SendLineHistory  []string
-
-	NewSessionCalls  int
-	KillSessionCalls int
-	SendKeysCalls    int
-	SendLineCalls    int
-
-	NewSessionErr  error
-	KillSessionErr error
-}
-
-func (f *FakeTmuxClient) Ensure() {
-	if f.Sessions == nil {
-		f.Sessions = map[string]bool{}
-	}
-	if f.SessionsBySocket == nil {
-		f.SessionsBySocket = map[string]map[string]bool{}
-	}
-	if f.ListErrBySocket == nil {
-		f.ListErrBySocket = map[string]error{}
-	}
-}
-
-func (f *FakeTmuxClient) NewSession(ctx context.Context, socket, name, startDir string) error {
-	_ = ctx
-	_ = socket
-	_ = startDir
-	f.Ensure()
-	name = strings.TrimSpace(name)
-	if f.NewSessionErr != nil {
-		return f.NewSessionErr
-	}
-	f.NewSessionCalls++
-	f.Sessions[name] = true
-	return nil
-}
-
-func (f *FakeTmuxClient) NewSessionWithCommand(ctx context.Context, socket, name, startDir string, cmd []string) error {
-	_ = cmd
-	return f.NewSession(ctx, socket, name, startDir)
-}
-
-func (f *FakeTmuxClient) KillSession(ctx context.Context, socket, name string) error {
-	_ = ctx
-	_ = socket
-	f.Ensure()
-	name = strings.TrimSpace(name)
-	f.KillSessionCalls++
-	if f.KillSessionErr != nil {
-		return f.KillSessionErr
-	}
-	delete(f.Sessions, name)
-	for _, m := range f.SessionsBySocket {
-		delete(m, name)
-	}
-	return nil
-}
-
-func (f *FakeTmuxClient) KillServer(ctx context.Context, socket string) error {
-	_ = ctx
-	_ = socket
-	f.Ensure()
-	f.Sessions = map[string]bool{}
-	f.SessionsBySocket = map[string]map[string]bool{}
-	return nil
-}
-
-func (f *FakeTmuxClient) SendKeys(ctx context.Context, socket, target, keys string) error {
-	_ = ctx
-	_ = socket
-	_ = target
-	_ = keys
-	f.SendKeysCalls++
-	return nil
-}
-
-func (f *FakeTmuxClient) SendKeysLiteral(ctx context.Context, socket, target, text string) error {
-	_ = ctx
-	_ = socket
-	_ = target
-	_ = text
-	return nil
-}
-
-func (f *FakeTmuxClient) SendLine(ctx context.Context, socket, target, line string) error {
-	_ = ctx
-	_ = socket
-	_ = target
-	f.SendLineCalls++
-	f.SendLineHistory = append(f.SendLineHistory, strings.TrimSpace(line))
-	return nil
-}
-
-func (f *FakeTmuxClient) CapturePane(ctx context.Context, socket, target string, lines int) (string, error) {
-	_ = ctx
-	_ = socket
-	_ = target
-	_ = lines
-	return "ok", nil
-}
-
-func (f *FakeTmuxClient) PipePaneToFile(ctx context.Context, socket, target, filePath string) error {
-	_ = ctx
-	_ = socket
-	_ = target
-	_ = filePath
-	return nil
-}
-
-func (f *FakeTmuxClient) StopPipePane(ctx context.Context, socket, target string) error {
-	_ = ctx
-	_ = socket
-	_ = target
-	return nil
-}
-
-func (f *FakeTmuxClient) ListSessions(ctx context.Context, socket string) (map[string]bool, error) {
-	_ = ctx
-	f.Ensure()
-	socket = strings.TrimSpace(socket)
-	if err := f.ListErrBySocket[socket]; err != nil {
-		return nil, err
-	}
-	src := f.Sessions
-	if m := f.SessionsBySocket[socket]; m != nil {
-		src = m
-	}
-	out := make(map[string]bool, len(src))
-	for k, v := range src {
-		out[k] = v
-	}
-	return out, nil
-}
-
-func (f *FakeTmuxClient) ListPanes(ctx context.Context, socket, session string) ([]infra.PaneInfo, error) {
-	_ = ctx
-	_ = socket
-	_ = session
-	return []infra.PaneInfo{
-		{PaneID: "%1", CurrentCommand: "bash"},
-	}, nil
-}
-
-func (f *FakeTmuxClient) ActivePane(ctx context.Context, socket, session string) (infra.PaneInfo, error) {
-	_ = ctx
-	_ = socket
-	_ = session
-	return infra.PaneInfo{PaneID: "%1", CurrentCommand: "bash"}, nil
-}
-
-func (f *FakeTmuxClient) AttachCmd(socket, session string) *exec.Cmd {
-	_ = socket
-	_ = session
-	return exec.Command("true")
-}
 
 type FakeGitClient struct {
 	AddCalls           int
@@ -185,6 +26,113 @@ type FakeGitClient struct {
 	RemoveErr          error
 	RemoveCalls        int
 	RemovedPaths       []string
+}
+
+type FakeWorkerRuntime struct {
+	StartCalls     int
+	StopCalls      int
+	InterruptCalls int
+	IsAliveCalls   int
+
+	StartErr     error
+	StopErr      error
+	InterruptErr error
+	IsAliveErr   error
+	CaptureErr   error
+
+	NextPID int
+
+	StartSpecs       []infra.WorkerProcessSpec
+	StopHandles      []infra.WorkerProcessHandle
+	InterruptHandles []infra.WorkerProcessHandle
+	CaptureHandles   []infra.WorkerProcessHandle
+
+	AliveByPID  map[int]bool
+	CaptureText string
+}
+
+func (f *FakeWorkerRuntime) ensure() {
+	if f.AliveByPID == nil {
+		f.AliveByPID = map[int]bool{}
+	}
+	if f.NextPID <= 0 {
+		f.NextPID = 1000
+	}
+}
+
+func (f *FakeWorkerRuntime) StartProcess(ctx context.Context, spec infra.WorkerProcessSpec) (infra.WorkerProcessHandle, error) {
+	_ = ctx
+	f.ensure()
+	f.StartCalls++
+	f.StartSpecs = append(f.StartSpecs, spec)
+	if f.StartErr != nil {
+		return infra.WorkerProcessHandle{}, f.StartErr
+	}
+	pid := f.NextPID
+	f.NextPID++
+	f.AliveByPID[pid] = true
+	return infra.WorkerProcessHandle{
+		PID:       pid,
+		Command:   strings.TrimSpace(spec.Command),
+		Args:      append([]string(nil), spec.Args...),
+		WorkDir:   strings.TrimSpace(spec.WorkDir),
+		LogPath:   strings.TrimSpace(spec.LogPath),
+		StartedAt: time.Now(),
+	}, nil
+}
+
+func (f *FakeWorkerRuntime) StopProcess(ctx context.Context, handle infra.WorkerProcessHandle, timeout time.Duration) error {
+	_ = ctx
+	_ = timeout
+	f.ensure()
+	f.StopCalls++
+	f.StopHandles = append(f.StopHandles, handle)
+	if f.StopErr != nil {
+		return f.StopErr
+	}
+	if handle.PID > 0 {
+		f.AliveByPID[handle.PID] = false
+	}
+	return nil
+}
+
+func (f *FakeWorkerRuntime) InterruptProcess(ctx context.Context, handle infra.WorkerProcessHandle) error {
+	_ = ctx
+	f.ensure()
+	f.InterruptCalls++
+	f.InterruptHandles = append(f.InterruptHandles, handle)
+	if f.InterruptErr != nil {
+		return f.InterruptErr
+	}
+	return nil
+}
+
+func (f *FakeWorkerRuntime) IsAlive(ctx context.Context, handle infra.WorkerProcessHandle) (bool, error) {
+	_ = ctx
+	f.ensure()
+	f.IsAliveCalls++
+	if f.IsAliveErr != nil {
+		return false, f.IsAliveErr
+	}
+	return f.AliveByPID[handle.PID], nil
+}
+
+func (f *FakeWorkerRuntime) CaptureOutput(ctx context.Context, handle infra.WorkerProcessHandle, lines int) (string, error) {
+	_ = ctx
+	_ = lines
+	f.CaptureHandles = append(f.CaptureHandles, handle)
+	if f.CaptureErr != nil {
+		return "", f.CaptureErr
+	}
+	return f.CaptureText, nil
+}
+
+func (f *FakeWorkerRuntime) AttachCmd(handle infra.WorkerProcessHandle) *exec.Cmd {
+	logPath := strings.TrimSpace(handle.LogPath)
+	if logPath == "" {
+		return exec.Command("true")
+	}
+	return exec.Command("tail", "-n", "200", "-F", logPath)
 }
 
 func (f *FakeGitClient) CurrentBranch(repoRoot string) (string, error) {
@@ -255,7 +203,7 @@ func (f *FakeGitClient) IsWorktreeDir(path string) bool {
 	return err == nil && !st.IsDir()
 }
 
-func NewTestProject(t testing.TB) (*core.Project, *FakeTmuxClient, *FakeGitClient) {
+func NewTestProject(t testing.TB) (*core.Project, *FakeGitClient) {
 	t.Helper()
 
 	repoRoot := t.TempDir()
@@ -296,7 +244,6 @@ echo '{"type":"item.completed","item":{"id":"msg-worker-default","type":"agent_m
 `)
 
 	cfg := repo.Config{
-		TmuxSocket:        "dalek",
 		BranchPrefix:      "",
 		RefreshIntervalMS: 1000,
 		WorkerAgent: repo.AgentExecConfig{
@@ -311,31 +258,29 @@ echo '{"type":"item.completed","item":{"id":"msg-worker-default","type":"agent_m
 		},
 	}.WithDefaults()
 
-	fTmux := &FakeTmuxClient{
-		Sessions: map[string]bool{},
-	}
 	fGit := &FakeGitClient{
 		CurrentBranchValue: "main",
 	}
+	fRuntime := &FakeWorkerRuntime{}
 
 	cp, err := core.NewProject(core.NewProjectInput{
-		Name:         "demo",
-		Key:          "demo",
-		RepoRoot:     repoRoot,
-		Layout:       layout,
-		WorktreesDir: worktreesDir,
-		WorkersDir:   layout.RuntimeWorkersDir,
-		Config:       cfg,
-		DB:           db,
-		Logger:       core.DiscardLogger(),
-		Tmux:         fTmux,
-		Git:          fGit,
-		TaskRuntime:  tasksvc.NewRuntimeFactory(),
+		Name:          "demo",
+		Key:           "demo",
+		RepoRoot:      repoRoot,
+		Layout:        layout,
+		WorktreesDir:  worktreesDir,
+		WorkersDir:    layout.RuntimeWorkersDir,
+		Config:        cfg,
+		DB:            db,
+		Logger:        core.DiscardLogger(),
+		WorkerRuntime: fRuntime,
+		Git:           fGit,
+		TaskRuntime:   tasksvc.NewRuntimeFactory(),
 	})
 	if err != nil {
 		t.Fatalf("NewProject failed: %v", err)
 	}
-	return cp, fTmux, fGit
+	return cp, fGit
 }
 
 func writeExecutable(t testing.TB, name, content string) string {

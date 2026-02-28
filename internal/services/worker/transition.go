@@ -117,12 +117,12 @@ func (s *Service) MarkWorkerFailed(ctx context.Context, workerID uint, now time.
 	return nil
 }
 
-// MarkWorkerSessionNotAlive 由 watcher 调用：当确认 tmux session 不存在时，推进 worker 生命周期状态。
+// MarkWorkerRuntimeNotAlive 由 watcher 调用：当确认 worker runtime 不存活时，推进 worker 生命周期状态。
 //
 // 约束：
 // - watcher 不直接写 worker.status/ticket.status，必须走 worker 的权威入口。
-// - 这里不 kill tmux（session 已不存活），只做 DB 状态收口。
-func (s *Service) MarkWorkerSessionNotAlive(ctx context.Context, w contracts.Worker, now time.Time) error {
+// - 这里不做底层进程清理，只做 DB 状态收口。
+func (s *Service) MarkWorkerRuntimeNotAlive(ctx context.Context, w contracts.Worker, now time.Time) error {
 	db, err := s.db()
 	if err != nil {
 		return err
@@ -155,11 +155,16 @@ func (s *Service) MarkWorkerSessionNotAlive(ctx context.Context, w contracts.Wor
 			// 已经不是 running，则不再回退 ticket（避免覆盖并发状态变更）。
 			return nil
 		}
-		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, contracts.WorkerRunning, contracts.WorkerStopped, "worker.transition", "session 不存活，worker 收口为 stopped", map[string]any{
+		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, contracts.WorkerRunning, contracts.WorkerStopped, "worker.transition", "runtime 不存活，worker 收口为 stopped", map[string]any{
 			"worker_id": w.ID,
 			"ticket_id": w.TicketID,
 		}, now)
 	})
+}
+
+// MarkWorkerSessionNotAlive 兼容旧调用入口，语义等同于 MarkWorkerRuntimeNotAlive。
+func (s *Service) MarkWorkerSessionNotAlive(ctx context.Context, w contracts.Worker, now time.Time) error {
+	return s.MarkWorkerRuntimeNotAlive(ctx, w, now)
 }
 
 func truncateMiddle(s string, maxRunes int) string {

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"dalek/internal/agent/provider"
-	"dalek/internal/infra"
 	"dalek/internal/repo"
 	"dalek/internal/services/agentexec"
 )
@@ -50,25 +49,7 @@ func (s *Service) launchWorkerSDKHandle(
 		return nil, err
 	}
 
-	socket := strings.TrimSpace(w.TmuxSocket)
-	if socket == "" {
-		socket = strings.TrimSpace(cfg.TmuxSocket)
-	}
-	session := strings.TrimSpace(w.TmuxSession)
-	target := ""
-	if p.Tmux != nil && session != "" {
-		tctx, cancel := context.WithTimeout(context.Background(), tmuxObserveTargetTimeout)
-		picked, _, _ := infra.PickObservationTarget(p.Tmux, tctx, socket, session)
-		cancel()
-		target = strings.TrimSpace(picked)
-	}
-	if target == "" && session != "" {
-		target = session + ":0.0"
-	}
-
 	env := buildBaseEnv(p, t, w)
-	env[envTmuxSocket] = strings.TrimSpace(socket)
-	env[envTmuxSession] = strings.TrimSpace(session)
 	env[dispatchDepthEnvKey] = nextDispatchDepthEnvValue()
 
 	executor := agentexec.NewSDKExecutor(agentexec.SDKConfig{
@@ -88,11 +69,7 @@ func (s *Service) launchWorkerSDKHandle(
 			WorkDir:     strings.TrimSpace(w.WorktreePath),
 			Env:         env,
 		},
-		Tmux:        p.Tmux,
-		TmuxSocket:  strings.TrimSpace(socket),
-		TmuxSession: strings.TrimSpace(session),
-		TmuxTarget:  strings.TrimSpace(target),
-		TmuxLogPath: repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID),
+		StreamLogPath: repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID),
 		AppendEvent: func(evtCtx context.Context, eventType, note string, payload any, createdAt time.Time) {
 			_ = s.worker.AppendWorkerTaskEvent(evtCtx, w.ID, eventType, note, payload, createdAt)
 		},

@@ -10,8 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// StopWorker 停止一个 worker（kill 对应 tmux session）并更新 DB 状态。
-// 这是“清理/回收资源”的最小能力：避免 tmux session 越堆越多。
+// StopWorker 停止一个 worker 并更新 DB 状态。
 func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 	p, err := s.require()
 	if err != nil {
@@ -30,29 +29,21 @@ func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 		return err
 	}
 
-	session := strings.TrimSpace(w.TmuxSession)
-	if session == "" {
-		return fmt.Errorf("worker 缺少 tmux_session: w%d", workerID)
-	}
-
-	// kill-session：不存在时 tmux 会返回非 0，但 infra.TmuxClient.KillSession 会把它当作非致命（err=nil）
-	if err := p.Tmux.KillSession(ctx, w.TmuxSocket, session); err != nil {
-		return err
-	}
-
 	now := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
-			"status":     contracts.WorkerStopped,
-			"stopped_at": &now,
+			"status":      contracts.WorkerStopped,
+			"stopped_at":  &now,
+			"process_pid": 0,
 		}).Error; err != nil {
 			return err
 		}
 		if err := s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, contracts.WorkerStopped, "worker.stop", "stop 命令停止 worker", map[string]any{
-			"worker_id":    w.ID,
-			"ticket_id":    w.TicketID,
-			"tmux_socket":  strings.TrimSpace(w.TmuxSocket),
-			"tmux_session": strings.TrimSpace(w.TmuxSession),
+			"worker_id":      w.ID,
+			"ticket_id":      w.TicketID,
+			"stop_mode":      "task_runtime",
+			"log_path":       strings.TrimSpace(w.LogPath),
+			"runtime_failed": false,
 		}, now); err != nil {
 			return err
 		}
@@ -66,18 +57,4 @@ func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 	}
 
 	return nil
-}
-
-// KillAllTmuxSessions 直接关闭本项目 tmux socket 下的所有 sessions（等价于 `tmux -L <socket> kill-server`）。
-// 用于“一键清理”。
-func (s *Service) KillAllTmuxSessions(ctx context.Context) error {
-	p, err := s.require()
-	if err != nil {
-		return err
-	}
-	cfg, err := s.cfg()
-	if err != nil {
-		return err
-	}
-	return p.Tmux.KillServer(ctx, cfg.TmuxSocket)
 }

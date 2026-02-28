@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"dalek/internal/infra"
 	"dalek/internal/repo"
@@ -14,41 +15,6 @@ import (
 
 	"gorm.io/gorm"
 )
-
-type noopTmuxClient struct{}
-
-func (noopTmuxClient) NewSession(ctx context.Context, socket, name, startDir string) error {
-	return nil
-}
-func (noopTmuxClient) NewSessionWithCommand(ctx context.Context, socket, name, startDir string, cmd []string) error {
-	return nil
-}
-func (noopTmuxClient) KillSession(ctx context.Context, socket, name string) error { return nil }
-func (noopTmuxClient) KillServer(ctx context.Context, socket string) error        { return nil }
-func (noopTmuxClient) SendKeys(ctx context.Context, socket, target, keys string) error {
-	return nil
-}
-func (noopTmuxClient) SendKeysLiteral(ctx context.Context, socket, target, text string) error {
-	return nil
-}
-func (noopTmuxClient) SendLine(ctx context.Context, socket, target, line string) error { return nil }
-func (noopTmuxClient) CapturePane(ctx context.Context, socket, target string, lines int) (string, error) {
-	return "", nil
-}
-func (noopTmuxClient) PipePaneToFile(ctx context.Context, socket, target, filePath string) error {
-	return nil
-}
-func (noopTmuxClient) StopPipePane(ctx context.Context, socket, target string) error { return nil }
-func (noopTmuxClient) ListSessions(ctx context.Context, socket string) (map[string]bool, error) {
-	return map[string]bool{}, nil
-}
-func (noopTmuxClient) ListPanes(ctx context.Context, socket, session string) ([]infra.PaneInfo, error) {
-	return []infra.PaneInfo{{PaneID: "%1", CurrentCommand: "bash"}}, nil
-}
-func (noopTmuxClient) ActivePane(ctx context.Context, socket, session string) (infra.PaneInfo, error) {
-	return infra.PaneInfo{PaneID: "%1", CurrentCommand: "bash"}, nil
-}
-func (noopTmuxClient) AttachCmd(socket, session string) *exec.Cmd { return exec.Command("true") }
 
 type noopGitClient struct{}
 
@@ -71,6 +37,27 @@ type noopTaskRuntimeFactory struct{}
 
 func (noopTaskRuntimeFactory) ForDB(db *gorm.DB) TaskRuntime {
 	return nil
+}
+
+type noopWorkerRuntime struct{}
+
+func (noopWorkerRuntime) StartProcess(ctx context.Context, spec infra.WorkerProcessSpec) (infra.WorkerProcessHandle, error) {
+	return infra.WorkerProcessHandle{}, nil
+}
+func (noopWorkerRuntime) StopProcess(ctx context.Context, handle infra.WorkerProcessHandle, timeout time.Duration) error {
+	return nil
+}
+func (noopWorkerRuntime) InterruptProcess(ctx context.Context, handle infra.WorkerProcessHandle) error {
+	return nil
+}
+func (noopWorkerRuntime) IsAlive(ctx context.Context, handle infra.WorkerProcessHandle) (bool, error) {
+	return false, nil
+}
+func (noopWorkerRuntime) CaptureOutput(ctx context.Context, handle infra.WorkerProcessHandle, lines int) (string, error) {
+	return "", nil
+}
+func (noopWorkerRuntime) AttachCmd(handle infra.WorkerProcessHandle) *exec.Cmd {
+	return exec.Command("true")
 }
 
 func TestNewProject_SuccessAndPathHelpers(t *testing.T) {
@@ -126,11 +113,11 @@ func TestNewProject_ValidateRequiredFields(t *testing.T) {
 			want: "Logger",
 		},
 		{
-			name: "missing_tmux",
+			name: "missing_worker_runtime",
 			mutate: func(in *NewProjectInput) {
-				in.Tmux = nil
+				in.WorkerRuntime = nil
 			},
-			want: "Tmux",
+			want: "WorkerRuntime",
 		},
 		{
 			name: "missing_git",
@@ -191,17 +178,17 @@ func newValidProjectInput(t *testing.T) NewProjectInput {
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	return NewProjectInput{
-		Name:         "demo",
-		Key:          "demo",
-		RepoRoot:     repoRoot,
-		Layout:       layout,
-		WorktreesDir: filepath.Join(t.TempDir(), "worktrees"),
-		WorkersDir:   layout.RuntimeWorkersDir,
-		Config:       repo.Config{}.WithDefaults(),
-		DB:           db,
-		Logger:       DiscardLogger(),
-		Tmux:         noopTmuxClient{},
-		Git:          noopGitClient{},
-		TaskRuntime:  noopTaskRuntimeFactory{},
+		Name:          "demo",
+		Key:           "demo",
+		RepoRoot:      repoRoot,
+		Layout:        layout,
+		WorktreesDir:  filepath.Join(t.TempDir(), "worktrees"),
+		WorkersDir:    layout.RuntimeWorkersDir,
+		Config:        repo.Config{}.WithDefaults(),
+		DB:            db,
+		Logger:        DiscardLogger(),
+		WorkerRuntime: noopWorkerRuntime{},
+		Git:           noopGitClient{},
+		TaskRuntime:   noopTaskRuntimeFactory{},
 	}
 }

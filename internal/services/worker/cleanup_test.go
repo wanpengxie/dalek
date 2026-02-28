@@ -9,7 +9,7 @@ import (
 )
 
 func TestCleanupTicketWorktree_DryRunThenClean(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "cleanup-ticket")
 
 	worktreePath := filepath.Join(t.TempDir(), "ticket-worktree")
@@ -25,8 +25,6 @@ func TestCleanupTicketWorktree_DryRunThenClean(t *testing.T) {
 		Status:       contracts.WorkerStopped,
 		WorktreePath: worktreePath,
 		Branch:       "ts/demo/t1",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "ts-demo-t1-w1",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -78,7 +76,7 @@ func TestCleanupTicketWorktree_DryRunThenClean(t *testing.T) {
 }
 
 func TestCleanupTicketWorktree_RejectsNonArchived(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "cleanup-reject-ticket")
 
 	w := contracts.Worker{
@@ -86,8 +84,6 @@ func TestCleanupTicketWorktree_RejectsNonArchived(t *testing.T) {
 		Status:       contracts.WorkerStopped,
 		WorktreePath: filepath.Join(t.TempDir(), "wt"),
 		Branch:       "ts/demo/t2",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "ts-demo-t2-w1",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)

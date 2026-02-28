@@ -46,8 +46,6 @@ const chatRunnerClaudeSettingsJSONTemplate = `
       "Write(/tmp/**)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:code.claude.com)",
-      "Bash(tmux)",
-      "Bash(tmux *)",
       "Bash(dalek)",
       "Bash(dalek *)",
       "Bash(bash develop.sh)",

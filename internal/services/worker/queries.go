@@ -4,8 +4,6 @@ import (
 	"context"
 	"dalek/internal/contracts"
 	"fmt"
-	"strings"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -63,80 +61,4 @@ func (s *Service) ListRunningWorkers(ctx context.Context) ([]contracts.Worker, e
 		return nil, err
 	}
 	return workers, nil
-}
-
-func (s *Service) ReconcileRunningWorkersAfterKillAll(ctx context.Context, socket string) (int64, error) {
-	db, err := s.db()
-	if err != nil {
-		return 0, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	socket = strings.TrimSpace(socket)
-	if socket == "" {
-		cfg, err := s.cfg()
-		if err != nil {
-			return 0, err
-		}
-		socket = strings.TrimSpace(cfg.TmuxSocket)
-	}
-	if socket == "" {
-		return 0, fmt.Errorf("tmux socket 为空")
-	}
-
-	now := nowLocal()
-	var rows int64
-	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var txWorkers []contracts.Worker
-		if err := tx.WithContext(ctx).
-			Where("tmux_socket = ? AND status = ?", socket, contracts.WorkerRunning).
-			Order("id asc").
-			Find(&txWorkers).Error; err != nil {
-			return err
-		}
-		if len(txWorkers) == 0 {
-			rows = 0
-			return nil
-		}
-
-		workerIDs := make([]uint, 0, len(txWorkers))
-		for _, w := range txWorkers {
-			workerIDs = append(workerIDs, w.ID)
-		}
-
-		if err := tx.WithContext(ctx).Model(&contracts.Worker{}).
-			Where("id IN ?", workerIDs).
-			Updates(map[string]any{
-				"status":     contracts.WorkerStopped,
-				"stopped_at": &now,
-			}).Error; err != nil {
-			return err
-		}
-		rows = int64(len(workerIDs))
-		rt, terr := s.taskRuntimeForDB(tx)
-		if terr != nil {
-			return terr
-		}
-		for _, w := range txWorkers {
-			if err := s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, contracts.WorkerStopped, "worker.stop_all", "kill-all 后批量收口为 stopped", map[string]any{
-				"worker_id": w.ID,
-				"ticket_id": w.TicketID,
-				"socket":    socket,
-			}, now); err != nil {
-				return err
-			}
-			if err := s.finalizeWorkerTaskRunOnStopWithRuntime(ctx, rt, w, fmt.Sprintf("worker stopped by stop-all: socket=%s", socket), "worker_stop_all", now); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return 0, err
-	}
-	return rows, nil
-}
-
-func nowLocal() time.Time {
-	return time.Now()
 }

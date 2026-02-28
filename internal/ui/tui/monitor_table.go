@@ -128,7 +128,9 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		sel := m.selectedRow()
 		switch sel.kind {
 		case rowManager:
-			return m, m.attachManagerCmd()
+			m.status = "manager attach 已移除"
+			m.errMsg = ""
+			return m, nil
 		case rowTicket:
 			id, ok, denied := m.selectedTicketForAction(ticketActionAttach)
 			if !ok {
@@ -138,7 +140,18 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			return m, m.attachTicketCmd(id)
+			m.mode = modeWorkerLog
+			m.workerLogTicketID = id
+			m.workerLogWorkerID = 0
+			m.workerLogLogPath = ""
+			m.workerLogSource = ""
+			m.workerLogErr = ""
+			m.workerLogLoadedAt = time.Time{}
+			m.workerLogViewport.SetYOffset(0)
+			m.workerLogViewport.SetContent(faint("(加载中... 按 r 可手动刷新)"))
+			m.workerLogInFlight = true
+			m.status = fmt.Sprintf("加载日志 t%d...", id)
+			return m, m.loadWorkerLogCmd(id)
 		default:
 			return m, nil
 		}
@@ -152,6 +165,21 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.archiveTicketCmd(id)
+	case "enter":
+		ref := m.selectedRow()
+		if ref.kind != rowTicket || ref.ticketID == 0 {
+			m.status = "Enter 仅支持 ticket 行"
+			m.errMsg = ""
+			return m, nil
+		}
+		if !m.worktreeReadyInView(ref.ticketID) {
+			m.status = "该 ticket 尚未 start 或 worktree 不存在，请先按 s 启动（必要时按 r 刷新）"
+			m.errMsg = ""
+			return m, nil
+		}
+		m.status = fmt.Sprintf("打开 tmux t%d...", ref.ticketID)
+		m.errMsg = ""
+		return m, m.openTicketTmuxCmd(ref.ticketID)
 	case "e":
 		id, ok, denied := m.selectedTicketForAction(ticketActionEdit)
 		if !ok {

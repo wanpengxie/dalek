@@ -14,7 +14,7 @@ import (
 )
 
 func TestDispatchTicket_SingleModeRunsPMAgent(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "dispatch-single-mode")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
@@ -42,7 +42,7 @@ func TestDispatchTicket_SingleModeRunsPMAgent(t *testing.T) {
 }
 
 func TestDispatchTicket_InvalidPMAgentConfigFails(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "dispatch-invalid-pm-agent-config")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
@@ -58,7 +58,7 @@ func TestDispatchTicket_InvalidPMAgentConfigFails(t *testing.T) {
 }
 
 func TestDispatchTicket_PromptContainsStructuredContext(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	dumpPath := filepath.Join(t.TempDir(), "prompt.txt")
 	if err := os.Setenv("DALEK_TEST_PROMPT_PATH", dumpPath); err != nil {
@@ -104,7 +104,7 @@ func TestDispatchTicket_PromptContainsStructuredContext(t *testing.T) {
 }
 
 func TestDispatchTicket_AllowsTicketWithoutDescription(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := contracts.Ticket{
 		Title:          "dispatch-no-description",
@@ -124,7 +124,7 @@ func TestDispatchTicket_AllowsTicketWithoutDescription(t *testing.T) {
 }
 
 func TestDispatchTicket_SDKModeRunsPMAgent(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	fakeCodex := filepath.Join(t.TempDir(), "codex")
 	script := `#!/usr/bin/env bash
@@ -171,16 +171,6 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
 	if !strings.Contains(content, "sdk dispatch ok") {
 		t.Fatalf("expected sdk stream log contains agent message, got=%q", content)
 	}
-	if fTmux.SendLineCalls == 0 {
-		t.Fatalf("expected tmux send-line called for sdk playback")
-	}
-	joinedHistory := strings.Join(fTmux.SendLineHistory, "\n")
-	if !strings.Contains(joinedHistory, "tail -n 0 -F") {
-		t.Fatalf("expected tmux send-line includes tail command, got=%q", joinedHistory)
-	}
-	if fTmux.SendKeysCalls == 0 {
-		t.Fatalf("expected tmux send-keys called to stop sdk playback tail")
-	}
 
 	var streamEvents int64
 	if err := p.DB.Model(&contracts.TaskEvent{}).Where("event_type = ?", "task_stream").Count(&streamEvents).Error; err != nil {
@@ -192,7 +182,7 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
 }
 
 func TestDispatchTicket_WorkerLoopRunsAndStops(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	fakeWorkerCodex := filepath.Join(t.TempDir(), "worker-codex")
 	workerMarker := filepath.Join(t.TempDir(), "worker-ran")
@@ -243,7 +233,7 @@ echo "ran" > "` + workerMarker + `"
 }
 
 func TestDispatchTicket_DefaultAutoStartWhenNotStarted(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "dispatch-default-auto-start")
 	out, err := svc.DispatchTicket(context.Background(), tk.ID)
@@ -260,9 +250,6 @@ func TestDispatchTicket_DefaultAutoStartWhenNotStarted(t *testing.T) {
 	}
 	if w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
 		t.Fatalf("expected worker running/stopped after auto-start dispatch, got=%s", w.Status)
-	}
-	if strings.TrimSpace(w.TmuxSession) == "" {
-		t.Fatalf("expected worker session after auto-start dispatch")
 	}
 
 	var events []contracts.TicketWorkflowEvent
@@ -297,14 +284,14 @@ func TestDispatchTicket_DefaultAutoStartWhenNotStarted(t *testing.T) {
 }
 
 func TestDispatchTicket_AutoStartFalsePreservesMissingSessionError(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "dispatch-auto-start-off")
 	if _, err := svc.DispatchTicketWithOptions(context.Background(), tk.ID, DispatchOptions{
 		AutoStart: boolPtr(false),
 	}); err == nil {
 		t.Fatalf("expected dispatch fail when auto-start=false and ticket not started")
-	} else if !strings.Contains(err.Error(), "尚未启动（没有 worker/session）") {
+	} else if !strings.Contains(err.Error(), "尚未启动（没有 worker）") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -318,7 +305,7 @@ func TestDispatchTicket_AutoStartFalsePreservesMissingSessionError(t *testing.T)
 }
 
 func TestSubmitDispatchTicket_AutoStartWhenNotStarted(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "submit-dispatch-auto-start")
 	sub, err := svc.SubmitDispatchTicket(context.Background(), tk.ID, DispatchSubmitOptions{
@@ -338,13 +325,13 @@ func TestSubmitDispatchTicket_AutoStartWhenNotStarted(t *testing.T) {
 	if w.Status != contracts.WorkerRunning {
 		t.Fatalf("expected running worker, got=%s", w.Status)
 	}
-	if strings.TrimSpace(w.TmuxSession) == "" {
-		t.Fatalf("expected worker session after submit auto-start")
+	if strings.TrimSpace(w.LogPath) == "" {
+		t.Fatalf("expected runtime log path after submit auto-start")
 	}
 }
 
 func TestResolveDispatchTarget_WaitsCreatingWorkerReady(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "dispatch-wait-worker-ready")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -379,7 +366,7 @@ func TestResolveDispatchTarget_WaitsCreatingWorkerReady(t *testing.T) {
 }
 
 func TestResolveDispatchTarget_TimeoutWhenWorkerKeepsCreating(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "dispatch-wait-worker-timeout")
 	w, err := svc.StartTicket(context.Background(), tk.ID)

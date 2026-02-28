@@ -10,15 +10,19 @@ import (
 )
 
 func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-dead-recovery")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
-
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"log_path":   "",
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("clear runtime log path failed: %v", err)
+	}
 	rt, err := svc.taskRuntimeForDB(p.DB)
 	if err != nil {
 		t.Fatalf("taskRuntimeForDB failed: %v", err)
@@ -36,7 +40,6 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 	if out.Illegal != 1 {
 		t.Fatalf("expected illegal=1, got=%d", out.Illegal)
 	}
-
 	var got contracts.Worker
 	if err := p.DB.First(&got, w.ID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
@@ -53,7 +56,7 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 }
 
 func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-stalled-recovery")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -84,10 +87,6 @@ func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
 	if out.Blocked != 0 {
 		t.Fatalf("expected blocked=0, got=%d", out.Blocked)
 	}
-	if fTmux.SendKeysCalls == 0 {
-		t.Fatalf("expected interrupt path invoked")
-	}
-
 	var got contracts.Worker
 	if err := p.DB.First(&got, w.ID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
@@ -98,7 +97,7 @@ func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
 }
 
 func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-max-retries")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -107,12 +106,11 @@ func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"retry_count": defaultZombieMaxRetries,
+		"log_path":    "",
 		"updated_at":  time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("set retry_count failed: %v", err)
 	}
-	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
-
 	rt, err := svc.taskRuntimeForDB(p.DB)
 	if err != nil {
 		t.Fatalf("taskRuntimeForDB failed: %v", err)
@@ -144,7 +142,7 @@ func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
 }
 
 func TestCheckZombieWorkers_BackoffRespected(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-backoff")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -159,8 +157,6 @@ func TestCheckZombieWorkers_BackoffRespected(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("set backoff state failed: %v", err)
 	}
-	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
-
 	rt, err := svc.taskRuntimeForDB(p.DB)
 	if err != nil {
 		t.Fatalf("taskRuntimeForDB failed: %v", err)
@@ -180,15 +176,19 @@ func TestCheckZombieWorkers_BackoffRespected(t *testing.T) {
 }
 
 func TestManagerTick_ReportsZombieStats(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "manager-tick-zombie-stats")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
-
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"log_path":   "",
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("clear runtime log path failed: %v", err)
+	}
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{
 		DryRun:            true,
 		MaxRunningWorkers: 1,

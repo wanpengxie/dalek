@@ -9,7 +9,7 @@ import (
 )
 
 func TestStopTicket_ForceFailsActiveDispatchJobs(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "pm-stop-ticket-force-fail")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {

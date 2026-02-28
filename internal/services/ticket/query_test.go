@@ -14,11 +14,11 @@ import (
 	"gorm.io/gorm"
 )
 
-func newQueryServiceForTest(t *testing.T) (*QueryService, *core.Project, *testutil.FakeTmuxClient) {
+func newQueryServiceForTest(t *testing.T) (*QueryService, *core.Project) {
 	t.Helper()
 
-	cp, fTmux, _ := testutil.NewTestProject(t)
-	return NewQueryService(cp), cp, fTmux
+	cp, _ := testutil.NewTestProject(t)
+	return NewQueryService(cp), cp
 }
 
 func createTicketForQueryTest(t *testing.T, db *gorm.DB, title string) contracts.Ticket {
@@ -32,7 +32,7 @@ func createTicketForQueryTest(t *testing.T, db *gorm.DB, title string) contracts
 }
 
 func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
-	svc, p, fTmux := newQueryServiceForTest(t)
+	svc, p := newQueryServiceForTest(t)
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-view")
 	a := contracts.Worker{
@@ -40,8 +40,8 @@ func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testin
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w1",
 		Branch:       "ts/demo-ticket-1",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-ticket-1",
+		ProcessPID:   1001,
+		LogPath:      "/tmp/w1.log",
 	}
 	if err := p.DB.Create(&a).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -70,8 +70,6 @@ func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testin
 	}).Error; err != nil {
 		t.Fatalf("create runtime sample failed: %v", err)
 	}
-	fTmux.Sessions[a.TmuxSession] = true
-
 	views, err := svc.ListTicketViews(context.Background())
 	if err != nil {
 		t.Fatalf("ListTicketViews failed: %v", err)
@@ -86,10 +84,12 @@ func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testin
 		t.Fatalf("expected runtime busy, got %s", views[0].RuntimeHealthState)
 	}
 
-	// session 不在 + worker stopped => 运行态派生为 dead
-	delete(fTmux.Sessions, a.TmuxSession)
+	// active run 结束 + worker stopped => 运行态派生为 dead
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", a.ID).Update("status", contracts.WorkerStopped).Error; err != nil {
 		t.Fatalf("update worker failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.TaskRun{}).Where("id = ?", run.ID).Update("orchestration_state", contracts.TaskFailed).Error; err != nil {
+		t.Fatalf("update task run failed: %v", err)
 	}
 	views, err = svc.ListTicketViews(context.Background())
 	if err != nil {
@@ -99,22 +99,21 @@ func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testin
 		t.Fatalf("expected 1 view, got %d", len(views))
 	}
 	if views[0].RuntimeHealthState != contracts.TaskHealthDead {
-		t.Fatalf("expected runtime dead when session gone, got %s", views[0].RuntimeHealthState)
+		t.Fatalf("expected runtime dead when process gone, got %s", views[0].RuntimeHealthState)
 	}
 }
 
-func TestQueryService_ListTicketViews_UsesWorkerSocketForSessionAlive(t *testing.T) {
-	svc, p, fTmux := newQueryServiceForTest(t)
-	p.Config.TmuxSocket = "dalek-default"
+func TestQueryService_ListTicketViews_UsesTaskRunForSessionAlive(t *testing.T) {
+	svc, p := newQueryServiceForTest(t)
 
-	tk := createTicketForQueryTest(t, p.DB, "ticket-view-socket")
+	tk := createTicketForQueryTest(t, p.DB, "ticket-view-runtime")
 	a := contracts.Worker{
 		TicketID:     tk.ID,
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w2",
 		Branch:       "ts/demo-ticket-2",
-		TmuxSocket:   "dalek-alt",
-		TmuxSession:  "s-ticket-2",
+		ProcessPID:   1002,
+		LogPath:      "/tmp/w2.log",
 	}
 	if err := p.DB.Create(&a).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
@@ -143,12 +142,6 @@ func TestQueryService_ListTicketViews_UsesWorkerSocketForSessionAlive(t *testing
 	}).Error; err != nil {
 		t.Fatalf("create runtime sample failed: %v", err)
 	}
-	fTmux.Ensure()
-	fTmux.SessionsBySocket["dalek-default"] = map[string]bool{}
-	fTmux.SessionsBySocket["dalek-alt"] = map[string]bool{
-		"s-ticket-2": true,
-	}
-
 	views, err := svc.ListTicketViews(context.Background())
 	if err != nil {
 		t.Fatalf("ListTicketViews failed: %v", err)
@@ -157,7 +150,7 @@ func TestQueryService_ListTicketViews_UsesWorkerSocketForSessionAlive(t *testing
 		t.Fatalf("expected 1 view, got %d", len(views))
 	}
 	if !views[0].SessionAlive {
-		t.Fatalf("expected session alive by worker tmux_socket")
+		t.Fatalf("expected process alive by runtime handle")
 	}
 	if views[0].RuntimeHealthState != contracts.TaskHealthBusy {
 		t.Fatalf("expected runtime busy, got %s", views[0].RuntimeHealthState)
@@ -165,7 +158,7 @@ func TestQueryService_ListTicketViews_UsesWorkerSocketForSessionAlive(t *testing
 }
 
 func TestQueryService_ListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflowBacklog(t *testing.T) {
-	svc, p, fTmux := newQueryServiceForTest(t)
+	svc, p := newQueryServiceForTest(t)
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-derived-running")
 	w := contracts.Worker{
@@ -173,15 +166,25 @@ func TestQueryService_ListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflow
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w3",
 		Branch:       "ts/demo-ticket-3",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-ticket-3",
+		ProcessPID:   1003,
+		LogPath:      "/tmp/w3.log",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
 	}
-	fTmux.Ensure()
-	fTmux.SessionsBySocket["dalek"] = map[string]bool{
-		"s-ticket-3": true,
+	run := contracts.TaskRun{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
+		ProjectKey:         p.Key,
+		TicketID:           tk.ID,
+		WorkerID:           w.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", tk.ID),
+		RequestID:          "test-view-run-3",
+		OrchestrationState: contracts.TaskRunning,
+	}
+	if err := p.DB.Create(&run).Error; err != nil {
+		t.Fatalf("create task run failed: %v", err)
 	}
 
 	views, err := svc.ListTicketViews(context.Background())
@@ -199,8 +202,8 @@ func TestQueryService_ListTicketViews_BacklogWithAliveRunningWorkerKeepsWorkflow
 	}
 }
 
-func TestQueryService_ListTicketViews_SessionProbeFailureKeepsWorkflow(t *testing.T) {
-	svc, p, fTmux := newQueryServiceForTest(t)
+func TestQueryService_ListTicketViews_NoActiveRunKeepsWorkflowBacklog(t *testing.T) {
+	svc, p := newQueryServiceForTest(t)
 
 	tk := createTicketForQueryTest(t, p.DB, "ticket-probe-failed")
 	w := contracts.Worker{
@@ -208,14 +211,12 @@ func TestQueryService_ListTicketViews_SessionProbeFailureKeepsWorkflow(t *testin
 		Status:       contracts.WorkerRunning,
 		WorktreePath: "/tmp/w4",
 		Branch:       "ts/demo-ticket-4",
-		TmuxSocket:   "dalek",
-		TmuxSession:  "s-ticket-4",
+		ProcessPID:   1004,
+		LogPath:      "/tmp/w4.log",
 	}
 	if err := p.DB.Create(&w).Error; err != nil {
 		t.Fatalf("create worker failed: %v", err)
 	}
-	fTmux.Ensure()
-	fTmux.ListErrBySocket["dalek"] = context.DeadlineExceeded
 
 	views, err := svc.ListTicketViews(context.Background())
 	if err != nil {
@@ -225,15 +226,18 @@ func TestQueryService_ListTicketViews_SessionProbeFailureKeepsWorkflow(t *testin
 		t.Fatalf("expected 1 view, got %d", len(views))
 	}
 	if views[0].DerivedStatus != contracts.TicketBacklog {
-		t.Fatalf("expected workflow backlog when probe failed, got %s", views[0].DerivedStatus)
+		t.Fatalf("expected workflow backlog when no active run, got %s", views[0].DerivedStatus)
 	}
-	if views[0].RuntimeHealthState == contracts.TaskHealthDead {
-		t.Fatalf("probe failure should not degrade runtime to dead")
+	if views[0].SessionAlive {
+		t.Fatalf("expected session offline when no active run")
+	}
+	if views[0].RuntimeHealthState != contracts.TaskHealthDead {
+		t.Fatalf("expected runtime dead when no active run, got=%s", views[0].RuntimeHealthState)
 	}
 }
 
 func TestQueryService_ListTicketViews_SortsByPriorityThenCreatedAtThenID(t *testing.T) {
-	svc, p, _ := newQueryServiceForTest(t)
+	svc, p := newQueryServiceForTest(t)
 
 	t1 := createTicketForQueryTest(t, p.DB, "t1")
 	t2 := createTicketForQueryTest(t, p.DB, "t2")

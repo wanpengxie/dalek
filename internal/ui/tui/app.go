@@ -205,9 +205,6 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.p = msg.P
 		m.lastProjectsErr = ""
 
-		// best-effort：确保 manager session 可 attach（尽量不让错误阻塞）
-		_, _ = m.p.EnsureManagerSession(context.Background())
-
 		mon := newModel(m.p, m.home, m.currentProjectName)
 		return m.setMonitor(mon)
 

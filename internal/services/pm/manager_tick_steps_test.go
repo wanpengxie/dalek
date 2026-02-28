@@ -11,7 +11,7 @@ import (
 )
 
 func TestConsumeTaskEvents_CreatesIncidentAndNeedsUserInbox(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "manager-tick-consume-events")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -68,7 +68,7 @@ func TestConsumeTaskEvents_CreatesIncidentAndNeedsUserInbox(t *testing.T) {
 }
 
 func TestScanRunningWorkers_TracksBlockedAndProgressable(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	blockedTicket := createTicket(t, p.DB, "manager-tick-scan-blocked")
 	blockedWorker, err := svc.StartTicket(context.Background(), blockedTicket.ID)
@@ -130,7 +130,7 @@ func TestScanRunningWorkers_TracksBlockedAndProgressable(t *testing.T) {
 }
 
 func TestProposeMergesForDoneTickets_AvoidsDuplicateOpenItems(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "manager-tick-merge-proposal")
 	worker, err := svc.StartTicket(context.Background(), tk.ID)
@@ -182,7 +182,7 @@ func TestProposeMergesForDoneTickets_AvoidsDuplicateOpenItems(t *testing.T) {
 }
 
 func TestScheduleQueuedTickets_StartsAndDispatchesWithSubmitter(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "manager-tick-schedule-queued")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{

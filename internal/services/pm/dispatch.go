@@ -18,9 +18,6 @@ type DispatchResult struct {
 	WorkerID  uint
 	TaskRunID uint
 
-	TmuxSocket  string
-	TmuxSession string
-
 	WorkerCommand string
 	InjectedCmd   string
 }
@@ -135,11 +132,6 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 
 	payload := finalJob.ResultJSON
 
-	updatedWorker, err := s.worker.WorkerByID(ctx, finalJob.WorkerID)
-	if err != nil {
-		return DispatchResult{}, err
-	}
-
 	// dispatch 成功意味着进入 active（仅 PM reducer 写 workflow）。
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var cur contracts.Ticket
@@ -173,8 +165,6 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 		TicketID:      finalJob.TicketID,
 		WorkerID:      finalJob.WorkerID,
 		TaskRunID:     finalJob.TaskRunID,
-		TmuxSocket:    strings.TrimSpace(updatedWorker.TmuxSocket),
-		TmuxSession:   strings.TrimSpace(updatedWorker.TmuxSession),
 		WorkerCommand: workerCommandHint(cfg),
 		InjectedCmd:   strings.TrimSpace(payload.InjectedCmd),
 	}, nil
@@ -204,13 +194,17 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 	if err != nil {
 		return contracts.Ticket{}, nil, err
 	}
-	if autoStart && (w == nil || strings.TrimSpace(w.TmuxSession) == "") {
+	ready, rerr := s.workerDispatchReady(ctx, w)
+	if rerr != nil {
+		return contracts.Ticket{}, nil, rerr
+	}
+	if autoStart && (w == nil || !ready) {
 		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
 		if err != nil {
 			return contracts.Ticket{}, nil, err
 		}
 	}
-	if w == nil || strings.TrimSpace(w.TmuxSession) == "" {
+	if w == nil {
 		return contracts.Ticket{}, nil, s.workerMissingSessionError()
 	}
 	if w.Status == contracts.WorkerCreating {
@@ -233,6 +227,27 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 			w = ready
 		}
 	}
+	ready, rerr = s.workerDispatchReady(ctx, w)
+	if rerr != nil {
+		return contracts.Ticket{}, nil, rerr
+	}
+	if !ready {
+		if autoStart {
+			w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
+			if err != nil {
+				return contracts.Ticket{}, nil, err
+			}
+			ready, rerr = s.workerDispatchReady(ctx, w)
+			if rerr != nil {
+				return contracts.Ticket{}, nil, rerr
+			}
+			if !ready {
+				return contracts.Ticket{}, nil, s.workerMissingSessionError()
+			}
+		} else {
+			return contracts.Ticket{}, nil, s.workerMissingSessionError()
+		}
+	}
 	if w.Status != contracts.WorkerRunning {
 		return contracts.Ticket{}, nil, s.workerNotRunningError(w)
 	}
@@ -251,15 +266,22 @@ func (s *Service) ensureDispatchWorkerStarted(ctx context.Context, ticketID uint
 	if err != nil {
 		return nil, fmt.Errorf("auto-start 失败: %w", err)
 	}
-	if w != nil && strings.TrimSpace(w.TmuxSession) != "" {
+	if ready, rerr := s.workerDispatchReady(ctx, w); rerr != nil {
+		return nil, fmt.Errorf("auto-start 失败: %w", rerr)
+	} else if ready {
 		return w, nil
 	}
 	w, err = s.worker.LatestWorker(ctx, ticketID)
 	if err != nil {
 		return nil, fmt.Errorf("auto-start 失败: %w", err)
 	}
-	if w == nil || strings.TrimSpace(w.TmuxSession) == "" {
-		return nil, fmt.Errorf("auto-start 失败: 启动后仍无可用 worker/session（t%d）", ticketID)
+	if ready, rerr := s.workerDispatchReady(ctx, w); rerr != nil {
+		return nil, fmt.Errorf("auto-start 失败: %w", rerr)
+	} else if !ready {
+		if w == nil {
+			return nil, fmt.Errorf("auto-start 失败: 启动后仍无可用 worker/runtime（t%d）", ticketID)
+		}
+		return nil, fmt.Errorf("auto-start 失败: 启动后仍无可用 worker/runtime（t%d w%d status=%s）", ticketID, w.ID, w.Status)
 	}
 	return w, nil
 }

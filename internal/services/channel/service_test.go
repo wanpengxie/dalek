@@ -1391,11 +1391,9 @@ func (a testPMActionAdapter) DispatchTicket(ctx context.Context, ticketID uint, 
 		return DispatchTicketResult{}, err
 	}
 	return DispatchTicketResult{
-		TicketID:    res.TicketID,
-		WorkerID:    res.WorkerID,
-		TaskRunID:   res.TaskRunID,
-		TmuxSocket:  res.TmuxSocket,
-		TmuxSession: res.TmuxSession,
+		TicketID:  res.TicketID,
+		WorkerID:  res.WorkerID,
+		TaskRunID: res.TaskRunID,
 	}, nil
 }
 
@@ -1425,11 +1423,11 @@ func (a testWorkerActionAdapter) InterruptTicket(ctx context.Context, ticketID u
 		return InterruptTicketResult{}, err
 	}
 	return InterruptTicketResult{
-		TicketID:    res.TicketID,
-		WorkerID:    res.WorkerID,
-		TargetPane:  res.TargetPane,
-		TmuxSocket:  res.TmuxSocket,
-		TmuxSession: res.TmuxSession,
+		TicketID:  res.TicketID,
+		WorkerID:  res.WorkerID,
+		Mode:      res.Mode,
+		TaskRunID: res.TaskRunID,
+		LogPath:   res.LogPath,
 	}, nil
 }
 

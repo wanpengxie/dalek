@@ -8,7 +8,7 @@ import (
 )
 
 func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-claim-promote-active")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
@@ -52,7 +52,7 @@ func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 }
 
 func TestCompletePMDispatchJobFailed_DemotesTicketWorkflowToBlocked(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-failed-demote-blocked")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)

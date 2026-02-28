@@ -14,7 +14,7 @@ import (
 
 func newTestService(t *testing.T) *Service {
 	t.Helper()
-	cp, _, _ := testutil.NewTestProject(t)
+	cp, _ := testutil.NewTestProject(t)
 	return New(cp)
 }
 
