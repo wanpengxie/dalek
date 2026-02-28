@@ -273,11 +273,14 @@ func (s *Service) sendContentWithFallback(ctx context.Context, binding contracts
 		if sender, ok := s.sender.(chatReplySender); ok {
 			chatID := strings.TrimSpace(binding.PeerProjectKey)
 			resultMid, err := sender.SendCardInteractive(ctx, chatID, content.cardJSON)
-			if err == nil && strings.TrimSpace(resultMid) != "" {
-				return nil
-			}
 			if err == nil {
-				err = fmt.Errorf("feishu send interactive failed: empty message_id")
+				if strings.TrimSpace(resultMid) == "" {
+					core.EnsureLogger(s.logger).Warn("gateway send interactive card succeeded with empty message_id",
+						"binding_id", binding.ID,
+						"chat_id", chatID,
+					)
+				}
+				return nil
 			}
 			core.EnsureLogger(s.logger).Warn("gateway send interactive card failed, fallback to card/text",
 				"binding_id", binding.ID,

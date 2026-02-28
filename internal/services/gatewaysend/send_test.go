@@ -62,6 +62,8 @@ type interactiveCaptureSender struct {
 	mu               sync.Mutex
 	interactiveCalls int
 	lastCardJSON     string
+	overrideMid      *string
+	overrideErr      error
 }
 
 func (s *interactiveCaptureSender) SendCardInteractive(ctx context.Context, chatID, cardJSON string) (string, error) {
@@ -71,6 +73,9 @@ func (s *interactiveCaptureSender) SendCardInteractive(ctx context.Context, chat
 	s.interactiveCalls++
 	s.lastCardJSON = strings.TrimSpace(cardJSON)
 	s.mu.Unlock()
+	if s.overrideMid != nil {
+		return *s.overrideMid, s.overrideErr
+	}
 	return "om_interactive_1", nil
 }
 
@@ -513,5 +518,41 @@ func TestService_SendChatReply_UsesInteractiveCardAndPersistsPayload(t *testing.
 	gotPayloadCardJSON, _ := payload[payloadKeyCardJSON].(string)
 	if strings.TrimSpace(gotPayloadCardJSON) != cardJSON {
 		t.Fatalf("persisted payload card_json mismatch: got=%q want=%q", gotPayloadCardJSON, cardJSON)
+	}
+}
+
+func TestService_SendChatReply_EmptyMessageID_NoFallback(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	db, err := store.OpenGatewayDB(dbPath)
+	if err != nil {
+		t.Fatalf("OpenGatewayDB failed: %v", err)
+	}
+
+	binding := contracts.ChannelBinding{
+		ProjectName:    "demo",
+		ChannelType:    contracts.ChannelTypeIM,
+		Adapter:        AdapterFeishu,
+		PeerProjectKey: "chat-empty-mid",
+		RolePolicyJSON: contracts.JSONMap{},
+		Enabled:        true,
+	}
+	if err := db.Create(&binding).Error; err != nil {
+		t.Fatalf("create binding failed: %v", err)
+	}
+
+	emptyMid := ""
+	sender := &interactiveCaptureSender{overrideMid: &emptyMid}
+	svc := NewServiceWithDB(db, nil, sender, nil)
+	cardJSON := `{"schema":"2.0","body":{"elements":[{"tag":"markdown","content":"hello"}]}}`
+	if err := svc.SendChatReply(context.Background(), "demo", "chat-empty-mid", "fallback text", cardJSON); err != nil {
+		t.Fatalf("SendChatReply failed: %v", err)
+	}
+
+	interactiveCalls, _ := sender.interactiveSnapshot()
+	if interactiveCalls != 1 {
+		t.Fatalf("interactive sender should be called once: got=%d", interactiveCalls)
+	}
+	if calls := sender.snapshot(); len(calls) != 0 {
+		t.Fatalf("empty message_id with nil error should NOT fallback to SendCard/SendText, got=%d calls", len(calls))
 	}
 }
