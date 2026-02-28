@@ -1102,25 +1102,17 @@ func cmdTicketStop(args []string) {
 				"稍后重试，或检查数据库状态",
 			)
 		}
-		ctx2, cancel2 := projectCtx(*timeout)
-		if err := p.KillAllTmuxSessions(ctx2); err != nil {
-			cancel2()
-			exitRuntimeError(out,
-				"停止全部 workers 失败",
-				err.Error(),
-				"检查 tmux server 状态后重试",
-			)
-		}
-		if _, err := p.ReconcileRunningWorkersAfterKillAll(ctx2, ""); err != nil {
-			cancel2()
-			exitRuntimeError(out,
-				"回收 worker 状态失败",
-				err.Error(),
-				"检查数据库是否可写后重试",
-			)
-		}
-		cancel2()
 		for _, w := range running {
+			ctx2, cancel2 := projectCtx(*timeout)
+			err := p.StopWorker(ctx2, w.ID)
+			cancel2()
+			if err != nil {
+				exitRuntimeError(out,
+					fmt.Sprintf("停止 worker #%d 失败", w.ID),
+					err.Error(),
+					"确认 worker 正在运行并重试",
+				)
+			}
 			stopped = append(stopped, stopItem{WorkerID: w.ID, Session: strings.TrimSpace(w.TmuxSession)})
 		}
 	}

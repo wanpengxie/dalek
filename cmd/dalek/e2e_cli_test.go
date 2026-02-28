@@ -256,6 +256,76 @@ func TestCLI_TicketSetPriority_AndListOrder(t *testing.T) {
 	}
 }
 
+func TestCLI_TicketStopAll_ClearsRuntimeProcessPID(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+	home := filepath.Join(t.TempDir(), "home")
+
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "init", "-name", "demo")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "stop-all-1", "-desc", "stop-all-1")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "stop-all-2", "-desc", "stop-all-2")
+
+	type startResp struct {
+		WorkerID uint `json:"worker_id"`
+	}
+	startRaw1, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "start", "--ticket", "1", "-o", "json")
+	startRaw2, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "start", "--ticket", "2", "-o", "json")
+	var start1, start2 startResp
+	if err := json.Unmarshal([]byte(strings.TrimSpace(startRaw1)), &start1); err != nil {
+		t.Fatalf("decode ticket start #1 failed: %v\nraw=%s", err, startRaw1)
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(startRaw2)), &start2); err != nil {
+		t.Fatalf("decode ticket start #2 failed: %v\nraw=%s", err, startRaw2)
+	}
+	if start1.WorkerID == 0 || start2.WorkerID == 0 {
+		t.Fatalf("ticket start should return non-zero worker id, got=%d/%d", start1.WorkerID, start2.WorkerID)
+	}
+
+	stopRaw, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "stop", "--all", "-o", "json")
+	var stopResp struct {
+		Schema  string `json:"schema"`
+		Count   int    `json:"count"`
+		Stopped []struct {
+			WorkerID uint `json:"worker_id"`
+		} `json:"stopped"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stopRaw)), &stopResp); err != nil {
+		t.Fatalf("decode ticket stop --all failed: %v\nraw=%s", err, stopRaw)
+	}
+	if stopResp.Schema != "dalek.ticket.stop.v1" {
+		t.Fatalf("unexpected schema: %q", stopResp.Schema)
+	}
+	if stopResp.Count != 2 || len(stopResp.Stopped) != 2 {
+		t.Fatalf("stop --all should stop 2 workers, count=%d stopped=%d raw=%s", stopResp.Count, len(stopResp.Stopped), stopRaw)
+	}
+
+	h, err := app.OpenHome(home)
+	if err != nil {
+		t.Fatalf("OpenHome failed: %v", err)
+	}
+	project, err := h.OpenProjectByName("demo")
+	if err != nil {
+		t.Fatalf("OpenProjectByName failed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, wid := range []uint{start1.WorkerID, start2.WorkerID} {
+		w, err := project.WorkerByID(ctx, wid)
+		if err != nil {
+			t.Fatalf("WorkerByID(%d) failed: %v", wid, err)
+		}
+		if w == nil {
+			t.Fatalf("WorkerByID(%d) returned nil", wid)
+		}
+		if w.Status != contracts.WorkerStopped {
+			t.Fatalf("worker #%d should be stopped, got=%s", wid, w.Status)
+		}
+		if w.ProcessPID != 0 {
+			t.Fatalf("worker #%d process_pid should be 0 after stop --all, got=%d", wid, w.ProcessPID)
+		}
+	}
+}
+
 func TestCLI_GatewayChat_ListTickets(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
