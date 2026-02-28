@@ -78,6 +78,11 @@ func storeMigrations() []Migration {
 			Name:    "ensure_worker_last_retry_at_datetime",
 			Up:      migrateEnsureWorkerLastRetryAtDateTime,
 		},
+		{
+			Version: 13,
+			Name:    "ensure_ticket_label_column",
+			Up:      migrateEnsureTicketLabelColumn,
+		},
 	}
 }
 
@@ -301,6 +306,26 @@ func tableColumnType(db *gorm.DB, table string, col string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+func migrateEnsureTicketLabelColumn(db *gorm.DB) error {
+	has, err := tableHasColumn(db, "tickets", "label")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if err := db.Exec(`ALTER TABLE tickets ADD COLUMN label TEXT NOT NULL DEFAULT '';`).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if !strings.Contains(msg, "duplicate column name") {
+				return err
+			}
+		}
+	}
+	return db.Exec(`
+UPDATE tickets
+SET label = ''
+WHERE label IS NULL;
+`).Error
 }
 
 func normalizeMigrations(migrations []Migration) ([]Migration, error) {

@@ -99,24 +99,30 @@ func TestCLI_E2E_BasicWorkflow(t *testing.T) {
 	}
 
 	// 3) create ticket
-	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "first ticket", "-desc", "first ticket description")
+	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "first ticket", "-desc", "first ticket description", "--label", "feature")
 	if strings.TrimSpace(out) != "1" {
 		t.Fatalf("create should return ticket id 1, got: %q", out)
 	}
 
 	// 4) list ticket
 	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "ls")
-	if !strings.Contains(out, "first ticket") || !strings.Contains(out, "ID") || !strings.Contains(out, "PRIORITY") || !strings.Contains(out, "STATUS") {
+	if !strings.Contains(out, "first ticket") || !strings.Contains(out, "ID") || !strings.Contains(out, "LABEL") || !strings.Contains(out, "feature") || !strings.Contains(out, "PRIORITY") || !strings.Contains(out, "STATUS") {
 		t.Fatalf("ticket ls output missing expected columns:\n%s", out)
 	}
 
-	// 5) manager status（确保 manager 子命令链路可用）
+	// 5) show ticket（文本输出包含 label）
+	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "show", "--ticket", "1")
+	if !strings.Contains(out, "label:\tfeature") {
+		t.Fatalf("ticket show text should include label, got:\n%s", out)
+	}
+
+	// 6) manager status（确保 manager 子命令链路可用）
 	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "manager", "status")
 	if !strings.Contains(out, "autopilot=") {
 		t.Fatalf("manager status output unexpected:\n%s", out)
 	}
 
-	// 6) remove + empty list
+	// 7) remove + empty list
 	out, _ = runCLIOK(t, bin, repo, "-home", home, "project", "rm", "-name", "demo")
 	if !strings.Contains(out, "demo removed") {
 		t.Fatalf("project rm output unexpected:\n%s", out)
@@ -133,13 +139,13 @@ func TestCLI_TicketEdit_E2E(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "home")
 
 	_, _ = runCLIOK(t, bin, repo, "-home", home, "init", "-name", "demo")
-	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "old title", "-desc", "old desc")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "old title", "-desc", "old desc", "--label", "old-label")
 
 	_, stderr, err := runCLI(t, bin, repo, "-home", home, "-project", "demo", "ticket", "edit", "--ticket", "1")
 	if err == nil {
 		t.Fatalf("ticket edit without --title/--desc should fail")
 	}
-	if !strings.Contains(stderr, "至少需要 --title 或 --desc") {
+	if !strings.Contains(stderr, "至少需要 --title、--desc 或 --label") {
 		t.Fatalf("ticket edit missing-field hint not found:\n%s", stderr)
 	}
 
@@ -153,6 +159,7 @@ func TestCLI_TicketEdit_E2E(t *testing.T) {
 		Schema      string `json:"schema"`
 		Title       string `json:"title"`
 		Description string `json:"description"`
+		Label       string `json:"label"`
 	}
 	if err := json.Unmarshal([]byte(showOut), &showPayload); err != nil {
 		t.Fatalf("unmarshal ticket show json failed: %v\nraw=%s", err, showOut)
@@ -166,13 +173,17 @@ func TestCLI_TicketEdit_E2E(t *testing.T) {
 	if showPayload.Description != "old desc" {
 		t.Fatalf("description should remain unchanged, got=%q", showPayload.Description)
 	}
+	if showPayload.Label != "old-label" {
+		t.Fatalf("label should remain unchanged, got=%q", showPayload.Label)
+	}
 
-	editOut, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "edit", "--ticket", "1", "--desc", "new desc", "-o", "json")
+	editOut, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "edit", "--ticket", "1", "--desc", "new desc", "--label", "new-label", "-o", "json")
 	var editPayload struct {
 		Schema      string `json:"schema"`
 		TicketID    uint   `json:"ticket_id"`
 		Title       string `json:"title"`
 		Description string `json:"description"`
+		Label       string `json:"label"`
 		Status      string `json:"status"`
 	}
 	if err := json.Unmarshal([]byte(editOut), &editPayload); err != nil {
@@ -186,6 +197,9 @@ func TestCLI_TicketEdit_E2E(t *testing.T) {
 	}
 	if editPayload.Title != "new title" || editPayload.Description != "new desc" {
 		t.Fatalf("unexpected edit payload: %+v", editPayload)
+	}
+	if editPayload.Label != "new-label" {
+		t.Fatalf("label should be updated, got=%q", editPayload.Label)
 	}
 	if strings.TrimSpace(editPayload.Status) == "" {
 		t.Fatalf("edit status should not be empty")

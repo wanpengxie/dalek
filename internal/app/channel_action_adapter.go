@@ -22,8 +22,8 @@ func (a channelTicketActionAdapter) GetByID(ctx context.Context, ticketID uint) 
 	return a.svc.GetByID(ctx, ticketID)
 }
 
-func (a channelTicketActionAdapter) CreateWithDescription(ctx context.Context, title, description string) (*contracts.Ticket, error) {
-	return a.svc.CreateWithDescription(ctx, title, description)
+func (a channelTicketActionAdapter) CreateWithDescriptionAndLabel(ctx context.Context, title, description, label string) (*contracts.Ticket, error) {
+	return a.svc.CreateWithDescriptionAndLabel(ctx, title, description, label)
 }
 
 type channelPMActionAdapter struct {

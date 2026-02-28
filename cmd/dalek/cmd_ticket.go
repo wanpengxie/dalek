@@ -145,6 +145,7 @@ func cmdTicketList(args []string) {
 	type ticketItem struct {
 		ID            uint   `json:"id"`
 		Title         string `json:"title"`
+		Label         string `json:"label"`
 		Priority      int    `json:"priority"`
 		PriorityLabel string `json:"priority_label"`
 		Status        string `json:"status"`
@@ -187,6 +188,7 @@ func cmdTicketList(args []string) {
 		items = append(items, ticketItem{
 			ID:            tk.ID,
 			Title:         strings.TrimSpace(tk.Title),
+			Label:         strings.TrimSpace(tk.Label),
 			Priority:      tk.Priority,
 			PriorityLabel: contracts.TicketPriorityLabel(tk.Priority),
 			Status:        status,
@@ -211,10 +213,14 @@ func cmdTicketList(args []string) {
 		return
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tPRIORITY\tSTATUS\tRUNTIME\tNEEDS_USER\tOUTPUT\tTITLE")
+	fmt.Fprintln(tw, "ID\tLABEL\tPRIORITY\tSTATUS\tRUNTIME\tNEEDS_USER\tOUTPUT\tTITLE")
 	for _, it := range items {
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%v\t%s\t%s\n",
-			it.ID, formatTicketPriority(it.Priority), it.Status, it.Runtime, it.NeedsUser, it.OutputRef, it.Title)
+		label := "-"
+		if strings.TrimSpace(it.Label) != "" {
+			label = strings.TrimSpace(it.Label)
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%s\t%v\t%s\t%s\n",
+			it.ID, label, formatTicketPriority(it.Priority), it.Status, it.Runtime, it.NeedsUser, it.OutputRef, it.Title)
 	}
 	_ = tw.Flush()
 }
@@ -251,14 +257,14 @@ func cmdTicketCreate(args []string) {
 		fmt.Fprintln(os.Stderr, "创建新 ticket")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Usage:")
-		fmt.Fprintln(os.Stderr, "  dalek ticket create --title <title> --desc <description>")
+		fmt.Fprintln(os.Stderr, "  dalek ticket create --title <title> --desc <description> [--label <label>|-l <label>]")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  dalek ticket create --title \"实现功能X\" --desc \"需求文档在 /tmp/PRD.md\"")
-		fmt.Fprintln(os.Stderr, "  dalek ticket create -t \"修复 Bug\" -d \"详情见 issue #42\" -o json")
+		fmt.Fprintln(os.Stderr, "  dalek ticket create -t \"修复 Bug\" -d \"详情见 issue #42\" -l \"bugfix\" -o json")
 	}
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
 	proj := fs.String("project", globalProject, "项目名（可选）")
@@ -267,6 +273,8 @@ func cmdTicketCreate(args []string) {
 	fs.StringVar(title, "t", "", "ticket 标题 (required)")
 	desc := fs.String("desc", "", "ticket 描述 (required)")
 	fs.StringVar(desc, "d", "", "ticket 描述 (required)")
+	label := fs.String("label", "", "ticket 标签（可选，单标签）")
+	fs.StringVar(label, "l", "", "ticket 标签（可选，单标签）")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
 	parseFlagSetOrExit(fs, args, globalOutput, "ticket create 参数解析失败", "运行 dalek ticket create --help 查看参数")
 	if strings.TrimSpace(*projShort) != "" {
@@ -291,7 +299,7 @@ func cmdTicketCreate(args []string) {
 	p := mustOpenProjectWithOutput(out, *home, *proj)
 	ctx, cancel := projectCtx(10 * time.Second)
 	defer cancel()
-	t, err := p.CreateTicketWithDescription(ctx, *title, *desc)
+	t, err := p.CreateTicketWithDescriptionAndLabel(ctx, *title, *desc, *label)
 	if err != nil {
 		exitRuntimeError(out,
 			"创建 ticket 失败",
@@ -304,6 +312,7 @@ func cmdTicketCreate(args []string) {
 			"schema": "dalek.ticket.create.v1",
 			"id":     t.ID,
 			"title":  strings.TrimSpace(t.Title),
+			"label":  strings.TrimSpace(t.Label),
 			"status": "created",
 		})
 		return
@@ -317,10 +326,10 @@ func cmdTicketEdit(args []string) {
 	fs.Usage = func() {
 		printSubcommandUsage(
 			fs,
-			"编辑 ticket 标题/描述",
-			"dalek ticket edit --ticket <id> [--title <title>] [--desc <description>] [--timeout 2s] [--output text|json]",
+			"编辑 ticket 标题/描述/标签",
+			"dalek ticket edit --ticket <id> [--title <title>] [--desc <description>] [--label <label>|-l <label>] [--timeout 2s] [--output text|json]",
 			"dalek ticket edit --ticket 1 --title \"新标题\"",
-			"dalek ticket edit --ticket 1 --desc \"补充描述\" -o json",
+			"dalek ticket edit --ticket 1 --desc \"补充描述\" -l \"backend\" -o json",
 		)
 	}
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
@@ -330,6 +339,8 @@ func cmdTicketEdit(args []string) {
 	title := fs.String("title", "", "ticket 标题（可选）")
 	desc := fs.String("desc", "", "ticket 描述（可选）")
 	fs.StringVar(desc, "d", "", "ticket 描述（可选）")
+	label := fs.String("label", "", "ticket 标签（可选，传空字符串可清空）")
+	fs.StringVar(label, "l", "", "ticket 标签（可选，传空字符串可清空）")
 	timeout := fs.Duration("timeout", 2*time.Second, "超时（默认 2s）")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
 	parseFlagSetOrExit(fs, args, globalOutput, "ticket edit 参数解析失败", "运行 dalek ticket edit --help 查看参数")
@@ -346,18 +357,21 @@ func cmdTicketEdit(args []string) {
 	}
 	titleProvided := false
 	descProvided := false
+	labelProvided := false
 	fs.Visit(func(f *flag.Flag) {
 		switch strings.TrimSpace(f.Name) {
 		case "title":
 			titleProvided = true
 		case "desc", "d":
 			descProvided = true
+		case "label", "l":
+			labelProvided = true
 		}
 	})
-	if !titleProvided && !descProvided {
+	if !titleProvided && !descProvided && !labelProvided {
 		exitUsageError(out,
 			"缺少可更新字段",
-			"ticket edit 至少需要 --title 或 --desc 之一",
+			"ticket edit 至少需要 --title、--desc 或 --label 之一",
 			"dalek ticket edit --ticket 1 --title \"新标题\"",
 		)
 	}
@@ -418,22 +432,33 @@ func cmdTicketEdit(args []string) {
 
 	nextTitle := tk.Title
 	nextDesc := tk.Description
+	nextLabel := tk.Label
 	if titleProvided {
 		nextTitle = *title
 	}
 	if descProvided {
 		nextDesc = *desc
 	}
-	if err := p.UpdateTicketText(ctx, uint(*ticketID), nextTitle, nextDesc); err != nil {
+	if labelProvided {
+		nextLabel = *label
+	}
+	var errUpdate error
+	if labelProvided {
+		errUpdate = p.UpdateTicketTextAndLabel(ctx, uint(*ticketID), nextTitle, nextDesc, nextLabel)
+	} else {
+		errUpdate = p.UpdateTicketText(ctx, uint(*ticketID), nextTitle, nextDesc)
+	}
+	if errUpdate != nil {
 		exitRuntimeError(out,
 			"更新 ticket 文本失败",
-			err.Error(),
-			"检查 --title/--desc 参数后重试",
+			errUpdate.Error(),
+			"检查 --title/--desc/--label 参数后重试",
 		)
 	}
 
 	finalTitle := trimOneLine(nextTitle)
 	finalDesc := strings.TrimSpace(nextDesc)
+	finalLabel := trimOneLine(nextLabel)
 	status := string(contracts.CanonicalTicketWorkflowStatus(tk.WorkflowStatus))
 	if out == outputJSON {
 		printJSONOrExit(map[string]any{
@@ -441,6 +466,7 @@ func cmdTicketEdit(args []string) {
 			"ticket_id":   uint(*ticketID),
 			"title":       finalTitle,
 			"description": finalDesc,
+			"label":       finalLabel,
 			"status":      status,
 		})
 		return
@@ -665,6 +691,7 @@ func cmdTicketShow(args []string) {
 			"id":             tk.ID,
 			"title":          strings.TrimSpace(tk.Title),
 			"description":    strings.TrimSpace(tk.Description),
+			"label":          strings.TrimSpace(tk.Label),
 			"priority":       tk.Priority,
 			"priority_label": contracts.TicketPriorityLabel(tk.Priority),
 			"status":         status,
@@ -677,6 +704,11 @@ func cmdTicketShow(args []string) {
 	fmt.Printf("ticket:\t#%d\n", tk.ID)
 	fmt.Printf("title:\t%s\n", strings.TrimSpace(tk.Title))
 	fmt.Printf("desc:\t%s\n", strings.TrimSpace(tk.Description))
+	label := strings.TrimSpace(tk.Label)
+	if label == "" {
+		label = "-"
+	}
+	fmt.Printf("label:\t%s\n", label)
 	fmt.Printf("priority:\t%s\n", formatTicketPriority(tk.Priority))
 	fmt.Printf("status:\t%s\n", status)
 	fmt.Printf("created_at:\t%s\n", tk.CreatedAt.Local().Format("2006-01-02 15:04:05"))

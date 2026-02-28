@@ -135,6 +135,29 @@ func TestOpenAndMigrate_WorkerZombieRetryColumnsPresent(t *testing.T) {
 	}
 }
 
+func TestOpenAndMigrate_TicketLabelColumnPresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	type columnRow struct {
+		Name string `gorm:"column:name"`
+	}
+	var cols []columnRow
+	if err := db.Raw("PRAGMA table_info(tickets);").Scan(&cols).Error; err != nil {
+		t.Fatalf("query tickets columns failed: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, col := range cols {
+		seen[col.Name] = true
+	}
+	if !seen["label"] {
+		t.Fatalf("tickets should contain label column after migrations")
+	}
+}
+
 func TestOpenAndMigrate_RepairWorkerLogPathWhenOldV9Occupied(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)
