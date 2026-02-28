@@ -112,3 +112,10 @@ func (r *appProjectRuntime) ResetConversationSession(ctx context.Context, channe
 	}
 	return r.channel.ResetPeerConversationSession(ctx, channelType, adapter, peerConversationID)
 }
+
+func (r *appProjectRuntime) HardResetConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error) {
+	if r == nil || r.channel == nil {
+		return false, fmt.Errorf("project runtime 为空")
+	}
+	return r.channel.HardResetPeerConversation(ctx, channelType, adapter, peerConversationID)
+}

@@ -3,6 +3,7 @@ package channel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -53,10 +54,15 @@ type InterruptibleChatRunner interface {
 	Interrupt(ctx context.Context) (bool, error)
 }
 
+type ForceCloseChatRunner interface {
+	ForceClose() error
+}
+
 type ChatRunnerManager interface {
 	RunTurn(ctx context.Context, req ChatRunRequest, onEvent ChatEventHandler) (ChatRunResult, error)
 	InterruptConversation(ctx context.Context, conversationID string) (bool, error)
 	CloseConversation(conversationID string)
+	ForceCloseConversation(conversationID string) error
 	Close() error
 }
 
@@ -233,6 +239,39 @@ func (m *defaultChatRunnerManager) CloseConversation(conversationID string) {
 	for _, runner := range removed {
 		_ = runner.Close()
 	}
+}
+
+func (m *defaultChatRunnerManager) ForceCloseConversation(conversationID string) error {
+	conv := conversationID
+	if conv == "" {
+		return nil
+	}
+	prefix := "|" + conv
+	m.mu.Lock()
+	removed := make([]ChatRunner, 0, 2)
+	for key, item := range m.stateful {
+		if !strings.HasSuffix(key, prefix) {
+			continue
+		}
+		delete(m.stateful, key)
+		if item != nil && item.runner != nil {
+			removed = append(removed, item.runner)
+		}
+	}
+	m.mu.Unlock()
+	var errs []error
+	for _, runner := range removed {
+		if forceCloser, ok := runner.(ForceCloseChatRunner); ok && forceCloser != nil {
+			if err := forceCloser.ForceClose(); err != nil {
+				errs = append(errs, err)
+			}
+			continue
+		}
+		if err := runner.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (m *defaultChatRunnerManager) Close() error {

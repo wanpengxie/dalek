@@ -115,6 +115,26 @@ func (q *InboundQueue) Close() {
 	}
 }
 
+func (q *InboundQueue) Replace(projectName string) (chan InboundItem, chan InboundItem, error) {
+	if q == nil {
+		return nil, nil, errors.New("inbound queue 为空")
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return nil, nil, errors.New("project name 不能为空")
+	}
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed.Load() {
+		return nil, nil, ErrInboundQueueClosed
+	}
+	old := q.queues[projectName]
+	newCh := make(chan InboundItem, q.Depth())
+	q.queues[projectName] = newCh
+	return old, newCh, nil
+}
+
 func (q *InboundQueue) getOrCreateLocked(projectName string) (chan InboundItem, bool, error) {
 	if q.closed.Load() {
 		return nil, false, ErrInboundQueueClosed

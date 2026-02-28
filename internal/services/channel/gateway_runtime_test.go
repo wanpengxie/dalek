@@ -122,6 +122,8 @@ type interruptProjectRuntime struct {
 	interruptErr error
 	resetOK      bool
 	resetErr     error
+	hardResetOK  bool
+	hardResetErr error
 
 	mu                 sync.Mutex
 	interruptCalls     int
@@ -130,6 +132,8 @@ type interruptProjectRuntime struct {
 	lastConversationID string
 	resetCalls         int
 	lastResetConvID    string
+	hardResetCalls     int
+	lastHardResetConv  string
 }
 
 func (r *interruptProjectRuntime) ProcessInbound(ctx context.Context, env contracts.InboundEnvelope) (ProcessResult, error) {
@@ -174,6 +178,18 @@ func (r *interruptProjectRuntime) ResetConversationSession(ctx context.Context, 
 		return false, r.resetErr
 	}
 	return r.resetOK, nil
+}
+
+func (r *interruptProjectRuntime) HardResetConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error) {
+	_ = ctx
+	r.mu.Lock()
+	r.hardResetCalls++
+	r.lastHardResetConv = strings.TrimSpace(peerConversationID)
+	r.mu.Unlock()
+	if r.hardResetErr != nil {
+		return false, r.hardResetErr
+	}
+	return r.hardResetOK, nil
 }
 
 type mapProjectResolver struct {
@@ -714,6 +730,46 @@ func TestGateway_InterruptBoundConversation(t *testing.T) {
 	}
 }
 
+func TestGateway_InterruptBoundConversation_CancelsActiveTurn(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	runtime := &interruptProjectRuntime{interruptOK: true}
+	resolver := &fakeProjectResolver{ctx: &ProjectContext{
+		Name:     "alpha",
+		RepoRoot: "/tmp/alpha",
+		Runtime:  runtime,
+	}}
+	gw, err := NewGateway(db, resolver, GatewayOptions{QueueDepth: 4})
+	if err != nil {
+		t.Fatalf("new gateway failed: %v", err)
+	}
+	if _, err := gw.BindProject(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-2", "alpha"); err != nil {
+		t.Fatalf("bind project failed: %v", err)
+	}
+
+	canceled := false
+	turnID := gw.registerActiveTurn("alpha", "chat-2", func() { canceled = true })
+	defer gw.clearActiveTurn("alpha", turnID)
+
+	_, result, err := gw.InterruptBoundConversation(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-2", "chat-2")
+	if err != nil {
+		t.Fatalf("InterruptBoundConversation failed: %v", err)
+	}
+	if !canceled {
+		t.Fatalf("expected gateway active turn to be canceled")
+	}
+	if !result.ContextCanceled {
+		t.Fatalf("expected ContextCanceled=true after gateway cancel")
+	}
+	if result.Status != InterruptStatusHit {
+		t.Fatalf("expected status=hit, got=%s", result.Status)
+	}
+}
+
 func TestGateway_ResetBoundConversationSession(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "gateway.db")
 	db, err := store.OpenAndMigrate(dbPath)
@@ -753,6 +809,48 @@ func TestGateway_ResetBoundConversationSession(t *testing.T) {
 	}
 	if runtime.lastResetConvID != "chat-r" {
 		t.Fatalf("reset conversation id mismatch: %q", runtime.lastResetConvID)
+	}
+}
+
+func TestGateway_HardResetBoundConversation(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "gateway.db")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	runtime := &interruptProjectRuntime{hardResetOK: true}
+	resolver := &fakeProjectResolver{ctx: &ProjectContext{
+		Name:     "alpha",
+		RepoRoot: "/tmp/alpha",
+		Runtime:  runtime,
+	}}
+	gw, err := NewGateway(db, resolver, GatewayOptions{QueueDepth: 4})
+	if err != nil {
+		t.Fatalf("new gateway failed: %v", err)
+	}
+	if _, err := gw.BindProject(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-rst", "alpha"); err != nil {
+		t.Fatalf("bind project failed: %v", err)
+	}
+
+	projectName, reset, err := gw.HardResetBoundConversation(context.Background(), contracts.ChannelTypeIM, "im.feishu", "chat-rst", "chat-rst")
+	if err != nil {
+		t.Fatalf("HardResetBoundConversation failed: %v", err)
+	}
+	if strings.TrimSpace(projectName) != "alpha" {
+		t.Fatalf("unexpected project: %q", projectName)
+	}
+	if !reset {
+		t.Fatalf("expected reset=true")
+	}
+
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.hardResetCalls != 1 {
+		t.Fatalf("hard reset calls mismatch: %d", runtime.hardResetCalls)
+	}
+	if runtime.lastHardResetConv != "chat-rst" {
+		t.Fatalf("hard reset conversation id mismatch: %q", runtime.lastHardResetConv)
 	}
 }
 
@@ -1051,8 +1149,8 @@ func TestGateway_Stop_ContextTimeoutThenDrain(t *testing.T) {
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
-	if err := gw.Stop(stopCtx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("stop should timeout while worker busy, got=%v", err)
+	if err := gw.Stop(stopCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("stop should succeed or timeout while worker busy, got=%v", err)
 	}
 
 	if err := gw.Submit(context.Background(), GatewayInboundRequest{

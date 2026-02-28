@@ -242,10 +242,9 @@ func (s *Service) InterruptPeerConversation(ctx context.Context, channelType con
 	if manager := s.chatRunnerManagerSnapshot(); manager != nil {
 		runnerInterrupted, runnerErr = manager.InterruptConversation(ctx, fmt.Sprintf("%d", conv.ID))
 	}
-	ctxCanceled := false
-	if !runnerInterrupted {
-		ctxCanceled = s.cancelRunningTurnByConversation(conv.ID)
-	}
+	// 无论 runner 是否声明 interrupt 成功，都尝试取消 turn context。
+	// 某些阻塞路径只会响应 context cancel，不会响应 interrupt 信号。
+	ctxCanceled := s.cancelRunningTurnByConversation(conv.ID)
 	result := InterruptResult{
 		ConversationID:    conv.ID,
 		RunnerInterrupted: runnerInterrupted,
@@ -304,6 +303,48 @@ func (s *Service) ResetPeerConversationSession(ctx context.Context, channelType 
 	s.cancelRunningTurnByConversation(conv.ID)
 	if manager := s.chatRunnerManagerSnapshot(); manager != nil {
 		manager.CloseConversation(fmt.Sprintf("%d", conv.ID))
+	}
+	return true, nil
+}
+
+func (s *Service) HardResetPeerConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error) {
+	_, db, err := s.require()
+	if err != nil {
+		return false, err
+	}
+	if ctx == nil {
+		return false, fmt.Errorf("context 不能为空")
+	}
+
+	conv, found, err := s.resolvePeerConversation(ctx, channelType, adapter, peerConversationID)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return true, nil
+	}
+
+	s.cancelRunningTurnByConversation(conv.ID)
+
+	var forceErr error
+	if manager := s.chatRunnerManagerSnapshot(); manager != nil {
+		forceErr = manager.ForceCloseConversation(fmt.Sprintf("%d", conv.ID))
+	}
+
+	now := time.Now()
+	if err := db.WithContext(ctx).Model(&contracts.ChannelConversation{}).
+		Where("id = ?", conv.ID).
+		Updates(map[string]any{
+			"agent_session_id": "",
+			"updated_at":       now,
+		}).Error; err != nil {
+		if forceErr != nil {
+			return false, fmt.Errorf("%w；另外强制关闭 runner 失败: %v", err, forceErr)
+		}
+		return false, err
+	}
+	if forceErr != nil {
+		return true, forceErr
 	}
 	return true, nil
 }

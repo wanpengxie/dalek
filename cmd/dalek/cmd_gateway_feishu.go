@@ -61,6 +61,10 @@ func tryHandleFeishuNewCommand(ctx context.Context, gateway *channelsvc.Gateway,
 	return feishusvc.TryHandleNewCommand(ctx, gateway, resolver, sender, adapter, chatID, text)
 }
 
+func tryHandleFeishuResetCommand(ctx context.Context, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender feishuMessageSender, adapter, chatID, text string) bool {
+	return feishusvc.TryHandleResetCommand(ctx, gateway, resolver, sender, adapter, chatID, text)
+}
+
 func buildFeishuUnboundHint(resolver channelsvc.ProjectResolver) string {
 	return feishusvc.BuildUnboundHint(resolver)
 }

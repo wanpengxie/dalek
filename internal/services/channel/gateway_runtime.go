@@ -33,6 +33,10 @@ type ProjectRuntimeSessionResetter interface {
 	ResetConversationSession(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error)
 }
 
+type ProjectRuntimeHardResetter interface {
+	HardResetConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error)
+}
+
 type ProjectRuntimePendingActionManager interface {
 	ListPendingActions(ctx context.Context, jobID uint) ([]PendingActionView, error)
 	ApprovePendingAction(ctx context.Context, actionID uint, decider string) (PendingActionDecisionResult, error)
@@ -88,6 +92,10 @@ type Gateway struct {
 	stopping    atomic.Bool
 	stopOnce    sync.Once
 	stoppedCh   chan struct{}
+
+	activeTurnsMu sync.Mutex
+	activeTurns   map[string]gatewayActiveTurn
+	activeTurnSeq atomic.Uint64
 }
 
 type gatewayPersistState struct {
@@ -95,6 +103,12 @@ type gatewayPersistState struct {
 	conv    contracts.ChannelConversation
 	inbound contracts.ChannelMessage
 	job     contracts.ChannelTurnJob
+}
+
+type gatewayActiveTurn struct {
+	id                 uint64
+	peerConversationID string
+	cancel             context.CancelFunc
 }
 
 func NewGateway(db *gorm.DB, resolver ProjectResolver, opt GatewayOptions) (*Gateway, error) {
@@ -122,6 +136,7 @@ func NewGateway(db *gorm.DB, resolver ProjectResolver, opt GatewayOptions) (*Gat
 		defaultTurnTimeout: turnTimeout,
 		workers:            map[string]chan InboundItem{},
 		stoppedCh:          make(chan struct{}),
+		activeTurns:        map[string]gatewayActiveTurn{},
 	}, nil
 }
 
@@ -165,6 +180,19 @@ func (g *Gateway) Stop(ctx context.Context) error {
 
 	g.stopOnce.Do(func() {
 		g.stopping.Store(true)
+
+		g.activeTurnsMu.Lock()
+		cancels := make([]context.CancelFunc, 0, len(g.activeTurns))
+		for key, item := range g.activeTurns {
+			if item.cancel != nil {
+				cancels = append(cancels, item.cancel)
+			}
+			delete(g.activeTurns, key)
+		}
+		g.activeTurnsMu.Unlock()
+		for _, cancel := range cancels {
+			cancel()
+		}
 
 		g.lifecycleMu.Lock()
 		if g.queue != nil {
@@ -357,7 +385,7 @@ func (g *Gateway) startProjectWorker(projectName string, ch chan InboundItem) {
 	}
 
 	g.workersMu.Lock()
-	if _, ok := g.workers[projectName]; ok {
+	if existing, ok := g.workers[projectName]; ok && existing == ch {
 		g.workersMu.Unlock()
 		return
 	}
@@ -368,7 +396,9 @@ func (g *Gateway) startProjectWorker(projectName string, ch chan InboundItem) {
 	go func() {
 		defer func() {
 			g.workersMu.Lock()
-			delete(g.workers, projectName)
+			if current, ok := g.workers[projectName]; ok && current == ch {
+				delete(g.workers, projectName)
+			}
 			g.workersMu.Unlock()
 			g.workerWg.Done()
 		}()
@@ -440,6 +470,8 @@ func (g *Gateway) processInboundItem(item InboundItem) {
 	} else {
 		turnCtx, cancel = context.WithCancel(ctx)
 	}
+	turnID := g.registerActiveTurn(item.ProjectName, item.Envelope.PeerConversationID, cancel)
+	defer g.clearActiveTurn(item.ProjectName, turnID)
 	var streamedAny atomic.Bool
 	turnCtx = withStreamEventEmitter(turnCtx, func(ev AgentEvent) {
 		streamedAny.Store(true)
@@ -482,6 +514,89 @@ func (g *Gateway) callback(item InboundItem, result ProcessResult, err error) {
 		return
 	}
 	item.Callback(result, err)
+}
+
+func (g *Gateway) registerActiveTurn(projectName, peerConversationID string, cancel context.CancelFunc) uint64 {
+	if g == nil || cancel == nil {
+		return 0
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return 0
+	}
+	id := g.activeTurnSeq.Add(1)
+	g.activeTurnsMu.Lock()
+	g.activeTurns[projectName] = gatewayActiveTurn{
+		id:                 id,
+		peerConversationID: strings.TrimSpace(peerConversationID),
+		cancel:             cancel,
+	}
+	g.activeTurnsMu.Unlock()
+	return id
+}
+
+func (g *Gateway) clearActiveTurn(projectName string, id uint64) {
+	if g == nil || id == 0 {
+		return
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return
+	}
+	g.activeTurnsMu.Lock()
+	current, ok := g.activeTurns[projectName]
+	if ok && current.id == id {
+		delete(g.activeTurns, projectName)
+	}
+	g.activeTurnsMu.Unlock()
+}
+
+func (g *Gateway) cancelActiveTurn(projectName, peerConversationID string, allowProjectFallback bool) bool {
+	if g == nil {
+		return false
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return false
+	}
+	peerConversationID = strings.TrimSpace(peerConversationID)
+
+	g.activeTurnsMu.Lock()
+	current, ok := g.activeTurns[projectName]
+	if !ok || current.cancel == nil {
+		g.activeTurnsMu.Unlock()
+		return false
+	}
+	if peerConversationID != "" && current.peerConversationID != "" && current.peerConversationID != peerConversationID && !allowProjectFallback {
+		g.activeTurnsMu.Unlock()
+		return false
+	}
+	cancel := current.cancel
+	g.activeTurnsMu.Unlock()
+	cancel()
+	return true
+}
+
+func (g *Gateway) replaceProjectWorker(projectName string) error {
+	if g == nil || g.queue == nil {
+		return fmt.Errorf("gateway queue 不可用")
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return fmt.Errorf("project name 不能为空")
+	}
+	oldCh, newCh, err := g.queue.Replace(projectName)
+	if err != nil {
+		if errors.Is(err, ErrInboundQueueClosed) {
+			return ErrGatewayStopped
+		}
+		return err
+	}
+	g.startProjectWorker(projectName, newCh)
+	if oldCh != nil {
+		close(oldCh)
+	}
+	return nil
 }
 
 func (g *Gateway) persistInboundAccepted(ctx context.Context, item InboundItem) (gatewayPersistState, *ProcessResult, error) {
@@ -880,6 +995,11 @@ func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType co
 		"locator", "hit",
 		"project", projectName,
 	)
+	gatewayCanceled := g.cancelActiveTurn(projectName, peerConversationID, false)
+	if !gatewayCanceled {
+		// 容灾兜底：同项目串行 worker 只跑一个 turn，允许退化为项目级取消。
+		gatewayCanceled = g.cancelActiveTurn(projectName, "", true)
+	}
 	projectCtx, err := g.resolver.Resolve(projectName)
 	if err != nil {
 		return projectName, InterruptResult{}, err
@@ -889,7 +1009,14 @@ func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType co
 	}
 	interrupter, ok := projectCtx.Runtime.(ProjectRuntimeInterrupter)
 	if !ok || interrupter == nil {
-		result := InterruptResult{Status: InterruptStatusMiss}
+		status := InterruptStatusMiss
+		if gatewayCanceled {
+			status = InterruptStatusHit
+		}
+		result := InterruptResult{
+			Status:          status,
+			ContextCanceled: gatewayCanceled,
+		}
 		g.logInterrupt("runner_result",
 			"project", projectName,
 			"status", result.Status,
@@ -906,6 +1033,12 @@ func (g *Gateway) InterruptBoundConversation(ctx context.Context, channelType co
 			"error", err,
 		)
 		return projectName, result, err
+	}
+	if gatewayCanceled {
+		result.ContextCanceled = true
+		if result.Status != InterruptStatusHit {
+			result.Status = InterruptStatusHit
+		}
 	}
 	g.logInterrupt("runner_result",
 		"project", projectName,
@@ -962,6 +1095,69 @@ func (g *Gateway) ResetBoundConversationSession(ctx context.Context, channelType
 	reset, err := resetter.ResetConversationSession(ctx, channelType, adapter, peerConversationID)
 	if err != nil {
 		return projectName, reset, err
+	}
+	return projectName, reset, nil
+}
+
+func (g *Gateway) HardResetBoundConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerProjectKey, peerConversationID string) (string, bool, error) {
+	if g == nil || g.db == nil {
+		return "", false, fmt.Errorf("gateway db 为空")
+	}
+	if ctx == nil {
+		return "", false, fmt.Errorf("context 不能为空")
+	}
+	channelType = toStoreChannelType(channelType)
+	if channelType == "" {
+		channelType = contracts.ChannelTypeCLI
+	}
+	adapter = strings.TrimSpace(adapter)
+	if adapter == "" {
+		adapter = defaultAdapter(string(channelType))
+	}
+	peerProjectKey = strings.TrimSpace(peerProjectKey)
+	peerConversationID = strings.TrimSpace(peerConversationID)
+	if peerConversationID == "" {
+		peerConversationID = peerProjectKey
+	}
+	if peerProjectKey == "" || peerConversationID == "" {
+		return "", false, fmt.Errorf("peer project key / conversation id 不能为空")
+	}
+
+	projectName, err := g.LookupBoundProject(ctx, channelType, adapter, peerProjectKey)
+	if err != nil {
+		return "", false, err
+	}
+	if projectName == "" {
+		return "", false, nil
+	}
+
+	// /reset 以恢复可用性为优先：先做项目级取消，确保上层 turn ctx 收敛。
+	g.cancelActiveTurn(projectName, "", true)
+
+	projectCtx, err := g.resolver.Resolve(projectName)
+	if err != nil {
+		return projectName, false, err
+	}
+	if projectCtx == nil || projectCtx.Runtime == nil {
+		return projectName, false, fmt.Errorf("project runtime 不可用: %s", projectName)
+	}
+	resetter, ok := projectCtx.Runtime.(ProjectRuntimeHardResetter)
+	if !ok || resetter == nil {
+		return projectName, false, fmt.Errorf("project runtime 不支持 hard reset: %s", projectName)
+	}
+	reset, resetErr := resetter.HardResetConversation(ctx, channelType, adapter, peerConversationID)
+	replaceErr := g.replaceProjectWorker(projectName)
+	if resetErr != nil && replaceErr != nil {
+		return projectName, reset, fmt.Errorf("%w；另外 worker 重建失败: %v", resetErr, replaceErr)
+	}
+	if resetErr != nil {
+		return projectName, reset, resetErr
+	}
+	if replaceErr != nil {
+		return projectName, reset, replaceErr
+	}
+	if !reset {
+		reset = true
 	}
 	return projectName, reset, nil
 }

@@ -164,6 +164,38 @@ func TestChatRunnerManager_InterruptConversation_StatefulRunner(t *testing.T) {
 	}
 }
 
+func TestChatRunnerManager_ForceCloseConversation_StatefulRunner(t *testing.T) {
+	origFactory := createClaudeChatRunner
+	t.Cleanup(func() { createClaudeChatRunner = origFactory })
+
+	runner := &fakeChatRunner{
+		result:       ChatRunResult{Text: "ok"},
+		forceCloseOK: true,
+	}
+	createClaudeChatRunner = func(ctx context.Context, req ChatRunRequest) (ChatRunner, error) {
+		return runner, nil
+	}
+
+	manager := newDefaultChatRunnerManager(nil)
+	if _, err := manager.RunTurn(context.Background(), ChatRunRequest{
+		ConversationID: "conv-force-close",
+		Provider:       "claude",
+		Prompt:         "hello",
+	}, nil); err != nil {
+		t.Fatalf("RunTurn failed: %v", err)
+	}
+
+	if err := manager.ForceCloseConversation("conv-force-close"); err != nil {
+		t.Fatalf("ForceCloseConversation failed: %v", err)
+	}
+	if runner.forceCloseCount != 1 {
+		t.Fatalf("expected force close count=1, got=%d", runner.forceCloseCount)
+	}
+	if runner.closedCount != 0 {
+		t.Fatalf("force close path should not call Close, got=%d", runner.closedCount)
+	}
+}
+
 type fakeChatRunner struct {
 	runErr      error
 	result      ChatRunResult
@@ -173,6 +205,10 @@ type fakeChatRunner struct {
 	interruptOK    bool
 	interruptErr   error
 	interruptCount int
+
+	forceCloseOK    bool
+	forceCloseErr   error
+	forceCloseCount int
 }
 
 func (f *fakeChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEvent ChatEventHandler) (ChatRunResult, error) {
@@ -192,6 +228,17 @@ func (f *fakeChatRunner) Interrupt(ctx context.Context) (bool, error) {
 		return false, f.interruptErr
 	}
 	return f.interruptOK, nil
+}
+
+func (f *fakeChatRunner) ForceClose() error {
+	f.forceCloseCount++
+	if f.forceCloseErr != nil {
+		return f.forceCloseErr
+	}
+	if f.forceCloseOK {
+		return nil
+	}
+	return nil
 }
 
 type fakeTaskRunner struct {

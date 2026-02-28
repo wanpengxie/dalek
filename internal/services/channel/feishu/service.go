@@ -283,6 +283,10 @@ func TryHandleNewCommand(ctx context.Context, gateway *channelsvc.Gateway, resol
 	return tryHandleDaemonFeishuNewCommand(ctx, gateway, resolver, sender, adapter, chatID, text)
 }
 
+func TryHandleResetCommand(ctx context.Context, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender MessageSender, adapter, chatID, text string) bool {
+	return tryHandleDaemonFeishuResetCommand(ctx, gateway, resolver, sender, adapter, chatID, text)
+}
+
 func BuildUnboundHint(resolver channelsvc.ProjectResolver) string {
 	return buildDaemonFeishuUnboundHint(resolver)
 }
@@ -485,6 +489,10 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			return
 		}
 		if handled := tryHandleDaemonFeishuNewCommand(reqCtx, gateway, resolver, sender, opt.Adapter, chatID, text); handled {
+			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
+			return
+		}
+		if handled := tryHandleDaemonFeishuResetCommand(reqCtx, gateway, resolver, sender, opt.Adapter, chatID, text); handled {
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
@@ -1437,7 +1445,7 @@ func tryHandleDaemonFeishuInterruptCommand(ctx context.Context, gateway *channel
 }
 
 func tryHandleDaemonFeishuNewCommand(ctx context.Context, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, adapter, chatID, text string) bool {
-	if strings.ToLower(text) != "/new" {
+	if strings.ToLower(strings.TrimSpace(text)) != "/new" {
 		return false
 	}
 	projectName, reset, err := gateway.ResetBoundConversationSession(
@@ -1463,11 +1471,39 @@ func tryHandleDaemonFeishuNewCommand(ctx context.Context, gateway *channelsvc.Ga
 	return true
 }
 
+func tryHandleDaemonFeishuResetCommand(ctx context.Context, gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver, sender daemonFeishuMessageSender, adapter, chatID, text string) bool {
+	if strings.ToLower(strings.TrimSpace(text)) != "/reset" {
+		return false
+	}
+	projectName, reset, err := gateway.HardResetBoundConversation(
+		ctx,
+		contracts.ChannelTypeIM,
+		adapter,
+		chatID,
+		chatID,
+	)
+	if err != nil {
+		_ = sender.SendText(ctx, chatID, "彻底重置失败，请稍后重试")
+		return true
+	}
+	if projectName == "" {
+		_ = sender.SendText(ctx, chatID, buildDaemonFeishuUnboundHint(resolver))
+		return true
+	}
+	if reset {
+		_ = sender.SendText(ctx, chatID, "已彻底重置会话，下条消息将开启全新 session")
+		return true
+	}
+	_ = sender.SendText(ctx, chatID, "当前没有可重置的会话")
+	return true
+}
+
 var daemonFeishuHelpCommandLines = []string{
 	"/help         显示此帮助",
 	"/bind <项目名> 绑定当前群到项目",
 	"/unbind       解绑当前群项目绑定",
-	"/new          重置会话，下条消息开启新 session",
+	"/new          仅重置会话，下条消息开启新 session",
+	"/reset        彻底重置通道并开启全新 session",
 	"/interrupt    中断当前任务",
 	"/stop         /interrupt 的别名",
 	"/quiet        查看安静模式状态",

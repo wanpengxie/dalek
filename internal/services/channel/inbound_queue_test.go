@@ -88,3 +88,36 @@ func TestInboundQueue_Close_IdempotentAndRejectsNewQueue(t *testing.T) {
 		t.Fatalf("Enqueue after close should return ErrInboundQueueClosed, got=%v", err)
 	}
 }
+
+func TestInboundQueue_ReplaceProjectQueue(t *testing.T) {
+	q := NewInboundQueue(2)
+	orig, created, err := q.GetOrCreate("alpha")
+	if err != nil {
+		t.Fatalf("GetOrCreate failed: %v", err)
+	}
+	if !created || orig == nil {
+		t.Fatalf("expected initial queue channel created")
+	}
+
+	oldCh, newCh, err := q.Replace("alpha")
+	if err != nil {
+		t.Fatalf("Replace failed: %v", err)
+	}
+	if oldCh != orig {
+		t.Fatalf("replace should return old queue channel")
+	}
+	if newCh == nil || newCh == oldCh {
+		t.Fatalf("replace should create a new queue channel")
+	}
+
+	got, createdAgain, err := q.GetOrCreate("alpha")
+	if err != nil {
+		t.Fatalf("GetOrCreate after replace failed: %v", err)
+	}
+	if createdAgain {
+		t.Fatalf("queue should already exist after replace")
+	}
+	if got != newCh {
+		t.Fatalf("expected replaced queue channel")
+	}
+}

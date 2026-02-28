@@ -252,6 +252,17 @@ func (r *claudeChatRunner) Close() error {
 	return r.resetClient()
 }
 
+func (r *claudeChatRunner) ForceClose() error {
+	r.mu.Lock()
+	client := r.client
+	r.client = nil
+	r.mu.Unlock()
+	if client == nil {
+		return nil
+	}
+	return client.Close()
+}
+
 func (r *claudeChatRunner) ensureClientConnected(ctx context.Context) (claudeClient, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

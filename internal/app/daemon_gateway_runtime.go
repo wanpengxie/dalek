@@ -117,6 +117,13 @@ func (r *daemonGatewayProjectRuntime) ResetConversationSession(ctx context.Conte
 	return r.channel.ResetPeerConversationSession(ctx, channelType, adapter, peerConversationID)
 }
 
+func (r *daemonGatewayProjectRuntime) HardResetConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error) {
+	if r == nil || r.channel == nil {
+		return false, fmt.Errorf("project runtime 为空")
+	}
+	return r.channel.HardResetPeerConversation(ctx, channelType, adapter, peerConversationID)
+}
+
 func (r *daemonGatewayProjectRuntime) ListPendingActions(ctx context.Context, jobID uint) ([]channelsvc.PendingActionView, error) {
 	if r == nil || r.channel == nil {
 		return nil, fmt.Errorf("project runtime 为空")

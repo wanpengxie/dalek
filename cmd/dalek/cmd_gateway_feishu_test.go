@@ -207,6 +207,8 @@ type interruptableProjectRuntime struct {
 	interruptErr error
 	resetOK      bool
 	resetErr     error
+	hardResetOK  bool
+	hardResetErr error
 
 	mu                 sync.Mutex
 	interruptCalls     int
@@ -215,6 +217,8 @@ type interruptableProjectRuntime struct {
 	lastConversationID string
 	resetCalls         int
 	lastResetConvID    string
+	hardResetCalls     int
+	lastHardResetConv  string
 }
 
 func (r *interruptableProjectRuntime) ProcessInbound(ctx context.Context, env contracts.InboundEnvelope) (channelsvc.ProcessResult, error) {
@@ -262,6 +266,18 @@ func (r *interruptableProjectRuntime) ResetConversationSession(ctx context.Conte
 		return false, r.resetErr
 	}
 	return r.resetOK, nil
+}
+
+func (r *interruptableProjectRuntime) HardResetConversation(ctx context.Context, channelType contracts.ChannelType, adapter, peerConversationID string) (bool, error) {
+	_ = ctx
+	r.mu.Lock()
+	r.hardResetCalls++
+	r.lastHardResetConv = strings.TrimSpace(peerConversationID)
+	r.mu.Unlock()
+	if r.hardResetErr != nil {
+		return false, r.hardResetErr
+	}
+	return r.hardResetOK, nil
 }
 
 type senderMessage struct {
@@ -666,6 +682,52 @@ func TestGatewayFeishuWebhook_NewCommand(t *testing.T) {
 	}
 	if runtime.lastResetConvID != "chat-feishu-new" {
 		t.Fatalf("reset conversation id mismatch: %q", runtime.lastResetConvID)
+	}
+}
+
+func TestGatewayFeishuWebhook_ResetCommand(t *testing.T) {
+	db := openGatewayDBForFeishuTest(t)
+
+	runtime := &interruptableProjectRuntime{hardResetOK: true}
+	resolver := &staticProjectResolver{
+		projects: map[string]*channelsvc.ProjectContext{
+			"demo": {
+				Name:     "demo",
+				RepoRoot: "/tmp/demo",
+				Runtime:  runtime,
+			},
+		},
+	}
+	gateway, err := channelsvc.NewGateway(db, resolver, channelsvc.GatewayOptions{QueueDepth: 8})
+	if err != nil {
+		t.Fatalf("NewGateway failed: %v", err)
+	}
+
+	sender := &captureFeishuSender{}
+	handler := newGatewayFeishuWebhookHandler(gateway, resolver, sender, gatewayFeishuHandlerOptions{
+		Adapter:     "im.feishu",
+		VerifyToken: "verify-token",
+	})
+
+	postFeishuTextEvent(t, handler, "verify-token", "chat-feishu-reset", "msg-bind", "open-user-1", "/bind demo")
+	msgs := sender.waitMessages(t, 1, 2*time.Second)
+	if !strings.Contains(msgs[0].text, "已绑定到 project demo") {
+		t.Fatalf("bind reply unexpected: %q", msgs[0].text)
+	}
+
+	postFeishuTextEvent(t, handler, "verify-token", "chat-feishu-reset", "msg-reset", "open-user-1", "/reset")
+	msgs = sender.waitMessages(t, 2, 2*time.Second)
+	if !strings.Contains(msgs[1].text, "已彻底重置会话") {
+		t.Fatalf("reset reply unexpected: %q", msgs[1].text)
+	}
+
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.hardResetCalls != 1 {
+		t.Fatalf("hard reset calls mismatch: %d", runtime.hardResetCalls)
+	}
+	if runtime.lastHardResetConv != "chat-feishu-reset" {
+		t.Fatalf("hard reset conversation id mismatch: %q", runtime.lastHardResetConv)
 	}
 }
 
