@@ -19,6 +19,8 @@ type zombieCheckResult struct {
 	Checked   int
 	Recovered int
 	Blocked   int
+	Illegal   int
+	Undefined int
 	Errors    []string
 }
 
@@ -50,13 +52,13 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 		out.Errors = append(out.Errors, fmt.Sprintf("zombie 检查查询 running workers 失败: %v", err))
 		return out
 	}
-	if len(running) == 0 {
-		return out
-	}
-
-	runtimeByWorker, rerr := latestWorkerRuntimeStatus(ctx, taskRuntime)
-	if rerr != nil {
-		out.Errors = append(out.Errors, fmt.Sprintf("zombie 检查加载 task_status_view 失败: %v", rerr))
+	runtimeByWorker := map[uint]contracts.TaskStatusView{}
+	if len(running) > 0 {
+		var rerr error
+		runtimeByWorker, rerr = latestWorkerRuntimeStatus(ctx, taskRuntime)
+		if rerr != nil {
+			out.Errors = append(out.Errors, fmt.Sprintf("zombie 检查加载 task_status_view 失败: %v", rerr))
+		}
 	}
 
 	defaultSocket := strings.TrimSpace(p.Config.WithDefaults().TmuxSocket)
@@ -144,7 +146,195 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 			out.Errors = append(out.Errors, fmt.Sprintf("stalled 恢复失败：t%d w%d: %v", w.TicketID, w.ID, herr))
 		}
 	}
+
+	stateDrift := s.reconcileZombieStateDrift(ctx, db, now)
+	out.Illegal += stateDrift.Illegal
+	out.Undefined += stateDrift.Undefined
+	out.Blocked += stateDrift.Blocked
+	out.Errors = append(out.Errors, stateDrift.Errors...)
 	return out
+}
+
+type zombieStateDriftResult struct {
+	Illegal   int
+	Undefined int
+	Blocked   int
+	Errors    []string
+}
+
+func (s *Service) reconcileZombieStateDrift(ctx context.Context, db *gorm.DB, now time.Time) zombieStateDriftResult {
+	out := zombieStateDriftResult{}
+	if db == nil {
+		out.Errors = append(out.Errors, "zombie 状态巡检失败：db 为空")
+		return out
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	var tickets []contracts.Ticket
+	if err := db.WithContext(ctx).
+		Select("id", "workflow_status").
+		Where("workflow_status != ?", contracts.TicketArchived).
+		Order("id asc").
+		Find(&tickets).Error; err != nil {
+		out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检查询 tickets 失败: %v", err))
+		return out
+	}
+
+	var workers []contracts.Worker
+	if err := db.WithContext(ctx).
+		Select("id", "ticket_id", "status").
+		Order("id desc").
+		Find(&workers).Error; err != nil {
+		out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检查询 workers 失败: %v", err))
+		return out
+	}
+	latestWorkerByTicket := make(map[uint]contracts.Worker, len(workers))
+	for _, w := range workers {
+		if w.TicketID == 0 {
+			continue
+		}
+		if _, exists := latestWorkerByTicket[w.TicketID]; exists {
+			continue
+		}
+		latestWorkerByTicket[w.TicketID] = w
+	}
+
+	for _, t := range tickets {
+		status := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
+		if !fsm.TicketWorkflowTable.IsKnownState(status) {
+			reason := fmt.Sprintf("ticket workflow_status 未定义：raw=%q canonical=%q", strings.TrimSpace(string(t.WorkflowStatus)), strings.TrimSpace(string(status)))
+			demoted, err := s.demoteTicketBlockedOnStateAnomaly(ctx, db, t.ID, 0, "undefined_workflow_status", reason, now)
+			if err != nil {
+				out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检处理未定义状态失败：t%d: %v", t.ID, err))
+				continue
+			}
+			if demoted {
+				out.Undefined++
+				out.Blocked++
+			}
+			continue
+		}
+
+		if status != contracts.TicketActive {
+			continue
+		}
+
+		w, exists := latestWorkerByTicket[t.ID]
+		if !exists {
+			reason := "ticket active 但没有关联 worker"
+			demoted, err := s.demoteTicketBlockedOnStateAnomaly(ctx, db, t.ID, 0, "active_without_worker", reason, now)
+			if err != nil {
+				out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检处理非法状态失败：t%d: %v", t.ID, err))
+				continue
+			}
+			if demoted {
+				out.Illegal++
+				out.Blocked++
+			}
+			continue
+		}
+		if w.Status != contracts.WorkerRunning {
+			reason := fmt.Sprintf("ticket active 但 worker 不在 running（status=%s）", strings.TrimSpace(string(w.Status)))
+			demoted, err := s.demoteTicketBlockedOnStateAnomaly(ctx, db, t.ID, w.ID, "active_worker_not_running", reason, now)
+			if err != nil {
+				out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检处理非法状态失败：t%d w%d: %v", t.ID, w.ID, err))
+				continue
+			}
+			if demoted {
+				out.Illegal++
+				out.Blocked++
+			}
+		}
+	}
+	return out
+}
+
+func (s *Service) demoteTicketBlockedOnStateAnomaly(ctx context.Context, db *gorm.DB, ticketID, workerID uint, anomalyCode, reason string, now time.Time) (bool, error) {
+	if db == nil {
+		return false, fmt.Errorf("db 为空")
+	}
+	if ticketID == 0 {
+		return false, fmt.Errorf("ticket_id 不能为空")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	anomalyCode = strings.TrimSpace(anomalyCode)
+	if anomalyCode == "" {
+		anomalyCode = "state_anomaly"
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "检测到非法/未定义状态，已自动降级 blocked"
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	blocked := false
+	var statusEvent *StatusChangeEvent
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var t contracts.Ticket
+		if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&t, ticketID).Error; err != nil {
+			return err
+		}
+		from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
+		if !fsm.ShouldDemoteOnDispatchFailed(from) {
+			return nil
+		}
+		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
+			Where("id = ?", ticketID).
+			Updates(map[string]any{
+				"workflow_status": contracts.TicketBlocked,
+				"updated_at":      now,
+			}).Error; err != nil {
+			return err
+		}
+		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketBlocked, "pm.zombie", "检测到非法/未定义状态，自动降级 blocked", map[string]any{
+			"ticket_id":      ticketID,
+			"worker_id":      workerID,
+			"anomaly_code":   anomalyCode,
+			"anomaly_reason": reason,
+		}, now); err != nil {
+			return err
+		}
+		statusEvent = s.buildStatusChangeEvent(ticketID, from, contracts.TicketBlocked, "pm.zombie", now)
+		if statusEvent != nil {
+			statusEvent.WorkerID = workerID
+			statusEvent.Detail = reason
+		}
+
+		key := inboxKeyTicketIncident(ticketID, anomalyCode)
+		title := fmt.Sprintf("状态异常：t%d", ticketID)
+		if workerID != 0 {
+			key = inboxKeyWorkerIncident(workerID, anomalyCode)
+			title = fmt.Sprintf("状态异常：t%d w%d", ticketID, workerID)
+		}
+		if _, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
+			Key:      key,
+			Status:   contracts.InboxOpen,
+			Severity: contracts.InboxBlocker,
+			Reason:   contracts.InboxIncident,
+			Title:    title,
+			Body:     reason,
+			TicketID: ticketID,
+			WorkerID: workerID,
+		}); err != nil {
+			return err
+		}
+		blocked = true
+		return nil
+	})
+	if err != nil {
+		return blocked, err
+	}
+	s.emitStatusChangeHookAsync(statusEvent)
+	return blocked, nil
 }
 
 func latestWorkerRuntimeStatus(ctx context.Context, taskRuntime core.TaskRuntime) (map[uint]contracts.TaskStatusView, error) {
@@ -379,6 +569,7 @@ func (s *Service) blockZombieWorker(ctx context.Context, db *gorm.DB, w contract
 	errHash = strings.TrimSpace(errHash)
 
 	blocked := false
+	var statusEvent *StatusChangeEvent
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var t contracts.Ticket
 		if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&t, w.TicketID).Error; err != nil {
@@ -411,6 +602,11 @@ func (s *Service) blockZombieWorker(ctx context.Context, db *gorm.DB, w contract
 		}, now); err != nil {
 			return err
 		}
+		statusEvent = s.buildStatusChangeEvent(w.TicketID, from, contracts.TicketBlocked, "pm.zombie", now)
+		if statusEvent != nil {
+			statusEvent.WorkerID = w.ID
+			statusEvent.Detail = reason
+		}
 
 		if _, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
 			Key:      inboxKeyWorkerIncident(w.ID, "zombie_blocked"),
@@ -435,7 +631,11 @@ func (s *Service) blockZombieWorker(ctx context.Context, db *gorm.DB, w contract
 		blocked = true
 		return nil
 	})
-	return blocked, err
+	if err != nil {
+		return blocked, err
+	}
+	s.emitStatusChangeHookAsync(statusEvent)
+	return blocked, nil
 }
 
 func zombieErrorHash(parts ...string) string {

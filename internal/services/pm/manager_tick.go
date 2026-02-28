@@ -29,6 +29,8 @@ type ManagerTickResult struct {
 	RunningBlocked   int
 	ZombieRecovered  int
 	ZombieBlocked    int
+	ZombieIllegal    int
+	ZombieUndefined  int
 	Capacity         int
 
 	EventsConsumed int
@@ -193,6 +195,8 @@ func (res *ManagerTickResult) applyConsumeEventsResult(step consumeEventsResult)
 func (res *ManagerTickResult) applyZombieCheckResult(step zombieCheckResult) {
 	res.ZombieRecovered += step.Recovered
 	res.ZombieBlocked += step.Blocked
+	res.ZombieIllegal += step.Illegal
+	res.ZombieUndefined += step.Undefined
 	res.Errors = append(res.Errors, step.Errors...)
 }
 

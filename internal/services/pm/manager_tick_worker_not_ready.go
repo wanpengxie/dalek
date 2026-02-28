@@ -30,7 +30,8 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 		now = time.Now()
 	}
 
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	var statusEvent *StatusChangeEvent
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var t contracts.Ticket
 		if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&t, ticketID).Error; err != nil {
 			return err
@@ -54,6 +55,11 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 		}, now); err != nil {
 			return err
 		}
+		statusEvent = s.buildStatusChangeEvent(ticketID, from, contracts.TicketBlocked, "pm.manager_tick", now)
+		if statusEvent != nil {
+			statusEvent.WorkerID = workerID
+			statusEvent.Detail = reason
+		}
 
 		key := inboxKeyTicketIncident(ticketID, "worker_not_ready")
 		title := fmt.Sprintf("worker 未就绪：t%d", ticketID)
@@ -73,4 +79,9 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 		})
 		return err
 	})
+	if err != nil {
+		return err
+	}
+	s.emitStatusChangeHookAsync(statusEvent)
+	return nil
 }

@@ -232,6 +232,10 @@ func cmdManagerTick(args []string) {
 			"max_running":        res.MaxRunning,
 			"running":            res.Running,
 			"running_blocked":    res.RunningBlocked,
+			"zombie_recovered":   res.ZombieRecovered,
+			"zombie_blocked":     res.ZombieBlocked,
+			"zombie_illegal":     res.ZombieIllegal,
+			"zombie_undefined":   res.ZombieUndefined,
 			"capacity":           res.Capacity,
 			"events_consumed":    res.EventsConsumed,
 			"inbox_upserts":      res.InboxUpserts,
@@ -243,10 +247,11 @@ func cmdManagerTick(args []string) {
 		return
 	}
 
-	fmt.Printf("%s  autopilot=%v  running=%d(blocked=%d)  cap=%d  started=%d  dispatched=%d  inbox=%d  merge_proposed=%d\n",
+	fmt.Printf("%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  inbox=%d  merge_proposed=%d\n",
 		res.At.Local().Format("01-02 15:04:05"),
 		res.AutopilotEnabled,
 		res.Running, res.RunningBlocked,
+		res.ZombieRecovered, res.ZombieBlocked, res.ZombieIllegal, res.ZombieUndefined,
 		res.Capacity,
 		len(res.StartedTickets),
 		len(res.DispatchedTickets),
@@ -347,6 +352,10 @@ func cmdManagerRun(args []string) {
 			"max_running":        res.MaxRunning,
 			"running":            res.Running,
 			"running_blocked":    res.RunningBlocked,
+			"zombie_recovered":   res.ZombieRecovered,
+			"zombie_blocked":     res.ZombieBlocked,
+			"zombie_illegal":     res.ZombieIllegal,
+			"zombie_undefined":   res.ZombieUndefined,
 			"capacity":           res.Capacity,
 			"events_consumed":    res.EventsConsumed,
 			"inbox_upserts":      res.InboxUpserts,
@@ -362,11 +371,12 @@ func cmdManagerRun(args []string) {
 	if *dispatchTimeout > 0 {
 		timeoutText = dispatchTimeout.String()
 	}
-	fmt.Printf("%s  mode=sync_dispatch  dispatch_timeout=%s  autopilot=%v  running=%d(blocked=%d)  cap=%d  started=%d  dispatched=%d  inbox=%d  merge_proposed=%d\n",
+	fmt.Printf("%s  mode=sync_dispatch  dispatch_timeout=%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  inbox=%d  merge_proposed=%d\n",
 		res.At.Local().Format("01-02 15:04:05"),
 		timeoutText,
 		res.AutopilotEnabled,
 		res.Running, res.RunningBlocked,
+		res.ZombieRecovered, res.ZombieBlocked, res.ZombieIllegal, res.ZombieUndefined,
 		res.Capacity,
 		len(res.StartedTickets),
 		len(res.DispatchedTickets),
