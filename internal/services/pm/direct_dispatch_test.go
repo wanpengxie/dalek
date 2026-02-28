@@ -63,7 +63,7 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-1","type":"agent_message
 }
 
 func TestDirectDispatchWorker_AutoStartWhenStoppedSessionOffline(t *testing.T) {
-	svc, p, fTmux, _ := newServiceForTest(t)
+	svc, p, _, _ := newServiceForTest(t)
 
 	fakeWorkerCodex := filepath.Join(t.TempDir(), "worker-codex-stopped-offline")
 	workerScript := `#!/usr/bin/env bash
@@ -91,11 +91,11 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-stopped-offline","type":
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"status": contracts.WorkerStopped,
+		"status":      contracts.WorkerStopped,
+		"process_pid": 0,
 	}).Error; err != nil {
 		t.Fatalf("mark worker stopped failed: %v", err)
 	}
-	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
 
 	out, err := svc.DirectDispatchWorker(context.Background(), tk.ID, DirectDispatchOptions{
 		EntryPrompt: "继续处理这个 ticket",
@@ -105,6 +105,13 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-stopped-offline","type":
 	}
 	if out.WorkerID == 0 {
 		t.Fatalf("expected worker_id in direct dispatch result")
+	}
+	var after contracts.Worker
+	if err := p.DB.First(&after, out.WorkerID).Error; err != nil {
+		t.Fatalf("load worker after direct dispatch failed: %v", err)
+	}
+	if after.ProcessPID <= 0 {
+		t.Fatalf("expected auto-start to restore runtime pid, got=%d", after.ProcessPID)
 	}
 }
 

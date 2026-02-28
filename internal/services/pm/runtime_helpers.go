@@ -44,40 +44,12 @@ func (s *Service) workerDispatchLive(ctx context.Context, w *contracts.Worker) (
 	if w == nil {
 		return false, nil
 	}
-
-	var runtimeProbeErr error
-	if hasWorkerRuntimeHandle(*w) {
-		alive, err := p.WorkerRuntime.IsAlive(ctx, workerRuntimeHandle(*w))
-		if err != nil {
-			runtimeProbeErr = err
-		} else if alive {
-			return true, nil
-		}
-	}
-
-	session := strings.TrimSpace(w.TmuxSession)
-	if session == "" {
-		if runtimeProbeErr != nil {
-			return false, runtimeProbeErr
-		}
+	if !hasWorkerRuntimeHandle(*w) {
 		return false, nil
 	}
-	socket := strings.TrimSpace(w.TmuxSocket)
-	if socket == "" {
-		socket = strings.TrimSpace(p.Config.WithDefaults().TmuxSocket)
-	}
-	if socket == "" {
-		if runtimeProbeErr != nil {
-			return false, runtimeProbeErr
-		}
-		return false, nil
-	}
-	sessions, err := p.Tmux.ListSessions(ctx, socket)
+	alive, err := p.WorkerRuntime.IsAlive(ctx, workerRuntimeHandle(*w))
 	if err != nil {
-		if runtimeProbeErr != nil {
-			return false, runtimeProbeErr
-		}
 		return false, err
 	}
-	return sessions[session], nil
+	return alive, nil
 }

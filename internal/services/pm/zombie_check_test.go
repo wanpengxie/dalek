@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,8 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("clear runtime pid failed: %v", err)
 	}
-	delete(fTmux.Sessions, strings.TrimSpace(w.TmuxSession))
+	sentinel := "tmux-list-should-not-be-used"
+	fTmux.ListErrBySocket[strings.TrimSpace(w.TmuxSocket)] = errors.New(sentinel)
 
 	rt, err := svc.taskRuntimeForDB(p.DB)
 	if err != nil {
@@ -38,6 +40,11 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 	}
 	if out.Blocked != 0 {
 		t.Fatalf("expected blocked=0, got=%d", out.Blocked)
+	}
+	for _, msg := range out.Errors {
+		if strings.Contains(msg, sentinel) {
+			t.Fatalf("zombie check should not call tmux list sessions anymore, errors=%v", out.Errors)
+		}
 	}
 
 	var got contracts.Worker
