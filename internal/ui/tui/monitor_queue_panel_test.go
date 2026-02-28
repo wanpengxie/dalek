@@ -150,7 +150,7 @@ func TestApplyViews_MergeSectionHidesDiscardedAndMerged(t *testing.T) {
 }
 
 func TestColorizePartitionLine_PreservesLayoutWidth(t *testing.T) {
-	raw := "manager mgr    - 状态     运行       标题                                   tmux"
+	raw := "manager mgr    - 状态     运行       标题                                   输出"
 	colored := colorizePartitionLine(raw)
 	if ansi.Strip(colored) != raw {
 		t.Fatalf("strip after colorize should keep original text, got=%q", ansi.Strip(colored))

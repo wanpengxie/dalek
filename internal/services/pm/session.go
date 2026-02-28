@@ -176,6 +176,7 @@ func (s *Service) CaptureManagerTailPreview(ctx context.Context, lastLines int) 
 	return contracts.TailPreview{
 		TicketID:    0,
 		WorkerID:    0,
+		Source:      "manager_tmux",
 		TmuxSocket:  t.TmuxSocket,
 		TmuxSession: t.Session,
 		PaneID:      t.PaneID,

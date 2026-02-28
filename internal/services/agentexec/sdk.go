@@ -11,7 +11,6 @@ import (
 	"dalek/internal/agent/provider"
 	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
-	"dalek/internal/infra"
 	"dalek/internal/services/core"
 )
 
@@ -25,10 +24,8 @@ type SDKConfig struct {
 	SessionID string
 	Timeout   time.Duration
 
-	Tmux        infra.TmuxClient
-	TmuxSocket  string
-	TmuxSession string
-	TmuxTarget  string
+	StreamLogPath string
+	// TmuxLogPath 已废弃：保留兼容旧调用，内部会回退到该字段。
 	TmuxLogPath string
 
 	AppendEvent          TmuxAppendEventFunc
@@ -66,15 +63,14 @@ func (e *SDKExecutor) Execute(ctx context.Context, prompt string) (AgentRunHandl
 		l := time.Now().Add(e.cfg.Timeout)
 		lease = &l
 	}
+	streamLogPath := sdkStreamLogPathHint(e.cfg)
 	payload := marshalJSON(map[string]any{
 		"provider":         strings.TrimSpace(strings.ToLower(e.cfg.Provider)),
 		"mode":             "sdk",
 		"model":            strings.TrimSpace(e.cfg.Model),
 		"session_id":       strings.TrimSpace(e.cfg.SessionID),
-		"tmux_socket":      strings.TrimSpace(e.cfg.TmuxSocket),
-		"tmux_session":     strings.TrimSpace(e.cfg.TmuxSession),
-		"tmux_target":      strings.TrimSpace(e.cfg.TmuxTarget),
-		"tmux_log_path":    strings.TrimSpace(e.cfg.TmuxLogPath),
+		"stream_log_path":  streamLogPath,
+		"tmux_log_path":    streamLogPath,
 		"prompt_preview":   truncateRunes(prompt, 256),
 		"reasoning_effort": strings.TrimSpace(strings.ToLower(e.cfg.ReasoningEffort)),
 	})
@@ -160,12 +156,12 @@ func (h *sdkHandle) run() {
 	if h.cancel != nil {
 		defer h.cancel()
 	}
-	playback, playbackErr := startSDKTmuxPlayback(h.execCtx, h.cfg, h.runID)
+	playback, playbackErr := startSDKStreamPlayback(h.execCtx, h.cfg, h.runID)
 	if playback != nil {
 		defer playback.Close(context.Background())
 	}
 	if playbackErr != nil {
-		msg := "sdk tmux playback 不可用: " + trimOneLine(playbackErr.Error())
+		msg := "sdk stream playback 不可用: " + trimOneLine(playbackErr.Error())
 		h.appendTaskStreamEvent(msg, map[string]any{
 			"type":  "sdk_playback_error",
 			"error": trimOneLine(playbackErr.Error()),
@@ -177,8 +173,7 @@ func (h *sdkHandle) run() {
 		}
 	}
 	if playback != nil && h.cfg.AppendEvent != nil {
-		h.cfg.AppendEvent(context.Background(), "sdk_stream_started", fmt.Sprintf("target=%s log=%s", playback.targetPane(), playback.logFilePath()), map[string]any{
-			"target":   playback.targetPane(),
+		h.cfg.AppendEvent(context.Background(), "sdk_stream_started", fmt.Sprintf("log=%s", playback.logFilePath()), map[string]any{
 			"log_path": playback.logFilePath(),
 		}, time.Now())
 	}
@@ -191,7 +186,7 @@ func (h *sdkHandle) run() {
 		if playback != nil {
 			if err := playback.AppendEvent(ev); err != nil && !playbackWriteFailed {
 				playbackWriteFailed = true
-				msg := "sdk tmux playback 写入失败: " + trimOneLine(err.Error())
+				msg := "sdk stream playback 写入失败: " + trimOneLine(err.Error())
 				h.appendTaskStreamEvent(msg, map[string]any{
 					"type":  "sdk_playback_error",
 					"error": trimOneLine(err.Error()),
@@ -267,7 +262,6 @@ func (h *sdkHandle) run() {
 			note = trimOneLine(errStringWithOutput(finalErr, res.Stdout, res.Stderr))
 		}
 		h.cfg.AppendEvent(context.Background(), eventType, note, map[string]any{
-			"target":   playback.targetPane(),
 			"log_path": playback.logFilePath(),
 		}, time.Now())
 	}

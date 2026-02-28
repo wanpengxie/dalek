@@ -363,10 +363,10 @@ func (m model) canCaptureTail(ref rowRef) bool {
 		if !ok || v.LatestWorker == nil {
 			return false
 		}
-		if strings.TrimSpace(v.LatestWorker.TmuxSession) == "" {
-			return false
+		if v.LatestWorker.ProcessPID > 0 {
+			return true
 		}
-		return v.SessionAlive
+		return strings.TrimSpace(v.LatestWorker.LogPath) != ""
 	default:
 		return false
 	}
@@ -628,7 +628,7 @@ func tableColumns(layout tableLayout) []table.Column {
 		{Title: "状态", Width: layout.status},
 		{Title: "运行", Width: layout.runtime},
 		{Title: "标题", Width: layout.title},
-		{Title: "tmux", Width: layout.tmux},
+		{Title: "输出", Width: layout.tmux},
 	}
 }
 
@@ -780,16 +780,28 @@ func formatExecutionState(v app.TicketView) string {
 }
 
 func formatSessionState(v app.TicketView) string {
-	if v.LatestWorker == nil || strings.TrimSpace(v.LatestWorker.TmuxSession) == "" {
-		return "无会话"
+	if v.LatestWorker == nil {
+		return "无运行体"
 	}
-	if v.SessionProbeFailed {
-		return "会话未知"
+	if v.LatestWorker.ProcessPID > 0 {
+		if v.SessionProbeFailed {
+			return "进程未知"
+		}
+		if v.SessionAlive {
+			return "进程在线"
+		}
+		return "进程离线"
 	}
-	if v.SessionAlive {
-		return "会话在线"
+	if strings.TrimSpace(v.LatestWorker.TmuxSession) != "" {
+		if v.SessionProbeFailed {
+			return "会话未知"
+		}
+		if v.SessionAlive {
+			return "会话在线"
+		}
+		return "会话离线"
 	}
-	return "会话离线"
+	return "无运行体"
 }
 
 func shortDuration(d time.Duration) string {

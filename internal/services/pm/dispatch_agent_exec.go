@@ -101,11 +101,8 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 				WorkDir:     strings.TrimSpace(p.RepoRoot),
 				Env:         env,
 			},
-			Timeout:     timeout,
-			Tmux:        p.Tmux,
-			TmuxSocket:  strings.TrimSpace(w.TmuxSocket),
-			TmuxSession: strings.TrimSpace(w.TmuxSession),
-			TmuxLogPath: repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID),
+			Timeout:       timeout,
+			StreamLogPath: repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID),
 			AppendEvent: func(evtCtx context.Context, eventType, note string, payload any, createdAt time.Time) {
 				_ = s.worker.AppendWorkerTaskEvent(evtCtx, w.ID, eventType, note, payload, createdAt)
 			},

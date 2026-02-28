@@ -171,15 +171,11 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0
 	if !strings.Contains(content, "sdk dispatch ok") {
 		t.Fatalf("expected sdk stream log contains agent message, got=%q", content)
 	}
-	if fTmux.SendLineCalls == 0 {
-		t.Fatalf("expected tmux send-line called for sdk playback")
+	if fTmux.SendLineCalls != 0 {
+		t.Fatalf("expected sdk playback no longer injects tmux tail, send-line=%d", fTmux.SendLineCalls)
 	}
-	joinedHistory := strings.Join(fTmux.SendLineHistory, "\n")
-	if !strings.Contains(joinedHistory, "tail -n 0 -F") {
-		t.Fatalf("expected tmux send-line includes tail command, got=%q", joinedHistory)
-	}
-	if fTmux.SendKeysCalls == 0 {
-		t.Fatalf("expected tmux send-keys called to stop sdk playback tail")
+	if fTmux.SendKeysCalls != 0 {
+		t.Fatalf("expected sdk playback no longer sends tmux ctrl-c, send-keys=%d", fTmux.SendKeysCalls)
 	}
 
 	var streamEvents int64

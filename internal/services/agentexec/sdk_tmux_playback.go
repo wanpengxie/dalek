@@ -11,81 +11,47 @@ import (
 
 	"dalek/internal/agent/eventrender"
 	"dalek/internal/agent/sdkrunner"
-	"dalek/internal/infra"
 )
 
-type sdkTmuxPlayback struct {
+type sdkStreamPlayback struct {
 	runID    uint
 	provider string
+	logPath  string
 
-	tmux   infra.TmuxClient
-	socket string
-	target string
+	file *os.File
+	mu   sync.Mutex
 
-	logPath string
-
-	file     *os.File
-	started  bool
-	mu       sync.Mutex
 	renderer eventrender.Renderer
 	seq      int
 }
 
-const tmuxPlaybackMaxDetailLines = 10
+const streamPlaybackMaxDetailLines = 10
 
-func startSDKTmuxPlayback(ctx context.Context, cfg SDKConfig, runID uint) (*sdkTmuxPlayback, error) {
-	if cfg.Tmux == nil {
-		return nil, nil
+func sdkStreamLogPathHint(cfg SDKConfig) string {
+	if v := strings.TrimSpace(cfg.StreamLogPath); v != "" {
+		return v
 	}
-	target := strings.TrimSpace(cfg.TmuxTarget)
-	session := strings.TrimSpace(cfg.TmuxSession)
-	if target == "" && session == "" {
-		return nil, nil
+	if v := strings.TrimSpace(cfg.TmuxLogPath); v != "" {
+		return v
 	}
-	if session == "" {
-		return nil, fmt.Errorf("tmux session 为空，无法确认 pane 可注入")
+	if v := strings.TrimSpace(cfg.WorkDir); v != "" {
+		return filepath.Join(v, ".dalek", "runtime", "sdk-stream.log")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	return ""
+}
 
-	socket := strings.TrimSpace(cfg.TmuxSocket)
-	if socket == "" {
-		socket = "dalek"
-	}
-	pane := infra.PaneInfo{}
-	// 始终实时选择活动 pane，避免使用过期 target（例如 worker 预先计算后发生 pane 漂移）。
-	tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	picked, pickedPane, err := infra.PickObservationTarget(cfg.Tmux, tctx, socket, session)
-	if err != nil {
-		return nil, fmt.Errorf("解析 tmux target 失败: %w", err)
-	}
-	target = strings.TrimSpace(picked)
-	pane = pickedPane
-	if target == "" || strings.TrimSpace(pane.PaneID) == "" {
-		return nil, fmt.Errorf("解析 tmux target 失败: 未拿到活动 pane（session=%s）", strings.TrimSpace(session))
-	}
-	if target == "" {
-		return nil, fmt.Errorf("tmux target 为空")
-	}
-	if pane.InputOff {
-		return nil, fmt.Errorf("目标 pane input_off=1（pane=%s）", target)
-	}
-	if pane.InMode {
-		return nil, fmt.Errorf("目标 pane 处于 mode=%s（pane=%s）", strings.TrimSpace(pane.Mode), target)
-	}
-	if pane.PaneID != "" && !isShellLikePaneCommand(pane.CurrentCommand) {
-		return nil, fmt.Errorf("目标 pane 前台命令非 shell（pane=%s cmd=%s），无法安全注入", target, strings.TrimSpace(pane.CurrentCommand))
-	}
-
-	logPath := strings.TrimSpace(cfg.TmuxLogPath)
+func resolveSDKStreamLogPath(cfg SDKConfig) (string, error) {
+	logPath := strings.TrimSpace(sdkStreamLogPathHint(cfg))
 	if logPath == "" {
-		workDir := strings.TrimSpace(cfg.WorkDir)
-		if workDir == "" {
-			return nil, fmt.Errorf("tmux_log_path/work_dir 同时为空")
-		}
-		logPath = filepath.Join(workDir, ".dalek", "runtime", "sdk-stream.log")
+		return "", fmt.Errorf("stream_log_path/work_dir 同时为空")
+	}
+	return logPath, nil
+}
+
+func startSDKStreamPlayback(_ context.Context, cfg SDKConfig, runID uint) (*sdkStreamPlayback, error) {
+	logPath, err := resolveSDKStreamLogPath(cfg)
+	if err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return nil, err
@@ -96,40 +62,19 @@ func startSDKTmuxPlayback(ctx context.Context, cfg SDKConfig, runID uint) (*sdkT
 	}
 
 	prov := strings.TrimSpace(strings.ToLower(cfg.Provider))
-	playback := &sdkTmuxPlayback{
+	playback := &sdkStreamPlayback{
 		runID:    runID,
 		provider: prov,
-		tmux:     cfg.Tmux,
-		socket:   socket,
-		target:   strings.TrimSpace(target),
 		logPath:  logPath,
 		file:     fileHandle,
 		renderer: eventrender.ForProvider(prov),
 	}
 	_ = playback.writeLine(fmt.Sprintf("[%s] info   [dalek] sdk stream started provider=%s run_id=%d",
 		time.Now().Format("15:04:05"), playback.provider, playback.runID))
-
-	header := fmt.Sprintf("[dalek] sdk stream started provider=%s run_id=%d log=%s", playback.provider, playback.runID, playback.logPath)
-	tailScript := "echo " + shellQuote(header) + "; tail -n 0 -F " + shellQuote(playback.logPath)
-	tailCommand := "bash -lc " + shellQuote(tailScript)
-	if err := cfg.Tmux.SendLine(ctx, socket, playback.target, tailCommand); err != nil {
-		_ = fileHandle.Close()
-		return nil, fmt.Errorf("tmux 启动 sdk tail 失败: %w", err)
-	}
-	playback.started = true
 	return playback, nil
 }
 
-func isShellLikePaneCommand(cmd string) bool {
-	switch strings.TrimSpace(strings.ToLower(cmd)) {
-	case "bash", "zsh", "sh", "dash", "ksh", "ash", "fish", "nu", "pwsh", "powershell", "xonsh":
-		return true
-	default:
-		return false
-	}
-}
-
-func (p *sdkTmuxPlayback) AppendEvent(ev sdkrunner.Event) error {
+func (p *sdkStreamPlayback) AppendEvent(ev sdkrunner.Event) error {
 	if p == nil {
 		return nil
 	}
@@ -150,10 +95,10 @@ func formatStepLines(step eventrender.UnifiedStep) string {
 	ts := time.UnixMilli(step.Ts).Format("15:04:05")
 	tag := stepTag(step.StepType)
 
-	// tmux pane 用 Detail（完整内容），没有 Detail 时降级到 Summary
+	// 日志回放优先写 Detail（完整内容），没有 Detail 时降级为 Summary。
 	content := strings.TrimSpace(step.Detail)
 	if content != "" {
-		content = trimToMaxLines(content, tmuxPlaybackMaxDetailLines)
+		content = trimToMaxLines(content, streamPlaybackMaxDetailLines)
 	} else {
 		content = strings.TrimSpace(step.Summary)
 	}
@@ -197,7 +142,7 @@ func stepTag(st eventrender.StepType) string {
 	}
 }
 
-func (p *sdkTmuxPlayback) writeLine(line string) error {
+func (p *sdkStreamPlayback) writeLine(line string) error {
 	if p == nil {
 		return nil
 	}
@@ -216,34 +161,15 @@ func (p *sdkTmuxPlayback) writeLine(line string) error {
 	return nil
 }
 
-func (p *sdkTmuxPlayback) Close(ctx context.Context) {
+func (p *sdkStreamPlayback) Close(_ context.Context) {
 	if p == nil {
 		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	_ = p.writeLine(fmt.Sprintf("[%s] info   [dalek] sdk stream finished provider=%s run_id=%d",
 		time.Now().Format("15:04:05"), strings.TrimSpace(p.provider), p.runID))
 
 	p.mu.Lock()
 	fileHandle := p.file
-	shouldStop := p.started
-	tmuxClient := p.tmux
-	socket := strings.TrimSpace(p.socket)
-	target := strings.TrimSpace(p.target)
-	p.mu.Unlock()
-
-	// 两阶段 Ctrl+C：
-	// 1) 若 pane 处于 copy-mode 等模式，第一次 C-c 往往只会退出 mode；
-	// 2) 第二次 C-c 才能真正打到前台 tail -F 进程。
-	if shouldStop && tmuxClient != nil && target != "" {
-		if err := tmuxClient.SendKeys(ctx, socket, target, "C-c"); err == nil {
-			_ = tmuxClient.SendKeys(ctx, socket, target, "C-c")
-		}
-	}
-
-	p.mu.Lock()
 	p.file = nil
 	p.mu.Unlock()
 
@@ -252,14 +178,7 @@ func (p *sdkTmuxPlayback) Close(ctx context.Context) {
 	}
 }
 
-func (p *sdkTmuxPlayback) targetPane() string {
-	if p == nil {
-		return ""
-	}
-	return strings.TrimSpace(p.target)
-}
-
-func (p *sdkTmuxPlayback) logFilePath() string {
+func (p *sdkStreamPlayback) logFilePath() string {
 	if p == nil {
 		return ""
 	}

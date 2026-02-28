@@ -2,228 +2,83 @@ package agentexec
 
 import (
 	"context"
-	"os/exec"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"dalek/internal/agent/eventrender"
-	"dalek/internal/infra"
 )
 
-type tmuxCall struct {
-	socket string
-	target string
-	text   string
-}
-
-type fakePlaybackTmux struct {
-	activePane infra.PaneInfo
-	activeErr  error
-	listPanes  []infra.PaneInfo
-	listErr    error
-
-	sendLineCalls []tmuxCall
-	sendKeyCalls  []tmuxCall
-}
-
-func (f *fakePlaybackTmux) NewSession(ctx context.Context, socket, name, startDir string) error {
-	return nil
-}
-
-func (f *fakePlaybackTmux) NewSessionWithCommand(ctx context.Context, socket, name, startDir string, cmd []string) error {
-	return nil
-}
-
-func (f *fakePlaybackTmux) KillSession(ctx context.Context, socket, name string) error {
-	return nil
-}
-
-func (f *fakePlaybackTmux) KillServer(ctx context.Context, socket string) error {
-	return nil
-}
-
-func (f *fakePlaybackTmux) SendKeys(ctx context.Context, socket, target, keys string) error {
-	f.sendKeyCalls = append(f.sendKeyCalls, tmuxCall{socket: strings.TrimSpace(socket), target: strings.TrimSpace(target), text: strings.TrimSpace(keys)})
-	return nil
-}
-
-func (f *fakePlaybackTmux) SendKeysLiteral(ctx context.Context, socket, target, text string) error {
-	return nil
-}
-
-func (f *fakePlaybackTmux) SendLine(ctx context.Context, socket, target, line string) error {
-	f.sendLineCalls = append(f.sendLineCalls, tmuxCall{socket: strings.TrimSpace(socket), target: strings.TrimSpace(target), text: line})
-	return nil
-}
-
-func (f *fakePlaybackTmux) CapturePane(ctx context.Context, socket, target string, lines int) (string, error) {
-	return "", nil
-}
-
-func (f *fakePlaybackTmux) PipePaneToFile(ctx context.Context, socket, target, filePath string) error {
-	return nil
-}
-
-func (f *fakePlaybackTmux) StopPipePane(ctx context.Context, socket, target string) error {
-	return nil
-}
-
-func (f *fakePlaybackTmux) ListSessions(ctx context.Context, socket string) (map[string]bool, error) {
-	return map[string]bool{}, nil
-}
-
-func (f *fakePlaybackTmux) ListPanes(ctx context.Context, socket, session string) ([]infra.PaneInfo, error) {
-	if f.listErr != nil {
-		return nil, f.listErr
-	}
-	return append([]infra.PaneInfo(nil), f.listPanes...), nil
-}
-
-func (f *fakePlaybackTmux) ActivePane(ctx context.Context, socket, session string) (infra.PaneInfo, error) {
-	if f.activeErr != nil {
-		return infra.PaneInfo{}, f.activeErr
-	}
-	return f.activePane, nil
-}
-
-func (f *fakePlaybackTmux) AttachCmd(socket, session string) *exec.Cmd {
-	return nil
-}
-
-func TestStartSDKTmuxPlayback_AlwaysUsesActivePane(t *testing.T) {
-	fakeTmux := &fakePlaybackTmux{
-		activePane: infra.PaneInfo{
-			PaneID:         "%9",
-			CurrentCommand: "zsh",
-		},
-	}
+func TestStartSDKStreamPlayback_UsesExplicitLogPath(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "sdk-stream.log")
-	playback, err := startSDKTmuxPlayback(context.Background(), SDKConfig{
-		Provider:    "codex",
-		Tmux:        fakeTmux,
-		TmuxSocket:  "dalek",
-		TmuxSession: "ts-demo",
-		TmuxTarget:  "%123", // 故意传入过期 target，应被 active pane 覆盖。
-		TmuxLogPath: logPath,
+	playback, err := startSDKStreamPlayback(context.Background(), SDKConfig{
+		Provider:      "codex",
+		StreamLogPath: logPath,
 	}, 42)
 	if err != nil {
-		t.Fatalf("startSDKTmuxPlayback failed: %v", err)
+		t.Fatalf("startSDKStreamPlayback failed: %v", err)
+	}
+	if playback == nil {
+		t.Fatalf("expected non-nil playback")
+	}
+	if got := strings.TrimSpace(playback.logFilePath()); got != logPath {
+		t.Fatalf("unexpected log path: got=%q want=%q", got, logPath)
+	}
+	playback.Close(context.Background())
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log failed: %v", err)
+	}
+	content := string(raw)
+	if !strings.Contains(content, "sdk stream started") {
+		t.Fatalf("expected start marker, got=%q", content)
+	}
+	if !strings.Contains(content, "sdk stream finished") {
+		t.Fatalf("expected finish marker, got=%q", content)
+	}
+}
+
+func TestStartSDKStreamPlayback_FallbackToDeprecatedTmuxLogPath(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "sdk-stream.log")
+	playback, err := startSDKStreamPlayback(context.Background(), SDKConfig{
+		Provider:    "codex",
+		TmuxLogPath: logPath,
+	}, 7)
+	if err != nil {
+		t.Fatalf("startSDKStreamPlayback failed: %v", err)
 	}
 	defer playback.Close(context.Background())
 
-	if len(fakeTmux.sendLineCalls) != 1 {
-		t.Fatalf("expected 1 send-line call, got=%d", len(fakeTmux.sendLineCalls))
-	}
-	call := fakeTmux.sendLineCalls[0]
-	if call.target != "%9" {
-		t.Fatalf("expected active pane target %%9, got=%q", call.target)
-	}
-	if !strings.Contains(call.text, "tail -n 0 -F") {
-		t.Fatalf("expected tail command, got=%q", call.text)
+	if got := strings.TrimSpace(playback.logFilePath()); got != logPath {
+		t.Fatalf("unexpected log path: got=%q want=%q", got, logPath)
 	}
 }
 
-func TestSDKTmuxPlaybackClose_SendsCtrlCTwice(t *testing.T) {
-	fakeTmux := &fakePlaybackTmux{
-		activePane: infra.PaneInfo{
-			PaneID:         "%19",
-			CurrentCommand: "zsh",
-		},
-	}
-	logPath := filepath.Join(t.TempDir(), "sdk-stream.log")
-	playback, err := startSDKTmuxPlayback(context.Background(), SDKConfig{
-		Provider:    "codex",
-		Tmux:        fakeTmux,
-		TmuxSocket:  "dalek",
-		TmuxSession: "ts-demo",
-		TmuxLogPath: logPath,
-	}, 77)
-	if err != nil {
-		t.Fatalf("startSDKTmuxPlayback failed: %v", err)
-	}
-
-	playback.Close(context.Background())
-
-	if len(fakeTmux.sendKeyCalls) < 2 {
-		t.Fatalf("expected at least 2 send-keys calls, got=%d", len(fakeTmux.sendKeyCalls))
-	}
-	last := fakeTmux.sendKeyCalls[len(fakeTmux.sendKeyCalls)-2:]
-	if last[0].text != "C-c" || last[1].text != "C-c" {
-		t.Fatalf("expected last two keys are C-c, got=%q and %q", last[0].text, last[1].text)
-	}
-}
-
-func TestStartSDKTmuxPlayback_RejectsNonShellPane(t *testing.T) {
-	fakeTmux := &fakePlaybackTmux{
-		activePane: infra.PaneInfo{
-			PaneID:         "%10",
-			CurrentCommand: "node",
-		},
-	}
-	_, err := startSDKTmuxPlayback(context.Background(), SDKConfig{
-		Provider:    "codex",
-		Tmux:        fakeTmux,
-		TmuxSocket:  "dalek",
-		TmuxSession: "ts-demo",
-		TmuxLogPath: filepath.Join(t.TempDir(), "sdk-stream.log"),
-	}, 1)
-	if err == nil || !strings.Contains(err.Error(), "前台命令非 shell") {
-		t.Fatalf("expected non-shell pane error, got=%v", err)
-	}
-}
-
-func TestStartSDKTmuxPlayback_RejectsInputOffPane(t *testing.T) {
-	fakeTmux := &fakePlaybackTmux{
-		activePane: infra.PaneInfo{
-			PaneID:         "%11",
-			CurrentCommand: "zsh",
-			InputOff:       true,
-		},
-	}
-	_, err := startSDKTmuxPlayback(context.Background(), SDKConfig{
-		Provider:    "codex",
-		Tmux:        fakeTmux,
-		TmuxSocket:  "dalek",
-		TmuxSession: "ts-demo",
-		TmuxLogPath: filepath.Join(t.TempDir(), "sdk-stream.log"),
-	}, 2)
-	if err == nil || !strings.Contains(err.Error(), "input_off=1") {
-		t.Fatalf("expected input_off error, got=%v", err)
-	}
-}
-
-func TestStartSDKTmuxPlayback_RejectsInModePane(t *testing.T) {
-	fakeTmux := &fakePlaybackTmux{
-		activePane: infra.PaneInfo{
-			PaneID:         "%12",
-			CurrentCommand: "zsh",
-			InMode:         true,
-			Mode:           "copy-mode",
-		},
-	}
-	_, err := startSDKTmuxPlayback(context.Background(), SDKConfig{
-		Provider:    "codex",
-		Tmux:        fakeTmux,
-		TmuxSocket:  "dalek",
-		TmuxSession: "ts-demo",
-		TmuxLogPath: filepath.Join(t.TempDir(), "sdk-stream.log"),
-	}, 3)
-	if err == nil || !strings.Contains(err.Error(), "处于 mode=") {
-		t.Fatalf("expected in-mode error, got=%v", err)
-	}
-}
-
-func TestStartSDKTmuxPlayback_RequiresSessionForInjectabilityCheck(t *testing.T) {
-	fakeTmux := &fakePlaybackTmux{}
-	_, err := startSDKTmuxPlayback(context.Background(), SDKConfig{
+func TestStartSDKStreamPlayback_FallbackToWorkDir(t *testing.T) {
+	workDir := t.TempDir()
+	playback, err := startSDKStreamPlayback(context.Background(), SDKConfig{
 		Provider:   "codex",
-		Tmux:       fakeTmux,
-		TmuxSocket: "dalek",
-		TmuxTarget: "%20",
-	}, 4)
-	if err == nil || !strings.Contains(err.Error(), "tmux session 为空") {
-		t.Fatalf("expected missing session error, got=%v", err)
+		BaseConfig: BaseConfig{WorkDir: workDir},
+	}, 5)
+	if err != nil {
+		t.Fatalf("startSDKStreamPlayback failed: %v", err)
+	}
+	defer playback.Close(context.Background())
+
+	want := filepath.Join(workDir, ".dalek", "runtime", "sdk-stream.log")
+	if got := strings.TrimSpace(playback.logFilePath()); got != want {
+		t.Fatalf("unexpected log path: got=%q want=%q", got, want)
+	}
+}
+
+func TestStartSDKStreamPlayback_RequiresPathOrWorkDir(t *testing.T) {
+	_, err := startSDKStreamPlayback(context.Background(), SDKConfig{
+		Provider: "codex",
+	}, 1)
+	if err == nil || !strings.Contains(err.Error(), "stream_log_path/work_dir 同时为空") {
+		t.Fatalf("expected missing path/workdir error, got=%v", err)
 	}
 }
 
