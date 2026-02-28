@@ -91,20 +91,3 @@ func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 
 	return nil
 }
-
-// KillAllTmuxSessions 直接关闭本项目 tmux socket 下的所有 sessions（等价于 `tmux -L <socket> kill-server`）。
-// 用于“一键清理”。
-func (s *Service) KillAllTmuxSessions(ctx context.Context) error {
-	p, err := s.require()
-	if err != nil {
-		return err
-	}
-	if p.Tmux == nil {
-		return fmt.Errorf("tmux client 不可用")
-	}
-	cfg, err := s.cfg()
-	if err != nil {
-		return err
-	}
-	return p.Tmux.KillServer(ctx, cfg.TmuxSocket)
-}

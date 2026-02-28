@@ -50,20 +50,6 @@ func (p *Project) CountPendingWorktreeCleanup(ctx context.Context) (int64, error
 	return p.worker.CountPendingWorktreeCleanup(ctx)
 }
 
-func (p *Project) KillAllTmuxSessions(ctx context.Context) error {
-	if p == nil || p.worker == nil {
-		return fmt.Errorf("project worker service 为空")
-	}
-	return p.worker.KillAllTmuxSessions(ctx)
-}
-
-func (p *Project) ReconcileRunningWorkersAfterKillAll(ctx context.Context, socket string) (int64, error) {
-	if p == nil || p.worker == nil {
-		return 0, fmt.Errorf("project worker service 为空")
-	}
-	return p.worker.ReconcileRunningWorkersAfterKillAll(ctx, socket)
-}
-
 func (p *Project) AttachCmd(ctx context.Context, ticketID uint) (*exec.Cmd, error) {
 	if p == nil || p.worker == nil {
 		return nil, fmt.Errorf("project worker service 为空")
