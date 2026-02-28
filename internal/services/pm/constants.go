@@ -45,7 +45,7 @@ const (
 	tmuxNewSessionTimeout    = 5 * time.Second
 	tmuxObserveTargetTimeout = 5 * time.Second
 
-	defaultZombieStallThreshold  = 30 * time.Minute
+	defaultZombieStallThreshold  = 10 * time.Minute
 	defaultZombieMaxRetries      = 3
 	defaultZombieRetryBackoff    = 60 * time.Second
 	defaultZombieRetryBackoffMax = 10 * time.Minute
