@@ -12,6 +12,8 @@ type Worker struct {
 
 	WorktreePath string `gorm:"type:text;not null"`
 	Branch       string `gorm:"type:text;not null"`
+	ProcessPID   int    `gorm:"not null;default:0"`
+	LogPath      string `gorm:"type:text;not null;default:''"`
 	TmuxSocket   string `gorm:"type:text;not null"`
 	TmuxSession  string `gorm:"type:text;not null;default:''"`
 

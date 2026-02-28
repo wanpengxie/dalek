@@ -80,18 +80,19 @@ func newPMServiceForTest(t *testing.T) (*Service, *core.Project) {
 	}
 
 	p, err := core.NewProject(core.NewProjectInput{
-		Name:         "demo",
-		Key:          "demo",
-		RepoRoot:     repoRoot,
-		Layout:       layout,
-		WorktreesDir: filepath.Join(t.TempDir(), "worktrees"),
-		WorkersDir:   layout.RuntimeWorkersDir,
-		Config:       repo.Config{TmuxSocket: "dalek"},
-		DB:           db,
-		Logger:       core.DiscardLogger(),
-		Tmux:         noopTmux{},
-		Git:          noopGit{},
-		TaskRuntime:  tasksvc.NewRuntimeFactory(),
+		Name:          "demo",
+		Key:           "demo",
+		RepoRoot:      repoRoot,
+		Layout:        layout,
+		WorktreesDir:  filepath.Join(t.TempDir(), "worktrees"),
+		WorkersDir:    layout.RuntimeWorkersDir,
+		Config:        repo.Config{TmuxSocket: "dalek"},
+		DB:            db,
+		Logger:        core.DiscardLogger(),
+		Tmux:          noopTmux{},
+		WorkerRuntime: infra.NewDaemonProcessManager(),
+		Git:           noopGit{},
+		TaskRuntime:   tasksvc.NewRuntimeFactory(),
 	})
 	if err != nil {
 		t.Fatalf("NewProject failed: %v", err)

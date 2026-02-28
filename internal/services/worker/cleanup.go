@@ -122,6 +122,22 @@ func (s *Service) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt 
 		return result, fmt.Errorf("worker 仍在 running，拒绝清理")
 	}
 
+	if hasWorkerRuntimeHandle(w) {
+		alive, aerr := p.WorkerRuntime.IsAlive(ctx, workerRuntimeHandle(w))
+		if aerr != nil && !opt.Force {
+			return result, aerr
+		}
+		if aerr == nil && alive {
+			result.SessionLive = true
+			if !opt.Force {
+				return result, fmt.Errorf("worker 进程仍存活：pid=%d（可用 --force）", w.ProcessPID)
+			}
+			if err := p.WorkerRuntime.StopProcess(ctx, workerRuntimeHandle(w), defaultWorkerProcessStopTimeout); err != nil {
+				return result, err
+			}
+		}
+	}
+
 	socket := strings.TrimSpace(w.TmuxSocket)
 	if socket == "" {
 		cfg, err := s.cfg()

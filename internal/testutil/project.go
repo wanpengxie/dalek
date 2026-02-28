@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"dalek/internal/infra"
 	"dalek/internal/repo"
@@ -187,6 +188,113 @@ type FakeGitClient struct {
 	RemovedPaths       []string
 }
 
+type FakeWorkerRuntime struct {
+	StartCalls     int
+	StopCalls      int
+	InterruptCalls int
+	IsAliveCalls   int
+
+	StartErr     error
+	StopErr      error
+	InterruptErr error
+	IsAliveErr   error
+	CaptureErr   error
+
+	NextPID int
+
+	StartSpecs       []infra.WorkerProcessSpec
+	StopHandles      []infra.WorkerProcessHandle
+	InterruptHandles []infra.WorkerProcessHandle
+	CaptureHandles   []infra.WorkerProcessHandle
+
+	AliveByPID  map[int]bool
+	CaptureText string
+}
+
+func (f *FakeWorkerRuntime) ensure() {
+	if f.AliveByPID == nil {
+		f.AliveByPID = map[int]bool{}
+	}
+	if f.NextPID <= 0 {
+		f.NextPID = 1000
+	}
+}
+
+func (f *FakeWorkerRuntime) StartProcess(ctx context.Context, spec infra.WorkerProcessSpec) (infra.WorkerProcessHandle, error) {
+	_ = ctx
+	f.ensure()
+	f.StartCalls++
+	f.StartSpecs = append(f.StartSpecs, spec)
+	if f.StartErr != nil {
+		return infra.WorkerProcessHandle{}, f.StartErr
+	}
+	pid := f.NextPID
+	f.NextPID++
+	f.AliveByPID[pid] = true
+	return infra.WorkerProcessHandle{
+		PID:       pid,
+		Command:   strings.TrimSpace(spec.Command),
+		Args:      append([]string(nil), spec.Args...),
+		WorkDir:   strings.TrimSpace(spec.WorkDir),
+		LogPath:   strings.TrimSpace(spec.LogPath),
+		StartedAt: time.Now(),
+	}, nil
+}
+
+func (f *FakeWorkerRuntime) StopProcess(ctx context.Context, handle infra.WorkerProcessHandle, timeout time.Duration) error {
+	_ = ctx
+	_ = timeout
+	f.ensure()
+	f.StopCalls++
+	f.StopHandles = append(f.StopHandles, handle)
+	if f.StopErr != nil {
+		return f.StopErr
+	}
+	if handle.PID > 0 {
+		f.AliveByPID[handle.PID] = false
+	}
+	return nil
+}
+
+func (f *FakeWorkerRuntime) InterruptProcess(ctx context.Context, handle infra.WorkerProcessHandle) error {
+	_ = ctx
+	f.ensure()
+	f.InterruptCalls++
+	f.InterruptHandles = append(f.InterruptHandles, handle)
+	if f.InterruptErr != nil {
+		return f.InterruptErr
+	}
+	return nil
+}
+
+func (f *FakeWorkerRuntime) IsAlive(ctx context.Context, handle infra.WorkerProcessHandle) (bool, error) {
+	_ = ctx
+	f.ensure()
+	f.IsAliveCalls++
+	if f.IsAliveErr != nil {
+		return false, f.IsAliveErr
+	}
+	return f.AliveByPID[handle.PID], nil
+}
+
+func (f *FakeWorkerRuntime) CaptureOutput(ctx context.Context, handle infra.WorkerProcessHandle, lines int) (string, error) {
+	_ = ctx
+	_ = lines
+	f.CaptureHandles = append(f.CaptureHandles, handle)
+	if f.CaptureErr != nil {
+		return "", f.CaptureErr
+	}
+	return f.CaptureText, nil
+}
+
+func (f *FakeWorkerRuntime) AttachCmd(handle infra.WorkerProcessHandle) *exec.Cmd {
+	logPath := strings.TrimSpace(handle.LogPath)
+	if logPath == "" {
+		return exec.Command("true")
+	}
+	return exec.Command("tail", "-n", "200", "-F", logPath)
+}
+
 func (f *FakeGitClient) CurrentBranch(repoRoot string) (string, error) {
 	_ = repoRoot
 	cur := strings.TrimSpace(f.CurrentBranchValue)
@@ -317,20 +425,22 @@ echo '{"type":"item.completed","item":{"id":"msg-worker-default","type":"agent_m
 	fGit := &FakeGitClient{
 		CurrentBranchValue: "main",
 	}
+	fRuntime := &FakeWorkerRuntime{}
 
 	cp, err := core.NewProject(core.NewProjectInput{
-		Name:         "demo",
-		Key:          "demo",
-		RepoRoot:     repoRoot,
-		Layout:       layout,
-		WorktreesDir: worktreesDir,
-		WorkersDir:   layout.RuntimeWorkersDir,
-		Config:       cfg,
-		DB:           db,
-		Logger:       core.DiscardLogger(),
-		Tmux:         fTmux,
-		Git:          fGit,
-		TaskRuntime:  tasksvc.NewRuntimeFactory(),
+		Name:          "demo",
+		Key:           "demo",
+		RepoRoot:      repoRoot,
+		Layout:        layout,
+		WorktreesDir:  worktreesDir,
+		WorkersDir:    layout.RuntimeWorkersDir,
+		Config:        cfg,
+		DB:            db,
+		Logger:        core.DiscardLogger(),
+		Tmux:          fTmux,
+		WorkerRuntime: fRuntime,
+		Git:           fGit,
+		TaskRuntime:   tasksvc.NewRuntimeFactory(),
 	})
 	if err != nil {
 		t.Fatalf("NewProject failed: %v", err)

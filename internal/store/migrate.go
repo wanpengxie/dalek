@@ -58,6 +58,11 @@ func storeMigrations() []Migration {
 			Name:    "add_worker_zombie_retry_fields",
 			Up:      migrateAddWorkerZombieRetryFields,
 		},
+		{
+			Version: 9,
+			Name:    "add_worker_process_fields",
+			Up:      migrateAddWorkerProcessFields,
+		},
 	}
 }
 
@@ -139,6 +144,23 @@ func migrateAddWorkerZombieRetryFields(db *gorm.DB) error {
 		`ALTER TABLE workers ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0;`,
 		`ALTER TABLE workers ADD COLUMN last_retry_at TEXT DEFAULT NULL;`,
 		`ALTER TABLE workers ADD COLUMN last_error_hash TEXT NOT NULL DEFAULT '';`,
+	}
+	for _, stmt := range statements {
+		if err := db.Exec(stmt).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if strings.Contains(msg, "duplicate column name") {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateAddWorkerProcessFields(db *gorm.DB) error {
+	statements := []string{
+		`ALTER TABLE workers ADD COLUMN process_pid INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE workers ADD COLUMN log_path TEXT NOT NULL DEFAULT '';`,
 	}
 	for _, stmt := range statements {
 		if err := db.Exec(stmt).Error; err != nil {

@@ -122,7 +122,7 @@ func TestOpenAndMigrate_WorkerZombieRetryColumnsPresent(t *testing.T) {
 	for _, col := range cols {
 		seen[col.Name] = true
 	}
-	for _, want := range []string{"retry_count", "last_retry_at", "last_error_hash"} {
+	for _, want := range []string{"retry_count", "last_retry_at", "last_error_hash", "process_pid", "log_path"} {
 		if !seen[want] {
 			t.Fatalf("workers missing expected column: %s", want)
 		}

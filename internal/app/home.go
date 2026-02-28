@@ -424,18 +424,19 @@ func (h *Home) initProjectFiles(name, repoRoot string, cfg ProjectConfig) (*Proj
 
 func buildCoreProject(name, key, repoRoot string, layout repo.Layout, cfg repo.Config, db *gorm.DB, worktreesDir string) (*core.Project, error) {
 	return core.NewProject(core.NewProjectInput{
-		Name:         strings.TrimSpace(name),
-		Key:          strings.TrimSpace(key),
-		RepoRoot:     strings.TrimSpace(repoRoot),
-		Layout:       layout,
-		WorktreesDir: strings.TrimSpace(worktreesDir),
-		WorkersDir:   strings.TrimSpace(layout.RuntimeWorkersDir),
-		Config:       cfg,
-		DB:           db,
-		Logger:       core.DefaultLogger(),
-		Tmux:         infra.NewTmuxExecClient(),
-		Git:          infra.NewGitExecClient(),
-		TaskRuntime:  task.NewRuntimeFactory(),
+		Name:          strings.TrimSpace(name),
+		Key:           strings.TrimSpace(key),
+		RepoRoot:      strings.TrimSpace(repoRoot),
+		Layout:        layout,
+		WorktreesDir:  strings.TrimSpace(worktreesDir),
+		WorkersDir:    strings.TrimSpace(layout.RuntimeWorkersDir),
+		Config:        cfg,
+		DB:            db,
+		Logger:        core.DefaultLogger(),
+		Tmux:          infra.NewTmuxExecClient(),
+		WorkerRuntime: infra.NewDaemonProcessManager(),
+		Git:           infra.NewGitExecClient(),
+		TaskRuntime:   task.NewRuntimeFactory(),
 	})
 }
 

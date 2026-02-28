@@ -42,6 +42,9 @@ func (s *Service) require() (*core.Project, error) {
 	if s.p.Tmux == nil {
 		return nil, fmt.Errorf("worker service 缺少 tmux client")
 	}
+	if s.p.WorkerRuntime == nil {
+		return nil, fmt.Errorf("worker service 缺少 worker runtime")
+	}
 	if s.p.Git == nil {
 		return nil, fmt.Errorf("worker service 缺少 git client")
 	}
@@ -83,6 +86,14 @@ func (s *Service) tmux() (infra.TmuxClient, error) {
 		return nil, err
 	}
 	return p.Tmux, nil
+}
+
+func (s *Service) runtime() (infra.WorkerRuntime, error) {
+	p, err := s.require()
+	if err != nil {
+		return nil, err
+	}
+	return p.WorkerRuntime, nil
 }
 
 func (s *Service) git() (infra.GitClient, error) {

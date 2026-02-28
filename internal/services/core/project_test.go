@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"dalek/internal/infra"
 	"dalek/internal/repo"
@@ -73,6 +74,27 @@ func (noopTaskRuntimeFactory) ForDB(db *gorm.DB) TaskRuntime {
 	return nil
 }
 
+type noopWorkerRuntime struct{}
+
+func (noopWorkerRuntime) StartProcess(ctx context.Context, spec infra.WorkerProcessSpec) (infra.WorkerProcessHandle, error) {
+	return infra.WorkerProcessHandle{}, nil
+}
+func (noopWorkerRuntime) StopProcess(ctx context.Context, handle infra.WorkerProcessHandle, timeout time.Duration) error {
+	return nil
+}
+func (noopWorkerRuntime) InterruptProcess(ctx context.Context, handle infra.WorkerProcessHandle) error {
+	return nil
+}
+func (noopWorkerRuntime) IsAlive(ctx context.Context, handle infra.WorkerProcessHandle) (bool, error) {
+	return false, nil
+}
+func (noopWorkerRuntime) CaptureOutput(ctx context.Context, handle infra.WorkerProcessHandle, lines int) (string, error) {
+	return "", nil
+}
+func (noopWorkerRuntime) AttachCmd(handle infra.WorkerProcessHandle) *exec.Cmd {
+	return exec.Command("true")
+}
+
 func TestNewProject_SuccessAndPathHelpers(t *testing.T) {
 	input := newValidProjectInput(t)
 	p, err := NewProject(input)
@@ -133,6 +155,13 @@ func TestNewProject_ValidateRequiredFields(t *testing.T) {
 			want: "Tmux",
 		},
 		{
+			name: "missing_worker_runtime",
+			mutate: func(in *NewProjectInput) {
+				in.WorkerRuntime = nil
+			},
+			want: "WorkerRuntime",
+		},
+		{
 			name: "missing_git",
 			mutate: func(in *NewProjectInput) {
 				in.Git = nil
@@ -191,17 +220,18 @@ func newValidProjectInput(t *testing.T) NewProjectInput {
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	return NewProjectInput{
-		Name:         "demo",
-		Key:          "demo",
-		RepoRoot:     repoRoot,
-		Layout:       layout,
-		WorktreesDir: filepath.Join(t.TempDir(), "worktrees"),
-		WorkersDir:   layout.RuntimeWorkersDir,
-		Config:       repo.Config{}.WithDefaults(),
-		DB:           db,
-		Logger:       DiscardLogger(),
-		Tmux:         noopTmuxClient{},
-		Git:          noopGitClient{},
-		TaskRuntime:  noopTaskRuntimeFactory{},
+		Name:          "demo",
+		Key:           "demo",
+		RepoRoot:      repoRoot,
+		Layout:        layout,
+		WorktreesDir:  filepath.Join(t.TempDir(), "worktrees"),
+		WorkersDir:    layout.RuntimeWorkersDir,
+		Config:        repo.Config{}.WithDefaults(),
+		DB:            db,
+		Logger:        DiscardLogger(),
+		Tmux:          noopTmuxClient{},
+		WorkerRuntime: noopWorkerRuntime{},
+		Git:           noopGitClient{},
+		TaskRuntime:   noopTaskRuntimeFactory{},
 	}
 }

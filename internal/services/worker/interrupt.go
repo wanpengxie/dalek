@@ -14,6 +14,10 @@ type InterruptResult struct {
 	TicketID uint
 	WorkerID uint
 
+	Mode       string
+	ProcessPID int
+	LogPath    string
+
 	TmuxSocket  string
 	TmuxSession string
 	TargetPane  string
@@ -30,7 +34,7 @@ func (s *Service) InterruptTicket(ctx context.Context, ticketID uint) (Interrupt
 	return s.InterruptWorker(ctx, w.ID)
 }
 
-// InterruptWorker 软中断：向目标 pane 发送 Ctrl+C（SIGINT），不 kill tmux session。
+// InterruptWorker 软中断：优先对 worker 进程发送 SIGINT；无进程句柄时回退到 tmux Ctrl+C。
 func (s *Service) InterruptWorker(ctx context.Context, workerID uint) (InterruptResult, error) {
 	p, err := s.require()
 	if err != nil {
@@ -46,8 +50,33 @@ func (s *Service) InterruptWorker(ctx context.Context, workerID uint) (Interrupt
 	if err := db.First(&w, workerID).Error; err != nil {
 		return InterruptResult{}, err
 	}
+	if hasWorkerRuntimeHandle(w) {
+		if ierr := p.WorkerRuntime.InterruptProcess(ctx, workerRuntimeHandle(w)); ierr == nil {
+			_ = s.appendWorkerTaskEvent(ctx, w.ID, "interrupt_sent", fmt.Sprintf("pid=%d", w.ProcessPID), map[string]any{
+				"mode":        "process",
+				"process_pid": w.ProcessPID,
+				"log_path":    strings.TrimSpace(w.LogPath),
+			}, now)
+			_ = s.RequestWorkerSemanticWatch(ctx, w.ID, time.Now())
+			return InterruptResult{
+				TicketID:    w.TicketID,
+				WorkerID:    w.ID,
+				Mode:        "process",
+				ProcessPID:  w.ProcessPID,
+				LogPath:     strings.TrimSpace(w.LogPath),
+				TmuxSocket:  strings.TrimSpace(w.TmuxSocket),
+				TmuxSession: strings.TrimSpace(w.TmuxSession),
+			}, nil
+		} else if strings.TrimSpace(w.TmuxSession) == "" {
+			_ = s.appendWorkerTaskEvent(ctx, w.ID, "interrupt_error", fmt.Sprintf("process SIGINT 失败: %v", ierr), map[string]any{
+				"mode":        "process",
+				"process_pid": w.ProcessPID,
+			}, now)
+			return InterruptResult{}, ierr
+		}
+	}
 	if strings.TrimSpace(w.TmuxSession) == "" {
-		return InterruptResult{}, fmt.Errorf("worker 缺少 tmux_session: w%d", workerID)
+		return InterruptResult{}, fmt.Errorf("worker 缺少可中断运行句柄: w%d", workerID)
 	}
 
 	cfg, err := s.cfg()
@@ -92,6 +121,7 @@ func (s *Service) InterruptWorker(ctx context.Context, workerID uint) (Interrupt
 		return InterruptResult{}, err
 	}
 	_ = s.appendWorkerTaskEvent(ctx, w.ID, "interrupt_sent", fmt.Sprintf("target=%s", strings.TrimSpace(target)), map[string]any{
+		"mode":   "tmux",
 		"target": strings.TrimSpace(target),
 	}, now)
 	// 事件触发：尽快做一次语义观测（例如中断后可能马上回到 prompt / 报错 / 等待输入）。
@@ -100,6 +130,9 @@ func (s *Service) InterruptWorker(ctx context.Context, workerID uint) (Interrupt
 	return InterruptResult{
 		TicketID:    w.TicketID,
 		WorkerID:    w.ID,
+		Mode:        "tmux",
+		ProcessPID:  w.ProcessPID,
+		LogPath:     strings.TrimSpace(w.LogPath),
 		TmuxSocket:  socket,
 		TmuxSession: strings.TrimSpace(w.TmuxSession),
 		TargetPane:  strings.TrimSpace(target),
