@@ -155,10 +155,10 @@ func TestDirectDispatchWorker_RollbackWorkflowFallsBackToBlockedWhenPrevInvalid(
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": contracts.TicketWorkflowStatus("legacy_unknown_state"),
+		"workflow_status": contracts.TicketWorkflowStatus("old_unknown_state"),
 		"updated_at":      time.Now(),
 	}).Error; err != nil {
-		t.Fatalf("set ticket legacy workflow failed: %v", err)
+		t.Fatalf("set ticket old workflow failed: %v", err)
 	}
 
 	p.Config.WorkerAgent = repo.AgentExecConfig{

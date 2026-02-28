@@ -173,25 +173,25 @@ func TestOpenAndMigrate_TicketArchivedTakesPrecedenceOverStatus(t *testing.T) {
 
 	// 模拟历史 schema：tickets.status + tickets.archived
 	if err := db.Exec("ALTER TABLE tickets ADD COLUMN status TEXT;").Error; err != nil {
-		t.Fatalf("add legacy status column failed: %v", err)
+		t.Fatalf("add old status column failed: %v", err)
 	}
 	if err := db.Exec("ALTER TABLE tickets ADD COLUMN archived INTEGER;").Error; err != nil {
-		t.Fatalf("add legacy archived column failed: %v", err)
+		t.Fatalf("add old archived column failed: %v", err)
 	}
 	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);").Error; err != nil {
-		t.Fatalf("add legacy status index failed: %v", err)
+		t.Fatalf("add old status index failed: %v", err)
 	}
 	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_tickets_archived ON tickets(archived);").Error; err != nil {
-		t.Fatalf("add legacy archived index failed: %v", err)
+		t.Fatalf("add old archived index failed: %v", err)
 	}
 
 	now := time.Now()
 	if err := db.Exec(
-		"INSERT INTO tickets (created_at, updated_at, title, description, priority, workflow_status, status, archived) VALUES (?, ?, 'legacy-1', 'd', 0, 'backlog', 'done', 1);",
+		"INSERT INTO tickets (created_at, updated_at, title, description, priority, workflow_status, status, archived) VALUES (?, ?, 'old-1', 'd', 0, 'backlog', 'done', 1);",
 		now,
 		now,
 	).Error; err != nil {
-		t.Fatalf("insert legacy ticket failed: %v", err)
+		t.Fatalf("insert old ticket failed: %v", err)
 	}
 
 	// 回退版本标记，模拟“老库停留在 v3，待执行 v4+”。
@@ -225,12 +225,12 @@ func TestOpenAndMigrate_TicketArchivedTakesPrecedenceOverStatus(t *testing.T) {
 	}
 	for _, c := range cols {
 		if c.Name == "status" || c.Name == "archived" {
-			t.Fatalf("legacy ticket column should be removed after migrate, got=%s", c.Name)
+			t.Fatalf("old ticket column should be removed after migrate, got=%s", c.Name)
 		}
 	}
 }
 
-func TestOpenAndMigrate_NormalizesLegacyWorkflowAliases(t *testing.T) {
+func TestOpenAndMigrate_NormalizesOldWorkflowAliases(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)
 	if err != nil {
@@ -238,11 +238,11 @@ func TestOpenAndMigrate_NormalizesLegacyWorkflowAliases(t *testing.T) {
 	}
 	now := time.Now()
 	if err := db.Exec(
-		"INSERT INTO tickets (created_at, updated_at, title, description, priority, workflow_status) VALUES (?, ?, 'legacy-alias', '', 0, 'in_progress');",
+		"INSERT INTO tickets (created_at, updated_at, title, description, priority, workflow_status) VALUES (?, ?, 'old-alias', '', 0, 'in_progress');",
 		now,
 		now,
 	).Error; err != nil {
-		t.Fatalf("insert legacy ticket failed: %v", err)
+		t.Fatalf("insert old ticket failed: %v", err)
 	}
 
 	// 回退版本标记，模拟“老库停留在 v3，待执行 v4+”。
@@ -259,7 +259,7 @@ func TestOpenAndMigrate_NormalizesLegacyWorkflowAliases(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 	var got Ticket
-	if err := db2.Where("title = ?", "legacy-alias").First(&got).Error; err != nil {
+	if err := db2.Where("title = ?", "old-alias").First(&got).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
 	if got.WorkflowStatus != contracts.TicketActive {
@@ -396,7 +396,7 @@ func TestOpenAndMigrate_ChannelMessageDedupScopedByConversation(t *testing.T) {
 	}
 }
 
-func TestEnsureChannelMessageDedupIndex_RebuildLegacyDefinition(t *testing.T) {
+func TestEnsureChannelMessageDedupIndex_RebuildOldDefinition(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)
 	if err != nil {
@@ -407,7 +407,7 @@ func TestEnsureChannelMessageDedupIndex_RebuildLegacyDefinition(t *testing.T) {
 		t.Fatalf("drop index failed: %v", err)
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX idx_channel_message_dedup ON channel_messages(direction, adapter, peer_message_id)").Error; err != nil {
-		t.Fatalf("create legacy index failed: %v", err)
+		t.Fatalf("create old index failed: %v", err)
 	}
 
 	if err := ensureChannelMessageDedupIndex(db); err != nil {
@@ -469,14 +469,14 @@ func TestOpenAndMigrate_NotebookSchemaHasRequiredColumns(t *testing.T) {
 			t.Fatalf("note_items should contain column: %s", col)
 		}
 	}
-	legacyNoteCols := []string{"raw_text", "ticket_id", "rejected_reason"}
-	for _, col := range legacyNoteCols {
+	oldNoteCols := []string{"raw_text", "ticket_id", "rejected_reason"}
+	for _, col := range oldNoteCols {
 		ok, err := tableHasColumn(db, "note_items", col)
 		if err != nil {
 			t.Fatalf("tableHasColumn(note_items.%s) failed: %v", col, err)
 		}
 		if ok {
-			t.Fatalf("note_items legacy column should be removed: %s", col)
+			t.Fatalf("note_items old column should be removed: %s", col)
 		}
 	}
 
@@ -572,10 +572,10 @@ func TestOpenAndMigrate_NoteStatusMigrationToShaped(t *testing.T) {
 			now,
 			"demo",
 			st,
-			"legacy note",
+			"old note",
 			st+strings.Repeat("x", i+1),
 		).Error; err != nil {
-			t.Fatalf("insert legacy note status=%s failed: %v", st, err)
+			t.Fatalf("insert old note status=%s failed: %v", st, err)
 		}
 	}
 

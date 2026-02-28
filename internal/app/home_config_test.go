@@ -218,23 +218,23 @@ func TestLoadHomeConfig_ExistingConfigWithDefaults(t *testing.T) {
 	if cfg.Daemon.Public.Listen != "0.0.0.0:18080" {
 		t.Fatalf("daemon.public.listen should be normalized: got=%q", cfg.Daemon.Public.Listen)
 	}
-	if !cfg.Daemon.Public.Feishu.Enabled {
-		t.Fatalf("daemon.public.feishu.enabled should be migrated to true")
+	if cfg.Daemon.Public.Feishu.Enabled {
+		t.Fatalf("daemon.public.feishu.enabled should keep explicit false")
 	}
-	if cfg.Daemon.Public.Feishu.AppID != "app-id" {
-		t.Fatalf("daemon.public.feishu.app_id should be migrated: got=%q", cfg.Daemon.Public.Feishu.AppID)
+	if cfg.Daemon.Public.Feishu.AppID != "" {
+		t.Fatalf("daemon.public.feishu.app_id should not be auto-filled: got=%q", cfg.Daemon.Public.Feishu.AppID)
 	}
-	if cfg.Daemon.Public.Feishu.AppSecret != "app-secret" {
-		t.Fatalf("daemon.public.feishu.app_secret should be migrated: got=%q", cfg.Daemon.Public.Feishu.AppSecret)
+	if cfg.Daemon.Public.Feishu.AppSecret != "" {
+		t.Fatalf("daemon.public.feishu.app_secret should not be auto-filled: got=%q", cfg.Daemon.Public.Feishu.AppSecret)
 	}
-	if cfg.Daemon.Public.Feishu.VerificationToken != "verify-token" {
-		t.Fatalf("daemon.public.feishu.verification_token should be migrated: got=%q", cfg.Daemon.Public.Feishu.VerificationToken)
+	if cfg.Daemon.Public.Feishu.VerificationToken != "" {
+		t.Fatalf("daemon.public.feishu.verification_token should not be auto-filled: got=%q", cfg.Daemon.Public.Feishu.VerificationToken)
 	}
-	if cfg.Daemon.Public.Feishu.WebhookSecretPath != "hook-secret" {
-		t.Fatalf("daemon.public.feishu.webhook_secret_path should be migrated: got=%q", cfg.Daemon.Public.Feishu.WebhookSecretPath)
+	if cfg.Daemon.Public.Feishu.WebhookSecretPath != "" {
+		t.Fatalf("daemon.public.feishu.webhook_secret_path should not be auto-filled: got=%q", cfg.Daemon.Public.Feishu.WebhookSecretPath)
 	}
-	if cfg.Daemon.Public.Feishu.BaseURL != "https://feishu.example.com" {
-		t.Fatalf("daemon.public.feishu.base_url should be migrated: got=%q", cfg.Daemon.Public.Feishu.BaseURL)
+	if cfg.Daemon.Public.Feishu.BaseURL != "https://open.feishu.cn" {
+		t.Fatalf("daemon.public.feishu.base_url should fallback to default: got=%q", cfg.Daemon.Public.Feishu.BaseURL)
 	}
 	if !cfg.Daemon.Public.Feishu.UseSystemProxy {
 		t.Fatalf("daemon.public.feishu.use_system_proxy should keep explicit value")
@@ -242,17 +242,17 @@ func TestLoadHomeConfig_ExistingConfigWithDefaults(t *testing.T) {
 	if cfg.Daemon.Public.Ingress.Provider != "cloudflare_tunnel" {
 		t.Fatalf("daemon.public.ingress.provider should fallback to default: got=%q", cfg.Daemon.Public.Ingress.Provider)
 	}
-	if !cfg.Daemon.Public.Ingress.Enabled {
-		t.Fatalf("daemon.public.ingress.enabled should be migrated to true")
+	if cfg.Daemon.Public.Ingress.Enabled {
+		t.Fatalf("daemon.public.ingress.enabled should keep explicit false")
 	}
-	if cfg.Daemon.Public.Ingress.TunnelName != "gw-prod" {
-		t.Fatalf("daemon.public.ingress.tunnel_name should be migrated: got=%q", cfg.Daemon.Public.Ingress.TunnelName)
+	if cfg.Daemon.Public.Ingress.TunnelName != "" {
+		t.Fatalf("daemon.public.ingress.tunnel_name should not be auto-filled: got=%q", cfg.Daemon.Public.Ingress.TunnelName)
 	}
-	if cfg.Daemon.Public.Ingress.Hostname != "gw.example.com" {
-		t.Fatalf("daemon.public.ingress.hostname should be migrated: got=%q", cfg.Daemon.Public.Ingress.Hostname)
+	if cfg.Daemon.Public.Ingress.Hostname != "" {
+		t.Fatalf("daemon.public.ingress.hostname should not be auto-filled: got=%q", cfg.Daemon.Public.Ingress.Hostname)
 	}
-	if cfg.Daemon.Public.Ingress.CloudflaredBin != "/usr/local/bin/cloudflared" {
-		t.Fatalf("daemon.public.ingress.cloudflared_bin should be migrated: got=%q", cfg.Daemon.Public.Ingress.CloudflaredBin)
+	if cfg.Daemon.Public.Ingress.CloudflaredBin != "cloudflared" {
+		t.Fatalf("daemon.public.ingress.cloudflared_bin should fallback to default: got=%q", cfg.Daemon.Public.Ingress.CloudflaredBin)
 	}
 	if cfg.Daemon.Notebook.WorkerCount != defaultNotebookWorkerCount {
 		t.Fatalf("daemon.notebook.worker_count should fallback to default: got=%d", cfg.Daemon.Notebook.WorkerCount)
@@ -380,13 +380,13 @@ func TestHomeConfigWithDefaults_DaemonMaxConcurrentFallback(t *testing.T) {
 	}
 }
 
-func TestHomeConfigWithDefaults_DoesNotReenableDaemonFeishuWithoutLegacyValues(t *testing.T) {
+func TestHomeConfigWithDefaults_DoesNotReenableDaemonFeishuWithoutOldValues(t *testing.T) {
 	cfg := DefaultHomeConfig()
 	cfg.Daemon.Public.Feishu.Enabled = false
 
 	got := cfg.WithDefaults()
 	if got.Daemon.Public.Feishu.Enabled {
-		t.Fatalf("daemon.public.feishu.enabled should stay false when no legacy feishu config exists")
+		t.Fatalf("daemon.public.feishu.enabled should stay false when no old feishu config exists")
 	}
 }
 
@@ -428,7 +428,7 @@ func TestLoadHomeConfig_SchemaV1LogsDeprecation(t *testing.T) {
   "schema_version": 1,
   "gateway": {
     "feishu": {
-      "app_id": "legacy-app"
+      "app_id": "old-app"
     }
   }
 }`

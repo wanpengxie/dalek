@@ -128,11 +128,11 @@ func TestOpenAndMigrate_WorkerZombieRetryColumnsPresent(t *testing.T) {
 		}
 	}
 	if seen["process_pid"] {
-		t.Fatalf("workers should not keep legacy column: process_pid")
+		t.Fatalf("workers should not keep old column: process_pid")
 	}
 }
 
-func TestOpenAndMigrate_RepairWorkerLogPathWhenLegacyV9Occupied(t *testing.T) {
+func TestOpenAndMigrate_RepairWorkerLogPathWhenOldV9Occupied(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)
 	if err != nil {
@@ -166,10 +166,10 @@ func TestOpenAndMigrate_RepairWorkerLogPathWhenLegacyV9Occupied(t *testing.T) {
 		seen[col.Name] = true
 	}
 	if !seen["log_path"] {
-		t.Fatalf("workers should restore log_path when v9 was occupied by legacy branch")
+		t.Fatalf("workers should restore log_path when v9 was occupied by old branch")
 	}
 	if seen["process_pid"] {
-		t.Fatalf("workers should not keep legacy column: process_pid")
+		t.Fatalf("workers should not keep old column: process_pid")
 	}
 }
 

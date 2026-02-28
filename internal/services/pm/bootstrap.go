@@ -22,7 +22,6 @@ func (s *Service) executePMBootstrapEntrypoint(ctx context.Context, t contracts.
 	scriptPath := ""
 	for _, candidate := range []string{
 		strings.TrimSpace(p.Layout.ProjectBootstrapPath),
-		strings.TrimSpace(p.Layout.ProjectLegacyBootstrapPath),
 	} {
 		if candidate == "" {
 			continue

@@ -16,7 +16,7 @@ func TestCanonicalTicketWorkflowStatus(t *testing.T) {
 		{name: "wait_user_alias", in: "wait_user", want: TicketBlocked},
 		{name: "completed_alias", in: "completed", want: TicketDone},
 		{name: "archive_alias", in: "archive", want: TicketArchived},
-		{name: "unknown_passthrough", in: "legacy_custom", want: "legacy_custom"},
+		{name: "unknown_passthrough", in: "old_custom", want: "old_custom"},
 	}
 
 	for _, tt := range tests {

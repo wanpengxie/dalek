@@ -9,9 +9,6 @@ const (
 	NoteShaping   NoteStatus = "shaping"
 	NoteShaped    NoteStatus = "shaped"
 	NoteDiscarded NoteStatus = "discarded"
-
-	// NotePendingReviewLegacy 兼容历史数据，禁止新写入。
-	NotePendingReviewLegacy NoteStatus = "pending_review"
 )
 
 type NoteItem struct {

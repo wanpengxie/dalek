@@ -714,7 +714,7 @@ func TestDaemonFeishuWebhookHandler_CardActionTriggerV1EventTypeFallback(t *test
 		VerifyToken: "token-ok",
 	}, nil)
 
-	rec := postDaemonFeishuCardActionEventLegacyV1(t, handler, "token-ok", "chat-callback-v1", "om-card-v1", "evt-card-v1", "open-user-2", 42, "approve")
+	rec := postDaemonFeishuCardActionEventOldV1(t, handler, "token-ok", "chat-callback-v1", "om-card-v1", "evt-card-v1", "open-user-2", 42, "approve")
 
 	// Response body should contain the updated card JSON.
 	respBody := rec.Body.String()
@@ -1198,7 +1198,7 @@ func postDaemonFeishuCardActionEvent(t *testing.T, handler http.HandlerFunc, tok
 	return rec
 }
 
-func postDaemonFeishuCardActionEventLegacyV1(t *testing.T, handler http.HandlerFunc, token, chatID, messageID, eventID, operatorOpenID string, pendingActionID uint, decision string) *httptest.ResponseRecorder {
+func postDaemonFeishuCardActionEventOldV1(t *testing.T, handler http.HandlerFunc, token, chatID, messageID, eventID, operatorOpenID string, pendingActionID uint, decision string) *httptest.ResponseRecorder {
 	t.Helper()
 	payload := map[string]any{
 		"header": map[string]any{

@@ -100,13 +100,6 @@ func main() {
 	case "help", "-h", "--help":
 		usage(0)
 	default:
-		if migrated, ok := legacyTopLevelCommand(strings.TrimSpace(rest[0])); ok {
-			exitUsageError(globalOutput,
-				fmt.Sprintf("旧命令已移除: %s", strings.TrimSpace(rest[0])),
-				"CLI 已切换为 noun-verb 结构（硬切，不向后兼容）",
-				fmt.Sprintf("改用：%s", migrated),
-			)
-		}
 		exitUsageError(globalOutput,
 			fmt.Sprintf("未知命令: %s", strings.TrimSpace(rest[0])),
 			"命令不在当前 CLI 命令树中",
@@ -149,33 +142,6 @@ func usage(code int) {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Use \"dalek <command> --help\" for more information about a command.")
 	os.Exit(code)
-}
-
-func legacyTopLevelCommand(cmd string) (string, bool) {
-	switch strings.TrimSpace(strings.ToLower(cmd)) {
-	case "ls":
-		return "dalek ticket ls", true
-	case "create":
-		return "dalek ticket create --title \"...\" --desc \"...\"", true
-	case "edit":
-		return "dalek ticket edit --ticket N --title \"...\"", true
-	case "start":
-		return "dalek ticket start --ticket N", true
-	case "dispatch":
-		return "dalek ticket dispatch --ticket N", true
-	case "interrupt":
-		return "dalek ticket interrupt --ticket N", true
-	case "stop":
-		return "dalek ticket stop --ticket N", true
-	case "archive":
-		return "dalek ticket archive --ticket N", true
-	case "cleanup":
-		return "dalek ticket cleanup --ticket N", true
-	case "events":
-		return "dalek ticket events --ticket N", true
-	default:
-		return "", false
-	}
 }
 
 func mustOpenProject(homeFlag, projectFlag string) *app.Project {

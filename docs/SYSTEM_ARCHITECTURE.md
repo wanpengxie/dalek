@@ -279,7 +279,7 @@
 3. `<noun> <verb> --help` 必须 `exit 0`，不得输出 `Error:`。
 
 自动化检查：
-1. 测试门禁：`go test ./cmd/tmuxstudio -run 'TestCLI_HelpShouldExitZero|TestCLI_LegacyCommandShowsMigrationHint|TestCLI_JSONErrorForGatewayChat' -count=1`
+1. 测试门禁：`go test ./cmd/tmuxstudio -run 'TestCLI_HelpShouldExitZero|TestCLI_OldTopLevelCommandFails|TestCLI_JSONErrorForGatewayChat' -count=1`
 2. 文档门禁：`bash system_docs/check_cli_help_examples.sh`
 
 当命令树新增/删除时，必须同步更新：

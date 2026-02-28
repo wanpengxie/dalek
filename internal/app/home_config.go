@@ -56,11 +56,11 @@ type HomeGatewayConfig struct {
 	InternalAllowCIDRs []string `json:"internal_allow_cidrs,omitempty"`
 	QueueDepth         int      `json:"queue_depth"`
 	DBPath             string   `json:"db_path"`
-	// AuthToken 仅用于兼容 legacy gateway 配置，不用于 daemon internal。
+	// AuthToken 为保留字段，不用于 daemon internal。
 	AuthToken string `json:"auth_token"`
-	// Feishu 仅用于兼容 v1，runtime 应改用 daemon.public.feishu。
+	// Feishu 为保留字段，runtime 以 daemon.public.feishu 为准。
 	Feishu HomeGatewayFeishuConfig `json:"feishu"`
-	// Tunnel 仅用于兼容 v1，runtime 应改用 daemon.public.ingress。
+	// Tunnel 为保留字段，runtime 以 daemon.public.ingress 为准。
 	Tunnel HomeGatewayTunnelConfig `json:"tunnel"`
 }
 
@@ -164,9 +164,6 @@ func DefaultHomeConfig() HomeConfig {
 
 func (c HomeConfig) WithDefaults() HomeConfig {
 	out := c
-	originalSchemaVersion := out.SchemaVersion
-	legacyFeishuConfigured := hasAnyLegacyFeishuValue(out.Gateway.Feishu)
-	legacyTunnelConfigured := hasAnyLegacyTunnelValue(out.Gateway.Tunnel)
 	if out.SchemaVersion <= 0 || out.SchemaVersion < CurrentHomeConfigSchemaVersion {
 		out.SchemaVersion = CurrentHomeConfigSchemaVersion
 	}
@@ -210,8 +207,6 @@ func (c HomeConfig) WithDefaults() HomeConfig {
 	out.Gateway.Tunnel.Hostname = strings.TrimSpace(out.Gateway.Tunnel.Hostname)
 	out.Gateway.Tunnel.CloudflaredBin = strings.TrimSpace(out.Gateway.Tunnel.CloudflaredBin)
 	out.Gateway.Feishu.BaseURL = normalizeDaemonFeishuBaseURL(out.Gateway.Feishu.BaseURL)
-
-	migrateLegacyGatewayToDaemonPublic(&out, originalSchemaVersion <= 1, legacyFeishuConfigured, legacyTunnelConfigured)
 
 	out.Daemon.PIDFile = strings.TrimSpace(out.Daemon.PIDFile)
 	if out.Daemon.PIDFile == "" {
@@ -292,7 +287,7 @@ func LoadHomeConfig(path string) (cfg HomeConfig, exists bool, needsRewrite bool
 	needsRewrite = parsed.SchemaVersion <= 0 || parsed.SchemaVersion < CurrentHomeConfigSchemaVersion
 	if parsed.SchemaVersion > 0 && parsed.SchemaVersion < CurrentHomeConfigSchemaVersion {
 		homeConfigDeprecationWarnf(
-			"[deprecation] home config schema v%d 已废弃，已自动迁移到 v%d；请将 gateway.feishu/tunnel 迁移到 daemon.public.feishu/ingress",
+			"[deprecation] home config schema v%d 已废弃，已自动迁移到 v%d",
 			parsed.SchemaVersion,
 			CurrentHomeConfigSchemaVersion,
 		)
@@ -328,65 +323,6 @@ func validateRemovedDaemonInternalFields(raw []byte) error {
 		return fmt.Errorf("daemon.internal.auth_token_env 已移除，请删除该字段")
 	}
 	return nil
-}
-
-func migrateLegacyGatewayToDaemonPublic(cfg *HomeConfig, legacySchema bool, legacyFeishuConfigured bool, legacyTunnelConfigured bool) {
-	if cfg == nil {
-		return
-	}
-	if strings.TrimSpace(cfg.Daemon.Public.Feishu.AppID) == "" {
-		cfg.Daemon.Public.Feishu.AppID = strings.TrimSpace(cfg.Gateway.Feishu.AppID)
-	}
-	if strings.TrimSpace(cfg.Daemon.Public.Feishu.AppSecret) == "" {
-		cfg.Daemon.Public.Feishu.AppSecret = strings.TrimSpace(cfg.Gateway.Feishu.AppSecret)
-	}
-	if strings.TrimSpace(cfg.Daemon.Public.Feishu.VerificationToken) == "" {
-		cfg.Daemon.Public.Feishu.VerificationToken = strings.TrimSpace(cfg.Gateway.Feishu.VerificationToken)
-	}
-	if strings.TrimSpace(cfg.Daemon.Public.Feishu.WebhookSecretPath) == "" {
-		cfg.Daemon.Public.Feishu.WebhookSecretPath = strings.TrimSpace(cfg.Gateway.Feishu.WebhookSecretPath)
-	}
-	if strings.TrimSpace(cfg.Daemon.Public.Feishu.WebhookPath) == "" {
-		cfg.Daemon.Public.Feishu.WebhookPath = strings.TrimSpace(cfg.Gateway.Feishu.WebhookPath)
-	}
-	if strings.TrimSpace(cfg.Daemon.Public.Feishu.BaseURL) == "" {
-		cfg.Daemon.Public.Feishu.BaseURL = strings.TrimSpace(cfg.Gateway.Feishu.BaseURL)
-	}
-	if !cfg.Daemon.Public.Feishu.Enabled &&
-		(legacyFeishuConfigured || legacySchema) {
-		cfg.Daemon.Public.Feishu.Enabled = true
-	}
-
-	if strings.TrimSpace(cfg.Daemon.Public.Ingress.TunnelName) == "" {
-		cfg.Daemon.Public.Ingress.TunnelName = strings.TrimSpace(cfg.Gateway.Tunnel.Name)
-	}
-	if strings.TrimSpace(cfg.Daemon.Public.Ingress.Hostname) == "" {
-		cfg.Daemon.Public.Ingress.Hostname = strings.TrimSpace(cfg.Gateway.Tunnel.Hostname)
-	}
-	if strings.TrimSpace(cfg.Daemon.Public.Ingress.CloudflaredBin) == "" {
-		cfg.Daemon.Public.Ingress.CloudflaredBin = strings.TrimSpace(cfg.Gateway.Tunnel.CloudflaredBin)
-	}
-	if !cfg.Daemon.Public.Ingress.Enabled &&
-		(legacyTunnelConfigured || legacySchema) {
-		cfg.Daemon.Public.Ingress.Enabled = true
-	}
-}
-
-func hasAnyLegacyFeishuValue(cfg HomeGatewayFeishuConfig) bool {
-	baseURL := normalizeDaemonFeishuBaseURL(cfg.BaseURL)
-	baseURLConfigured := baseURL != "" && baseURL != defaultFeishuBaseURL
-	return strings.TrimSpace(cfg.AppID) != "" ||
-		strings.TrimSpace(cfg.AppSecret) != "" ||
-		strings.TrimSpace(cfg.VerificationToken) != "" ||
-		strings.TrimSpace(cfg.WebhookSecretPath) != "" ||
-		strings.TrimSpace(cfg.WebhookPath) != "" ||
-		baseURLConfigured
-}
-
-func hasAnyLegacyTunnelValue(cfg HomeGatewayTunnelConfig) bool {
-	return strings.TrimSpace(cfg.Name) != "" ||
-		strings.TrimSpace(cfg.Hostname) != "" ||
-		strings.TrimSpace(cfg.CloudflaredBin) != ""
 }
 
 func normalizeDaemonFeishuBaseURL(raw string) string {

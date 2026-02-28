@@ -458,11 +458,7 @@ func (s *Service) ListNotes(ctx context.Context, opt ListNoteOptions) ([]NoteVie
 
 	q := s.core.DB.WithContext(ctx).Model(&store.NoteItem{})
 	if statusOnly := strings.TrimSpace(strings.ToLower(opt.StatusOnly)); statusOnly != "" {
-		if statusOnly == string(store.NoteShaped) || statusOnly == string(store.NotePendingReviewLegacy) {
-			q = q.Where("status IN ?", []store.NoteStatus{store.NoteShaped, store.NotePendingReviewLegacy})
-		} else {
-			q = q.Where("status = ?", statusOnly)
-		}
+		q = q.Where("status = ?", statusOnly)
 	}
 	if opt.ShapedOnly {
 		q = q.Where("shaped_item_id > 0")
@@ -525,8 +521,6 @@ func (s *Service) ApproveNote(ctx context.Context, id uint, reviewedBy string) (
 			return err
 		}
 		switch {
-		case isLegacyNoteApproved(note.Status):
-			return fmt.Errorf("note 已审批")
 		case note.Status == store.NoteDiscarded:
 			return fmt.Errorf("note 已丢弃，不能审批")
 		case note.Status == store.NoteOpen || note.Status == store.NoteShaping:
@@ -642,9 +636,7 @@ func (s *Service) RejectNote(ctx context.Context, id uint, reason string) error 
 			return fmt.Errorf("note 已丢弃，不能驳回")
 		case note.Status == store.NoteOpen || note.Status == store.NoteShaping:
 			return fmt.Errorf("note 尚未 shaping 完成，请稍后重试")
-		case isLegacyNoteApproved(note.Status):
-			return fmt.Errorf("note 已审批，不能驳回")
-		case !isNoteShaped(note.Status) && !isLegacyNoteRejected(note.Status):
+		case !isNoteShaped(note.Status):
 			return fmt.Errorf("note 状态不支持驳回: %s", strings.TrimSpace(string(note.Status)))
 		}
 		if note.ShapedItemID == 0 {
@@ -1120,23 +1112,9 @@ func canonicalNoteStatus(status store.NoteStatus) store.NoteStatus {
 	switch {
 	case status == store.NoteShaped:
 		return store.NoteShaped
-	case status == store.NotePendingReviewLegacy:
-		return store.NoteShaped
-	case isLegacyNoteApproved(status):
-		return store.NoteShaped
-	case isLegacyNoteRejected(status):
-		return store.NoteShaped
 	default:
 		return status
 	}
-}
-
-func isLegacyNoteApproved(status store.NoteStatus) bool {
-	return strings.EqualFold(strings.TrimSpace(string(status)), "approved")
-}
-
-func isLegacyNoteRejected(status store.NoteStatus) bool {
-	return strings.EqualFold(strings.TrimSpace(string(status)), "rejected")
 }
 
 func defaultShapedTitle(raw string) string {

@@ -40,7 +40,7 @@ func TestCanDispatchTicket(t *testing.T) {
 		{name: "active", status: contracts.TicketActive, want: true},
 		{name: "done", status: contracts.TicketDone, want: false},
 		{name: "archived", status: contracts.TicketArchived, want: false},
-		{name: "unknown", status: "legacy", want: true},
+		{name: "unknown", status: "old", want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -64,7 +64,7 @@ func TestCanArchiveTicket(t *testing.T) {
 		{name: "done", status: contracts.TicketDone, want: true},
 		{name: "archived", status: contracts.TicketArchived, want: false},
 		{name: "alias_archive", status: "archive", want: false},
-		{name: "unknown", status: "legacy", want: true},
+		{name: "unknown", status: "old", want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,7 +85,7 @@ func TestCanManualSetWorkflowStatus(t *testing.T) {
 		{name: "done", status: contracts.TicketDone, want: true},
 		{name: "archived", status: contracts.TicketArchived, want: false},
 		{name: "alias_archive", status: "archive", want: false},
-		{name: "unknown", status: "legacy", want: true},
+		{name: "unknown", status: "old", want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,14 +102,14 @@ func TestShouldPromoteOnDispatchClaim(t *testing.T) {
 		status contracts.TicketWorkflowStatus
 		want   bool
 	}{
-		{name: "backlog_legacy", status: contracts.TicketBacklog, want: true},
+		{name: "backlog_old", status: contracts.TicketBacklog, want: true},
 		{name: "queued", status: contracts.TicketQueued, want: true},
 		{name: "blocked", status: contracts.TicketBlocked, want: true},
 		{name: "active", status: contracts.TicketActive, want: false},
 		{name: "done", status: contracts.TicketDone, want: false},
 		{name: "archived", status: contracts.TicketArchived, want: false},
 		{name: "alias_running", status: "running", want: false},
-		{name: "unknown", status: "legacy", want: true},
+		{name: "unknown", status: "old", want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,14 +126,14 @@ func TestShouldDemoteOnDispatchFailed(t *testing.T) {
 		status contracts.TicketWorkflowStatus
 		want   bool
 	}{
-		{name: "backlog_legacy", status: contracts.TicketBacklog, want: true},
+		{name: "backlog_old", status: contracts.TicketBacklog, want: true},
 		{name: "queued", status: contracts.TicketQueued, want: true},
 		{name: "active", status: contracts.TicketActive, want: true},
 		{name: "blocked", status: contracts.TicketBlocked, want: false},
 		{name: "done", status: contracts.TicketDone, want: false},
 		{name: "archived", status: contracts.TicketArchived, want: false},
 		{name: "alias_wait_user", status: "wait_user", want: false},
-		{name: "unknown", status: "legacy", want: true},
+		{name: "unknown", status: "old", want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -154,7 +154,7 @@ func TestShouldApplyWorkerReport(t *testing.T) {
 		{name: "done", status: contracts.TicketDone, want: true},
 		{name: "archived", status: contracts.TicketArchived, want: false},
 		{name: "alias_archive", status: "archive", want: false},
-		{name: "unknown", status: "legacy", want: true},
+		{name: "unknown", status: "old", want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -179,9 +179,9 @@ func TestCanReportPromoteTo(t *testing.T) {
 		{name: "done_to_blocked", current: contracts.TicketDone, target: contracts.TicketBlocked, want: true},
 		{name: "active_to_done", current: contracts.TicketActive, target: contracts.TicketDone, want: true},
 		{name: "queued_to_active", current: contracts.TicketQueued, target: contracts.TicketActive, want: true},
-		{name: "queued_to_done_legacy", current: contracts.TicketQueued, target: contracts.TicketDone, want: true},
+		{name: "queued_to_done_old", current: contracts.TicketQueued, target: contracts.TicketDone, want: true},
 		{name: "same_state", current: contracts.TicketActive, target: contracts.TicketActive, want: true},
-		{name: "unknown_to_active", current: "legacy", target: contracts.TicketActive, want: true},
+		{name: "unknown_to_active", current: "old", target: contracts.TicketActive, want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

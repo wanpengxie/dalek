@@ -22,7 +22,6 @@ type Layout struct {
 	ProjectAgentKernelPath     string
 	ProjectAgentUserPath       string
 	ProjectBootstrapPath       string
-	ProjectLegacyBootstrapPath string
 }
 
 func NewLayout(repoRoot string) Layout {
@@ -49,6 +48,5 @@ func NewLayout(repoRoot string) Layout {
 		ProjectAgentKernelPath:     filepath.Join(projectDir, "agent-kernel.md"),
 		ProjectAgentUserPath:       filepath.Join(projectDir, "agent-user.md"),
 		ProjectBootstrapPath:       filepath.Join(projectDir, "bootstrap.sh"),
-		ProjectLegacyBootstrapPath: filepath.Join(controlDir, "worker", "bootstrap.sh"),
 	}
 }

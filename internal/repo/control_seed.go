@@ -152,28 +152,6 @@ func ensureProjectBootstrap(layout Layout) error {
 		return fmt.Errorf("检查 bootstrap 脚本失败(%s): %w", current, err)
 	}
 
-	legacy := strings.TrimSpace(layout.ProjectLegacyBootstrapPath)
-	if legacy != "" {
-		if st, err := os.Stat(legacy); err == nil {
-			if !st.IsDir() {
-				raw, readErr := os.ReadFile(legacy)
-				if readErr != nil {
-					return fmt.Errorf("读取 legacy bootstrap 失败(%s): %w", legacy, readErr)
-				}
-				mode := st.Mode() & os.ModePerm
-				if mode == 0 {
-					mode = 0o755
-				}
-				if _, writeErr := writeFileIfMissing(current, string(raw), mode); writeErr != nil {
-					return fmt.Errorf("迁移 legacy bootstrap 失败(%s -> %s): %w", legacy, current, writeErr)
-				}
-				return nil
-			}
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("检查 legacy bootstrap 失败(%s): %w", legacy, err)
-		}
-	}
-
 	if _, err := writeFileIfMissing(current, defaultProjectBootstrapTemplate(), 0o755); err != nil {
 		return err
 	}

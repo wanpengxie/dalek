@@ -216,7 +216,7 @@ JSON 输出与错误格式：
 - `dalek archive` -> `dalek ticket archive`
 - `dalek events` -> `dalek ticket events`
 - `dalek agent run finish` -> `dalek agent finish`
-- `dalek gateway serve` -> 已迁移到 `dalek daemon start`（`gateway serve` 与 `gateway serve --legacy` 均报错退出）
+- `dalek gateway serve` -> 已迁移到 `dalek daemon start`（`gateway serve` 及其已移除的旧兼容参数均报错退出）
 - `dalek ticket dispatch` / `dalek worker run`：默认从“同步阻塞”迁移为“异步 accepted 回执”
 - 若需要旧行为（阻塞等待结果），请显式加 `--sync --timeout`
 

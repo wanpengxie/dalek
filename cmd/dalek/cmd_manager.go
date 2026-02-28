@@ -266,17 +266,6 @@ func cmdManagerTick(args []string) {
 }
 
 func cmdManagerRun(args []string) {
-	for _, raw := range args {
-		arg := strings.TrimSpace(raw)
-		if arg == "--legacy" || strings.HasPrefix(arg, "--legacy=") {
-			exitRuntimeError(globalOutput,
-				"manager run 已迁移到 daemon，legacy 前台循环已移除",
-				"请使用 dalek daemon start 启动常驻 manager loop（30s tick + 事件驱动）；如需单次执行调度，请使用 dalek manager tick",
-				"manager run --legacy 不再支持",
-			)
-		}
-	}
-
 	fs := flag.NewFlagSet("manager run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
@@ -293,7 +282,7 @@ func cmdManagerRun(args []string) {
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
 	proj := fs.String("project", globalProject, "项目名（可选）")
 	projShort := fs.String("p", globalProject, "项目名（可选）")
-	_ = fs.Duration("interval", 15*time.Second, "已废弃（manager run 旧前台循环已移除）")
+	_ = fs.Duration("interval", 15*time.Second, "已废弃（manager run 前台循环已移除）")
 	maxRunning := fs.Int("max", 0, "最大并发 running workers（可选；0 表示用 DB 默认）")
 	dryRun := fs.Bool("dry-run", false, "只观测/生成 inbox/merge 提案，不做 start/dispatch")
 	once := fs.Bool("once", false, "仅执行一次调度循环（sync-dispatch 模式必填）")
@@ -307,7 +296,7 @@ func cmdManagerRun(args []string) {
 	out := parseOutputOrExit(*output, true)
 	if !*syncDispatch {
 		exitRuntimeError(out,
-			"manager run 已迁移到 daemon，legacy 前台循环已移除",
+			"manager run 已迁移到 daemon，前台循环已移除",
 			"请使用 dalek daemon start 启动常驻 manager loop（30s tick + 事件驱动）",
 			"如需非 daemon 单次调试，请使用 dalek manager run --once --sync-dispatch",
 		)

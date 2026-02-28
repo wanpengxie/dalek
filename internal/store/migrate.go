@@ -30,8 +30,8 @@ func storeMigrations() []Migration {
 		},
 		{
 			Version: 3,
-			Name:    "drop_workers_legacy_runtime_columns",
-			Up:      migrateDropWorkersLegacyRuntimeColumns,
+			Name:    "drop_workers_runtime_columns",
+			Up:      migrateDropWorkersRuntimeColumns,
 		},
 		{
 			Version: 4,
@@ -65,8 +65,8 @@ func storeMigrations() []Migration {
 		},
 		{
 			Version: 10,
-			Name:    "drop_worker_legacy_process_pid_columns",
-			Up:      migrateDropWorkerLegacyProcessPIDColumns,
+			Name:    "drop_worker_process_pid_columns",
+			Up:      migrateDropWorkerProcessPIDColumns,
 		},
 	}
 }
@@ -132,7 +132,7 @@ func migrateDropWorkerEventsTable(db *gorm.DB) error {
 	return db.Exec(`DROP TABLE IF EXISTS worker_events;`).Error
 }
 
-func migrateDropWorkersLegacyRuntimeColumns(db *gorm.DB) error {
+func migrateDropWorkersRuntimeColumns(db *gorm.DB) error {
 	for _, col := range []string{"runtime_state", "runtime_needs_user", "runtime_summary"} {
 		if err := db.Exec(fmt.Sprintf(`ALTER TABLE workers DROP COLUMN %s;`, col)).Error; err != nil {
 			msg := strings.ToLower(strings.TrimSpace(err.Error()))
@@ -180,7 +180,7 @@ func migrateEnsureWorkerLogPathColumn(db *gorm.DB) error {
 	return nil
 }
 
-func migrateDropWorkerLegacyProcessPIDColumns(db *gorm.DB) error {
+func migrateDropWorkerProcessPIDColumns(db *gorm.DB) error {
 	if err := migrateEnsureWorkerLogPathColumn(db); err != nil {
 		return err
 	}

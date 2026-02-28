@@ -211,7 +211,7 @@ func TestManagerTick_ReportsZombieStats(t *testing.T) {
 }
 
 func TestCheckZombieWorkers_ActiveWithStoppedWorker_DemotesBlocked(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-illegal-active-stopped")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -261,7 +261,7 @@ func TestCheckZombieWorkers_ActiveWithStoppedWorker_DemotesBlocked(t *testing.T)
 }
 
 func TestCheckZombieWorkers_ActiveWithStoppedWorker_EmitsStatusHook(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
 	svc.SetStatusChangeHook(hook)
 
@@ -313,7 +313,7 @@ func TestCheckZombieWorkers_ActiveWithStoppedWorker_EmitsStatusHook(t *testing.T
 }
 
 func TestCheckZombieWorkers_ActiveWithoutWorker_DemotesBlocked(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-illegal-active-no-worker")
 	now := time.Now()
@@ -352,15 +352,15 @@ func TestCheckZombieWorkers_ActiveWithoutWorker_DemotesBlocked(t *testing.T) {
 }
 
 func TestCheckZombieWorkers_UndefinedWorkflow_DemotesBlocked(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-undefined-workflow")
 	now := time.Now()
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": contracts.TicketWorkflowStatus("legacy_unknown_state"),
+		"workflow_status": contracts.TicketWorkflowStatus("old_unknown_state"),
 		"updated_at":      now,
 	}).Error; err != nil {
-		t.Fatalf("set ticket legacy workflow failed: %v", err)
+		t.Fatalf("set ticket old workflow failed: %v", err)
 	}
 
 	rt, err := svc.taskRuntimeForDB(p.DB)
@@ -391,7 +391,7 @@ func TestCheckZombieWorkers_UndefinedWorkflow_DemotesBlocked(t *testing.T) {
 }
 
 func TestManagerTick_ReportsZombieStateDriftStats(t *testing.T) {
-	svc, p, _, _ := newServiceForTest(t)
+	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "manager-tick-zombie-state-drift")
 	w, err := svc.StartTicket(context.Background(), tk.ID)

@@ -156,7 +156,7 @@ func readMigrateLockOwner(lockDir string) (migrateLockOwner, bool, error) {
 	}
 	var owner migrateLockOwner
 	if err := json.Unmarshal(raw, &owner); err != nil {
-		// owner 文件损坏视为遗留锁，后续按 legacy 逻辑判定。
+		// owner 文件损坏视为遗留锁，后续按既有逻辑判定。
 		return migrateLockOwner{}, false, nil
 	}
 	return owner, true, nil

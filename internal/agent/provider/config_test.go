@@ -36,7 +36,7 @@ func TestNewFromConfig_ClaudeWithCommandOverride(t *testing.T) {
 func TestNewFromConfig_RejectsShellProvider(t *testing.T) {
 	if _, err := NewFromConfig(AgentConfig{
 		Provider: "shell",
-		Command:  "bash ./legacy.sh",
+		Command:  "bash ./old.sh",
 	}); err == nil {
 		t.Fatalf("expected shell provider rejected")
 	}

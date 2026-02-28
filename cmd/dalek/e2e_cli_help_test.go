@@ -49,16 +49,16 @@ func TestCLI_TicketHelpIncludesEdit(t *testing.T) {
 	}
 }
 
-func TestCLI_LegacyCommandShowsMigrationHint(t *testing.T) {
+func TestCLI_OldTopLevelCommandFails(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 
 	_, stderr, err := runCLI(t, bin, repo, "create")
 	if err == nil {
-		t.Fatalf("legacy top-level command should fail")
+		t.Fatalf("old top-level command should fail")
 	}
-	if !strings.Contains(stderr, "旧命令已移除") || !strings.Contains(stderr, "dalek ticket create") {
-		t.Fatalf("legacy hint missing for create:\n%s", stderr)
+	if !strings.Contains(stderr, "未知命令") || !strings.Contains(stderr, "运行 dalek --help 查看可用命令") {
+		t.Fatalf("unknown command hint missing for create:\n%s", stderr)
 	}
 
 	_, stderr, err = runCLI(t, bin, repo, "agent", "start")
@@ -109,14 +109,6 @@ func TestCLI_GatewayServeRemoved(t *testing.T) {
 	if !strings.Contains(stderr, "gateway serve 已迁移到 daemon") || !strings.Contains(stderr, "dalek daemon start") {
 		t.Fatalf("gateway serve migration hint missing:\n%s", stderr)
 	}
-
-	_, stderr, err = runCLI(t, bin, repo, "gateway", "serve", "--legacy")
-	if err == nil {
-		t.Fatalf("gateway serve --legacy should fail")
-	}
-	if !strings.Contains(stderr, "gateway serve --legacy 不再支持") {
-		t.Fatalf("gateway serve --legacy removal hint missing:\n%s", stderr)
-	}
 }
 
 func TestCLI_ManagerRunRemoved(t *testing.T) {
@@ -129,17 +121,6 @@ func TestCLI_ManagerRunRemoved(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "manager run 已迁移到 daemon") || !strings.Contains(stderr, "dalek daemon start") {
 		t.Fatalf("manager run migration hint missing:\n%s", stderr)
-	}
-
-	_, stderr, err = runCLI(t, bin, repo, "manager", "run", "--legacy")
-	if err == nil {
-		t.Fatalf("manager run --legacy should fail")
-	}
-	if !strings.Contains(stderr, "manager run --legacy 不再支持") {
-		t.Fatalf("manager run --legacy removal hint missing:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "dalek manager tick") {
-		t.Fatalf("manager run --legacy single-run hint missing:\n%s", stderr)
 	}
 }
 
