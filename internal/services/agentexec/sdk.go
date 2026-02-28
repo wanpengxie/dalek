@@ -28,8 +28,8 @@ type SDKConfig struct {
 	// TmuxLogPath 已废弃：保留兼容旧调用，内部会回退到该字段。
 	TmuxLogPath string
 
-	AppendEvent          TmuxAppendEventFunc
-	RequestSemanticWatch TmuxSemanticWatchFunc
+	AppendEvent          AppendEventFunc
+	RequestSemanticWatch SemanticWatchFunc
 }
 
 type SDKExecutor struct {
@@ -70,7 +70,6 @@ func (e *SDKExecutor) Execute(ctx context.Context, prompt string) (AgentRunHandl
 		"model":            strings.TrimSpace(e.cfg.Model),
 		"session_id":       strings.TrimSpace(e.cfg.SessionID),
 		"stream_log_path":  streamLogPath,
-		"tmux_log_path":    streamLogPath,
 		"prompt_preview":   truncateRunes(prompt, 256),
 		"reasoning_effort": strings.TrimSpace(strings.ToLower(e.cfg.ReasoningEffort)),
 	})

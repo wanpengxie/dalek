@@ -2,7 +2,6 @@ package agentexec
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -202,29 +201,5 @@ func TestRunLifecycleTracker_FinishCanceled(t *testing.T) {
 	}
 	if got := rt.events[len(rt.events)-1].EventType; got != "task_canceled" {
 		t.Fatalf("expected task_canceled event, got=%q", got)
-	}
-}
-
-func TestTmuxHandleWait_ContextCancelable(t *testing.T) {
-	rt := &fakeLifecycleRuntime{
-		findRunFn: func(ctx context.Context, runID uint) (*contracts.TaskRun, error) {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			return nil, nil
-		},
-	}
-	h := &TmuxHandle{runID: 42, runtime: rt}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
-	defer cancel()
-
-	started := time.Now()
-	_, err := h.Wait(ctx)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("expected deadline exceeded, got=%v", err)
-	}
-	if took := time.Since(started); took > 300*time.Millisecond {
-		t.Fatalf("wait should exit quickly on ctx cancel, took=%s", took)
 	}
 }
