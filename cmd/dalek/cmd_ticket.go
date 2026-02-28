@@ -150,7 +150,8 @@ func cmdTicketList(args []string) {
 		Status        string `json:"status"`
 		Runtime       string `json:"runtime"`
 		NeedsUser     bool   `json:"needs_user"`
-		Session       string `json:"session"`
+		OutputRef     string `json:"output_ref"`
+		Session       string `json:"session,omitempty"`
 		WorkerID      *uint  `json:"worker_id,omitempty"`
 		Worktree      string `json:"worktree,omitempty"`
 		Branch        string `json:"branch,omitempty"`
@@ -164,7 +165,8 @@ func cmdTicketList(args []string) {
 		status := string(contracts.CanonicalTicketWorkflowStatus(tk.WorkflowStatus))
 		runtime := string(contracts.TaskHealthUnknown)
 		needsUser := false
-		session := "-"
+		outputRef := "-"
+		session := ""
 		var workerID *uint
 		worktree := ""
 		branch := ""
@@ -177,10 +179,8 @@ func cmdTicketList(args []string) {
 			}
 			needsUser = v.RuntimeNeedsUser
 			if v.LatestWorker != nil {
-				s := strings.TrimSpace(v.LatestWorker.TmuxSession)
-				if s != "" {
-					session = s
-				}
+				outputRef = workerOutputRef(v.LatestWorker)
+				session = strings.TrimSpace(v.LatestWorker.TmuxSession)
 				wid := v.LatestWorker.ID
 				workerID = &wid
 				worktree = strings.TrimSpace(v.LatestWorker.WorktreePath)
@@ -195,6 +195,7 @@ func cmdTicketList(args []string) {
 			Status:        status,
 			Runtime:       runtime,
 			NeedsUser:     needsUser,
+			OutputRef:     outputRef,
 			Session:       session,
 			WorkerID:      workerID,
 			Worktree:      worktree,
@@ -214,10 +215,10 @@ func cmdTicketList(args []string) {
 		return
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tPRIORITY\tSTATUS\tRUNTIME\tNEEDS_USER\tSESSION\tTITLE")
+	fmt.Fprintln(tw, "ID\tPRIORITY\tSTATUS\tRUNTIME\tNEEDS_USER\tOUTPUT\tTITLE")
 	for _, it := range items {
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%v\t%s\t%s\n",
-			it.ID, formatTicketPriority(it.Priority), it.Status, it.Runtime, it.NeedsUser, it.Session, it.Title)
+			it.ID, formatTicketPriority(it.Priority), it.Status, it.Runtime, it.NeedsUser, it.OutputRef, it.Title)
 	}
 	_ = tw.Flush()
 }
@@ -228,6 +229,30 @@ func formatTicketPriority(priority int) string {
 		return label
 	}
 	return fmt.Sprintf("%s(%d)", label, priority)
+}
+
+func outputRefFromRuntime(processPID int, logPath string, tmuxSession string) string {
+	logPath = strings.TrimSpace(logPath)
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	switch {
+	case processPID > 0 && logPath != "":
+		return fmt.Sprintf("pid=%d log=%s", processPID, logPath)
+	case processPID > 0:
+		return fmt.Sprintf("pid=%d", processPID)
+	case logPath != "":
+		return fmt.Sprintf("log=%s", logPath)
+	case tmuxSession != "":
+		return "tmux=" + tmuxSession
+	default:
+		return "-"
+	}
+}
+
+func workerOutputRef(w *contracts.Worker) string {
+	if w == nil {
+		return "-"
+	}
+	return outputRefFromRuntime(w.ProcessPID, w.LogPath, w.TmuxSession)
 }
 
 func cmdTicketCreate(args []string) {
@@ -625,7 +650,10 @@ func cmdTicketShow(args []string) {
 
 	type workerJSON struct {
 		ID        uint   `json:"id"`
-		Session   string `json:"session"`
+		OutputRef string `json:"output_ref"`
+		ProcessID int    `json:"process_pid"`
+		LogPath   string `json:"log_path"`
+		Session   string `json:"session,omitempty"`
 		Worktree  string `json:"worktree"`
 		Branch    string `json:"branch"`
 		Runtime   string `json:"runtime"`
@@ -635,6 +663,9 @@ func cmdTicketShow(args []string) {
 	if worker != nil {
 		workerPayload = &workerJSON{
 			ID:        worker.ID,
+			OutputRef: workerOutputRef(worker),
+			ProcessID: worker.ProcessPID,
+			LogPath:   strings.TrimSpace(worker.LogPath),
 			Session:   strings.TrimSpace(worker.TmuxSession),
 			Worktree:  strings.TrimSpace(worker.WorktreePath),
 			Branch:    strings.TrimSpace(worker.Branch),
@@ -667,7 +698,7 @@ func cmdTicketShow(args []string) {
 	fmt.Println()
 	if worker == nil {
 		fmt.Println("worker:\t-")
-		fmt.Println("session:\t-")
+		fmt.Println("output:\t-")
 		fmt.Println("worktree:\t-")
 		fmt.Println("branch:\t-")
 		fmt.Printf("runtime:\t%s\n", runtime)
@@ -675,7 +706,7 @@ func cmdTicketShow(args []string) {
 		return
 	}
 	fmt.Printf("worker:\tw%d\n", worker.ID)
-	fmt.Printf("session:\t%s\n", strings.TrimSpace(worker.TmuxSession))
+	fmt.Printf("output:\t%s\n", workerOutputRef(worker))
 	fmt.Printf("worktree:\t%s\n", strings.TrimSpace(worker.WorktreePath))
 	fmt.Printf("branch:\t%s\n", strings.TrimSpace(worker.Branch))
 	fmt.Printf("runtime:\t%s\n", runtime)
@@ -736,18 +767,24 @@ func cmdTicketStart(args []string) {
 	}
 
 	if out == outputJSON {
-		printJSONOrExit(map[string]any{
-			"schema":    "dalek.ticket.start.v1",
-			"ticket_id": uint(*ticketID),
-			"worker_id": a.ID,
-			"session":   strings.TrimSpace(a.TmuxSession),
-			"worktree":  strings.TrimSpace(a.WorktreePath),
-			"branch":    strings.TrimSpace(a.Branch),
-		})
+		payload := map[string]any{
+			"schema":      "dalek.ticket.start.v1",
+			"ticket_id":   uint(*ticketID),
+			"worker_id":   a.ID,
+			"output_ref":  outputRefFromRuntime(a.ProcessPID, a.LogPath, a.TmuxSession),
+			"process_pid": a.ProcessPID,
+			"log_path":    strings.TrimSpace(a.LogPath),
+			"worktree":    strings.TrimSpace(a.WorktreePath),
+			"branch":      strings.TrimSpace(a.Branch),
+		}
+		if s := strings.TrimSpace(a.TmuxSession); s != "" {
+			payload["session"] = s
+		}
+		printJSONOrExit(payload)
 		return
 	}
-	fmt.Printf("t%d started: worker=w%d session=%s worktree=%s branch=%s\n",
-		*ticketID, a.ID, strings.TrimSpace(a.TmuxSession), strings.TrimSpace(a.WorktreePath), strings.TrimSpace(a.Branch))
+	fmt.Printf("t%d started: worker=w%d output=%s worktree=%s branch=%s\n",
+		*ticketID, a.ID, outputRefFromRuntime(a.ProcessPID, a.LogPath, a.TmuxSession), strings.TrimSpace(a.WorktreePath), strings.TrimSpace(a.Branch))
 }
 
 func cmdTicketDispatch(args []string) {
@@ -820,19 +857,37 @@ func cmdTicketDispatch(args []string) {
 			)
 		}
 
+		dispatchPID := 0
+		dispatchLogPath := ""
+		dispatchSession := strings.TrimSpace(r.TmuxSession)
+		if w, werr := p.WorkerByID(ctx, r.WorkerID); werr == nil && w != nil {
+			dispatchPID = w.ProcessPID
+			dispatchLogPath = strings.TrimSpace(w.LogPath)
+			if dispatchSession == "" {
+				dispatchSession = strings.TrimSpace(w.TmuxSession)
+			}
+		}
+		dispatchOutputRef := outputRefFromRuntime(dispatchPID, dispatchLogPath, dispatchSession)
+
 		if out == outputJSON {
-			printJSONOrExit(map[string]any{
+			payload := map[string]any{
 				"schema":       "dalek.ticket.dispatch.sync.v1",
 				"ticket_id":    r.TicketID,
 				"worker_id":    r.WorkerID,
-				"session":      strings.TrimSpace(r.TmuxSession),
+				"output_ref":   dispatchOutputRef,
+				"process_pid":  dispatchPID,
+				"log_path":     dispatchLogPath,
 				"injected_cmd": strings.TrimSpace(r.InjectedCmd),
 				"mode":         "sync",
-			})
+			}
+			if dispatchSession != "" {
+				payload["session"] = dispatchSession
+			}
+			printJSONOrExit(payload)
 			return
 		}
 
-		fmt.Printf("t%d dispatched(sync): worker=w%d session=%s\n", r.TicketID, r.WorkerID, strings.TrimSpace(r.TmuxSession))
+		fmt.Printf("t%d dispatched(sync): worker=w%d output=%s\n", r.TicketID, r.WorkerID, dispatchOutputRef)
 		if strings.TrimSpace(r.InjectedCmd) != "" {
 			fmt.Printf("cmd: %s\n", strings.TrimSpace(r.InjectedCmd))
 		} else if strings.TrimSpace(r.WorkerCommand) != "" {
@@ -962,17 +1017,30 @@ func cmdTicketInterrupt(args []string) {
 	}
 
 	if out == outputJSON {
-		printJSONOrExit(map[string]any{
-			"schema":    "dalek.ticket.interrupt.v1",
-			"ticket_id": r.TicketID,
-			"worker_id": r.WorkerID,
-			"session":   strings.TrimSpace(r.TmuxSession),
-			"target":    strings.TrimSpace(r.TargetPane),
-		})
+		payload := map[string]any{
+			"schema":      "dalek.ticket.interrupt.v1",
+			"ticket_id":   r.TicketID,
+			"worker_id":   r.WorkerID,
+			"mode":        strings.TrimSpace(r.Mode),
+			"output_ref":  outputRefFromRuntime(r.ProcessPID, r.LogPath, r.TmuxSession),
+			"process_pid": r.ProcessPID,
+			"log_path":    strings.TrimSpace(r.LogPath),
+		}
+		if s := strings.TrimSpace(r.TmuxSession); s != "" {
+			payload["session"] = s
+		}
+		if t := strings.TrimSpace(r.TargetPane); t != "" {
+			payload["target"] = t
+		}
+		printJSONOrExit(payload)
 		return
 	}
-	fmt.Printf("interrupted: t%d worker=w%d session=%s target=%s\n",
-		r.TicketID, r.WorkerID, strings.TrimSpace(r.TmuxSession), strings.TrimSpace(r.TargetPane))
+	fmt.Printf("interrupted: t%d worker=w%d mode=%s output=%s",
+		r.TicketID, r.WorkerID, strings.TrimSpace(r.Mode), outputRefFromRuntime(r.ProcessPID, r.LogPath, r.TmuxSession))
+	if target := strings.TrimSpace(r.TargetPane); target != "" {
+		fmt.Printf(" target=%s", target)
+	}
+	fmt.Println()
 }
 
 func cmdTicketStop(args []string) {
@@ -1031,8 +1099,9 @@ func cmdTicketStop(args []string) {
 
 	p := mustOpenProjectWithOutput(out, *home, *proj)
 	type stopItem struct {
-		WorkerID uint   `json:"worker_id"`
-		Session  string `json:"session"`
+		WorkerID  uint   `json:"worker_id"`
+		OutputRef string `json:"output_ref"`
+		Session   string `json:"session,omitempty"`
 	}
 	stopped := make([]stopItem, 0, 4)
 
@@ -1058,10 +1127,12 @@ func cmdTicketStop(args []string) {
 			)
 		}
 		session := ""
+		outputRef := "-"
 		if w != nil {
 			session = strings.TrimSpace(w.TmuxSession)
+			outputRef = outputRefFromRuntime(w.ProcessPID, w.LogPath, w.TmuxSession)
 		}
-		stopped = append(stopped, stopItem{WorkerID: uint(*workerID), Session: session})
+		stopped = append(stopped, stopItem{WorkerID: uint(*workerID), OutputRef: outputRef, Session: session})
 	} else if *ticketID != 0 {
 		ctx1, cancel1 := projectCtx(*timeout)
 		w, werr := p.LatestWorker(ctx1, uint(*ticketID))
@@ -1090,7 +1161,11 @@ func cmdTicketStop(args []string) {
 				"确认 ticket 正在运行并重试",
 			)
 		}
-		stopped = append(stopped, stopItem{WorkerID: w.ID, Session: strings.TrimSpace(w.TmuxSession)})
+		stopped = append(stopped, stopItem{
+			WorkerID:  w.ID,
+			OutputRef: outputRefFromRuntime(w.ProcessPID, w.LogPath, w.TmuxSession),
+			Session:   strings.TrimSpace(w.TmuxSession),
+		})
 	} else {
 		ctx1, cancel1 := projectCtx(*timeout)
 		running, err := p.ListRunningWorkers(ctx1)
@@ -1113,7 +1188,11 @@ func cmdTicketStop(args []string) {
 					"确认 worker 正在运行并重试",
 				)
 			}
-			stopped = append(stopped, stopItem{WorkerID: w.ID, Session: strings.TrimSpace(w.TmuxSession)})
+			stopped = append(stopped, stopItem{
+				WorkerID:  w.ID,
+				OutputRef: outputRefFromRuntime(w.ProcessPID, w.LogPath, w.TmuxSession),
+				Session:   strings.TrimSpace(w.TmuxSession),
+			})
 		}
 	}
 
@@ -1130,7 +1209,7 @@ func cmdTicketStop(args []string) {
 		return
 	}
 	for _, it := range stopped {
-		fmt.Printf("stopped: worker=w%d session=%s\n", it.WorkerID, it.Session)
+		fmt.Printf("stopped: worker=w%d output=%s\n", it.WorkerID, it.OutputRef)
 	}
 }
 
