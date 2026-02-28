@@ -40,7 +40,7 @@ func (s *Service) require() (*core.Project, error) {
 	return s.p, nil
 }
 
-// CaptureTicketTail 抓取该 ticket 最新 worker 的日志尾部输出。
+// CaptureTicketTail 抓取该 ticket 最新 worker 的 SDK 流式日志尾部输出（sdk-stream.log）。
 func (s *Service) CaptureTicketTail(ctx context.Context, ticketID uint, lastLines int) (contracts.TailPreview, error) {
 	p, err := s.require()
 	if err != nil {
@@ -53,12 +53,12 @@ func (s *Service) CaptureTicketTail(ctx context.Context, ticketID uint, lastLine
 	if a == nil {
 		return contracts.TailPreview{}, fmt.Errorf("该 ticket 没有可抓取的 worker")
 	}
-	logPath := strings.TrimSpace(a.LogPath)
-	if logPath == "" && strings.TrimSpace(p.WorkersDir) != "" && a.ID != 0 {
-		logPath = repo.WorkerStreamLogPath(p.WorkersDir, a.ID)
+	logPath := ""
+	if strings.TrimSpace(p.WorkersDir) != "" && a.ID != 0 {
+		logPath = repo.WorkerSDKStreamLogPath(p.WorkersDir, a.ID)
 	}
 	if logPath == "" {
-		return contracts.TailPreview{}, fmt.Errorf("该 ticket 没有可抓取的日志路径")
+		return contracts.TailPreview{}, fmt.Errorf("该 ticket 没有可抓取的 sdk-stream 日志路径")
 	}
 
 	if lastLines <= 0 {
@@ -83,7 +83,7 @@ func (s *Service) CaptureTicketTail(ctx context.Context, ticketID uint, lastLine
 	return contracts.TailPreview{
 		TicketID:   ticketID,
 		WorkerID:   a.ID,
-		Source:     "worker_log",
+		Source:     "sdk_stream_log",
 		LogPath:    logPath,
 		CapturedAt: time.Now(),
 		Lines:      lines,

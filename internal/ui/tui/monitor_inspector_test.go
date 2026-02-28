@@ -93,7 +93,7 @@ func TestInspectorRightView_SimplifiesTailToRecentLines(t *testing.T) {
 	}
 
 	got := ansi.Strip(m.inspectorRightView(120))
-	if !strings.Contains(got, "实时输出(简版)") {
+	if !strings.Contains(got, "worker_log观察窗") {
 		t.Fatalf("should render simplified output title, got=%q", got)
 	}
 	if strings.Contains(got, "line-1") || strings.Contains(got, "line-2") {
@@ -101,5 +101,84 @@ func TestInspectorRightView_SimplifiesTailToRecentLines(t *testing.T) {
 	}
 	if !strings.Contains(got, "line-6") {
 		t.Fatalf("should keep latest line in simplified output, got=%q", got)
+	}
+}
+
+func TestInspectorMiddleView_ShowsEventNoteFacts(t *testing.T) {
+	m := newModel(nil, nil, "")
+	now := time.Now().UTC().Add(-2 * time.Second)
+	view := app.TicketView{
+		Ticket: contracts.Ticket{
+			ID:    3,
+			Title: "事实观察",
+		},
+		LatestWorker: &contracts.Worker{
+			ID:     33,
+			Status: contracts.WorkerRunning,
+		},
+		SessionAlive:       true,
+		DerivedStatus:      contracts.TicketActive,
+		LastEventType:      "task_stream",
+		LastEventNote:      "读取 ticket 相关模型并准备修改",
+		SemanticNextAction: "continue",
+		SemanticSummary:    "继续实现",
+		RuntimeSummary:     "处理中",
+		LastEventAt:        &now,
+	}
+	m.applyViews([]app.TicketView{view})
+	for i, ref := range m.rowRefs {
+		if ref.kind == rowTicket && ref.ticketID == view.Ticket.ID {
+			m.table.SetCursor(i)
+			break
+		}
+	}
+
+	got := ansi.Strip(m.inspectorMiddleView(120))
+	if !strings.Contains(got, "PM事实观察") {
+		t.Fatalf("should render PM facts title, got=%q", got)
+	}
+	if !strings.Contains(got, "event_note: 读取 ticket 相关模型并准备修改") {
+		t.Fatalf("should render event_note facts, got=%q", got)
+	}
+	if !strings.Contains(got, "next_action: continue") {
+		t.Fatalf("should render next_action in facts panel, got=%q", got)
+	}
+}
+
+func TestInspectorView_UsesThreePanelsOnWideScreen(t *testing.T) {
+	m := newModel(nil, nil, "")
+	view := app.TicketView{
+		Ticket: contracts.Ticket{
+			ID:    4,
+			Title: "三栏布局",
+		},
+		LatestWorker: &contracts.Worker{
+			ID:      44,
+			Status:  contracts.WorkerRunning,
+			LogPath: "/tmp/w44/stream.log",
+		},
+		SessionAlive:       true,
+		DerivedStatus:      contracts.TicketActive,
+		LastEventType:      "task_stream",
+		LastEventNote:      "event note",
+		SemanticNextAction: "continue",
+	}
+	m.applyViews([]app.TicketView{view})
+	for i, ref := range m.rowRefs {
+		if ref.kind == rowTicket && ref.ticketID == view.Ticket.ID {
+			m.table.SetCursor(i)
+			break
+		}
+	}
+
+	got := ansi.Strip(m.inspectorView(150))
+	if !strings.Contains(got, "元信息") {
+		t.Fatalf("wide inspector should contain meta panel, got=%q", got)
+	}
+	if !strings.Contains(got, "PM事实观察") {
+		t.Fatalf("wide inspector should contain PM facts panel, got=%q", got)
+	}
+	if !strings.Contains(got, "worker_log观察窗") {
+		t.Fatalf("wide inspector should contain worker log panel, got=%q", got)
 	}
 }

@@ -130,6 +130,9 @@ func TestOpenAndMigrate_WorkerZombieRetryColumnsPresent(t *testing.T) {
 	if seen["process_pid"] {
 		t.Fatalf("workers should not keep old column: process_pid")
 	}
+	if seen["tmux_socket"] || seen["tmux_session"] {
+		t.Fatalf("workers should not keep old tmux columns")
+	}
 }
 
 func TestOpenAndMigrate_RepairWorkerLogPathWhenOldV9Occupied(t *testing.T) {
@@ -170,6 +173,73 @@ func TestOpenAndMigrate_RepairWorkerLogPathWhenOldV9Occupied(t *testing.T) {
 	}
 	if seen["process_pid"] {
 		t.Fatalf("workers should not keep old column: process_pid")
+	}
+}
+
+func TestOpenAndMigrate_DropsLegacyWorkerTmuxColumnsAndDagPlans(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	if err := db.Exec("ALTER TABLE workers ADD COLUMN tmux_socket TEXT NOT NULL DEFAULT '';").Error; err != nil {
+		t.Fatalf("add legacy workers.tmux_socket failed: %v", err)
+	}
+	if err := db.Exec("ALTER TABLE workers ADD COLUMN tmux_session TEXT NOT NULL DEFAULT '';").Error; err != nil {
+		t.Fatalf("add legacy workers.tmux_session failed: %v", err)
+	}
+	if err := db.Exec(`
+CREATE TABLE IF NOT EXISTS dag_plans (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL DEFAULT '',
+	status TEXT NOT NULL DEFAULT 'active',
+	config_json TEXT NOT NULL DEFAULT '{}',
+	created_at DATETIME NOT NULL,
+	updated_at DATETIME NOT NULL
+);
+`).Error; err != nil {
+		t.Fatalf("create legacy dag_plans failed: %v", err)
+	}
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_dag_plans_status ON dag_plans(status);").Error; err != nil {
+		t.Fatalf("create legacy idx_dag_plans_status failed: %v", err)
+	}
+
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 11;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations failed: %v", err)
+	}
+	if _, err := OpenAndMigrate(dbPath); err != nil {
+		t.Fatalf("OpenAndMigrate (cleanup) failed: %v", err)
+	}
+
+	db2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	hasSocket, err := tableHasColumn(db2, "workers", "tmux_socket")
+	if err != nil {
+		t.Fatalf("query workers.tmux_socket failed: %v", err)
+	}
+	if hasSocket {
+		t.Fatalf("workers should drop legacy column tmux_socket")
+	}
+	hasSession, err := tableHasColumn(db2, "workers", "tmux_session")
+	if err != nil {
+		t.Fatalf("query workers.tmux_session failed: %v", err)
+	}
+	if hasSession {
+		t.Fatalf("workers should drop legacy column tmux_session")
+	}
+
+	type countRow struct {
+		N int `gorm:"column:n"`
+	}
+	var row countRow
+	if err := db2.Raw("SELECT COUNT(1) AS n FROM sqlite_master WHERE type = 'table' AND name = 'dag_plans';").Scan(&row).Error; err != nil {
+		t.Fatalf("query dag_plans table failed: %v", err)
+	}
+	if row.N != 0 {
+		t.Fatalf("dag_plans should be dropped after migrate")
 	}
 }
 

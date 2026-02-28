@@ -989,7 +989,7 @@ func (m model) mergeInspectorLeftView(panelW int, mergeID uint) string {
 	mi, ok := m.mergeItemByID(mergeID)
 	if !ok {
 		lines := []string{
-			panelTitle(fmt.Sprintf("检查器  m%d", mergeID)),
+			panelTitle(fmt.Sprintf("元信息  m%d", mergeID)),
 			faint("merge item 不存在（可能已被更新）"),
 		}
 		lines = padBottom(lines, 6+tailShowLines)
@@ -1004,7 +1004,7 @@ func (m model) mergeInspectorLeftView(panelW int, mergeID uint) string {
 		approvedAt = mi.ApprovedAt.Local().Format("01-02 15:04")
 	}
 	lines := []string{
-		panelTitle(fmt.Sprintf("检查器  m%d", mi.ID)),
+		panelTitle(fmt.Sprintf("元信息  m%d", mi.ID)),
 		badge("merge", cWarn) + " " + badge(strings.TrimSpace(string(mi.Status)), cNeutral),
 		kvLine("ticket:", fmt.Sprintf("t%d", mi.TicketID), innerW),
 		kvLine("worker:", fmt.Sprintf("w%d", mi.WorkerID), innerW),
@@ -1052,23 +1052,29 @@ func (m model) inspectorView(width int) string {
 		return panelStyle().Width(width).Render(content)
 	}
 
-	// 宽屏：左右双栏；窄屏：上下两块（避免两边太挤）。
-	if width < 90 {
-		left := panelStyle().Width(width).Render(m.inspectorLeftView(width))
-		right := panelStyle().Width(width).Render(m.inspectorRightView(width))
-		return lipgloss.JoinVertical(lipgloss.Left, left, right)
+	// 宽屏：三栏（元信息 / PM事实观察 / worker_log）；窄屏：上下三块。
+	if width < 126 {
+		meta := panelStyle().Width(width).Render(m.inspectorLeftView(width))
+		facts := panelStyle().Width(width).Render(m.inspectorMiddleView(width))
+		logs := panelStyle().Width(width).Render(m.inspectorRightView(width))
+		return lipgloss.JoinVertical(lipgloss.Left, meta, facts, logs)
 	}
 
-	// 宽屏下优先给“流程卡片”更多空间，右侧保留简版实时输出。
-	leftW := max(42, (width*3)/5)
-	rightW := width - leftW - 1
-	if rightW < 28 {
-		rightW = 28
-		leftW = width - rightW - 1
+	metaW := max(36, (width*38)/100)
+	factsW := max(32, (width*26)/100)
+	logW := width - metaW - factsW - 2
+	if logW < 34 {
+		logW = 34
+		if metaW > 40 {
+			metaW = max(36, metaW-2)
+		}
+		factsW = max(32, width-metaW-logW-2)
 	}
-	left := panelStyle().Width(leftW).Render(m.inspectorLeftView(leftW))
-	right := panelStyle().Width(rightW).Render(m.inspectorRightView(rightW))
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
+
+	meta := panelStyle().Width(metaW).Render(m.inspectorLeftView(metaW))
+	facts := panelStyle().Width(factsW).Render(m.inspectorMiddleView(factsW))
+	logs := panelStyle().Width(logW).Render(m.inspectorRightView(logW))
+	return lipgloss.JoinHorizontal(lipgloss.Top, meta, " ", facts, " ", logs)
 }
 
 func (m model) inspectorLeftView(panelW int) string {
@@ -1096,7 +1102,7 @@ func (m model) inspectorLeftView(panelW int) string {
 			status := "待办"
 			status = formatTicketStatus(t.WorkflowStatus)
 			lines := []string{
-				panelTitle(fmt.Sprintf("检查器  t%d", id)),
+				panelTitle(fmt.Sprintf("元信息  t%d", id)),
 				badge(status, cNeutral),
 				kvLine("标题:", title, innerW),
 				kvLine("描述:", desc, innerW),
@@ -1107,7 +1113,7 @@ func (m model) inspectorLeftView(panelW int) string {
 			lines = padBottom(lines, 6+tailShowLines)
 			return strings.Join(lines, "\n")
 		}
-		title := panelTitle(fmt.Sprintf("检查器  t%d", id))
+		title := panelTitle(fmt.Sprintf("元信息  t%d", id))
 		return title + "\n" + faint("详情尚未加载（等一下自动刷新）")
 	}
 	t := v.Ticket
@@ -1180,15 +1186,11 @@ func (m model) inspectorLeftView(panelW int) string {
 	if eventType == "" {
 		eventType = "-"
 	}
-	eventNote := oneLine(strings.TrimSpace(v.LastEventNote))
-	if eventNote == "" {
-		eventNote = "-"
-	}
 	runtimeState := formatRuntimeState(v)
 	sessionState := formatSessionState(v)
 
 	lines := []string{
-		panelTitle(fmt.Sprintf("检查器  t%d · dispatch/running", t.ID)),
+		panelTitle(fmt.Sprintf("元信息  t%d · dispatch/running", t.ID)),
 		statusB + " " + runtimeB + " " + processB,
 		kvLine("ticket:", title, innerW),
 		kvLine("流程:", m.dispatchProcessState(v), innerW),
@@ -1196,10 +1198,123 @@ func (m model) inspectorLeftView(panelW int) string {
 		kvLine("phase:", semPhase+"  next="+semNext, innerW),
 		kvLine("semantic:", semSummary, innerW),
 		kvLine("last_event:", eventType+"  @ "+timeAndAge(v.LastEventAt), innerW),
-		kvLine("event_note:", eventNote, innerW),
 		kvLine("runtime_observed:", timeAndAge(v.RuntimeObservedAt)+"  result="+summary, innerW),
 		kvLine("worker:", worker+"  "+lifecycle+"  "+runtimeRef+"  "+sessionState, innerW),
 		kvLine("runtime/worktree:", "cmd="+cmd+"  mode="+mode+"  "+worktree, innerW),
+	}
+	lines = padBottom(lines, 4+tailShowLines)
+	return strings.Join(lines, "\n")
+}
+
+func (m model) inspectorMiddleView(panelW int) string {
+	innerW := max(10, panelW-4) // border(2) + padding(2)
+
+	sel := m.selectedRow()
+	switch sel.kind {
+	case rowManager:
+		return m.managerInspectorMiddleView(panelW)
+	case rowMerge:
+		return m.mergeInspectorMiddleView(panelW, sel.mergeID)
+	}
+
+	id := sel.ticketID
+	v, ok := m.viewsByID[id]
+	if !ok {
+		if t, tok := m.ticketsByID[id]; tok {
+			lines := []string{
+				panelTitle(fmt.Sprintf("PM事实观察  t%d", id)),
+				badge(formatTicketStatus(t.WorkflowStatus), cNeutral),
+				kvLine("来源:", "event_note", innerW),
+				kvLine("状态:", string(t.WorkflowStatus), innerW),
+				faint("该 ticket 暂无活跃运行事实（等待刷新或尚未派发）"),
+			}
+			lines = padBottom(lines, 4+tailShowLines)
+			return strings.Join(lines, "\n")
+		}
+		return panelTitle(fmt.Sprintf("PM事实观察  t%d", id)) + "\n" + faint("事实尚未加载（等一下自动刷新）")
+	}
+
+	eventType := strings.TrimSpace(v.LastEventType)
+	if eventType == "" {
+		eventType = "-"
+	}
+	eventNote := oneLine(strings.TrimSpace(v.LastEventNote))
+	if eventNote == "" {
+		eventNote = "-"
+	}
+	semNext := strings.TrimSpace(v.SemanticNextAction)
+	if semNext == "" {
+		semNext = "-"
+	}
+	semSummary := oneLine(strings.TrimSpace(v.SemanticSummary))
+	if semSummary == "" {
+		semSummary = "-"
+	}
+	runtimeSummary := oneLine(strings.TrimSpace(v.RuntimeSummary))
+	if runtimeSummary == "" {
+		runtimeSummary = "-"
+	}
+
+	lines := []string{
+		panelTitle(fmt.Sprintf("PM事实观察  t%d", v.Ticket.ID)),
+		badge("event_note", cInfo) + " " + badge(eventType, cNeutral),
+		kvLine("流程:", m.dispatchProcessState(v), innerW),
+		kvLine("last_event:", eventType+"  @ "+timeAndAge(v.LastEventAt), innerW),
+		kvLine("next_action:", semNext, innerW),
+		kvLine("semantic:", semSummary, innerW),
+		kvLine("runtime:", runtimeSummary, innerW),
+		kvLine("event_note:", eventNote, innerW),
+	}
+	lines = padBottom(lines, 4+tailShowLines)
+	return strings.Join(lines, "\n")
+}
+
+func (m model) mergeInspectorMiddleView(panelW int, mergeID uint) string {
+	innerW := max(10, panelW-4)
+	mi, ok := m.mergeItemByID(mergeID)
+	if !ok {
+		lines := []string{
+			panelTitle(fmt.Sprintf("PM事实观察  m%d", mergeID)),
+			faint("merge item 不存在（可能已被更新）"),
+		}
+		lines = padBottom(lines, 4+tailShowLines)
+		return strings.Join(lines, "\n")
+	}
+	checks := oneLine(strings.TrimSpace(mi.ChecksJSON.String()))
+	if checks == "" || checks == "{}" {
+		checks = "-"
+	}
+	lines := []string{
+		panelTitle(fmt.Sprintf("PM事实观察  m%d", mi.ID)),
+		badge("merge", cWarn) + " " + badge(strings.TrimSpace(string(mi.Status)), cNeutral),
+		kvLine("ticket:", fmt.Sprintf("t%d", mi.TicketID), innerW),
+		kvLine("facts:", "merge 没有 worker event_note，观察 checks_json", innerW),
+		kvLine("checks:", checks, innerW),
+	}
+	lines = padBottom(lines, 4+tailShowLines)
+	return strings.Join(lines, "\n")
+}
+
+func (m model) managerInspectorMiddleView(panelW int) string {
+	innerW := max(10, panelW-4)
+
+	issues := collectPendingIssues(m.orderedViews(), 6)
+	lines := []string{
+		panelTitle("PM事实观察  manager"),
+		badge("event_note", cInfo),
+		kvLine("来源:", "ticket 运行态事件聚合", innerW),
+	}
+	if m.lastRefresh.IsZero() {
+		lines = append(lines, kvLine("刷新:", "-", innerW))
+	} else {
+		lines = append(lines, kvLine("刷新:", m.lastRefresh.Format("15:04:05"), innerW))
+	}
+	if len(issues) == 0 {
+		lines = append(lines, faint("暂无待处理事实"))
+	} else {
+		for _, it := range issues {
+			lines = append(lines, cutANSI(" - "+oneLine(it), innerW))
+		}
 	}
 	lines = padBottom(lines, 4+tailShowLines)
 	return strings.Join(lines, "\n")
@@ -1229,7 +1344,7 @@ func (m model) managerInspectorLeftView(panelW int) string {
 	mergeSummary := summarizeMergeQueue(mergeItems)
 
 	lines := []string{
-		panelTitle("检查器  manager"),
+		panelTitle("元信息  manager"),
 		badge("manager", cInfo) + " " + badge("runtime", cNeutral),
 		kvLine("repo:", repo, innerW),
 		kvLine("state:", stateDir, innerW),
@@ -1318,7 +1433,7 @@ func (m model) inspectorRightView(panelW int) string {
 		state = badge("已停止", cNeutral)
 	}
 
-	head := panelTitle("检查器 · 实时输出(简版)") + "  " + state
+	head := panelTitle("worker_log观察窗") + "  " + state
 	meta := kvLine("更新:", metaTime+"  ("+metaAge+"前)", innerW)
 	where := kvLine("来源:", "source="+source+"  log="+logPath, innerW)
 

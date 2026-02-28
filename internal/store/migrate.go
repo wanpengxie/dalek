@@ -68,6 +68,11 @@ func storeMigrations() []Migration {
 			Name:    "drop_worker_process_pid_columns",
 			Up:      migrateDropWorkerProcessPIDColumns,
 		},
+		{
+			Version: 11,
+			Name:    "drop_legacy_worker_tmux_and_dag_plans",
+			Up:      migrateDropLegacyWorkerTmuxAndDagPlans,
+		},
 	}
 }
 
@@ -188,6 +193,21 @@ func migrateDropWorkerProcessPIDColumns(db *gorm.DB) error {
 		if err := dropTableColumn(db, "workers", col); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func migrateDropLegacyWorkerTmuxAndDagPlans(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	for _, col := range []string{"tmux_socket", "tmux_session"} {
+		if err := dropTableColumn(db, "workers", col); err != nil {
+			return err
+		}
+	}
+	if err := db.Exec(`DROP TABLE IF EXISTS dag_plans;`).Error; err != nil {
+		return err
 	}
 	return nil
 }

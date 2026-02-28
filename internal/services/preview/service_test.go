@@ -21,7 +21,7 @@ func (s stubWorkerLookup) LatestWorker(ctx context.Context, ticketID uint) (*con
 	return s.worker, s.err
 }
 
-func TestCaptureTicketTail_UsesWorkerRuntimeLog(t *testing.T) {
+func TestCaptureTicketTail_UsesWorkerSDKStreamLog(t *testing.T) {
 	p, _ := testutil.NewTestProject(t)
 	fRuntime, ok := p.WorkerRuntime.(*testutil.FakeWorkerRuntime)
 	if !ok {
@@ -32,18 +32,19 @@ func TestCaptureTicketTail_UsesWorkerRuntimeLog(t *testing.T) {
 	w := &contracts.Worker{
 		ID:       7,
 		TicketID: 9,
-		LogPath:  "/tmp/w7-stream.log",
+		LogPath:  "/tmp/w7-stream.log", // 应被忽略；preview 固定读取 sdk-stream.log
 	}
 	svc := New(p, stubWorkerLookup{worker: w})
 	got, err := svc.CaptureTicketTail(context.Background(), 9, 2)
 	if err != nil {
 		t.Fatalf("CaptureTicketTail failed: %v", err)
 	}
-	if got.Source != "worker_log" {
+	if got.Source != "sdk_stream_log" {
 		t.Fatalf("unexpected source: %q", got.Source)
 	}
-	if got.LogPath != w.LogPath {
-		t.Fatalf("unexpected log path: got=%q want=%q", got.LogPath, w.LogPath)
+	wantPath := repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID)
+	if got.LogPath != wantPath {
+		t.Fatalf("unexpected log path: got=%q want=%q", got.LogPath, wantPath)
 	}
 	if len(got.Lines) != 2 || got.Lines[0] != "line-2" || got.Lines[1] != "line-3" {
 		t.Fatalf("unexpected lines: %#v", got.Lines)
@@ -51,12 +52,12 @@ func TestCaptureTicketTail_UsesWorkerRuntimeLog(t *testing.T) {
 	if len(fRuntime.CaptureHandles) != 1 {
 		t.Fatalf("expected one capture call, got=%d", len(fRuntime.CaptureHandles))
 	}
-	if strings.TrimSpace(fRuntime.CaptureHandles[0].LogPath) != w.LogPath {
-		t.Fatalf("unexpected captured log path: got=%q want=%q", fRuntime.CaptureHandles[0].LogPath, w.LogPath)
+	if strings.TrimSpace(fRuntime.CaptureHandles[0].LogPath) != wantPath {
+		t.Fatalf("unexpected captured log path: got=%q want=%q", fRuntime.CaptureHandles[0].LogPath, wantPath)
 	}
 }
 
-func TestCaptureTicketTail_FallbackToRepoWorkerLogPath(t *testing.T) {
+func TestCaptureTicketTail_UsesRepoWorkerSDKLogPath(t *testing.T) {
 	p, _ := testutil.NewTestProject(t)
 	fRuntime, ok := p.WorkerRuntime.(*testutil.FakeWorkerRuntime)
 	if !ok {
@@ -73,7 +74,7 @@ func TestCaptureTicketTail_FallbackToRepoWorkerLogPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CaptureTicketTail failed: %v", err)
 	}
-	wantPath := repo.WorkerStreamLogPath(p.WorkersDir, w.ID)
+	wantPath := repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID)
 	if got.LogPath != wantPath {
 		t.Fatalf("unexpected log path: got=%q want=%q", got.LogPath, wantPath)
 	}
