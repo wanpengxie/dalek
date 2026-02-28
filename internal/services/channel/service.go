@@ -169,6 +169,15 @@ func (s *Service) logInterrupt(phase string, attrs ...any) {
 	s.slog().Info("channel interrupt", all...)
 }
 
+func (s *Service) logReset(phase string, attrs ...any) {
+	all := []any{
+		"cmd", "reset",
+		"phase", phase,
+	}
+	all = append(all, attrs...)
+	s.slog().Info("channel reset", all...)
+}
+
 func (s *Service) Close() error {
 	if s == nil {
 		return nil
@@ -315,21 +324,66 @@ func (s *Service) HardResetPeerConversation(ctx context.Context, channelType con
 	if ctx == nil {
 		return false, fmt.Errorf("context 不能为空")
 	}
+	channelType = toStoreChannelType(channelType)
+	if channelType == "" {
+		channelType = contracts.ChannelTypeCLI
+	}
+	adapter = strings.TrimSpace(adapter)
+	if adapter == "" {
+		adapter = defaultAdapter(string(channelType))
+	}
+	peerConversationID = strings.TrimSpace(peerConversationID)
+	s.logReset("cmd_received",
+		"channel_type", channelType,
+		"adapter", adapter,
+		"peer_conversation_id", peerConversationID,
+	)
 
 	conv, found, err := s.resolvePeerConversation(ctx, channelType, adapter, peerConversationID)
 	if err != nil {
+		s.logReset("locator_error",
+			"channel_type", channelType,
+			"adapter", adapter,
+			"peer_conversation_id", peerConversationID,
+			"error", err,
+		)
 		return false, err
 	}
 	if !found {
+		s.logReset("locator_result",
+			"channel_type", channelType,
+			"adapter", adapter,
+			"peer_conversation_id", peerConversationID,
+			"locator", "miss",
+		)
 		return true, nil
 	}
+	s.logReset("locator_result",
+		"channel_type", channelType,
+		"adapter", adapter,
+		"peer_conversation_id", peerConversationID,
+		"locator", "hit",
+		"conversation_id", conv.ID,
+		"has_session", strings.TrimSpace(conv.AgentSessionID) != "",
+	)
 
-	s.cancelRunningTurnByConversation(conv.ID)
+	contextCanceled := s.cancelRunningTurnByConversation(conv.ID)
+	s.logReset("cancel_turn_result",
+		"conversation_id", conv.ID,
+		"context_canceled", contextCanceled,
+	)
 
 	var forceErr error
+	managerPresent := false
 	if manager := s.chatRunnerManagerSnapshot(); manager != nil {
+		managerPresent = true
 		forceErr = manager.ForceCloseConversation(fmt.Sprintf("%d", conv.ID))
 	}
+	s.logReset("force_close_result",
+		"conversation_id", conv.ID,
+		"manager_present", managerPresent,
+		"error", forceErr,
+	)
 
 	now := time.Now()
 	if err := db.WithContext(ctx).Model(&contracts.ChannelConversation{}).
@@ -338,14 +392,42 @@ func (s *Service) HardResetPeerConversation(ctx context.Context, channelType con
 			"agent_session_id": "",
 			"updated_at":       now,
 		}).Error; err != nil {
+		s.logReset("persist_error",
+			"conversation_id", conv.ID,
+			"error", err,
+		)
 		if forceErr != nil {
-			return false, fmt.Errorf("%w；另外强制关闭 runner 失败: %v", err, forceErr)
+			combinedErr := fmt.Errorf("%w；另外强制关闭 runner 失败: %v", err, forceErr)
+			s.logReset("cmd_result",
+				"conversation_id", conv.ID,
+				"status", "error",
+				"reset", false,
+				"error", combinedErr,
+			)
+			return false, combinedErr
 		}
+		s.logReset("cmd_result",
+			"conversation_id", conv.ID,
+			"status", "error",
+			"reset", false,
+			"error", err,
+		)
 		return false, err
 	}
 	if forceErr != nil {
+		s.logReset("cmd_result",
+			"conversation_id", conv.ID,
+			"status", "partial",
+			"reset", true,
+			"error", forceErr,
+		)
 		return true, forceErr
 	}
+	s.logReset("cmd_result",
+		"conversation_id", conv.ID,
+		"status", "ok",
+		"reset", true,
+	)
 	return true, nil
 }
 

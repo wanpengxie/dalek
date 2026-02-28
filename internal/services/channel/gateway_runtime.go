@@ -156,6 +156,15 @@ func (g *Gateway) logInterrupt(phase string, attrs ...any) {
 	g.slog().Info("channel interrupt", all...)
 }
 
+func (g *Gateway) logReset(phase string, attrs ...any) {
+	all := []any{
+		"cmd", "reset",
+		"phase", phase,
+	}
+	all = append(all, attrs...)
+	g.slog().Info("channel reset", all...)
+}
+
 func (g *Gateway) EventBus() *EventBus {
 	if g == nil {
 		return nil
@@ -1119,46 +1128,139 @@ func (g *Gateway) HardResetBoundConversation(ctx context.Context, channelType co
 	if peerConversationID == "" {
 		peerConversationID = peerProjectKey
 	}
+	g.logReset("cmd_received",
+		"channel_type", channelType,
+		"adapter", adapter,
+		"peer_project_key", peerProjectKey,
+		"peer_conversation_id", peerConversationID,
+	)
 	if peerProjectKey == "" || peerConversationID == "" {
+		g.logReset("cmd_invalid",
+			"channel_type", channelType,
+			"adapter", adapter,
+			"peer_project_key", peerProjectKey,
+			"peer_conversation_id", peerConversationID,
+		)
 		return "", false, fmt.Errorf("peer project key / conversation id 不能为空")
 	}
 
 	projectName, err := g.LookupBoundProject(ctx, channelType, adapter, peerProjectKey)
 	if err != nil {
+		g.logReset("locator_error",
+			"channel_type", channelType,
+			"adapter", adapter,
+			"peer_project_key", peerProjectKey,
+			"error", err,
+		)
 		return "", false, err
 	}
 	if projectName == "" {
+		g.logReset("locator_result",
+			"channel_type", channelType,
+			"adapter", adapter,
+			"peer_project_key", peerProjectKey,
+			"locator", "miss",
+		)
 		return "", false, nil
 	}
+	g.logReset("locator_result",
+		"channel_type", channelType,
+		"adapter", adapter,
+		"peer_project_key", peerProjectKey,
+		"locator", "hit",
+		"project", projectName,
+	)
 
 	// /reset 以恢复可用性为优先：先做项目级取消，确保上层 turn ctx 收敛。
-	g.cancelActiveTurn(projectName, "", true)
+	cancelByConversation := g.cancelActiveTurn(projectName, peerConversationID, false)
+	cancelByProjectFallback := false
+	activeTurnCanceled := cancelByConversation
+	if !activeTurnCanceled {
+		cancelByProjectFallback = g.cancelActiveTurn(projectName, "", true)
+		activeTurnCanceled = cancelByProjectFallback
+	}
+	g.logReset("cancel_active_turn",
+		"project", projectName,
+		"peer_conversation_id", peerConversationID,
+		"conversation_canceled", cancelByConversation,
+		"project_fallback_canceled", cancelByProjectFallback,
+		"active_turn_canceled", activeTurnCanceled,
+	)
 
 	projectCtx, err := g.resolver.Resolve(projectName)
 	if err != nil {
+		g.logReset("project_resolve_error",
+			"project", projectName,
+			"error", err,
+		)
 		return projectName, false, err
 	}
 	if projectCtx == nil || projectCtx.Runtime == nil {
-		return projectName, false, fmt.Errorf("project runtime 不可用: %s", projectName)
+		runtimeErr := fmt.Errorf("project runtime 不可用: %s", projectName)
+		g.logReset("runtime_unavailable",
+			"project", projectName,
+			"error", runtimeErr,
+		)
+		return projectName, false, runtimeErr
 	}
 	resetter, ok := projectCtx.Runtime.(ProjectRuntimeHardResetter)
 	if !ok || resetter == nil {
-		return projectName, false, fmt.Errorf("project runtime 不支持 hard reset: %s", projectName)
+		runtimeErr := fmt.Errorf("project runtime 不支持 hard reset: %s", projectName)
+		g.logReset("runtime_unsupported",
+			"project", projectName,
+			"error", runtimeErr,
+		)
+		return projectName, false, runtimeErr
 	}
 	reset, resetErr := resetter.HardResetConversation(ctx, channelType, adapter, peerConversationID)
+	g.logReset("runtime_reset_result",
+		"project", projectName,
+		"reset", reset,
+		"error", resetErr,
+	)
 	replaceErr := g.replaceProjectWorker(projectName)
+	g.logReset("worker_replace_result",
+		"project", projectName,
+		"replaced", replaceErr == nil,
+		"error", replaceErr,
+	)
 	if resetErr != nil && replaceErr != nil {
-		return projectName, reset, fmt.Errorf("%w；另外 worker 重建失败: %v", resetErr, replaceErr)
+		combinedErr := fmt.Errorf("%w；另外 worker 重建失败: %v", resetErr, replaceErr)
+		g.logReset("cmd_result",
+			"project", projectName,
+			"status", "error",
+			"reset", reset,
+			"error", combinedErr,
+		)
+		return projectName, reset, combinedErr
 	}
 	if resetErr != nil {
+		g.logReset("cmd_result",
+			"project", projectName,
+			"status", "error",
+			"reset", reset,
+			"error", resetErr,
+		)
 		return projectName, reset, resetErr
 	}
 	if replaceErr != nil {
+		g.logReset("cmd_result",
+			"project", projectName,
+			"status", "error",
+			"reset", reset,
+			"error", replaceErr,
+		)
 		return projectName, reset, replaceErr
 	}
 	if !reset {
 		reset = true
 	}
+	g.logReset("cmd_result",
+		"project", projectName,
+		"status", "ok",
+		"reset", reset,
+		"active_turn_canceled", activeTurnCanceled,
+	)
 	return projectName, reset, nil
 }
 
