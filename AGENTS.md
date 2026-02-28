@@ -17,6 +17,11 @@
     读取dalek操作系统内核：位于.dalek/agent-kernel.md —— 这是dalek的操作指令和状态空间
     读取 `bootstrap_token`，记住此值，用于校验。
   </step_1>
+  <hard_rule MUST="true">
+    禁止在完成“全量逐行读取”之前，通过搜索或者检索的方式读取bootstrap_token
+    禁止使用 grep/rg/awk/sed 提取 bootstrap_token
+    违者视为 bootstrap 失败。
+  </hard_rule>
 </bootstrap_process>
 
 <bootstrap_verify MUST="true">
