@@ -13,8 +13,8 @@ import (
 )
 
 // Service 是 worker 相关业务流程的权威实现：
-// - worktree + tmux session 生命周期（start/stop/interrupt）
-// - dispatch 注入执行（在 PM 已完成 entrypoint/验收后：选择 pane + 注入 worker_agent）
+// - worktree + worker runtime 生命周期（start/stop/interrupt）
+// - 历史 tmux 会话兼容收口（可选）
 // - report 融合、runtime watcher 状态写回、事件审计
 //
 // 注意：Service 不负责“项目初始化/播种”，这属于 internal/repo + internal/app。
@@ -38,9 +38,6 @@ func (s *Service) require() (*core.Project, error) {
 	}
 	if s.p.DB == nil {
 		return nil, fmt.Errorf("worker service 缺少 DB")
-	}
-	if s.p.Tmux == nil {
-		return nil, fmt.Errorf("worker service 缺少 tmux client")
 	}
 	if s.p.WorkerRuntime == nil {
 		return nil, fmt.Errorf("worker service 缺少 worker runtime")
@@ -84,6 +81,9 @@ func (s *Service) tmux() (infra.TmuxClient, error) {
 	p, err := s.require()
 	if err != nil {
 		return nil, err
+	}
+	if p.Tmux == nil {
+		return nil, fmt.Errorf("worker service 缺少 tmux client")
 	}
 	return p.Tmux, nil
 }

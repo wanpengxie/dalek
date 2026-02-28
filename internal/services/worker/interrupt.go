@@ -50,6 +50,7 @@ func (s *Service) InterruptWorker(ctx context.Context, workerID uint) (Interrupt
 	if err := db.First(&w, workerID).Error; err != nil {
 		return InterruptResult{}, err
 	}
+	processInterruptErr := error(nil)
 	if hasWorkerRuntimeHandle(w) {
 		if ierr := p.WorkerRuntime.InterruptProcess(ctx, workerRuntimeHandle(w)); ierr == nil {
 			_ = s.appendWorkerTaskEvent(ctx, w.ID, "interrupt_sent", fmt.Sprintf("pid=%d", w.ProcessPID), map[string]any{
@@ -73,10 +74,18 @@ func (s *Service) InterruptWorker(ctx context.Context, workerID uint) (Interrupt
 				"process_pid": w.ProcessPID,
 			}, now)
 			return InterruptResult{}, ierr
+		} else {
+			processInterruptErr = ierr
 		}
 	}
 	if strings.TrimSpace(w.TmuxSession) == "" {
 		return InterruptResult{}, fmt.Errorf("worker 缺少可中断运行句柄: w%d", workerID)
+	}
+	if p.Tmux == nil {
+		if processInterruptErr != nil {
+			return InterruptResult{}, processInterruptErr
+		}
+		return InterruptResult{}, fmt.Errorf("tmux client 不可用，无法中断历史 tmux worker: w%d", workerID)
 	}
 
 	cfg, err := s.cfg()

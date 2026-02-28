@@ -147,7 +147,7 @@ func (s *Service) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt 
 		socket = strings.TrimSpace(cfg.TmuxSocket)
 	}
 	session := strings.TrimSpace(w.TmuxSession)
-	if socket != "" && session != "" {
+	if p.Tmux != nil && socket != "" && session != "" {
 		sessions, err := p.Tmux.ListSessions(ctx, socket)
 		if err != nil && !opt.Force {
 			return result, err

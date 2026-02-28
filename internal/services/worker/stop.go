@@ -40,6 +40,12 @@ func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 	}
 	if runtimeStopErr != nil || !hasWorkerRuntimeHandle(w) {
 		session := strings.TrimSpace(w.TmuxSession)
+		if p.Tmux == nil {
+			if runtimeStopErr != nil {
+				return runtimeStopErr
+			}
+			return fmt.Errorf("worker 缺少可停止运行句柄: w%d", workerID)
+		}
 		if session == "" {
 			if runtimeStopErr != nil {
 				return runtimeStopErr
@@ -92,6 +98,9 @@ func (s *Service) KillAllTmuxSessions(ctx context.Context) error {
 	p, err := s.require()
 	if err != nil {
 		return err
+	}
+	if p.Tmux == nil {
+		return fmt.Errorf("tmux client 不可用")
 	}
 	cfg, err := s.cfg()
 	if err != nil {

@@ -67,6 +67,32 @@ func TestStartTicket_CreatesWorkerAndSession(t *testing.T) {
 	}
 }
 
+func TestStartTicket_RuntimePrimaryWithoutTmuxClient(t *testing.T) {
+	svc, p, _, _ := newServiceForTest(t)
+	p.Tmux = nil
+
+	tk := createTicket(t, p.DB, "ticket-start-no-tmux")
+	w, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicketResources failed without tmux client: %v", err)
+	}
+	if w.ProcessPID <= 0 {
+		t.Fatalf("expected runtime pid > 0, got %d", w.ProcessPID)
+	}
+
+	attachCmd, err := svc.AttachCmd(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("AttachCmd should prefer runtime attach without tmux client: %v", err)
+	}
+	if attachCmd == nil {
+		t.Fatalf("expected non-nil attach command")
+	}
+
+	if err := svc.StopTicket(context.Background(), tk.ID); err != nil {
+		t.Fatalf("StopTicket failed without tmux client: %v", err)
+	}
+}
+
 func TestStartTicket_NewWorkerUsesRunScopedBranchAndWorktree(t *testing.T) {
 	svc, p, _, _ := newServiceForTest(t)
 

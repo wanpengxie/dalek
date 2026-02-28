@@ -106,7 +106,7 @@ type StartOptions struct {
 	BaseBranch string
 }
 
-// StartTicketResources 启动一个 ticket 的执行资源（当前默认为 worktree + tmux session）。
+// StartTicketResources 启动一个 ticket 的执行资源（当前默认为 worktree + worker runtime 进程）。
 //
 // 注意：
 // - worker 只负责“资源启动”，不做额外初始化脚本。
@@ -148,7 +148,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		if runtimeRollbackNeeded && rollbackRuntime.PID > 0 {
 			_ = p.WorkerRuntime.StopProcess(cleanupCtx, rollbackRuntime, defaultWorkerProcessStopTimeout)
 		}
-		if sessionRollbackNeeded && strings.TrimSpace(rollbackSession) != "" {
+		if p.Tmux != nil && sessionRollbackNeeded && strings.TrimSpace(rollbackSession) != "" {
 			socket := strings.TrimSpace(rollbackSocket)
 			if socket == "" {
 				socket = strings.TrimSpace(p.Config.TmuxSocket)
@@ -205,7 +205,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 				return w, nil
 			}
 		}
-		if strings.TrimSpace(w.TmuxSession) != "" {
+		if p.Tmux != nil && strings.TrimSpace(w.TmuxSession) != "" {
 			socket := strings.TrimSpace(w.TmuxSocket)
 			if socket == "" {
 				socket = strings.TrimSpace(p.Config.TmuxSocket)
@@ -348,7 +348,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	}
 	w.Status = contracts.WorkerCreating
 
-	if oldSession != "" {
+	if p.Tmux != nil && oldSession != "" {
 		if oldSocket == "" {
 			oldSocket = socket
 		}
@@ -356,7 +356,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	}
 	// 防御：无论 worker 记录是否 fresh，都对目标 session 名做一次 best-effort 清理。
 	// 这样可以回收“DB fresh 但 tmux socket 残留同名 session”的脏状态，避免 duplicate session。
-	if oldSession == "" || oldSocket != socket || oldSession != session {
+	if p.Tmux != nil && (oldSession == "" || oldSocket != socket || oldSession != session) {
 		shouldKill := true
 		if sessions, serr := p.Tmux.ListSessions(ctx, socket); serr == nil {
 			shouldKill = sessions[strings.TrimSpace(session)]
@@ -366,7 +366,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		}
 	}
 
-	// 在 tmux session 启动时注入 DALEK_* 环境变量（供 worker 内 CLI 使用）。
+	// 注入 DALEK_* 环境变量（供 worker 内 CLI 使用）。
 	contractDir := filepath.Join(worktreePath, ".dalek")
 
 	// worker session 内必须能调用到 dalek（report 等依赖）。
@@ -473,6 +473,25 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		}
 		return &out, nil
 	}
+	if p.Tmux == nil {
+		failedAt := time.Now()
+		_ = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if uerr := tx.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+				"status":     contracts.WorkerFailed,
+				"last_error": runtimeErr.Error(),
+				"stopped_at": &failedAt,
+			}).Error; uerr != nil {
+				return uerr
+			}
+			return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, w.Status, contracts.WorkerFailed, "worker.start", "runtime 启动失败且 tmux 不可用", map[string]any{
+				"ticket_id":    w.TicketID,
+				"tmux_socket":  strings.TrimSpace(socket),
+				"tmux_session": strings.TrimSpace(session),
+				"error":        strings.TrimSpace(runtimeErr.Error()),
+			}, failedAt)
+		})
+		return nil, runtimeErr
+	}
 
 	parts = append(parts, "exec ${SHELL:-bash} -l")
 	injected := strings.Join(parts, "; ")
@@ -533,7 +552,7 @@ func (s *Service) StopTicket(ctx context.Context, ticketID uint) error {
 		// 可能出现“DB 无 worker，但 tmux 里仍有旧 session”的孤儿状态。
 		// 这里做一次 best-effort 的按命名约定清理，避免 stop -ticket 永久不可用。
 		cfg, cerr := s.cfg()
-		if cerr == nil {
+		if cerr == nil && p.Tmux != nil {
 			socket := strings.TrimSpace(cfg.TmuxSocket)
 			key := strings.TrimSpace(p.Key)
 			if socket != "" && key != "" && ticketID != 0 {
@@ -557,7 +576,7 @@ func (s *Service) StopTicket(ctx context.Context, ticketID uint) error {
 	return s.StopWorker(ctx, w.ID)
 }
 
-// AttachCmd 返回该 ticket 最新 worker 的 tmux attach 命令（供 TUI/CLI 调起）。
+// AttachCmd 返回该 ticket 最新 worker 的 attach 命令（优先 runtime 日志 attach，兼容历史 tmux worker）。
 func (s *Service) AttachCmd(ctx context.Context, ticketID uint) (*exec.Cmd, error) {
 	p, err := s.require()
 	if err != nil {
@@ -578,6 +597,9 @@ func (s *Service) AttachCmd(ctx context.Context, ticketID uint) (*exec.Cmd, erro
 	}
 	if strings.TrimSpace(w.TmuxSession) == "" {
 		return nil, fmt.Errorf("该 ticket 尚无可 attach 的 worker session")
+	}
+	if p.Tmux == nil {
+		return nil, fmt.Errorf("tmux client 不可用，无法 attach 历史 tmux worker")
 	}
 	return p.Tmux.AttachCmd(w.TmuxSocket, w.TmuxSession), nil
 }
