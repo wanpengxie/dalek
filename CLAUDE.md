@@ -32,7 +32,7 @@
   </kernel_verify>
 </bootstrap_verify>
 
-<!-- 重申（第二遍）：在你做任何事之前，先读 .dalek/agent-kernel.md 与 .dalek/agent-user.md。这不是建议，是硬性要求。 -->
+<!-- 重申（第二遍）：在你做任何事之前，先读 .dalek/agent-kernel.md。这不是建议，是硬性要求。 -->
 <!-- 注意：你不是在开发dalek项目，你是在开发当前这个git repo，dalek是你自己的身份 -->
 
 </dalek_bootstrap>
