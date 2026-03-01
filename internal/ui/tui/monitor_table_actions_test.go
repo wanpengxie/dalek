@@ -311,6 +311,34 @@ func TestUpdateTable_EnterOnManagerRowNoop(t *testing.T) {
 	}
 }
 
+func TestUpdateTable_EPrefillsEditLabel(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.rowRefs = []rowRef{{kind: rowTicket, section: "backlog", ticketID: 10}}
+	m.viewsByID = map[uint]app.TicketView{
+		10: {
+			Ticket: contracts.Ticket{
+				ID:             10,
+				WorkflowStatus: contracts.TicketBacklog,
+				Title:          "needs label",
+				Description:    "desc",
+				Label:          "ops",
+			},
+		},
+	}
+
+	gotModel, cmd := m.updateTable(keyRune('e'))
+	if cmd == nil {
+		t.Fatalf("e should return focus cmd")
+	}
+	got := gotModel.(model)
+	if got.mode != modeEditTicket {
+		t.Fatalf("mode=%v, want=%v", got.mode, modeEditTicket)
+	}
+	if got.editLabel.Value() != "ops" {
+		t.Fatalf("edit label should be prefilled, got=%q", got.editLabel.Value())
+	}
+}
+
 func TestUpdateTable_AOpensWorkerLogPage(t *testing.T) {
 	m := newModel(nil, nil, "")
 	m.rowRefs = []rowRef{{kind: rowTicket, section: "running", ticketID: 10}}

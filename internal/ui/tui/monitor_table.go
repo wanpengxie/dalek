@@ -55,6 +55,8 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.titleInput.SetValue("")
 		m.newDesc.SetValue("")
 		m.newDesc.Blur()
+		m.newLabel.SetValue("")
+		m.newLabel.Blur()
 		m.errMsg = ""
 		return m, nil
 	case "s":
@@ -200,6 +202,8 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.editTitle.SetValue(strings.TrimSpace(v.Ticket.Title))
 		m.editDesc.SetValue(strings.TrimSpace(v.Ticket.Description))
 		m.editDesc.Blur()
+		m.editLabel.SetValue(strings.TrimSpace(v.Ticket.Label))
+		m.editLabel.Blur()
 		m.errMsg = ""
 		m.status = fmt.Sprintf("编辑 t%d（Ctrl+S 保存）", id)
 		return m, m.editTitle.Focus()

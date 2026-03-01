@@ -27,6 +27,7 @@ func TestUpdateTable_NShortcutGotoNotebook(t *testing.T) {
 
 func TestUpdateTable_CShortcutNewTicket(t *testing.T) {
 	m := newModel(nil, nil, "")
+	m.newLabel.SetValue("should-clear")
 
 	gotModel, cmd := m.updateTable(keyRune('c'))
 	if cmd != nil {
@@ -36,6 +37,9 @@ func TestUpdateTable_CShortcutNewTicket(t *testing.T) {
 	got := gotModel.(model)
 	if got.mode != modeNewTicket {
 		t.Fatalf("mode=%v, want=%v", got.mode, modeNewTicket)
+	}
+	if got.newLabel.Value() != "" {
+		t.Fatalf("new ticket label should reset on open, got=%q", got.newLabel.Value())
 	}
 }
 

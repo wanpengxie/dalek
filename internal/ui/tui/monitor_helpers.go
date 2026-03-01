@@ -464,11 +464,11 @@ func (m model) tailCmd(ref rowRef) tea.Cmd {
 	}
 }
 
-func (m model) createTicketCmd(title, description string) tea.Cmd {
+func (m model) createTicketCmd(title, description, label string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		t, err := m.p.CreateTicketWithDescription(ctx, title, description)
+		t, err := m.p.CreateTicketWithDescriptionAndLabel(ctx, title, description, label)
 		id := uint(0)
 		if t != nil {
 			id = t.ID
@@ -681,21 +681,30 @@ func trimCell(s string, maxLen int) string {
 	return ansi.Cut(s, 0, maxLen-3) + "..."
 }
 
+func labelOrDash(label string) string {
+	label = oneLine(strings.TrimSpace(label))
+	if label == "" {
+		return "-"
+	}
+	return label
+}
+
 func defaultTableLayout() tableLayout {
 	return tableLayout{
 		section:  8,
 		id:       6,
 		priority: 2,
+		label:    8,
 		status:   8,
 		runtime:  10,
-		title:    42,
+		title:    34,
 		output:   18,
 	}
 }
 
 func tableTotalWidth(layout tableLayout) int {
-	const gapCount = 6
-	return layout.section + layout.id + layout.priority + layout.status + layout.runtime + layout.title + layout.output + gapCount
+	const gapCount = 7
+	return layout.section + layout.id + layout.priority + layout.label + layout.status + layout.runtime + layout.title + layout.output + gapCount
 }
 
 func tableColumns(layout tableLayout) []table.Column {
@@ -703,6 +712,7 @@ func tableColumns(layout tableLayout) []table.Column {
 		{Title: "分区", Width: layout.section},
 		{Title: "ID", Width: layout.id},
 		{Title: "P", Width: layout.priority},
+		{Title: "标签", Width: layout.label},
 		{Title: "状态", Width: layout.status},
 		{Title: "运行", Width: layout.runtime},
 		{Title: "标题", Width: layout.title},
@@ -1016,11 +1026,11 @@ func (m model) bumpPriorityCmd(ticketID uint, delta int) tea.Cmd {
 	}
 }
 
-func (m model) updateTicketTextCmd(ticketID uint, title, desc string) tea.Cmd {
+func (m model) updateTicketTextCmd(ticketID uint, title, desc, label string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		err := m.p.UpdateTicketText(ctx, ticketID, title, desc)
+		err := m.p.UpdateTicketTextAndLabel(ctx, ticketID, title, desc, label)
 		return ticketTextMsg{TicketID: ticketID, Err: err}
 	}
 }
