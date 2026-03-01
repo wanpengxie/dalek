@@ -689,6 +689,29 @@ func labelOrDash(label string) string {
 	return label
 }
 
+func ticketPriorityShort(priority int) string {
+	switch contracts.TicketPriorityLabel(priority) {
+	case "none":
+		return "N"
+	case "low":
+		return "L"
+	case "medium":
+		return "M"
+	case "high":
+		return "H"
+	default:
+		return fmt.Sprintf("%d", priority)
+	}
+}
+
+func ticketPriorityDisplay(priority int) string {
+	label := contracts.TicketPriorityLabel(priority)
+	if label == fmt.Sprintf("%d", priority) {
+		return label
+	}
+	return fmt.Sprintf("%s(%d)", label, priority)
+}
+
 func defaultTableLayout() tableLayout {
 	return tableLayout{
 		section:  8,

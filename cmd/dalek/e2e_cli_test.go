@@ -145,7 +145,7 @@ func TestCLI_TicketEdit_E2E(t *testing.T) {
 	if err == nil {
 		t.Fatalf("ticket edit without --title/--desc should fail")
 	}
-	if !strings.Contains(stderr, "至少需要 --title、--desc 或 --label") {
+	if !strings.Contains(stderr, "至少需要 --title、--desc、--label 或 --priority") {
 		t.Fatalf("ticket edit missing-field hint not found:\n%s", stderr)
 	}
 
@@ -212,6 +212,60 @@ func TestCLI_TicketEdit_E2E(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "已归档") {
 		t.Fatalf("archived ticket edit hint missing:\n%s", stderr)
+	}
+}
+
+func TestCLI_TicketCreateAndEdit_PriorityFlags(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+	home := filepath.Join(t.TempDir(), "home")
+
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "init", "-name", "demo")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "t-none", "-desc", "d-none")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "t-low", "-desc", "d-low", "--priority", "low")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "t-medium", "-desc", "d-medium", "--priority", "medium")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "t-high", "-desc", "d-high", "--priority", "high")
+
+	checkPriority := func(ticketID uint, wantPriority int, wantLabel string) {
+		t.Helper()
+		raw, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "show", "--ticket", fmt.Sprintf("%d", ticketID), "-o", "json")
+		var payload struct {
+			Priority      int    `json:"priority"`
+			PriorityLabel string `json:"priority_label"`
+		}
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatalf("unmarshal ticket show json failed: %v\nraw=%s", err, raw)
+		}
+		if payload.Priority != wantPriority || payload.PriorityLabel != wantLabel {
+			t.Fatalf("unexpected priority for t%d: got=%d/%s want=%d/%s", ticketID, payload.Priority, payload.PriorityLabel, wantPriority, wantLabel)
+		}
+	}
+
+	checkPriority(1, contracts.TicketPriorityNone, "none")
+	checkPriority(2, contracts.TicketPriorityLow, "low")
+	checkPriority(3, contracts.TicketPriorityMedium, "medium")
+	checkPriority(4, contracts.TicketPriorityHigh, "high")
+
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "edit", "--ticket", "1", "--priority", "high")
+	checkPriority(1, contracts.TicketPriorityHigh, "high")
+
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "edit", "--ticket", "2", "--title", "t-low-v2")
+	checkPriority(2, contracts.TicketPriorityLow, "low")
+
+	_, stderr, err := runCLI(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "bad-priority", "-desc", "bad-priority", "--priority", "p0")
+	if err == nil {
+		t.Fatalf("ticket create should fail on invalid priority")
+	}
+	if !strings.Contains(stderr, "只支持 high、medium、low、none") {
+		t.Fatalf("invalid create priority hint missing:\n%s", stderr)
+	}
+
+	_, stderr, err = runCLI(t, bin, repo, "-home", home, "-project", "demo", "ticket", "edit", "--ticket", "3", "--priority", "p0")
+	if err == nil {
+		t.Fatalf("ticket edit should fail on invalid priority")
+	}
+	if !strings.Contains(stderr, "只支持 high、medium、low、none") {
+		t.Fatalf("invalid edit priority hint missing:\n%s", stderr)
 	}
 }
 

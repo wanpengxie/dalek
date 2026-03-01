@@ -160,7 +160,7 @@ func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contrac
 		return ActionResult{}, err
 	}
 	if strings.TrimSpace(tk.Label) == "" {
-		msg := fmt.Sprintf("t%d %s（状态=%s，优先级=%d）", tk.ID, tk.Title, tk.WorkflowStatus, tk.Priority)
+		msg := fmt.Sprintf("t%d %s（状态=%s，优先级=%s）", tk.ID, tk.Title, tk.WorkflowStatus, actionPriorityLabel(tk.Priority))
 		return ActionResult{
 			ActionName: contracts.ActionTicketDetail,
 			Success:    true,
@@ -177,7 +177,7 @@ func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contrac
 			},
 		}, nil
 	}
-	msg := fmt.Sprintf("t%d %s（标签=%s，状态=%s，优先级=%d）", tk.ID, tk.Title, tk.Label, tk.WorkflowStatus, tk.Priority)
+	msg := fmt.Sprintf("t%d %s（标签=%s，状态=%s，优先级=%s）", tk.ID, tk.Title, tk.Label, tk.WorkflowStatus, actionPriorityLabel(tk.Priority))
 	return ActionResult{
 		ActionName: contracts.ActionTicketDetail,
 		Success:    true,
@@ -425,6 +425,14 @@ func actionArgString(args map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func actionPriorityLabel(priority int) string {
+	label := contracts.TicketPriorityLabel(priority)
+	if label == strconv.Itoa(priority) {
+		return label
+	}
+	return fmt.Sprintf("%s(%d)", label, priority)
 }
 
 func actionArgBool(args map[string]any, defaultValue bool, keys ...string) bool {

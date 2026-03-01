@@ -34,6 +34,10 @@ func (s *Service) CreateWithDescription(ctx context.Context, title, description 
 }
 
 func (s *Service) CreateWithDescriptionAndLabel(ctx context.Context, title, description, label string) (*contracts.Ticket, error) {
+	return s.CreateWithDescriptionAndLabelAndPriority(ctx, title, description, label, contracts.TicketPriorityNone)
+}
+
+func (s *Service) CreateWithDescriptionAndLabelAndPriority(ctx context.Context, title, description, label string, priority int) (*contracts.Ticket, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -49,7 +53,7 @@ func (s *Service) CreateWithDescriptionAndLabel(ctx context.Context, title, desc
 		Description:    description,
 		Label:          label,
 		WorkflowStatus: contracts.TicketBacklog,
-		Priority:       contracts.TicketPriorityNone,
+		Priority:       priority,
 	}
 	if err := db.WithContext(ctx).Create(&t).Error; err != nil {
 		return nil, err
@@ -186,6 +190,58 @@ func (s *Service) UpdateTextAndLabel(ctx context.Context, ticketID uint, title, 
 			"title":       title,
 			"description": description,
 			"label":       label,
+			"updated_at":  now,
+		}).Error
+}
+
+func (s *Service) UpdateTextAndPriority(ctx context.Context, ticketID uint, title, description string, priority int) error {
+	db, err := s.requireDB()
+	if err != nil {
+		return err
+	}
+	title = trimOneLine(title)
+	if title == "" {
+		return fmt.Errorf("title 不能为空")
+	}
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return fmt.Errorf("description 不能为空")
+	}
+	now := time.Now()
+	return db.WithContext(ctx).
+		Model(&contracts.Ticket{}).
+		Where("id = ?", ticketID).
+		Updates(map[string]any{
+			"title":       title,
+			"description": description,
+			"priority":    priority,
+			"updated_at":  now,
+		}).Error
+}
+
+func (s *Service) UpdateTextAndLabelAndPriority(ctx context.Context, ticketID uint, title, description, label string, priority int) error {
+	db, err := s.requireDB()
+	if err != nil {
+		return err
+	}
+	title = trimOneLine(title)
+	if title == "" {
+		return fmt.Errorf("title 不能为空")
+	}
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return fmt.Errorf("description 不能为空")
+	}
+	label = normalizeLabel(label)
+	now := time.Now()
+	return db.WithContext(ctx).
+		Model(&contracts.Ticket{}).
+		Where("id = ?", ticketID).
+		Updates(map[string]any{
+			"title":       title,
+			"description": description,
+			"label":       label,
+			"priority":    priority,
 			"updated_at":  now,
 		}).Error
 }

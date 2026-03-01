@@ -257,14 +257,14 @@ func cmdTicketCreate(args []string) {
 		fmt.Fprintln(os.Stderr, "创建新 ticket")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Usage:")
-		fmt.Fprintln(os.Stderr, "  dalek ticket create --title <title> --desc <description> [--label <label>|-l <label>]")
+		fmt.Fprintln(os.Stderr, "  dalek ticket create --title <title> --desc <description> [--label <label>|-l <label>] [--priority <high|medium|low|none>]")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  dalek ticket create --title \"实现功能X\" --desc \"需求文档在 /tmp/PRD.md\"")
-		fmt.Fprintln(os.Stderr, "  dalek ticket create -t \"修复 Bug\" -d \"详情见 issue #42\" -l \"bugfix\" -o json")
+		fmt.Fprintln(os.Stderr, "  dalek ticket create -t \"修复 Bug\" -d \"详情见 issue #42\" -l \"bugfix\" --priority high -o json")
 	}
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
 	proj := fs.String("project", globalProject, "项目名（可选）")
@@ -275,6 +275,7 @@ func cmdTicketCreate(args []string) {
 	fs.StringVar(desc, "d", "", "ticket 描述 (required)")
 	label := fs.String("label", "", "ticket 标签（可选，单标签）")
 	fs.StringVar(label, "l", "", "ticket 标签（可选，单标签）")
+	priorityName := fs.String("priority", "none", "优先级（可选：high|medium|low|none，默认 none）")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
 	parseFlagSetOrExit(fs, args, globalOutput, "ticket create 参数解析失败", "运行 dalek ticket create --help 查看参数")
 	if strings.TrimSpace(*projShort) != "" {
@@ -295,11 +296,23 @@ func cmdTicketCreate(args []string) {
 			"dalek ticket create --title \"标题\" --desc \"描述\"",
 		)
 	}
+	priorityRaw := strings.TrimSpace(*priorityName)
+	if priorityRaw == "" {
+		priorityRaw = "none"
+	}
+	priority, ok := contracts.ParseTicketPriority(priorityRaw)
+	if !ok {
+		exitUsageError(out,
+			fmt.Sprintf("非法参数 --priority: %s", priorityRaw),
+			"只支持 high、medium、low、none",
+			"例如: dalek ticket create --title \"标题\" --desc \"描述\" --priority high",
+		)
+	}
 
 	p := mustOpenProjectWithOutput(out, *home, *proj)
 	ctx, cancel := projectCtx(10 * time.Second)
 	defer cancel()
-	t, err := p.CreateTicketWithDescriptionAndLabel(ctx, *title, *desc, *label)
+	t, err := p.CreateTicketWithDescriptionAndLabelAndPriority(ctx, *title, *desc, *label, priority)
 	if err != nil {
 		exitRuntimeError(out,
 			"创建 ticket 失败",
@@ -327,9 +340,9 @@ func cmdTicketEdit(args []string) {
 		printSubcommandUsage(
 			fs,
 			"编辑 ticket 标题/描述/标签",
-			"dalek ticket edit --ticket <id> [--title <title>] [--desc <description>] [--label <label>|-l <label>] [--timeout 2s] [--output text|json]",
+			"dalek ticket edit --ticket <id> [--title <title>] [--desc <description>] [--label <label>|-l <label>] [--priority <high|medium|low|none>] [--timeout 2s] [--output text|json]",
 			"dalek ticket edit --ticket 1 --title \"新标题\"",
-			"dalek ticket edit --ticket 1 --desc \"补充描述\" -l \"backend\" -o json",
+			"dalek ticket edit --ticket 1 --desc \"补充描述\" -l \"backend\" --priority medium -o json",
 		)
 	}
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
@@ -341,6 +354,7 @@ func cmdTicketEdit(args []string) {
 	fs.StringVar(desc, "d", "", "ticket 描述（可选）")
 	label := fs.String("label", "", "ticket 标签（可选，传空字符串可清空）")
 	fs.StringVar(label, "l", "", "ticket 标签（可选，传空字符串可清空）")
+	priorityName := fs.String("priority", "", "ticket 优先级（可选：high|medium|low|none）")
 	timeout := fs.Duration("timeout", 2*time.Second, "超时（默认 2s）")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
 	parseFlagSetOrExit(fs, args, globalOutput, "ticket edit 参数解析失败", "运行 dalek ticket edit --help 查看参数")
@@ -358,6 +372,7 @@ func cmdTicketEdit(args []string) {
 	titleProvided := false
 	descProvided := false
 	labelProvided := false
+	priorityProvided := false
 	fs.Visit(func(f *flag.Flag) {
 		switch strings.TrimSpace(f.Name) {
 		case "title":
@@ -366,12 +381,14 @@ func cmdTicketEdit(args []string) {
 			descProvided = true
 		case "label", "l":
 			labelProvided = true
+		case "priority":
+			priorityProvided = true
 		}
 	})
-	if !titleProvided && !descProvided && !labelProvided {
+	if !titleProvided && !descProvided && !labelProvided && !priorityProvided {
 		exitUsageError(out,
 			"缺少可更新字段",
-			"ticket edit 至少需要 --title、--desc 或 --label 之一",
+			"ticket edit 至少需要 --title、--desc、--label 或 --priority 之一",
 			"dalek ticket edit --ticket 1 --title \"新标题\"",
 		)
 	}
@@ -388,6 +405,26 @@ func cmdTicketEdit(args []string) {
 			"--desc 不能为空",
 			"请提供非空描述，例如 --desc \"补充需求背景\"",
 		)
+	}
+	var parsedPriority int
+	if priorityProvided {
+		priorityRaw := strings.TrimSpace(*priorityName)
+		if priorityRaw == "" {
+			exitUsageError(out,
+				"非法参数 --priority",
+				"--priority 不能为空",
+				"可选值：high、medium、low、none",
+			)
+		}
+		priority, ok := contracts.ParseTicketPriority(priorityRaw)
+		if !ok {
+			exitUsageError(out,
+				fmt.Sprintf("非法参数 --priority: %s", priorityRaw),
+				"只支持 high、medium、low、none",
+				"例如: dalek ticket edit --ticket 1 --priority high",
+			)
+		}
+		parsedPriority = priority
 	}
 	if *timeout <= 0 {
 		exitUsageError(out,
@@ -433,6 +470,7 @@ func cmdTicketEdit(args []string) {
 	nextTitle := tk.Title
 	nextDesc := tk.Description
 	nextLabel := tk.Label
+	nextPriority := tk.Priority
 	if titleProvided {
 		nextTitle = *title
 	}
@@ -442,17 +480,20 @@ func cmdTicketEdit(args []string) {
 	if labelProvided {
 		nextLabel = *label
 	}
+	if priorityProvided {
+		nextPriority = parsedPriority
+	}
 	var errUpdate error
 	if labelProvided {
-		errUpdate = p.UpdateTicketTextAndLabel(ctx, uint(*ticketID), nextTitle, nextDesc, nextLabel)
+		errUpdate = p.UpdateTicketTextAndLabelAndPriority(ctx, uint(*ticketID), nextTitle, nextDesc, nextLabel, nextPriority)
 	} else {
-		errUpdate = p.UpdateTicketText(ctx, uint(*ticketID), nextTitle, nextDesc)
+		errUpdate = p.UpdateTicketTextAndPriority(ctx, uint(*ticketID), nextTitle, nextDesc, nextPriority)
 	}
 	if errUpdate != nil {
 		exitRuntimeError(out,
 			"更新 ticket 文本失败",
 			errUpdate.Error(),
-			"检查 --title/--desc/--label 参数后重试",
+			"检查 --title/--desc/--label/--priority 参数后重试",
 		)
 	}
 

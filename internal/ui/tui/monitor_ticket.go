@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -156,7 +155,7 @@ func (m model) editTicketView(width int) string {
 	prio := "-"
 	if v, ok := m.viewsByID[id]; ok {
 		status = formatTicketStatus(v.DerivedStatus)
-		prio = strconv.Itoa(v.Ticket.Priority)
+		prio = ticketPriorityDisplay(v.Ticket.Priority)
 	}
 	meta := faint(fmt.Sprintf("当前状态: %s  |  优先级: %s", status, prio))
 

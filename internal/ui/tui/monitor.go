@@ -892,7 +892,7 @@ func (m *model) applyViews(views []app.TicketView) {
 			rows = append(rows, table.Row{
 				partitionCell(sectionKey),
 				trimCell(strconv.Itoa(int(t.ID)), m.tableLayout.id),
-				trimCell(strconv.Itoa(t.Priority), m.tableLayout.priority),
+				trimCell(ticketPriorityShort(t.Priority), m.tableLayout.priority),
 				trimCell(labelOrDash(t.Label), m.tableLayout.label),
 				trimCell(status, m.tableLayout.status),
 				trimCell(runtime, m.tableLayout.runtime),
@@ -942,7 +942,7 @@ func (m *model) applyViews(views []app.TicketView) {
 			rows = append(rows, table.Row{
 				partitionCell("archive"),
 				trimCell(strconv.Itoa(int(t.ID)), m.tableLayout.id),
-				trimCell(strconv.Itoa(t.Priority), m.tableLayout.priority),
+				trimCell(ticketPriorityShort(t.Priority), m.tableLayout.priority),
 				trimCell(labelOrDash(t.Label), m.tableLayout.label),
 				trimCell("归档", m.tableLayout.status),
 				"-",

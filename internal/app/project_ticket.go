@@ -36,6 +36,13 @@ func (p *Project) CreateTicketWithDescriptionAndLabel(ctx context.Context, title
 	return p.ticket.CreateWithDescriptionAndLabel(ctx, title, description, label)
 }
 
+func (p *Project) CreateTicketWithDescriptionAndLabelAndPriority(ctx context.Context, title, description, label string, priority int) (*contracts.Ticket, error) {
+	if p == nil || p.ticket == nil {
+		return nil, fmt.Errorf("project ticket service 为空")
+	}
+	return p.ticket.CreateWithDescriptionAndLabelAndPriority(ctx, title, description, label, priority)
+}
+
 func (p *Project) ArchiveTicket(ctx context.Context, ticketID uint) error {
 	if p == nil || p.pm == nil {
 		return fmt.Errorf("project pm service 为空")
@@ -76,6 +83,20 @@ func (p *Project) UpdateTicketTextAndLabel(ctx context.Context, ticketID uint, t
 		return fmt.Errorf("project ticket service 为空")
 	}
 	return p.ticket.UpdateTextAndLabel(ctx, ticketID, title, description, label)
+}
+
+func (p *Project) UpdateTicketTextAndPriority(ctx context.Context, ticketID uint, title, description string, priority int) error {
+	if p == nil || p.ticket == nil {
+		return fmt.Errorf("project ticket service 为空")
+	}
+	return p.ticket.UpdateTextAndPriority(ctx, ticketID, title, description, priority)
+}
+
+func (p *Project) UpdateTicketTextAndLabelAndPriority(ctx context.Context, ticketID uint, title, description, label string, priority int) error {
+	if p == nil || p.ticket == nil {
+		return fmt.Errorf("project ticket service 为空")
+	}
+	return p.ticket.UpdateTextAndLabelAndPriority(ctx, ticketID, title, description, label, priority)
 }
 
 func (p *Project) ApplyWorkerReport(ctx context.Context, r contracts.WorkerReport, source string) error {
