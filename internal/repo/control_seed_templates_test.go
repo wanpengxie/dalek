@@ -2,6 +2,7 @@ package repo
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -70,5 +71,86 @@ func TestEnsureControlPlaneSeed_RenderProjectIdentityInAgentUserTemplate(t *test
 	}
 	if info.Mode()&0o111 == 0 {
 		t.Fatalf("bootstrap placeholder should be executable, mode=%v", info.Mode())
+	}
+}
+
+func TestPlanControlPlaneSeedUpdate_DetectSkillDrift(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := NewLayout(repoRoot)
+	if err := EnsureControlPlaneSeed(layout, "alpha"); err != nil {
+		t.Fatalf("EnsureControlPlaneSeed failed: %v", err)
+	}
+
+	skillPath := filepath.Join(layout.ControlSkillsDir, "project-init", "SKILL.md")
+	if err := os.WriteFile(skillPath, []byte("custom-skill-content\n"), 0o644); err != nil {
+		t.Fatalf("write drift skill failed: %v", err)
+	}
+
+	changes, err := PlanControlPlaneSeedUpdate(layout, "alpha")
+	if err != nil {
+		t.Fatalf("PlanControlPlaneSeedUpdate failed: %v", err)
+	}
+	found := false
+	for _, change := range changes {
+		if change.Path == skillPath && change.Action == "update" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected drifted skill in plan changes, got=%+v", changes)
+	}
+}
+
+func TestUpdateControlPlaneSeed_OverwriteSkillsKeepKnowledge(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := NewLayout(repoRoot)
+	if err := EnsureControlPlaneSeed(layout, "alpha"); err != nil {
+		t.Fatalf("EnsureControlPlaneSeed failed: %v", err)
+	}
+
+	skillPath := filepath.Join(layout.ControlSkillsDir, "project-init", "SKILL.md")
+	if err := os.WriteFile(skillPath, []byte("local-drift\n"), 0o644); err != nil {
+		t.Fatalf("write local drift failed: %v", err)
+	}
+	knowledgePath := filepath.Join(layout.ControlKnowledgeDir, "custom.md")
+	if err := os.MkdirAll(filepath.Dir(knowledgePath), 0o755); err != nil {
+		t.Fatalf("mkdir knowledge dir failed: %v", err)
+	}
+	if err := os.WriteFile(knowledgePath, []byte("user-knowledge\n"), 0o644); err != nil {
+		t.Fatalf("write knowledge failed: %v", err)
+	}
+
+	changes, err := UpdateControlPlaneSeed(layout, "alpha")
+	if err != nil {
+		t.Fatalf("UpdateControlPlaneSeed failed: %v", err)
+	}
+
+	gotSkill, err := os.ReadFile(skillPath)
+	if err != nil {
+		t.Fatalf("read skill failed: %v", err)
+	}
+	wantSkill := MustReadSeedTemplate("templates/project/control/skills/project-init/SKILL.md")
+	if string(gotSkill) != wantSkill {
+		t.Fatalf("skill should be overwritten by template")
+	}
+
+	gotKnowledge, err := os.ReadFile(knowledgePath)
+	if err != nil {
+		t.Fatalf("read knowledge failed: %v", err)
+	}
+	if string(gotKnowledge) != "user-knowledge\n" {
+		t.Fatalf("knowledge should stay untouched, got=%q", string(gotKnowledge))
+	}
+
+	foundSkillUpdate := false
+	for _, change := range changes {
+		if change.Path == skillPath && change.Action == "update" {
+			foundSkillUpdate = true
+			break
+		}
+	}
+	if !foundSkillUpdate {
+		t.Fatalf("expected skill update in changes, got=%+v", changes)
 	}
 }

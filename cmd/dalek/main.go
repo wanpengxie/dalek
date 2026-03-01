@@ -15,6 +15,7 @@ import (
 )
 
 var (
+	version             = "dev"
 	globalHome          string
 	globalProject       string
 	globalAgentProvider string
@@ -93,6 +94,10 @@ func main() {
 		cmdProject(rest[1:])
 	case "config":
 		cmdConfig(rest[1:])
+	case "upgrade":
+		cmdUpgrade(rest[1:])
+	case "version":
+		cmdVersion(rest[1:])
 	case "gateway":
 		cmdGateway(rest[1:])
 	case "daemon":
@@ -127,6 +132,8 @@ func usage(code int) {
 	fmt.Fprintln(out, "  agent      Agent 子任务运行（run/ls/show/cancel/logs/finish）")
 	fmt.Fprintln(out, "  project    项目注册管理（添加/删除/列表）")
 	fmt.Fprintln(out, "  config     统一配置管理（ls/get/set）")
+	fmt.Fprintln(out, "  upgrade    升级当前项目控制面与元信息（支持 --dry-run）")
+	fmt.Fprintln(out, "  version    打印当前 dalek binary 版本")
 	fmt.Fprintln(out, "  gateway    Channel Gateway（对话/通知/绑定）")
 	fmt.Fprintln(out, "  daemon     Daemon 进程管理（start/stop/status/logs）")
 	fmt.Fprintln(out, "  init       初始化项目（注册当前 git repo）")

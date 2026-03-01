@@ -1,21 +1,12 @@
 package repo
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
-
-type managerProjectMeta struct {
-	Schema   string    `json:"schema"`
-	Name     string    `json:"name"`
-	Key      string    `json:"key"`
-	RepoRoot string    `json:"repo_root"`
-	Created  time.Time `json:"created_at"`
-}
 
 // EnsureManagerBootstrap 在项目状态目录（<repoRoot>/.dalek/）下补齐元信息文件。
 //
@@ -38,19 +29,9 @@ func EnsureManagerBootstrap(layout Layout, projectName string) error {
 		_, _ = writeFileIfMissing(filepath.Join(layout.ProjectDir, ".dalek_bin_path"), strings.TrimSpace(exe)+"\n", 0o644)
 	}
 
-	metaPath := filepath.Join(layout.ProjectDir, ".dalek_project.json")
-	if _, err := os.Stat(metaPath); err != nil && os.IsNotExist(err) {
-		m := managerProjectMeta{
-			Schema:   "dalek.project_meta.v0",
-			Name:     strings.TrimSpace(projectName),
-			Key:      key,
-			RepoRoot: repoRoot,
-			Created:  time.Now(),
-		}
-		if b, err := json.MarshalIndent(m, "", "  "); err == nil {
-			b = append(b, '\n')
-			_ = os.WriteFile(metaPath, b, 0o644)
-		}
+	metaPath := ProjectMetaPath(layout)
+	if err := EnsureProjectMeta(metaPath, projectName, key, repoRoot, time.Now()); err != nil {
+		return err
 	}
 
 	return nil

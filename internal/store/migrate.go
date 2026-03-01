@@ -76,6 +76,33 @@ func storeMigrations() []Migration {
 	}
 }
 
+func LatestMigrationVersion() int {
+	migrations := storeMigrations()
+	latest := 0
+	for _, migration := range migrations {
+		if migration.Version > latest {
+			latest = migration.Version
+		}
+	}
+	return latest
+}
+
+func CurrentMigrationVersion(db *gorm.DB) (int, error) {
+	if db == nil {
+		return 0, fmt.Errorf("db 为空")
+	}
+	if err := ensureSchemaMigrationsTable(db); err != nil {
+		return 0, err
+	}
+	var row struct {
+		MaxVersion int `gorm:"column:max_version"`
+	}
+	if err := db.Raw("SELECT COALESCE(MAX(version), 0) AS max_version FROM schema_migrations;").Scan(&row).Error; err != nil {
+		return 0, err
+	}
+	return row.MaxVersion, nil
+}
+
 // RunMigrations 按 version 顺序执行未应用的迁移，并写入 schema_migrations。
 func RunMigrations(db *gorm.DB, migrations []Migration) error {
 	if db == nil {

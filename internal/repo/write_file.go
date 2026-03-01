@@ -16,3 +16,17 @@ func writeFileIfMissing(path, content string, perm os.FileMode) (bool, error) {
 	}
 	return true, os.WriteFile(path, []byte(content), perm)
 }
+
+func writeFileForce(path, content string, perm os.FileMode) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if err == nil && string(raw) == content {
+		return false, nil
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(path, []byte(content), perm)
+}

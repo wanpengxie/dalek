@@ -60,9 +60,13 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[develop] build -> ${tmp_bin}"
+build_version="$(
+  cd "$repo_root"
+  git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD
+)"
 (
   cd "$repo_root"
-  go build -o "$tmp_bin" ./cmd/dalek
+  go build -ldflags "-X main.version=${build_version}" -o "$tmp_bin" ./cmd/dalek
 )
 chmod +x "$tmp_bin"
 

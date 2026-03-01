@@ -12,26 +12,19 @@ import (
 	"dalek/internal/infra"
 )
 
+type ControlPlaneChange struct {
+	Path   string `json:"path"`
+	Action string `json:"action"`
+}
+
 func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 	if strings.TrimSpace(layout.ProjectDir) == "" {
 		return fmt.Errorf("project_dir 为空")
 	}
-
-	dirs := []string{
-		layout.ControlWorkerDir,
-		layout.ControlSkillsDir,
-		layout.ControlKnowledgeDir,
-		layout.ControlToolsDir,
-		layout.RuntimeDir,
-		layout.RuntimeWorkersDir,
-		filepath.Join(layout.ControlSkillsDir, "dispatch-new-ticket"),
+	if err := ensureControlPlaneDirs(layout); err != nil {
+		return err
 	}
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("创建目录失败(%s): %w", dir, err)
-		}
-	}
-	if err := seedControlSkillsTemplates(layout); err != nil {
+	if _, err := seedControlSkillsTemplates(layout, false); err != nil {
 		return err
 	}
 
@@ -41,7 +34,7 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 	if _, err := writeFileIfMissing(layout.ProjectAgentUserPath, defaultControlProjectAgentUserTemplate(layout, projectName), 0o644); err != nil {
 		return err
 	}
-	if err := ensureProjectBootstrap(layout); err != nil {
+	if _, err := ensureProjectBootstrap(layout); err != nil {
 		return err
 	}
 	for _, line := range []string{
@@ -56,6 +49,78 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 		}
 	}
 	return nil
+}
+
+func PlanControlPlaneSeedUpdate(layout Layout, projectName string) ([]ControlPlaneChange, error) {
+	if strings.TrimSpace(layout.ProjectDir) == "" {
+		return nil, fmt.Errorf("project_dir 为空")
+	}
+	changes := make([]ControlPlaneChange, 0)
+
+	skillChanges, err := planControlSkillsTemplateChanges(layout)
+	if err != nil {
+		return nil, err
+	}
+	changes = append(changes, skillChanges...)
+
+	if missing, err := fileMissing(layout.ProjectAgentKernelPath); err != nil {
+		return nil, err
+	} else if missing {
+		changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentKernelPath, Action: "create"})
+	}
+	if missing, err := fileMissing(layout.ProjectAgentUserPath); err != nil {
+		return nil, err
+	} else if missing {
+		changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentUserPath, Action: "create"})
+	}
+	if missing, err := fileMissing(layout.ProjectBootstrapPath); err != nil {
+		return nil, err
+	} else if missing {
+		changes = append(changes, ControlPlaneChange{Path: layout.ProjectBootstrapPath, Action: "create"})
+	}
+	return changes, nil
+}
+
+func UpdateControlPlaneSeed(layout Layout, projectName string) ([]ControlPlaneChange, error) {
+	if strings.TrimSpace(layout.ProjectDir) == "" {
+		return nil, fmt.Errorf("project_dir 为空")
+	}
+	if err := ensureControlPlaneDirs(layout); err != nil {
+		return nil, err
+	}
+	changes, err := seedControlSkillsTemplates(layout, true)
+	if err != nil {
+		return nil, err
+	}
+
+	if created, err := writeFileIfMissing(layout.ProjectAgentKernelPath, defaultControlProjectAgentKernelTemplate(layout, projectName), 0o644); err != nil {
+		return nil, err
+	} else if created {
+		changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentKernelPath, Action: "create"})
+	}
+	if created, err := writeFileIfMissing(layout.ProjectAgentUserPath, defaultControlProjectAgentUserTemplate(layout, projectName), 0o644); err != nil {
+		return nil, err
+	} else if created {
+		changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentUserPath, Action: "create"})
+	}
+	if created, err := ensureProjectBootstrap(layout); err != nil {
+		return nil, err
+	} else if created {
+		changes = append(changes, ControlPlaneChange{Path: layout.ProjectBootstrapPath, Action: "create"})
+	}
+
+	for _, line := range []string{
+		"runtime/",
+		".dalek_project_name",
+		".dalek_repo_path",
+		".dalek_bin_path",
+		".dalek_project.json",
+	} {
+		if err := infra.EnsureLineInFile(layout.ProjectGitignorePath, line); err != nil {
+			return nil, err
+		}
+	}
+	return changes, nil
 }
 
 func CurrentControlVersion(ctx context.Context, repoRoot string) string {
@@ -138,32 +203,52 @@ func defaultProjectBootstrapTemplate() string {
 	return mustReadSeedTemplate("templates/project/bootstrap.sh")
 }
 
-func ensureProjectBootstrap(layout Layout) error {
+func ensureProjectBootstrap(layout Layout) (bool, error) {
 	current := strings.TrimSpace(layout.ProjectBootstrapPath)
 	if current == "" {
-		return fmt.Errorf("project_bootstrap_path 为空")
+		return false, fmt.Errorf("project_bootstrap_path 为空")
 	}
 	if st, err := os.Stat(current); err == nil {
 		if st.IsDir() {
-			return fmt.Errorf("bootstrap 路径是目录: %s", current)
+			return false, fmt.Errorf("bootstrap 路径是目录: %s", current)
 		}
-		return nil
+		return false, nil
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("检查 bootstrap 脚本失败(%s): %w", current, err)
+		return false, fmt.Errorf("检查 bootstrap 脚本失败(%s): %w", current, err)
 	}
 
-	if _, err := writeFileIfMissing(current, defaultProjectBootstrapTemplate(), 0o755); err != nil {
-		return err
+	changed, err := writeFileIfMissing(current, defaultProjectBootstrapTemplate(), 0o755)
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
+}
+
+func ensureControlPlaneDirs(layout Layout) error {
+	dirs := []string{
+		layout.ControlWorkerDir,
+		layout.ControlSkillsDir,
+		layout.ControlKnowledgeDir,
+		layout.ControlToolsDir,
+		layout.RuntimeDir,
+		layout.RuntimeWorkersDir,
+		filepath.Join(layout.ControlSkillsDir, "dispatch-new-ticket"),
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("创建目录失败(%s): %w", dir, err)
+		}
 	}
 	return nil
 }
 
-func seedControlSkillsTemplates(layout Layout) error {
+func seedControlSkillsTemplates(layout Layout, force bool) ([]ControlPlaneChange, error) {
 	if strings.TrimSpace(layout.ControlSkillsDir) == "" {
-		return fmt.Errorf("control_skills_dir 为空")
+		return nil, fmt.Errorf("control_skills_dir 为空")
 	}
+	changes := make([]ControlPlaneChange, 0)
 	const templateRoot = "templates/project/control/skills"
-	return fs.WalkDir(seedTemplateFS, templateRoot, func(path string, d fs.DirEntry, walkErr error) error {
+	err := fs.WalkDir(seedTemplateFS, templateRoot, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -179,19 +264,108 @@ func seedControlSkillsTemplates(layout Layout) error {
 			return nil
 		}
 
-		// embed.FS 对所有文件一律返回 0444 权限（只读文件系统），
-		// 不能直接信任。根据文件后缀判断：.sh/.py 给可执行权限，其余给 0644。
-		mode := os.FileMode(0o644)
-		if strings.HasSuffix(rel, ".sh") || strings.HasSuffix(rel, ".py") {
-			mode = 0o755
-		}
+		mode := controlTemplateFileMode(rel)
 		raw, err := seedTemplateFS.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("读取 skills 模板失败(%s): %w", path, err)
 		}
-		if _, err := writeFileIfMissing(target, string(raw), mode); err != nil {
+		existed := true
+		if _, err := os.Stat(target); err != nil {
+			if os.IsNotExist(err) {
+				existed = false
+			} else {
+				return fmt.Errorf("检查 skills 目标文件失败(%s): %w", target, err)
+			}
+		}
+
+		var changed bool
+		if force {
+			changed, err = writeFileForce(target, string(raw), mode)
+		} else {
+			changed, err = writeFileIfMissing(target, string(raw), mode)
+		}
+		if err != nil {
 			return fmt.Errorf("写入 skills 模板失败(%s): %w", target, err)
+		}
+		if !changed {
+			return nil
+		}
+		action := "create"
+		if existed {
+			action = "update"
+		}
+		changes = append(changes, ControlPlaneChange{Path: target, Action: action})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return changes, nil
+}
+
+func planControlSkillsTemplateChanges(layout Layout) ([]ControlPlaneChange, error) {
+	if strings.TrimSpace(layout.ControlSkillsDir) == "" {
+		return nil, fmt.Errorf("control_skills_dir 为空")
+	}
+	changes := make([]ControlPlaneChange, 0)
+	const templateRoot = "templates/project/control/skills"
+	err := fs.WalkDir(seedTemplateFS, templateRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == templateRoot || d.IsDir() {
+			return nil
+		}
+		rel := strings.TrimPrefix(path, templateRoot+"/")
+		target := filepath.Join(layout.ControlSkillsDir, filepath.FromSlash(rel))
+		raw, err := seedTemplateFS.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("读取 skills 模板失败(%s): %w", path, err)
+		}
+		local, exists, err := readFileStringIfExists(target)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			changes = append(changes, ControlPlaneChange{Path: target, Action: "create"})
+			return nil
+		}
+		if local != string(raw) {
+			changes = append(changes, ControlPlaneChange{Path: target, Action: "update"})
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return changes, nil
+}
+
+func controlTemplateFileMode(rel string) os.FileMode {
+	if strings.HasSuffix(rel, ".sh") || strings.HasSuffix(rel, ".py") {
+		return 0o755
+	}
+	return 0o644
+}
+
+func fileMissing(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return false, nil
+	}
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	return false, err
+}
+
+func readFileStringIfExists(path string) (string, bool, error) {
+	raw, err := os.ReadFile(path)
+	if err == nil {
+		return string(raw), true, nil
+	}
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("读取文件失败(%s): %w", path, err)
 }
