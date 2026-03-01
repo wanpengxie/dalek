@@ -18,6 +18,7 @@ func TestInspectorLeftView_ShowsDispatchRunningProcess(t *testing.T) {
 		Ticket: contracts.Ticket{
 			ID:        1,
 			Title:     "dispatch 可视化",
+			Label:     "backend",
 			UpdatedAt: now,
 		},
 		LatestWorker: &contracts.Worker{
@@ -62,6 +63,9 @@ func TestInspectorLeftView_ShowsDispatchRunningProcess(t *testing.T) {
 	}
 	if !strings.Contains(got, "last_event: task_dispatched") {
 		t.Fatalf("should render last event, got=%q", got)
+	}
+	if !strings.Contains(got, "标签: backend") {
+		t.Fatalf("should render label field, got=%q", got)
 	}
 }
 

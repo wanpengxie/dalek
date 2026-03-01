@@ -60,6 +60,7 @@ type tableLayout struct {
 	section  int
 	id       int
 	priority int
+	label    int
 	status   int
 	runtime  int
 	title    int
@@ -205,7 +206,8 @@ type model struct {
 
 	titleInput textinput.Model
 	newDesc    textarea.Model
-	newFocus   int // 0=title, 1=desc
+	newLabel   textinput.Model
+	newFocus   int // 0=title, 1=desc, 2=label
 
 	lastSelected rowRef
 
@@ -219,7 +221,8 @@ type model struct {
 	editTicketID uint
 	editTitle    textinput.Model
 	editDesc     textarea.Model
-	editFocus    int // 0=title, 1=desc
+	editLabel    textinput.Model
+	editFocus    int // 0=title, 1=desc, 2=label
 
 	eventsViewport viewport.Model
 	eventsTicketID uint
@@ -264,6 +267,11 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 	nd.SetWidth(60)
 	nd.SetHeight(8)
 
+	nl := textinput.New()
+	nl.Placeholder = "标签（可选，单标签）"
+	nl.CharLimit = 64
+	nl.Width = 40
+
 	et := textinput.New()
 	et.Placeholder = "标题（必填）"
 	et.CharLimit = 120
@@ -276,6 +284,11 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 	ed.Prompt = ""
 	ed.SetWidth(60)
 	ed.SetHeight(8)
+
+	el := textinput.New()
+	el.Placeholder = "标签（可选，留空清除）"
+	el.CharLimit = 64
+	el.Width = 40
 
 	vp := viewport.New(0, 0)
 	lvp := viewport.New(0, 0)
@@ -300,6 +313,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		errMsg:          "",
 		titleInput:      ti,
 		newDesc:         nd,
+		newLabel:        nl,
 		newFocus:        0,
 
 		lastSelected:  rowRef{kind: rowNone},
@@ -313,6 +327,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		editTicketID: 0,
 		editTitle:    et,
 		editDesc:     ed,
+		editLabel:    el,
 		editFocus:    0,
 
 		eventsViewport: vp,
@@ -351,9 +366,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.titleInput.Width = min(80, formW-4)
 		m.newDesc.SetWidth(min(90, formW-4))
 		m.newDesc.SetHeight(max(6, msg.Height-12))
+		m.newLabel.Width = min(80, formW-4)
 		m.editTitle.Width = min(80, formW-4)
 		m.editDesc.SetWidth(min(90, formW-4))
 		m.editDesc.SetHeight(max(6, msg.Height-10))
+		m.editLabel.Width = min(80, formW-4)
 
 		m.eventsViewport.Width = max(30, msg.Width-10)
 		m.eventsViewport.Height = max(8, msg.Height-8)
@@ -533,6 +550,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = modeTable
 		m.editTicketID = 0
 		m.editFocus = 0
+		m.editLabel.SetValue("")
 		m.refreshInFlight = true
 		m.refreshManual = false
 		m.refreshTicketID = 0
@@ -583,6 +601,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.titleInput.SetValue("")
 		m.newDesc.SetValue("")
 		m.newDesc.Blur()
+		m.newLabel.SetValue("")
+		m.newLabel.Blur()
 		m.status = fmt.Sprintf("已创建 ticket #%d", msg.TicketID)
 		m.refreshInFlight = true
 		m.refreshManual = false
@@ -833,6 +853,7 @@ func (m *model) applyViews(views []app.TicketView) {
 		partitionCell("manager"),
 		trimCell("mgr", m.tableLayout.id),
 		"-",
+		"-",
 		trimCell("manager", m.tableLayout.status),
 		trimCell("就绪", m.tableLayout.runtime),
 		trimCell("项目管理员", m.tableLayout.title),
@@ -871,7 +892,8 @@ func (m *model) applyViews(views []app.TicketView) {
 			rows = append(rows, table.Row{
 				partitionCell(sectionKey),
 				trimCell(strconv.Itoa(int(t.ID)), m.tableLayout.id),
-				trimCell(strconv.Itoa(t.Priority), m.tableLayout.priority),
+				trimCell(ticketPriorityShort(t.Priority), m.tableLayout.priority),
+				trimCell(labelOrDash(t.Label), m.tableLayout.label),
 				trimCell(status, m.tableLayout.status),
 				trimCell(runtime, m.tableLayout.runtime),
 				trimCell(t.Title, m.tableLayout.title),
@@ -894,6 +916,7 @@ func (m *model) applyViews(views []app.TicketView) {
 		rows = append(rows, table.Row{
 			partitionCell("merge"),
 			trimCell(fmt.Sprintf("m%d", mi.ID), m.tableLayout.id),
+			"-",
 			"-",
 			trimCell(strings.TrimSpace(string(mi.Status)), m.tableLayout.status),
 			"-",
@@ -919,7 +942,8 @@ func (m *model) applyViews(views []app.TicketView) {
 			rows = append(rows, table.Row{
 				partitionCell("archive"),
 				trimCell(strconv.Itoa(int(t.ID)), m.tableLayout.id),
-				trimCell(strconv.Itoa(t.Priority), m.tableLayout.priority),
+				trimCell(ticketPriorityShort(t.Priority), m.tableLayout.priority),
+				trimCell(labelOrDash(t.Label), m.tableLayout.label),
 				trimCell("归档", m.tableLayout.status),
 				"-",
 				trimCell(t.Title, m.tableLayout.title),
@@ -1105,6 +1129,7 @@ func (m model) inspectorLeftView(panelW int) string {
 				panelTitle(fmt.Sprintf("元信息  t%d", id)),
 				badge(status, cNeutral),
 				kvLine("标题:", title, innerW),
+				kvLine("标签:", labelOrDash(t.Label), innerW),
 				kvLine("描述:", desc, innerW),
 				kvLine("状态:", string(t.WorkflowStatus), innerW),
 				kvLine("更新:", t.UpdatedAt.Local().Format("01-02 15:04"), innerW),
@@ -1193,6 +1218,7 @@ func (m model) inspectorLeftView(panelW int) string {
 		panelTitle(fmt.Sprintf("元信息  t%d · dispatch/running", t.ID)),
 		statusB + " " + runtimeB + " " + processB,
 		kvLine("ticket:", title, innerW),
+		kvLine("标签:", labelOrDash(t.Label), innerW),
 		kvLine("流程:", m.dispatchProcessState(v), innerW),
 		kvLine("run:", runID+"  runtime="+runtimeState, innerW),
 		kvLine("phase:", semPhase+"  next="+semNext, innerW),

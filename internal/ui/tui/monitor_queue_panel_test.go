@@ -159,3 +159,22 @@ func TestColorizePartitionLine_PreservesLayoutWidth(t *testing.T) {
 		t.Fatalf("colorize should preserve display width, raw=%d colored=%d", ansi.StringWidth(raw), ansi.StringWidth(colored))
 	}
 }
+
+func TestApplyViews_RendersLabelColumnAndPlaceholder(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.applyViews([]app.TicketView{
+		{Ticket: contracts.Ticket{ID: 1, Title: "has label", Label: "backend"}, DerivedStatus: contracts.TicketBacklog},
+		{Ticket: contracts.Ticket{ID: 2, Title: "no label", Label: ""}, DerivedStatus: contracts.TicketBacklog},
+	})
+
+	view := ansi.Strip(m.tablePanelView(160))
+	if !strings.Contains(view, "标签") {
+		t.Fatalf("table should render label column header, got=%q", view)
+	}
+	if !strings.Contains(view, "backend") {
+		t.Fatalf("table should render non-empty label value, got=%q", view)
+	}
+	if !strings.Contains(view, "no label") || !strings.Contains(view, "  -  ") {
+		t.Fatalf("table should render dash placeholder for empty label, got=%q", view)
+	}
+}

@@ -22,14 +22,25 @@ func (p *Project) ListTickets(ctx context.Context, includeArchived bool) ([]cont
 }
 
 func (p *Project) CreateTicket(ctx context.Context, title string) (*contracts.Ticket, error) {
-	return p.CreateTicketWithDescription(ctx, title, "")
+	return p.CreateTicketWithDescriptionAndLabel(ctx, title, "", "")
 }
 
 func (p *Project) CreateTicketWithDescription(ctx context.Context, title, description string) (*contracts.Ticket, error) {
+	return p.CreateTicketWithDescriptionAndLabel(ctx, title, description, "")
+}
+
+func (p *Project) CreateTicketWithDescriptionAndLabel(ctx context.Context, title, description, label string) (*contracts.Ticket, error) {
 	if p == nil || p.ticket == nil {
 		return nil, fmt.Errorf("project ticket service 为空")
 	}
-	return p.ticket.CreateWithDescription(ctx, title, description)
+	return p.ticket.CreateWithDescriptionAndLabel(ctx, title, description, label)
+}
+
+func (p *Project) CreateTicketWithDescriptionAndLabelAndPriority(ctx context.Context, title, description, label string, priority int) (*contracts.Ticket, error) {
+	if p == nil || p.ticket == nil {
+		return nil, fmt.Errorf("project ticket service 为空")
+	}
+	return p.ticket.CreateWithDescriptionAndLabelAndPriority(ctx, title, description, label, priority)
 }
 
 func (p *Project) ArchiveTicket(ctx context.Context, ticketID uint) error {
@@ -65,6 +76,27 @@ func (p *Project) UpdateTicketText(ctx context.Context, ticketID uint, title, de
 		return fmt.Errorf("project ticket service 为空")
 	}
 	return p.ticket.UpdateText(ctx, ticketID, title, description)
+}
+
+func (p *Project) UpdateTicketTextAndLabel(ctx context.Context, ticketID uint, title, description, label string) error {
+	if p == nil || p.ticket == nil {
+		return fmt.Errorf("project ticket service 为空")
+	}
+	return p.ticket.UpdateTextAndLabel(ctx, ticketID, title, description, label)
+}
+
+func (p *Project) UpdateTicketTextAndPriority(ctx context.Context, ticketID uint, title, description string, priority int) error {
+	if p == nil || p.ticket == nil {
+		return fmt.Errorf("project ticket service 为空")
+	}
+	return p.ticket.UpdateTextAndPriority(ctx, ticketID, title, description, priority)
+}
+
+func (p *Project) UpdateTicketTextAndLabelAndPriority(ctx context.Context, ticketID uint, title, description, label string, priority int) error {
+	if p == nil || p.ticket == nil {
+		return fmt.Errorf("project ticket service 为空")
+	}
+	return p.ticket.UpdateTextAndLabelAndPriority(ctx, ticketID, title, description, label, priority)
 }
 
 func (p *Project) ApplyWorkerReport(ctx context.Context, r contracts.WorkerReport, source string) error {

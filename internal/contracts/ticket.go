@@ -20,6 +20,7 @@ type Ticket struct {
 	UpdatedAt      time.Time            `gorm:"not null"`
 	Title          string               `gorm:"type:text;not null"`
 	Description    string               `gorm:"type:text;not null;default:''"`
+	Label          string               `gorm:"type:text;not null;default:''"`
 	WorkflowStatus TicketWorkflowStatus `gorm:"column:workflow_status;type:text;not null;default:'backlog';index"`
 	Priority       int                  `gorm:"not null;default:0"`
 }

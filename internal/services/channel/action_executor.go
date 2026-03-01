@@ -32,7 +32,7 @@ type ActionExecutor struct {
 type TicketActionService interface {
 	List(ctx context.Context, includeArchived bool) ([]contracts.Ticket, error)
 	GetByID(ctx context.Context, ticketID uint) (*contracts.Ticket, error)
-	CreateWithDescription(ctx context.Context, title, description string) (*contracts.Ticket, error)
+	CreateWithDescriptionAndLabel(ctx context.Context, title, description, label string) (*contracts.Ticket, error)
 }
 
 type DispatchTicketResult struct {
@@ -130,6 +130,7 @@ func (e *ActionExecutor) executeListTickets(ctx context.Context, action contract
 		views = append(views, map[string]any{
 			"id":       tk.ID,
 			"title":    tk.Title,
+			"label":    tk.Label,
 			"status":   tk.WorkflowStatus,
 			"priority": tk.Priority,
 		})
@@ -158,7 +159,25 @@ func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contrac
 		}
 		return ActionResult{}, err
 	}
-	msg := fmt.Sprintf("t%d %s（状态=%s，优先级=%d）", tk.ID, tk.Title, tk.WorkflowStatus, tk.Priority)
+	if strings.TrimSpace(tk.Label) == "" {
+		msg := fmt.Sprintf("t%d %s（状态=%s，优先级=%s）", tk.ID, tk.Title, tk.WorkflowStatus, actionPriorityLabel(tk.Priority))
+		return ActionResult{
+			ActionName: contracts.ActionTicketDetail,
+			Success:    true,
+			Message:    msg,
+			Data: map[string]any{
+				"ticket": map[string]any{
+					"id":          tk.ID,
+					"title":       tk.Title,
+					"description": tk.Description,
+					"label":       tk.Label,
+					"status":      tk.WorkflowStatus,
+					"priority":    tk.Priority,
+				},
+			},
+		}, nil
+	}
+	msg := fmt.Sprintf("t%d %s（标签=%s，状态=%s，优先级=%s）", tk.ID, tk.Title, tk.Label, tk.WorkflowStatus, actionPriorityLabel(tk.Priority))
 	return ActionResult{
 		ActionName: contracts.ActionTicketDetail,
 		Success:    true,
@@ -168,6 +187,7 @@ func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contrac
 				"id":          tk.ID,
 				"title":       tk.Title,
 				"description": tk.Description,
+				"label":       tk.Label,
 				"status":      tk.WorkflowStatus,
 				"priority":    tk.Priority,
 			},
@@ -184,12 +204,16 @@ func (e *ActionExecutor) executeCreateTicket(ctx context.Context, action contrac
 	if description == "" {
 		description = title
 	}
+	label := actionArgString(action.Args, "label", "tag")
 
-	tk, err := e.ticketSvc.CreateWithDescription(ctx, title, description)
+	tk, err := e.ticketSvc.CreateWithDescriptionAndLabel(ctx, title, description, label)
 	if err != nil {
 		return ActionResult{}, err
 	}
 	msg := fmt.Sprintf("已创建 t%d：%s", tk.ID, tk.Title)
+	if strings.TrimSpace(tk.Label) != "" {
+		msg = fmt.Sprintf("%s（标签=%s）", msg, tk.Label)
+	}
 	return ActionResult{
 		ActionName: contracts.ActionCreateTicket,
 		Success:    true,
@@ -198,6 +222,7 @@ func (e *ActionExecutor) executeCreateTicket(ctx context.Context, action contrac
 			"ticket": map[string]any{
 				"id":       tk.ID,
 				"title":    tk.Title,
+				"label":    tk.Label,
 				"status":   tk.WorkflowStatus,
 				"priority": tk.Priority,
 			},
@@ -400,6 +425,14 @@ func actionArgString(args map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func actionPriorityLabel(priority int) string {
+	label := contracts.TicketPriorityLabel(priority)
+	if label == strconv.Itoa(priority) {
+		return label
+	}
+	return fmt.Sprintf("%s(%d)", label, priority)
 }
 
 func actionArgBool(args map[string]any, defaultValue bool, keys ...string) bool {

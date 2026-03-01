@@ -73,6 +73,16 @@ func storeMigrations() []Migration {
 			Name:    "drop_legacy_worker_tmux_and_dag_plans",
 			Up:      migrateDropLegacyWorkerTmuxAndDagPlans,
 		},
+		{
+			Version: 12,
+			Name:    "ensure_worker_last_retry_at_datetime",
+			Up:      migrateEnsureWorkerLastRetryAtDateTime,
+		},
+		{
+			Version: 13,
+			Name:    "ensure_ticket_label_column",
+			Up:      migrateEnsureTicketLabelColumn,
+		},
 	}
 }
 
@@ -237,6 +247,112 @@ func migrateDropLegacyWorkerTmuxAndDagPlans(db *gorm.DB) error {
 		return err
 	}
 	return nil
+}
+
+func migrateEnsureWorkerLastRetryAtDateTime(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	has, err := tableHasColumn(db, "workers", "last_retry_at")
+	if err != nil {
+		return err
+	}
+	if !has {
+		return nil
+	}
+
+	colType, err := tableColumnType(db, "workers", "last_retry_at")
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(colType)) {
+	case "datetime", "timestamp":
+		return nil
+	}
+
+	const tempCol = "last_retry_at_tmp_datetime"
+	hasTemp, err := tableHasColumn(db, "workers", tempCol)
+	if err != nil {
+		return err
+	}
+	if !hasTemp {
+		if err := db.Exec(`ALTER TABLE workers ADD COLUMN last_retry_at_tmp_datetime datetime;`).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if !strings.Contains(msg, "duplicate column name") {
+				return err
+			}
+		}
+	}
+
+	if err := db.Exec(`
+UPDATE workers
+SET last_retry_at_tmp_datetime = CASE
+	WHEN TRIM(COALESCE(last_retry_at, '')) = '' THEN NULL
+	ELSE last_retry_at
+END;
+`).Error; err != nil {
+		return err
+	}
+
+	if err := dropTableColumn(db, "workers", "last_retry_at"); err != nil {
+		return err
+	}
+	if err := db.Exec(`ALTER TABLE workers RENAME COLUMN last_retry_at_tmp_datetime TO last_retry_at;`).Error; err != nil {
+		msg := strings.ToLower(strings.TrimSpace(err.Error()))
+		if !strings.Contains(msg, "duplicate column name") {
+			return err
+		}
+	}
+	return nil
+}
+
+func tableColumnType(db *gorm.DB, table string, col string) (string, error) {
+	if db == nil {
+		return "", fmt.Errorf("db 为空")
+	}
+	var err error
+	table, err = normalizeSQLIdentifier(table)
+	if err != nil {
+		return "", err
+	}
+	col, err = normalizeSQLIdentifier(col)
+	if err != nil {
+		return "", err
+	}
+	type pragmaColumn struct {
+		Name string `gorm:"column:name"`
+		Type string `gorm:"column:type"`
+	}
+	var cols []pragmaColumn
+	if err := db.Raw(fmt.Sprintf("PRAGMA table_info(%s);", table)).Scan(&cols).Error; err != nil {
+		return "", err
+	}
+	for _, item := range cols {
+		if strings.EqualFold(strings.TrimSpace(item.Name), col) {
+			return strings.TrimSpace(item.Type), nil
+		}
+	}
+	return "", nil
+}
+
+func migrateEnsureTicketLabelColumn(db *gorm.DB) error {
+	has, err := tableHasColumn(db, "tickets", "label")
+	if err != nil {
+		return err
+	}
+	if !has {
+		if err := db.Exec(`ALTER TABLE tickets ADD COLUMN label TEXT NOT NULL DEFAULT '';`).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if !strings.Contains(msg, "duplicate column name") {
+				return err
+			}
+		}
+	}
+	return db.Exec(`
+UPDATE tickets
+SET label = ''
+WHERE label IS NULL;
+`).Error
 }
 
 func normalizeMigrations(migrations []Migration) ([]Migration, error) {

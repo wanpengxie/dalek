@@ -31,6 +31,31 @@ func createTicketForQueryTest(t *testing.T, db *gorm.DB, title string) contracts
 	return tk
 }
 
+func TestQueryService_ListTicketViews_IncludesLabel(t *testing.T) {
+	svc, p := newQueryServiceForTest(t)
+
+	tk := contracts.Ticket{
+		Title:          "ticket-with-label",
+		Description:    "desc",
+		Label:          "backend",
+		WorkflowStatus: contracts.TicketBacklog,
+	}
+	if err := p.DB.Create(&tk).Error; err != nil {
+		t.Fatalf("create ticket failed: %v", err)
+	}
+
+	views, err := svc.ListTicketViews(context.Background())
+	if err != nil {
+		t.Fatalf("ListTicketViews failed: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("expected 1 view, got %d", len(views))
+	}
+	if views[0].Ticket.Label != "backend" {
+		t.Fatalf("expected label backend, got=%q", views[0].Ticket.Label)
+	}
+}
+
 func TestQueryService_ListTicketViews_ReflectsSessionAndDerivedRuntime(t *testing.T) {
 	svc, p := newQueryServiceForTest(t)
 

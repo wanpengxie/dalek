@@ -34,6 +34,9 @@ func TestService_CreateAndList(t *testing.T) {
 	if items[0].WorkflowStatus != contracts.TicketBacklog {
 		t.Fatalf("unexpected status: %s", items[0].WorkflowStatus)
 	}
+	if items[0].Label != "" {
+		t.Fatalf("expected empty label by default, got=%q", items[0].Label)
+	}
 }
 
 func TestService_Create_AllowsEmptyDescription(t *testing.T) {
@@ -82,6 +85,59 @@ func TestService_CreateWithDescription(t *testing.T) {
 	}
 }
 
+func TestService_CreateWithDescriptionAndLabel(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	svc := New(db)
+	tk, err := svc.CreateWithDescriptionAndLabel(context.Background(), "gateway", "desc", "  backend/api  ")
+	if err != nil {
+		t.Fatalf("create with label failed: %v", err)
+	}
+	if tk.Label != "backend/api" {
+		t.Fatalf("label not normalized, got=%q", tk.Label)
+	}
+}
+
+func TestService_CreateWithDescriptionAndLabelAndPriority(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	svc := New(db)
+	cases := []struct {
+		name     string
+		priority int
+	}{
+		{name: "none", priority: contracts.TicketPriorityNone},
+		{name: "low", priority: contracts.TicketPriorityLow},
+		{name: "medium", priority: contracts.TicketPriorityMedium},
+		{name: "high", priority: contracts.TicketPriorityHigh},
+	}
+
+	for _, tc := range cases {
+		tk, err := svc.CreateWithDescriptionAndLabelAndPriority(context.Background(), "ticket-"+tc.name, "desc-"+tc.name, "", tc.priority)
+		if err != nil {
+			t.Fatalf("create %s failed: %v", tc.name, err)
+		}
+		if tk.Priority != tc.priority {
+			t.Fatalf("priority mismatch for %s: got=%d want=%d", tc.name, tk.Priority, tc.priority)
+		}
+		got, err := svc.GetByID(context.Background(), tk.ID)
+		if err != nil {
+			t.Fatalf("get %s failed: %v", tc.name, err)
+		}
+		if got.Priority != tc.priority {
+			t.Fatalf("stored priority mismatch for %s: got=%d want=%d", tc.name, got.Priority, tc.priority)
+		}
+	}
+}
+
 func TestService_UpdateText_RequiresDescription(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
 	db, err := store.OpenAndMigrate(dbPath)
@@ -97,6 +153,116 @@ func TestService_UpdateText_RequiresDescription(t *testing.T) {
 
 	if err := svc.UpdateText(context.Background(), tk.ID, "new title", "   "); err == nil {
 		t.Fatalf("expected error when description is empty")
+	}
+}
+
+func TestService_UpdateTextAndLabel(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	svc := New(db)
+	tk, err := svc.CreateWithDescriptionAndLabel(context.Background(), "hello", "desc", "ops")
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	if err := svc.UpdateTextAndLabel(context.Background(), tk.ID, "new title", "new desc", "platform"); err != nil {
+		t.Fatalf("update text and label failed: %v", err)
+	}
+
+	got, err := svc.GetByID(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if got.Title != "new title" || got.Description != "new desc" || got.Label != "platform" {
+		t.Fatalf("unexpected ticket after update: %+v", got)
+	}
+}
+
+func TestService_UpdateTextAndLabelAndPriority(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	svc := New(db)
+	tk, err := svc.CreateWithDescriptionAndLabelAndPriority(context.Background(), "hello", "desc", "ops", contracts.TicketPriorityLow)
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	if err := svc.UpdateTextAndLabelAndPriority(context.Background(), tk.ID, "new title", "new desc", "platform", contracts.TicketPriorityHigh); err != nil {
+		t.Fatalf("update text/label/priority failed: %v", err)
+	}
+
+	got, err := svc.GetByID(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if got.Title != "new title" || got.Description != "new desc" || got.Label != "platform" {
+		t.Fatalf("unexpected ticket text/label after update: %+v", got)
+	}
+	if got.Priority != contracts.TicketPriorityHigh {
+		t.Fatalf("priority should be high, got=%d", got.Priority)
+	}
+}
+
+func TestService_UpdateText_DoesNotChangeLabel(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	svc := New(db)
+	tk, err := svc.CreateWithDescriptionAndLabel(context.Background(), "hello", "desc", "backend")
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	if err := svc.UpdateText(context.Background(), tk.ID, "new title", "new desc"); err != nil {
+		t.Fatalf("update text failed: %v", err)
+	}
+
+	got, err := svc.GetByID(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if got.Label != "backend" {
+		t.Fatalf("label should be kept, got=%q", got.Label)
+	}
+}
+
+func TestService_UpdateTextAndPriority_DoesNotChangeLabel(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	svc := New(db)
+	tk, err := svc.CreateWithDescriptionAndLabelAndPriority(context.Background(), "hello", "desc", "backend", contracts.TicketPriorityLow)
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+
+	if err := svc.UpdateTextAndPriority(context.Background(), tk.ID, "new title", "new desc", contracts.TicketPriorityMedium); err != nil {
+		t.Fatalf("update text and priority failed: %v", err)
+	}
+
+	got, err := svc.GetByID(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+	if got.Label != "backend" {
+		t.Fatalf("label should be kept, got=%q", got.Label)
+	}
+	if got.Priority != contracts.TicketPriorityMedium {
+		t.Fatalf("priority should be medium, got=%d", got.Priority)
 	}
 }
 

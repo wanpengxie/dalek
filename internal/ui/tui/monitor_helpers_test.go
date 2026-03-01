@@ -23,6 +23,71 @@ func TestTrimCell(t *testing.T) {
 	}
 }
 
+func TestLabelOrDash(t *testing.T) {
+	if got := labelOrDash(""); got != "-" {
+		t.Fatalf("empty label should fallback to dash, got=%q", got)
+	}
+	if got := labelOrDash("   "); got != "-" {
+		t.Fatalf("blank label should fallback to dash, got=%q", got)
+	}
+	if got := labelOrDash(" feature "); got != "feature" {
+		t.Fatalf("label should be trimmed, got=%q", got)
+	}
+}
+
+func TestTableColumnsIncludeLabel(t *testing.T) {
+	layout := defaultTableLayout()
+	if layout.label != 8 {
+		t.Fatalf("default label width mismatch: got=%d want=8", layout.label)
+	}
+	if layout.title != 34 {
+		t.Fatalf("default title width mismatch: got=%d want=34", layout.title)
+	}
+	cols := tableColumns(layout)
+	if len(cols) != 8 {
+		t.Fatalf("columns count mismatch: got=%d want=8", len(cols))
+	}
+	if cols[3].Title != "标签" {
+		t.Fatalf("label column title mismatch: got=%q", cols[3].Title)
+	}
+}
+
+func TestTicketPriorityShort(t *testing.T) {
+	cases := []struct {
+		priority int
+		want     string
+	}{
+		{priority: 0, want: "N"},
+		{priority: 1, want: "L"},
+		{priority: 2, want: "M"},
+		{priority: 3, want: "H"},
+		{priority: 9, want: "9"},
+	}
+	for _, tc := range cases {
+		if got := ticketPriorityShort(tc.priority); got != tc.want {
+			t.Fatalf("ticketPriorityShort(%d)=%q, want=%q", tc.priority, got, tc.want)
+		}
+	}
+}
+
+func TestTicketPriorityDisplay(t *testing.T) {
+	cases := []struct {
+		priority int
+		want     string
+	}{
+		{priority: 0, want: "none(0)"},
+		{priority: 1, want: "low(1)"},
+		{priority: 2, want: "medium(2)"},
+		{priority: 3, want: "high(3)"},
+		{priority: 9, want: "9"},
+	}
+	for _, tc := range cases {
+		if got := ticketPriorityDisplay(tc.priority); got != tc.want {
+			t.Fatalf("ticketPriorityDisplay(%d)=%q, want=%q", tc.priority, got, tc.want)
+		}
+	}
+}
+
 func TestTmuxSessionForWorktree_Deterministic(t *testing.T) {
 	path := "/tmp/ticket-t71-demo-abcdef01"
 	a := tmuxSessionForWorktree(path)
