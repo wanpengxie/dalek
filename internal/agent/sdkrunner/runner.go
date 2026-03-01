@@ -343,6 +343,8 @@ func runCodex(ctx context.Context, req Request, onEvent EventHandler) (Result, e
 		SkipGitRepoCheck: true,
 		ApprovalPolicy:   codexsdk.ApprovalNever,
 	}
+	networkEnabled := true
+	threadOpts.NetworkAccessEnabled = &networkEnabled
 	if addDirs := SDKAdditionalDirectories(req.WorkDir); len(addDirs) > 0 {
 		threadOpts.AdditionalDirectories = append(threadOpts.AdditionalDirectories, addDirs...)
 	}
