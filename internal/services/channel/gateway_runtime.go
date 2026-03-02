@@ -756,6 +756,8 @@ func (g *Gateway) publishStreamAgentEvent(projectName, conversationID, peerMessa
 		Stream:         stream,
 		Text:           text,
 		EventType:      eventType,
+		ToolName:       ev.Data.ToolName,
+		ToolInput:      ev.Data.ToolInput,
 		JobStatus:      contracts.ChannelTurnRunning,
 		At:             time.Now(),
 	})
@@ -850,6 +852,8 @@ func (g *Gateway) publishFromResult(projectName, conversationID, peerMessageID s
 			Stream:         stream,
 			Text:           text,
 			EventType:      eventType,
+			ToolName:       ev.Data.ToolName,
+			ToolInput:      ev.Data.ToolInput,
 			AgentProvider:  result.AgentProvider,
 			AgentModel:     result.AgentModel,
 			JobStatus:      result.JobStatus,
