@@ -400,6 +400,11 @@ func (s *testDaemonFeishuSender) GetUserName(ctx context.Context, userID string)
 	return strings.TrimSpace(s.userNames[strings.TrimSpace(userID)]), nil
 }
 
+func (s *testDaemonFeishuSender) GetBotOpenID(ctx context.Context) (string, error) {
+	_ = ctx
+	return "", nil
+}
+
 func (s *testDaemonFeishuSender) waitMessages(t *testing.T, want int, timeout time.Duration) []testDaemonFeishuSenderMessage {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

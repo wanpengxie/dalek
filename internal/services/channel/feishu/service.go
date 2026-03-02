@@ -143,6 +143,7 @@ type daemonFeishuMessageSender interface {
 	SendCardInteractive(ctx context.Context, chatID, cardJSON string) (string, error)
 	PatchCard(ctx context.Context, messageID, cardJSON string) error
 	GetUserName(ctx context.Context, userID string) (string, error)
+	GetBotOpenID(ctx context.Context) (string, error)
 }
 
 type MessageSender = daemonFeishuMessageSender
@@ -190,6 +191,11 @@ func (s *daemonFeishuNoopSender) GetUserName(ctx context.Context, userID string)
 	return "", nil
 }
 
+func (s *daemonFeishuNoopSender) GetBotOpenID(ctx context.Context) (string, error) {
+	_ = ctx
+	return "", nil
+}
+
 type daemonFeishuUserNameCacheEntry struct {
 	name      string
 	expiresAt time.Time
@@ -208,6 +214,8 @@ type daemonFeishuHTTPSender struct {
 
 	userNameTTL time.Duration
 	userNames   sync.Map
+	botOpenID   string
+	botIDLoaded bool
 }
 
 func NewSender(cfg SenderConfig) MessageSender {
@@ -520,7 +528,19 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
 		}
-		if quietMode && !hasDaemonFeishuMention(req.Event.Message.Mentions) {
+		botOpenID := ""
+		if quietMode {
+			resolvedBotOpenID, botOpenIDErr := sender.GetBotOpenID(reqCtx)
+			if botOpenIDErr != nil {
+				logDaemonFeishuInfo(logger, "GetBotOpenID failed",
+					"chat", chatID,
+					"error", botOpenIDErr,
+				)
+			} else {
+				botOpenID = strings.TrimSpace(resolvedBotOpenID)
+			}
+		}
+		if quietMode && !hasDaemonFeishuMention(req.Event.Message.Mentions, botOpenID) {
 			logDaemonFeishuInfo(logger, "quiet mode skip message",
 				"chat", chatID,
 				"peer_msg", msgID,
@@ -1572,8 +1592,20 @@ func tryHandleDaemonFeishuQuietCommand(ctx context.Context, gateway *channelsvc.
 	}
 }
 
-func hasDaemonFeishuMention(mentions []daemonFeishuMention) bool {
-	return len(mentions) > 0
+func hasDaemonFeishuMention(mentions []daemonFeishuMention, botOpenID string) bool {
+	if len(mentions) == 0 {
+		return false
+	}
+	botOpenID = strings.TrimSpace(botOpenID)
+	if botOpenID == "" {
+		return true
+	}
+	for _, mention := range mentions {
+		if strings.TrimSpace(mention.ID.OpenID) == botOpenID {
+			return true
+		}
+	}
+	return false
 }
 
 func buildDaemonFeishuUnboundHint(resolver channelsvc.ProjectResolver) string {
@@ -2308,6 +2340,108 @@ func (s *daemonFeishuHTTPSender) GetUserName(ctx context.Context, userID string)
 		return "", lastErr
 	}
 	return "", fmt.Errorf("feishu get user failed: invalid token retry exhausted")
+}
+
+func (s *daemonFeishuHTTPSender) GetBotOpenID(ctx context.Context) (string, error) {
+	if s == nil {
+		return "", nil
+	}
+	s.mu.Lock()
+	if s.botIDLoaded {
+		openID := s.botOpenID
+		s.mu.Unlock()
+		return openID, nil
+	}
+	s.mu.Unlock()
+
+	openID, err := s.fetchBotOpenID(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	s.mu.Lock()
+	if !s.botIDLoaded {
+		s.botOpenID = openID
+		s.botIDLoaded = true
+	}
+	cachedOpenID := s.botOpenID
+	s.mu.Unlock()
+	return cachedOpenID, nil
+}
+
+func (s *daemonFeishuHTTPSender) fetchBotOpenID(ctx context.Context) (string, error) {
+	u := strings.TrimRight(s.baseURL, "/") + "/open-apis/bot/v3/info"
+
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		token, tokenErr := s.getTenantToken(ctx)
+		if tokenErr != nil {
+			return "", tokenErr
+		}
+		req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if reqErr != nil {
+			return "", reqErr
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, doErr := s.client.Do(req)
+		if doErr != nil {
+			return "", doErr
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("feishu get bot info failed: http=%d body=%s", resp.StatusCode, string(raw))
+			if attempt == 1 && isDaemonFeishuInvalidTokenBody(raw) {
+				s.invalidateTenantToken()
+				s.logInfo("feishu token invalid, retry get bot info")
+				continue
+			}
+			return "", lastErr
+		}
+
+		var out struct {
+			Code int    `json:"code"`
+			Msg  string `json:"msg"`
+			Bot  struct {
+				OpenID string `json:"open_id"`
+			} `json:"bot"`
+			Data struct {
+				OpenID string `json:"open_id"`
+				Bot    struct {
+					OpenID string `json:"open_id"`
+				} `json:"bot"`
+			} `json:"data"`
+		}
+		if unmarshalErr := json.Unmarshal(raw, &out); unmarshalErr != nil {
+			return "", unmarshalErr
+		}
+		if out.Code != 0 {
+			lastErr = fmt.Errorf("feishu get bot info failed: code=%d msg=%s", out.Code, out.Msg)
+			if attempt == 1 && out.Code == daemonFeishuInvalidTokenCode {
+				s.invalidateTenantToken()
+				s.logInfo("feishu token invalid, retry get bot info")
+				continue
+			}
+			return "", lastErr
+		}
+
+		openID := strings.TrimSpace(out.Bot.OpenID)
+		if openID == "" {
+			openID = strings.TrimSpace(out.Data.Bot.OpenID)
+		}
+		if openID == "" {
+			openID = strings.TrimSpace(out.Data.OpenID)
+		}
+		if openID == "" {
+			return "", fmt.Errorf("feishu get bot info failed: open_id empty")
+		}
+		return openID, nil
+	}
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("feishu get bot info failed: invalid token retry exhausted")
 }
 
 func (s *daemonFeishuHTTPSender) getCachedUserName(userID string) (string, bool) {
