@@ -26,6 +26,9 @@ type GatewayEvent struct {
 	Text      string
 	EventType string
 
+	ToolName  string // 工具名（仅 stream=tool 时有值，如 "TodoWrite"）
+	ToolInput string // 工具完整输入 JSON（仅 stream=tool 时有值）
+
 	AgentProvider string
 	AgentModel    string
 	JobStatus     contracts.ChannelTurnJobStatus

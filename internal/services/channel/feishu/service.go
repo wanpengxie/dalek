@@ -986,6 +986,17 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 							continue
 						}
 
+						// TodoWrite 分流：发送独立消息而非进度卡片行
+						if ev.Stream == "tool" && ev.ToolName == "TodoWrite" && ev.ToolInput != "" {
+							todoMsg := formatTodoWriteMessage(ev.ToolInput)
+							if todoMsg != "" {
+								sendCtx, sendCancel := context.WithTimeout(progressCtx, 5*time.Second)
+								_ = sender.SendCard(sendCtx, chatID, "📋 任务列表", todoMsg)
+								sendCancel()
+							}
+							continue
+						}
+
 						progress := buildDaemonFeishuStreamProgress(ev)
 						if progress == "" {
 							continue
@@ -1652,6 +1663,56 @@ func buildDaemonFeishuProjectList(resolver channelsvc.ProjectResolver) string {
 		lines = append(lines, "  • "+p)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// formatTodoWriteMessage 解析 TodoWrite 工具的 ToolInput JSON，格式化为可读文本。
+// ToolInput 格式为 "TodoWrite:\n{JSON}" 或直接 JSON。
+// 返回空字符串表示解析失败或无 todo 项。
+func formatTodoWriteMessage(toolInput string) string {
+	// ToolInput 可能带 "TodoWrite:\n" 前缀，需要跳过
+	raw := toolInput
+	if idx := strings.Index(raw, "{"); idx >= 0 {
+		raw = raw[idx:]
+	}
+
+	var payload struct {
+		Todos []struct {
+			Content    string `json:"content"`
+			Status     string `json:"status"`
+			ActiveForm string `json:"activeForm"`
+		} `json:"todos"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+	if len(payload.Todos) == 0 {
+		return ""
+	}
+
+	var md strings.Builder
+	for _, item := range payload.Todos {
+		var icon string
+		switch item.Status {
+		case "completed":
+			icon = "✅"
+		case "in_progress":
+			icon = "🔄"
+		default:
+			icon = "⏳"
+		}
+		content := item.Content
+		if content == "" {
+			content = item.ActiveForm
+		}
+		if content == "" {
+			continue
+		}
+		md.WriteString(icon)
+		md.WriteString(" ")
+		md.WriteString(content)
+		md.WriteString("\n")
+	}
+	return strings.TrimSpace(md.String())
 }
 
 func buildDaemonFeishuStreamProgress(ev channelsvc.GatewayEvent) string {
