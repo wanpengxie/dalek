@@ -450,11 +450,22 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			return
 		}
 
+		logDaemonFeishuInfo(logger, "daemon feishu message received",
+			"message_type", req.Event.Message.MessageType,
+			"chat_id", chatID,
+			"msg_id", msgID,
+			"sender_id", req.Event.Sender.SenderID.OpenID,
+		)
+
 		text, supported := parseDaemonFeishuMessageText(
 			req.Event.Message.MessageType,
 			req.Event.Message.Content,
 		)
 		if !supported {
+			logDaemonFeishuInfo(logger, "daemon feishu message parse rejected",
+				"message_type", req.Event.Message.MessageType,
+				"content_len", len(req.Event.Message.Content),
+			)
 			_ = sender.SendText(reqCtx, chatID, "暂不支持此类消息")
 			writeJSON(w, http.StatusOK, map[string]any{"code": 0})
 			return
@@ -1985,17 +1996,76 @@ func parseDaemonFeishuMessageText(messageType, content string) (string, bool) {
 		}
 		return content, true
 	case "post":
-		var obj map[string]any
-		if err := json.Unmarshal([]byte(content), &obj); err != nil {
-			return "", false
-		}
-		if txt, ok := obj["text"].(string); ok {
-			return strings.TrimSpace(txt), true
-		}
-		return "", false
+		return parseDaemonFeishuPostContent(content)
 	default:
+		// 非文本消息类型（image/file/audio/media/sticker/share_chat/share_user 等）
+		// 静默忽略，不触发"暂不支持此类消息"回复
+		return "", true
+	}
+}
+
+// parseDaemonFeishuPostContent 解析飞书 post 富文本消息的嵌套结构。
+// 飞书 post 的 JSON 结构为 locale > { title, content: [][]element }，
+// 其中 element 的 tag 可以是 text/at/img/media 等。
+// 本函数遍历提取 tag=text 和 tag=at 的文本内容。
+func parseDaemonFeishuPostContent(content string) (string, bool) {
+	var locales map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &locales); err != nil {
 		return "", false
 	}
+
+	// 选择 locale：优先 zh_cn > en_us > 任意第一个
+	var chosen json.RawMessage
+	if raw, ok := locales["zh_cn"]; ok {
+		chosen = raw
+	} else if raw, ok := locales["en_us"]; ok {
+		chosen = raw
+	} else {
+		for _, raw := range locales {
+			chosen = raw
+			break
+		}
+	}
+	if chosen == nil {
+		return "", true
+	}
+
+	var localeBody struct {
+		Title   string          `json:"title"`
+		Content [][]interface{} `json:"content"`
+	}
+	if err := json.Unmarshal(chosen, &localeBody); err != nil {
+		return "", false
+	}
+
+	var lines []string
+	for _, line := range localeBody.Content {
+		var parts []string
+		for _, elem := range line {
+			m, ok := elem.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			tag, _ := m["tag"].(string)
+			switch tag {
+			case "text":
+				if txt, ok := m["text"].(string); ok && txt != "" {
+					parts = append(parts, txt)
+				}
+			case "at":
+				if name, ok := m["user_name"].(string); ok && name != "" {
+					parts = append(parts, "@"+name)
+				} else {
+					parts = append(parts, "@unknown")
+				}
+			}
+		}
+		if len(parts) > 0 {
+			lines = append(lines, strings.Join(parts, " "))
+		}
+	}
+
+	return strings.TrimSpace(strings.Join(lines, "\n")), true
 }
 
 func BuildWebhookPath(secretPath string) string {
