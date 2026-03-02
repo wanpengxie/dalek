@@ -814,6 +814,11 @@ func (s *cliTestChannelCaptureSender) GetUserName(ctx context.Context, userID st
 	return "", nil
 }
 
+func (s *cliTestChannelCaptureSender) GetBotOpenID(ctx context.Context) (string, error) {
+	_ = ctx
+	return "", nil
+}
+
 func newGatewayCLITestChannelHandlerForE2E(gateway *channelsvc.Gateway, resolver channelsvc.ProjectResolver) http.HandlerFunc {
 	const adapter = "im.cli.test"
 	return func(w http.ResponseWriter, r *http.Request) {

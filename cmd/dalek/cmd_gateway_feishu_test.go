@@ -361,6 +361,11 @@ func (s *captureFeishuSender) GetUserName(ctx context.Context, userID string) (s
 	return strings.TrimSpace(s.userNames[strings.TrimSpace(userID)]), nil
 }
 
+func (s *captureFeishuSender) GetBotOpenID(ctx context.Context) (string, error) {
+	_ = ctx
+	return "", nil
+}
+
 func (s *captureFeishuSender) waitMessages(t *testing.T, want int, timeout time.Duration) []senderMessage {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

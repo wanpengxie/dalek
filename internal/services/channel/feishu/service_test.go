@@ -359,6 +359,84 @@ func TestGetUserNameRefreshesTokenWhenCachedTokenInvalid(t *testing.T) {
 	}
 }
 
+func TestGetBotOpenIDCachesAndRefreshesTokenWhenCachedTokenInvalid(t *testing.T) {
+	var tokenCalls atomic.Int32
+	var botInfoCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/open-apis/auth/v3/tenant_access_token/internal":
+			tokenCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":                0,
+				"msg":                 "ok",
+				"tenant_access_token": "fresh-bot-token",
+				"expire":              7200,
+			})
+		case r.URL.Path == "/open-apis/bot/v3/info":
+			botInfoCalls.Add(1)
+			auth := strings.TrimSpace(r.Header.Get("Authorization"))
+			switch auth {
+			case "Bearer stale-token":
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code": daemonFeishuInvalidTokenCode,
+					"msg":  "Invalid access token for authorization. Please make a request with token attached.",
+				})
+			case "Bearer fresh-bot-token":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code": 0,
+					"msg":  "ok",
+					"bot": map[string]any{
+						"open_id": "ou_bot_1",
+					},
+				})
+			default:
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code": 999,
+					"msg":  "unexpected authorization token",
+				})
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	sender := NewSender(SenderConfig{
+		Enabled:   true,
+		AppID:     "app-id",
+		AppSecret: "app-secret",
+		BaseURL:   server.URL,
+	})
+	httpSender, ok := sender.(*daemonFeishuHTTPSender)
+	if !ok {
+		t.Fatalf("expected daemonFeishuHTTPSender, got %T", sender)
+	}
+	httpSender.mu.Lock()
+	httpSender.token = "stale-token"
+	httpSender.tokenUntil = time.Now().Add(5 * time.Minute)
+	httpSender.mu.Unlock()
+
+	openID1, err := sender.GetBotOpenID(context.Background())
+	if err != nil {
+		t.Fatalf("first GetBotOpenID returned error: %v", err)
+	}
+	openID2, err := sender.GetBotOpenID(context.Background())
+	if err != nil {
+		t.Fatalf("second GetBotOpenID returned error: %v", err)
+	}
+	if openID1 != "ou_bot_1" || openID2 != "ou_bot_1" {
+		t.Fatalf("unexpected open_id values: first=%q second=%q", openID1, openID2)
+	}
+	if got := botInfoCalls.Load(); got != 2 {
+		t.Fatalf("expected 2 bot info attempts (invalid token retry), got %d", got)
+	}
+	if got := tokenCalls.Load(); got != 1 {
+		t.Fatalf("expected 1 token refresh call, got %d", got)
+	}
+}
+
 func TestTryHandleDaemonFeishuQuietCommand(t *testing.T) {
 	gateway, resolver := newFeishuQuietTestGateway(t)
 	sender := &captureFeishuSender{}
@@ -429,6 +507,139 @@ func TestTryHandleDaemonFeishuQuietCommand(t *testing.T) {
 	}
 }
 
+func TestNewWebhookHandlerQuietModeMentionGate(t *testing.T) {
+	cases := []struct {
+		name          string
+		quietMode     bool
+		botOpenID     string
+		botOpenIDErr  error
+		mentions      []daemonFeishuMention
+		wantReply     bool
+		wantBotIDCall int
+	}{
+		{
+			name:      "quiet_on_mention_non_bot_skip",
+			quietMode: true,
+			botOpenID: "ou_bot",
+			mentions: []daemonFeishuMention{
+				{ID: daemonFeishuMentionID{OpenID: "ou_other"}},
+			},
+			wantReply:     false,
+			wantBotIDCall: 1,
+		},
+		{
+			name:      "quiet_on_mention_bot_reply",
+			quietMode: true,
+			botOpenID: "ou_bot",
+			mentions: []daemonFeishuMention{
+				{ID: daemonFeishuMentionID{OpenID: "ou_bot"}},
+			},
+			wantReply:     true,
+			wantBotIDCall: 1,
+		},
+		{
+			name:          "quiet_on_no_mention_skip",
+			quietMode:     true,
+			botOpenID:     "ou_bot",
+			mentions:      nil,
+			wantReply:     false,
+			wantBotIDCall: 1,
+		},
+		{
+			name:          "quiet_off_normal_reply",
+			quietMode:     false,
+			botOpenID:     "ou_bot",
+			mentions:      nil,
+			wantReply:     true,
+			wantBotIDCall: 0,
+		},
+		{
+			name:         "quiet_on_get_bot_open_id_failed_fallback_len",
+			quietMode:    true,
+			botOpenIDErr: fmt.Errorf("mock GetBotOpenID failed"),
+			mentions: []daemonFeishuMention{
+				{ID: daemonFeishuMentionID{OpenID: "ou_other"}},
+			},
+			wantReply:     true,
+			wantBotIDCall: 1,
+		},
+	}
+
+	for idx, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway, resolver := newFeishuQuietTestGateway(t)
+			if _, err := gateway.BindProject(context.Background(), contracts.ChannelTypeIM, defaultDaemonFeishuAdapter, "chat-quiet", "alpha"); err != nil {
+				t.Fatalf("bind project failed: %v", err)
+			}
+			if err := gateway.SetBindingQuietMode(context.Background(), contracts.ChannelTypeIM, defaultDaemonFeishuAdapter, "chat-quiet", tc.quietMode); err != nil {
+				t.Fatalf("SetBindingQuietMode failed: %v", err)
+			}
+
+			sender := &captureFeishuSender{
+				botOpenID:    tc.botOpenID,
+				botOpenIDErr: tc.botOpenIDErr,
+			}
+			replySender := &captureChatReplySender{calls: make(chan chatReplyCall, 1)}
+			handler := NewWebhookHandler(gateway, resolver, sender, HandlerOptions{
+				VerifyToken:      "token-ok",
+				RelayTimeout:     5 * time.Second,
+				RelayIdleTimeout: 5 * time.Second,
+				ChatReplySender:  replySender,
+			})
+
+			body := map[string]any{
+				"header": map[string]any{
+					"event_type": "im.message.receive_v1",
+					"token":      "token-ok",
+					"event_id":   fmt.Sprintf("evt-quiet-%d", idx+1),
+				},
+				"event": map[string]any{
+					"sender": map[string]any{
+						"sender_type": "user",
+						"sender_id": map[string]any{
+							"open_id": "ou_sender_1",
+						},
+					},
+					"message": map[string]any{
+						"message_id":   fmt.Sprintf("om-quiet-%d", idx+1),
+						"chat_id":      "chat-quiet",
+						"message_type": "text",
+						"content":      "{\"text\":\"hello\"}",
+						"mentions":     tc.mentions,
+					},
+				},
+			}
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatalf("marshal webhook body failed: %v", err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/feishu/webhook", strings.NewReader(string(raw)))
+			rr := httptest.NewRecorder()
+			handler(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("unexpected status: %d", rr.Code)
+			}
+
+			if tc.wantReply {
+				select {
+				case <-replySender.calls:
+				case <-time.After(3 * time.Second):
+					t.Fatalf("wait chat reply timeout")
+				}
+			} else {
+				select {
+				case call := <-replySender.calls:
+					t.Fatalf("quiet mode should skip, but got reply: %+v", call)
+				case <-time.After(1200 * time.Millisecond):
+				}
+			}
+			if got := sender.BotOpenIDCalls(); got != tc.wantBotIDCall {
+				t.Fatalf("GetBotOpenID calls mismatch: got=%d want=%d", got, tc.wantBotIDCall)
+			}
+		})
+	}
+}
+
 func TestTryHandleDaemonFeishuHelpCommand(t *testing.T) {
 	sender := &captureFeishuSender{}
 	ctx := context.Background()
@@ -459,14 +670,56 @@ func TestTryHandleDaemonFeishuHelpCommand(t *testing.T) {
 }
 
 func TestHasDaemonFeishuMention(t *testing.T) {
-	if hasDaemonFeishuMention(nil) {
-		t.Fatalf("nil mentions should be false")
+	tests := []struct {
+		name      string
+		mentions  []daemonFeishuMention
+		botOpenID string
+		want      bool
+	}{
+		{
+			name:      "empty_mentions_false",
+			mentions:  nil,
+			botOpenID: "ou_bot",
+			want:      false,
+		},
+		{
+			name: "bot_open_id_match_true",
+			mentions: []daemonFeishuMention{
+				{ID: daemonFeishuMentionID{OpenID: "ou_bot"}},
+			},
+			botOpenID: "ou_bot",
+			want:      true,
+		},
+		{
+			name: "bot_open_id_not_match_false",
+			mentions: []daemonFeishuMention{
+				{ID: daemonFeishuMentionID{OpenID: "ou_other"}},
+			},
+			botOpenID: "ou_bot",
+			want:      false,
+		},
+		{
+			name: "bot_open_id_empty_fallback_non_empty_mentions_true",
+			mentions: []daemonFeishuMention{
+				{ID: daemonFeishuMentionID{OpenID: "ou_other"}},
+			},
+			botOpenID: "",
+			want:      true,
+		},
+		{
+			name:      "bot_open_id_empty_fallback_empty_mentions_false",
+			mentions:  []daemonFeishuMention{},
+			botOpenID: "",
+			want:      false,
+		},
 	}
-	if hasDaemonFeishuMention([]daemonFeishuMention{}) {
-		t.Fatalf("empty mentions should be false")
-	}
-	if !hasDaemonFeishuMention([]daemonFeishuMention{{Key: "@_user_1"}}) {
-		t.Fatalf("non-empty mentions should be true")
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasDaemonFeishuMention(tc.mentions, tc.botOpenID); got != tc.want {
+				t.Fatalf("hasDaemonFeishuMention() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -474,6 +727,9 @@ type captureFeishuSender struct {
 	mu               sync.Mutex
 	texts            []string
 	interactiveCalls int
+	botOpenID        string
+	botOpenIDErr     error
+	botOpenIDCalls   int
 }
 
 func (s *captureFeishuSender) SendText(ctx context.Context, chatID, text string) error {
@@ -516,6 +772,17 @@ func (s *captureFeishuSender) GetUserName(ctx context.Context, userID string) (s
 	return "", nil
 }
 
+func (s *captureFeishuSender) GetBotOpenID(ctx context.Context) (string, error) {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.botOpenIDCalls++
+	if s.botOpenIDErr != nil {
+		return "", s.botOpenIDErr
+	}
+	return strings.TrimSpace(s.botOpenID), nil
+}
+
 func (s *captureFeishuSender) LastText() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -529,6 +796,12 @@ func (s *captureFeishuSender) InteractiveCalls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.interactiveCalls
+}
+
+func (s *captureFeishuSender) BotOpenIDCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.botOpenIDCalls
 }
 
 type feishuQuietTestRuntime struct{}
