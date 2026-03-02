@@ -917,111 +917,20 @@ func TestParseDaemonFeishuMessageText(t *testing.T) {
 			wantOK:      true,
 		},
 
-		// === post 类型 ===
+		// === post 类型：原样透传给 LLM ===
 		{
-			name:        "post/zh_cn with text and at",
+			name:        "post/passes raw content through",
 			messageType: "post",
-			content: `{
-				"zh_cn": {
-					"title": "测试",
-					"content": [
-						[{"tag":"text","text":"你好 "},{"tag":"at","user_id":"u1","user_name":"张三"}],
-						[{"tag":"text","text":"第二行"}]
-					]
-				}
-			}`,
-			wantText: "你好  @张三\n第二行",
-			wantOK:   true,
-		},
-		{
-			name:        "post/en_us fallback",
-			messageType: "post",
-			content: `{
-				"en_us": {
-					"title": "test",
-					"content": [
-						[{"tag":"text","text":"hello "},{"tag":"at","user_id":"u1","user_name":"tom"}]
-					]
-				}
-			}`,
-			wantText: "hello  @tom",
-			wantOK:   true,
-		},
-		{
-			name:        "post/empty content array",
-			messageType: "post",
-			content: `{
-				"zh_cn": {
-					"title": "empty",
-					"content": []
-				}
-			}`,
-			wantText: "",
-			wantOK:   true,
-		},
-		{
-			name:        "post/at without user_name",
-			messageType: "post",
-			content: `{
-				"zh_cn": {
-					"title": "",
-					"content": [[{"tag":"at","user_id":"u1"}]]
-				}
-			}`,
-			wantText: "@unknown",
-			wantOK:   true,
-		},
-		{
-			name:        "post/only non-text tags",
-			messageType: "post",
-			content: `{
-				"zh_cn": {
-					"title": "img",
-					"content": [[{"tag":"img","image_key":"key1"}]]
-				}
-			}`,
-			wantText: "",
-			wantOK:   true,
-		},
-		{
-			name:        "post/multi-line multi-element",
-			messageType: "post",
-			content: `{
-				"zh_cn": {
-					"title": "多行",
-					"content": [
-						[{"tag":"text","text":"A"},{"tag":"text","text":"B"}],
-						[{"tag":"text","text":"C"},{"tag":"at","user_id":"u","user_name":"D"}],
-						[{"tag":"text","text":"E"}]
-					]
-				}
-			}`,
-			wantText: "A B\nC @D\nE",
-			wantOK:   true,
-		},
-		{
-			name:        "post/invalid JSON",
-			messageType: "post",
-			content:     "not json",
-			wantText:    "",
-			wantOK:      false,
-		},
-		{
-			name:        "post/empty locales",
-			messageType: "post",
-			content:     `{}`,
-			wantText:    "",
+			content:     `{"title":"","content":[[{"tag":"text","text":"你是谁","style":[]}]]}`,
+			wantText:    `{"title":"","content":[[{"tag":"text","text":"你是谁","style":[]}]]}`,
 			wantOK:      true,
 		},
 		{
-			name:        "post/zh_cn preferred over en_us",
+			name:        "post/any content passes through",
 			messageType: "post",
-			content: `{
-				"en_us": {"title":"en","content":[[{"tag":"text","text":"english"}]]},
-				"zh_cn": {"title":"cn","content":[[{"tag":"text","text":"中文"}]]}
-			}`,
-			wantText: "中文",
-			wantOK:   true,
+			content:     "not json",
+			wantText:    "not json",
+			wantOK:      true,
 		},
 
 		// === 非文本类型（静默忽略）===
