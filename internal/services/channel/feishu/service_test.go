@@ -871,3 +871,227 @@ func newFeishuQuietTestGateway(t *testing.T) (*channelsvc.Gateway, channelsvc.Pr
 	}
 	return gateway, resolver
 }
+
+func TestParseDaemonFeishuMessageText(t *testing.T) {
+	tests := []struct {
+		name        string
+		messageType string
+		content     string
+		wantText    string
+		wantOK      bool
+	}{
+		// === text 类型 ===
+		{
+			name:        "text/normal JSON",
+			messageType: "text",
+			content:     `{"text":"hello world"}`,
+			wantText:    "hello world",
+			wantOK:      true,
+		},
+		{
+			name:        "text/with whitespace",
+			messageType: "text",
+			content:     `{"text":"  hello  "}`,
+			wantText:    "hello",
+			wantOK:      true,
+		},
+		{
+			name:        "text/invalid JSON falls back to raw content",
+			messageType: "text",
+			content:     "raw text content",
+			wantText:    "raw text content",
+			wantOK:      true,
+		},
+		{
+			name:        "text/empty text field",
+			messageType: "text",
+			content:     `{"text":""}`,
+			wantText:    "",
+			wantOK:      true,
+		},
+		{
+			name:        "text/messageType case insensitive",
+			messageType: "TEXT",
+			content:     `{"text":"upper"}`,
+			wantText:    "upper",
+			wantOK:      true,
+		},
+
+		// === post 类型 ===
+		{
+			name:        "post/zh_cn with text and at",
+			messageType: "post",
+			content: `{
+				"zh_cn": {
+					"title": "测试",
+					"content": [
+						[{"tag":"text","text":"你好 "},{"tag":"at","user_id":"u1","user_name":"张三"}],
+						[{"tag":"text","text":"第二行"}]
+					]
+				}
+			}`,
+			wantText: "你好  @张三\n第二行",
+			wantOK:   true,
+		},
+		{
+			name:        "post/en_us fallback",
+			messageType: "post",
+			content: `{
+				"en_us": {
+					"title": "test",
+					"content": [
+						[{"tag":"text","text":"hello "},{"tag":"at","user_id":"u1","user_name":"tom"}]
+					]
+				}
+			}`,
+			wantText: "hello  @tom",
+			wantOK:   true,
+		},
+		{
+			name:        "post/empty content array",
+			messageType: "post",
+			content: `{
+				"zh_cn": {
+					"title": "empty",
+					"content": []
+				}
+			}`,
+			wantText: "",
+			wantOK:   true,
+		},
+		{
+			name:        "post/at without user_name",
+			messageType: "post",
+			content: `{
+				"zh_cn": {
+					"title": "",
+					"content": [[{"tag":"at","user_id":"u1"}]]
+				}
+			}`,
+			wantText: "@unknown",
+			wantOK:   true,
+		},
+		{
+			name:        "post/only non-text tags",
+			messageType: "post",
+			content: `{
+				"zh_cn": {
+					"title": "img",
+					"content": [[{"tag":"img","image_key":"key1"}]]
+				}
+			}`,
+			wantText: "",
+			wantOK:   true,
+		},
+		{
+			name:        "post/multi-line multi-element",
+			messageType: "post",
+			content: `{
+				"zh_cn": {
+					"title": "多行",
+					"content": [
+						[{"tag":"text","text":"A"},{"tag":"text","text":"B"}],
+						[{"tag":"text","text":"C"},{"tag":"at","user_id":"u","user_name":"D"}],
+						[{"tag":"text","text":"E"}]
+					]
+				}
+			}`,
+			wantText: "A B\nC @D\nE",
+			wantOK:   true,
+		},
+		{
+			name:        "post/invalid JSON",
+			messageType: "post",
+			content:     "not json",
+			wantText:    "",
+			wantOK:      false,
+		},
+		{
+			name:        "post/empty locales",
+			messageType: "post",
+			content:     `{}`,
+			wantText:    "",
+			wantOK:      true,
+		},
+		{
+			name:        "post/zh_cn preferred over en_us",
+			messageType: "post",
+			content: `{
+				"en_us": {"title":"en","content":[[{"tag":"text","text":"english"}]]},
+				"zh_cn": {"title":"cn","content":[[{"tag":"text","text":"中文"}]]}
+			}`,
+			wantText: "中文",
+			wantOK:   true,
+		},
+
+		// === 非文本类型（静默忽略）===
+		{
+			name:        "image/silent ignore",
+			messageType: "image",
+			content:     `{"image_key":"key1"}`,
+			wantText:    "",
+			wantOK:      true,
+		},
+		{
+			name:        "file/silent ignore",
+			messageType: "file",
+			content:     `{"file_key":"key1"}`,
+			wantText:    "",
+			wantOK:      true,
+		},
+		{
+			name:        "audio/silent ignore",
+			messageType: "audio",
+			content:     `{"file_key":"key1"}`,
+			wantText:    "",
+			wantOK:      true,
+		},
+		{
+			name:        "media/silent ignore",
+			messageType: "media",
+			content:     `{"file_key":"key1"}`,
+			wantText:    "",
+			wantOK:      true,
+		},
+		{
+			name:        "sticker/silent ignore",
+			messageType: "sticker",
+			content:     `{"file_key":"key1"}`,
+			wantText:    "",
+			wantOK:      true,
+		},
+		{
+			name:        "share_chat/silent ignore",
+			messageType: "share_chat",
+			content:     `{"chat_id":"oc_xxx"}`,
+			wantText:    "",
+			wantOK:      true,
+		},
+		{
+			name:        "share_user/silent ignore",
+			messageType: "share_user",
+			content:     `{"user_id":"ou_xxx"}`,
+			wantText:    "",
+			wantOK:      true,
+		},
+		{
+			name:        "unknown_future_type/silent ignore",
+			messageType: "some_future_type",
+			content:     `{}`,
+			wantText:    "",
+			wantOK:      true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotText, gotOK := parseDaemonFeishuMessageText(tc.messageType, tc.content)
+			if gotText != tc.wantText {
+				t.Errorf("text = %q, want %q", gotText, tc.wantText)
+			}
+			if gotOK != tc.wantOK {
+				t.Errorf("ok = %v, want %v", gotOK, tc.wantOK)
+			}
+		})
+	}
+}
