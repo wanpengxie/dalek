@@ -28,6 +28,7 @@ type GatewayEvent struct {
 
 	ToolName  string // 工具名（仅 stream=tool 时有值，如 "TodoWrite"）
 	ToolInput string // 工具完整输入 JSON（仅 stream=tool 时有值）
+	Detail    string // 事件完整内容（所有类型均填充，不截断）
 
 	AgentProvider string
 	AgentModel    string

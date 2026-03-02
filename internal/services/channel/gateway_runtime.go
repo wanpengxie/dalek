@@ -758,6 +758,7 @@ func (g *Gateway) publishStreamAgentEvent(projectName, conversationID, peerMessa
 		EventType:      eventType,
 		ToolName:       ev.Data.ToolName,
 		ToolInput:      ev.Data.ToolInput,
+		Detail:         ev.Data.Detail,
 		JobStatus:      contracts.ChannelTurnRunning,
 		At:             time.Now(),
 	})
@@ -854,6 +855,7 @@ func (g *Gateway) publishFromResult(projectName, conversationID, peerMessageID s
 			EventType:      eventType,
 			ToolName:       ev.Data.ToolName,
 			ToolInput:      ev.Data.ToolInput,
+			Detail:         ev.Data.Detail,
 			AgentProvider:  result.AgentProvider,
 			AgentModel:     result.AgentModel,
 			JobStatus:      result.JobStatus,
@@ -941,6 +943,9 @@ func deriveGatewayRuntimeEventType(stream, phase string) string {
 		return "lifecycle"
 	}
 	if stream == "assistant" {
+		if phase != "" {
+			return phase
+		}
 		return "assistant"
 	}
 	if stream == "error" {

@@ -986,6 +986,14 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 							continue
 						}
 
+						// assistant text 分流：中间文本作为独立消息发送，不截断进进度行
+						if ev.Stream == "assistant" && ev.EventType == "message" && ev.Detail != "" {
+							sendCtx, sendCancel := context.WithTimeout(progressCtx, 5*time.Second)
+							_ = sender.SendCard(sendCtx, chatID, "💬 分析", ev.Detail)
+							sendCancel()
+							continue
+						}
+
 						// TodoWrite 分流：发送独立消息而非进度卡片行
 						if ev.Stream == "tool" && ev.ToolName == "TodoWrite" && ev.ToolInput != "" {
 							todoMsg := formatTodoWriteMessage(ev.ToolInput)

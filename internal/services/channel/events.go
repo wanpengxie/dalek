@@ -39,6 +39,7 @@ type AgentEventData struct {
 
 	ToolName  string `json:"tool_name,omitempty"`
 	ToolInput string `json:"tool_input,omitempty"`
+	Detail    string `json:"detail,omitempty"` // 事件完整内容（所有类型均填充，不截断）
 }
 
 func SynthesizeEventsFromCLIResult(runID string, startedAt time.Time, cliEvents []agentcli.Event, replyText string, runErr error, provider string) []AgentEvent {
@@ -132,8 +133,11 @@ func mapStepToAgentEvent(runID string, step eventrender.UnifiedStep) AgentEvent 
 	stream := StreamAssistant
 	phase := ""
 	switch step.StepType {
-	case eventrender.StepThinking, eventrender.StepMessage:
+	case eventrender.StepThinking:
 		stream = StreamAssistant
+	case eventrender.StepMessage:
+		stream = StreamAssistant
+		phase = "message"
 	case eventrender.StepToolCall, eventrender.StepToolResult:
 		stream = StreamTool
 	case eventrender.StepError:
@@ -149,7 +153,11 @@ func mapStepToAgentEvent(runID string, step eventrender.UnifiedStep) AgentEvent 
 		ToolName: step.ToolName,
 	}
 	if step.Detail != "" {
-		data.ToolInput = step.Detail
+		data.Detail = step.Detail
+		// ToolInput 保持向后兼容：tool 类事件同时填充
+		if stream == StreamTool {
+			data.ToolInput = step.Detail
+		}
 	}
 	if stream == StreamError {
 		data.Error = step.Summary
