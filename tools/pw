@@ -4,6 +4,7 @@ set -euo pipefail
 PW_BIN="${PW_BIN:-playwright-cli}"
 PW_HOME="${PW_HOME:-$HOME/.dalek/playwright}"
 PW_SESSION="${PW_SESSION:-shared}"
+PW_SKILL_DIR="${PW_SKILL_DIR:-$HOME/.dalek/playwright/skill}"
 PW_CALLER_CWD="${PWD}"
 
 _pw_usage() {
@@ -15,11 +16,13 @@ Usage:
   pw close [index]     Close current tab (or the specified tab index)
   pw stop              Stop browser session
   pw status            Show browser session status
+  pw init-skill        Install pw skill into current project's .claude/skills/
   pw <command> [...]   Forward any other command to playwright-cli
 
 Environment:
   PW_HOME              Shared workspace path (default: ~/.dalek/playwright)
   PW_SESSION           Shared session name (default: shared)
+  PW_SKILL_DIR         Skill source directory (default: ~/.dalek/playwright/skill)
   PW_BIN               playwright-cli binary (default: playwright-cli)
 EOF
 }
@@ -83,6 +86,19 @@ _pw_init() {
       done < <(find "$src_dir" -mindepth 1 -maxdepth 1 -type f -print0)
     fi
   fi
+  _pw_find_skill
+}
+
+_pw_find_skill() {
+  if [[ -d "$PW_SKILL_DIR" ]]; then
+    return 0
+  fi
+  # seed from project skill if global seed doesn't exist yet
+  local project_skill="${PW_CALLER_CWD}/.claude/skills/playwright-cli"
+  if [[ -d "$project_skill" ]]; then
+    mkdir -p "$PW_SKILL_DIR"
+    cp -R "$project_skill"/* "$PW_SKILL_DIR"/
+  fi
 }
 
 _pw_exec() {
@@ -107,6 +123,17 @@ shift
 case "$command" in
   help|-h|--help)
     _pw_usage
+    exit 0
+    ;;
+  init-skill)
+    if [[ ! -d "$PW_SKILL_DIR" ]]; then
+      echo "[pw] skill source not found: $PW_SKILL_DIR" >&2
+      exit 1
+    fi
+    _pw_target=".claude/skills/playwright-cli"
+    mkdir -p "$_pw_target"
+    cp -R "$PW_SKILL_DIR"/* "$_pw_target"/
+    echo "[pw] skill installed to $_pw_target/"
     exit 0
     ;;
 esac
