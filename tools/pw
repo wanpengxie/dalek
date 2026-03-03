@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PW_BIN="${PW_BIN:-playwright-cli}"
+PW_HOME="${PW_HOME:-$HOME/.dalek/playwright}"
+PW_SESSION="${PW_SESSION:-shared}"
+PW_CALLER_CWD="${PWD}"
+
+_pw_usage() {
+  cat <<'EOF'
+pw: shared playwright-cli wrapper
+
+Usage:
+  pw open [url]        Open browser once; when already running, create a new tab
+  pw close [index]     Close current tab (or the specified tab index)
+  pw stop              Stop browser session
+  pw status            Show browser session status
+  pw <command> [...]   Forward any other command to playwright-cli
+
+Environment:
+  PW_HOME              Shared workspace path (default: ~/.dalek/playwright)
+  PW_SESSION           Shared session name (default: shared)
+  PW_BIN               playwright-cli binary (default: playwright-cli)
+EOF
+}
+
+_pw_require_cli() {
+  if ! command -v "$PW_BIN" >/dev/null 2>&1; then
+    echo "[pw] command not found: $PW_BIN" >&2
+    exit 127
+  fi
+}
+
+_pw_find_config() {
+  if [[ -n "${PW_CONFIG:-}" && -f "${PW_CONFIG}" ]]; then
+    printf '%s\n' "${PW_CONFIG}"
+    return 0
+  fi
+
+  if [[ -n "${DALEK_REPO_ROOT:-}" && -f "${DALEK_REPO_ROOT}/.playwright/cli.config.json" ]]; then
+    printf '%s\n' "${DALEK_REPO_ROOT}/.playwright/cli.config.json"
+    return 0
+  fi
+
+  local dir="$PW_CALLER_CWD"
+  while true; do
+    if [[ -f "$dir/.playwright/cli.config.json" ]]; then
+      printf '%s\n' "$dir/.playwright/cli.config.json"
+      return 0
+    fi
+    if [[ "$dir" == "/" ]]; then
+      break
+    fi
+    dir="$(dirname "$dir")"
+  done
+
+  if [[ -f "$HOME/.playwright/cli.config.json" ]]; then
+    printf '%s\n' "$HOME/.playwright/cli.config.json"
+    return 0
+  fi
+
+  return 1
+}
+
+_pw_init() {
+  mkdir -p "$PW_HOME/.playwright"
+  if [[ ! -f "$PW_HOME/.playwright/cli.config.json" ]]; then
+    local src_config=""
+    if src_config="$(_pw_find_config)"; then
+      local src_dir=""
+      src_dir="$(dirname "$src_config")"
+      cp "$src_config" "$PW_HOME/.playwright/cli.config.json"
+
+      # Copy top-level helper files (for example init scripts) but skip heavy dirs.
+      local f=""
+      while IFS= read -r -d '' f; do
+        local name=""
+        name="$(basename "$f")"
+        if [[ "$name" == "cli.config.json" ]]; then
+          continue
+        fi
+        cp "$f" "$PW_HOME/.playwright/$name"
+      done < <(find "$src_dir" -mindepth 1 -maxdepth 1 -type f -print0)
+    fi
+  fi
+}
+
+_pw_exec() {
+  (
+    cd "$PW_HOME"
+    "$PW_BIN" "-s=$PW_SESSION" "$@"
+  )
+}
+
+_pw_is_running() {
+  _pw_exec tab-list >/dev/null 2>&1
+}
+
+if [[ $# -eq 0 ]]; then
+  _pw_usage
+  exit 0
+fi
+
+command="$1"
+shift
+
+case "$command" in
+  help|-h|--help)
+    _pw_usage
+    exit 0
+    ;;
+esac
+
+_pw_require_cli
+_pw_init
+
+case "$command" in
+  open)
+    if _pw_is_running; then
+      _pw_exec tab-new "$@"
+    else
+      _pw_exec open "$@"
+    fi
+    ;;
+  close)
+    if _pw_is_running; then
+      _pw_exec tab-close "$@"
+    else
+      echo "Browser '$PW_SESSION' is not open." >&2
+    fi
+    ;;
+  stop)
+    _pw_exec close "$@"
+    ;;
+  status)
+    _pw_exec list
+    if _pw_is_running; then
+      _pw_exec tab-list
+    fi
+    ;;
+  *)
+    _pw_exec "$command" "$@"
+    ;;
+esac
