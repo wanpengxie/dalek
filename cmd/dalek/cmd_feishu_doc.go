@@ -44,7 +44,7 @@ func cmdFeishuDoc(args []string) {
 func printFeishuDocUsage() {
 	printGroupUsage("飞书文档操作", "dalek feishu doc <command> [flags]", []string{
 		"create   创建文档",
-		"read     读取文档纯文本内容",
+		"read     读取文档 Markdown 内容（含格式）",
 		"write    向文档追加 Markdown/文本内容",
 		"ls       列出目录下文档",
 	})
@@ -107,7 +107,7 @@ func cmdFeishuDocRead(args []string) {
 	fs.Usage = func() {
 		printSubcommandUsage(
 			fs,
-			"读取飞书文档纯文本",
+			"读取飞书文档 Markdown 内容",
 			"dalek feishu doc read --doc <document_id> [--timeout 12s] [--output text|json]",
 			"dalek feishu doc read --doc doxcxxxxxxxx",
 			"dalek feishu doc read --doc doxcxxxxxxxx -o json",
@@ -131,18 +131,26 @@ func cmdFeishuDocRead(args []string) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	result, err := svc.ReadDocument(ctx, strings.TrimSpace(*docID))
+	result, err := svc.ReadDocument(ctx, strings.TrimSpace(*docID), feishudoc.ReadDocumentOptions{})
 	if err != nil {
 		exitRuntimeError(out, "读取飞书文档失败", err.Error(), "检查 document_id 与飞书权限后重试")
 	}
 
 	if out == outputJSON {
-		printJSONOrExit(map[string]any{
+		payload := map[string]any{
 			"schema":   "dalek.feishu.doc.read.v1",
 			"document": result.Document,
 			"content":  result.Content,
-		})
+		}
+		if len(result.Warnings) > 0 {
+			payload["warnings"] = result.Warnings
+		}
+		printJSONOrExit(payload)
 		return
+	}
+
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
 	}
 
 	fmt.Printf("document_id=%s\n", result.Document.DocumentID)

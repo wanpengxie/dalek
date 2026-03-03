@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -45,7 +46,7 @@ func cmdDoc(args []string) {
 func printDocUsage() {
 	printGroupUsage("飞书文档操作", "feishu doc <command> [flags]", []string{
 		"create   创建文档",
-		"read     读取文档纯文本内容",
+		"read     读取文档 Markdown 内容（含格式）",
 		"write    向文档追加 Markdown/文本内容",
 		"ls       列出目录下文档",
 	})
@@ -133,23 +134,41 @@ func cmdDocRead(args []string) {
 		outFile = strings.TrimSpace(rest[0])
 	}
 
+	readOptions := feishudoc.ReadDocumentOptions{}
+	if outFile != "" {
+		imageDir := filepath.Join(filepath.Dir(outFile), "images")
+		if err := os.MkdirAll(imageDir, 0o755); err != nil {
+			exitRuntimeError(out, "创建图片目录失败", err.Error(), fmt.Sprintf("检查目录权限: %s", imageDir))
+		}
+		readOptions.ImagesDir = imageDir
+		readOptions.ImagePathPrefix = "./images"
+	}
+
 	h := mustOpenHome(out, *home)
 	svc := mustBuildService(out, h)
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	result, err := svc.ReadDocument(ctx, resolvedDocID)
+	result, err := svc.ReadDocument(ctx, resolvedDocID, readOptions)
 	if err != nil {
 		exitRuntimeError(out, "读取飞书文档失败", err.Error(), "检查 document_id 与飞书权限后重试")
 	}
 
 	if out == outputJSON {
-		printJSONOrExit(map[string]any{
+		payload := map[string]any{
 			"schema":   "feishu.doc.read.v1",
 			"document": result.Document,
 			"content":  result.Content,
-		})
+		}
+		if len(result.Warnings) > 0 {
+			payload["warnings"] = result.Warnings
+		}
+		printJSONOrExit(payload)
 		return
+	}
+
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", warning)
 	}
 
 	// write to file if specified, otherwise stdout
