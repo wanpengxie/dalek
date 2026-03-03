@@ -131,8 +131,8 @@ func TestTokenURL(t *testing.T) {
 		token     string
 		want      string
 	}{
-		{name: "docx", tokenType: "docx", token: "doxc123", want: "https://open.feishu.cn/docx/doxc123"},
-		{name: "wiki", tokenType: "wiki", token: "wikc123", want: "https://open.feishu.cn/wiki/wikc123"},
+		{name: "docx", tokenType: "docx", token: "doxc123", want: "https://feishu.cn/docx/doxc123"},
+		{name: "wiki", tokenType: "wiki", token: "wikc123", want: "https://feishu.cn/wiki/wikc123"},
 		{name: "unknown", tokenType: "x", token: "abc", want: ""},
 	}
 

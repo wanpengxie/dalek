@@ -13,3 +13,6 @@ __pycache__/
 *.pyc
 .DS_Store
 vault/
+.playwright/
+.playwright-cli/
+tools/*

@@ -56,6 +56,7 @@ mkdir -p "$target_dir"
 
 cleanup() {
   rm -f "$tmp_bin"
+  rm -f "${target_dir}/.feishu.new.$$"
 }
 trap cleanup EXIT
 
@@ -72,6 +73,18 @@ chmod +x "$tmp_bin"
 
 echo "[develop] install -> ${target}"
 mv -f "$tmp_bin" "$target"
+
+# --- feishu CLI ---
+feishu_target="${target_dir}/feishu"
+feishu_tmp="${target_dir}/.feishu.new.$$"
+echo "[develop] build feishu -> ${feishu_tmp}"
+(
+  cd "$repo_root"
+  go build -o "$feishu_tmp" ./cmd/feishu
+)
+chmod +x "$feishu_tmp"
+echo "[develop] install feishu -> ${feishu_target}"
+mv -f "$feishu_tmp" "$feishu_target"
 
 if [[ "$restart_daemon" != "1" ]]; then
   echo "[develop] done (skip daemon restart)"

@@ -1,10 +1,12 @@
 ---
-name: playwright-cli
+name: pw
 description: Automates browser interactions for web testing, form filling, screenshots, and data extraction. Use when the user needs to navigate websites, interact with web pages, fill forms, take screenshots, test web applications, or extract information from web pages.
-allowed-tools: Bash(pw:*), Bash(playwright-cli:*)
+allowed-tools: Bash(pw), Bash(pw *)
 ---
 
-# Browser Automation with pw + playwright-cli
+# Browser Automation with pw
+
+`pw` is a shared-browser wrapper. All commands use the same shared browser instance.
 
 ## Quick start
 
@@ -17,7 +19,7 @@ pw goto https://playwright.dev
 pw click e15
 pw type "page.click"
 pw press Enter
-# take a screenshot (rarely used, as snapshot is more common)
+# take a screenshot
 pw screenshot
 # close current tab
 pw close
@@ -25,183 +27,152 @@ pw close
 pw stop
 ```
 
-## Shared browser mode (default)
+## pw wrapper behavior
 
-`pw` is a thin wrapper around `playwright-cli -s=shared` with safer defaults for multi-agent usage:
-
-- `pw open [url]`: if browser is already running, it creates a new tab (`tab-new`) instead of restarting the browser
-- `pw close [index]`: closes tab (`tab-close`) instead of stopping the full browser session
-- `pw stop`: stops the shared browser session (`close`)
-- other commands (goto/click/fill/snapshot/tab-select/...): forwarded transparently
-
-Environment variables:
-
-- `PW_HOME`: shared workspace directory (default `~/.dalek/playwright`)
-- `PW_SESSION`: session name (default `shared`)
-- `PW_BIN`: playwright-cli binary path/name (default `playwright-cli`)
+- `pw open [url]`: if browser is already running, creates a new tab instead of restarting
+- `pw close [index]`: closes current tab (or specified index), not the whole browser
+- `pw stop`: stops the shared browser session
+- `pw status`: show browser status and tab list
+- `pw init-skill`: install this skill into current project's `.claude/skills/`
+- All other commands forwarded transparently to `playwright-cli -s=shared`
 
 ## Commands
 
 ### Core
 
 ```bash
-playwright-cli open
-# open and navigate right away
-playwright-cli open https://example.com/
-playwright-cli goto https://playwright.dev
-playwright-cli type "search query"
-playwright-cli click e3
-playwright-cli dblclick e7
-playwright-cli fill e5 "user@example.com"
-playwright-cli drag e2 e8
-playwright-cli hover e4
-playwright-cli select e9 "option-value"
-playwright-cli upload ./document.pdf
-playwright-cli check e12
-playwright-cli uncheck e12
-playwright-cli snapshot
-playwright-cli snapshot --filename=after-click.yaml
-playwright-cli eval "document.title"
-playwright-cli eval "el => el.textContent" e5
-playwright-cli dialog-accept
-playwright-cli dialog-accept "confirmation text"
-playwright-cli dialog-dismiss
-playwright-cli resize 1920 1080
-playwright-cli close
+pw open
+pw open https://example.com/
+pw goto https://playwright.dev
+pw type "search query"
+pw click e3
+pw dblclick e7
+pw fill e5 "user@example.com"
+pw drag e2 e8
+pw hover e4
+pw select e9 "option-value"
+pw upload ./document.pdf
+pw check e12
+pw uncheck e12
+pw snapshot
+pw snapshot --filename=after-click.yaml
+pw eval "document.title"
+pw eval "el => el.textContent" e5
+pw dialog-accept
+pw dialog-accept "confirmation text"
+pw dialog-dismiss
+pw resize 1920 1080
+pw close
 ```
 
 ### Navigation
 
 ```bash
-playwright-cli go-back
-playwright-cli go-forward
-playwright-cli reload
+pw go-back
+pw go-forward
+pw reload
 ```
 
 ### Keyboard
 
 ```bash
-playwright-cli press Enter
-playwright-cli press ArrowDown
-playwright-cli keydown Shift
-playwright-cli keyup Shift
+pw press Enter
+pw press ArrowDown
+pw keydown Shift
+pw keyup Shift
 ```
 
 ### Mouse
 
 ```bash
-playwright-cli mousemove 150 300
-playwright-cli mousedown
-playwright-cli mousedown right
-playwright-cli mouseup
-playwright-cli mouseup right
-playwright-cli mousewheel 0 100
+pw mousemove 150 300
+pw mousedown
+pw mousedown right
+pw mouseup
+pw mouseup right
+pw mousewheel 0 100
 ```
 
 ### Save as
 
 ```bash
-playwright-cli screenshot
-playwright-cli screenshot e5
-playwright-cli screenshot --filename=page.png
-playwright-cli pdf --filename=page.pdf
+pw screenshot
+pw screenshot e5
+pw screenshot --filename=page.png
+pw pdf --filename=page.pdf
 ```
 
 ### Tabs
 
 ```bash
-playwright-cli tab-list
-playwright-cli tab-new
-playwright-cli tab-new https://example.com/page
-playwright-cli tab-close
-playwright-cli tab-close 2
-playwright-cli tab-select 0
+pw tab-list
+pw tab-new
+pw tab-new https://example.com/page
+pw tab-close
+pw tab-close 2
+pw tab-select 0
 ```
 
 ### Storage
 
 ```bash
-playwright-cli state-save
-playwright-cli state-save auth.json
-playwright-cli state-load auth.json
+pw state-save
+pw state-save auth.json
+pw state-load auth.json
 
 # Cookies
-playwright-cli cookie-list
-playwright-cli cookie-list --domain=example.com
-playwright-cli cookie-get session_id
-playwright-cli cookie-set session_id abc123
-playwright-cli cookie-set session_id abc123 --domain=example.com --httpOnly --secure
-playwright-cli cookie-delete session_id
-playwright-cli cookie-clear
+pw cookie-list
+pw cookie-list --domain=example.com
+pw cookie-get session_id
+pw cookie-set session_id abc123
+pw cookie-set session_id abc123 --domain=example.com --httpOnly --secure
+pw cookie-delete session_id
+pw cookie-clear
 
 # LocalStorage
-playwright-cli localstorage-list
-playwright-cli localstorage-get theme
-playwright-cli localstorage-set theme dark
-playwright-cli localstorage-delete theme
-playwright-cli localstorage-clear
+pw localstorage-list
+pw localstorage-get theme
+pw localstorage-set theme dark
+pw localstorage-delete theme
+pw localstorage-clear
 
 # SessionStorage
-playwright-cli sessionstorage-list
-playwright-cli sessionstorage-get step
-playwright-cli sessionstorage-set step 3
-playwright-cli sessionstorage-delete step
-playwright-cli sessionstorage-clear
+pw sessionstorage-list
+pw sessionstorage-get step
+pw sessionstorage-set step 3
+pw sessionstorage-delete step
+pw sessionstorage-clear
 ```
 
 ### Network
 
 ```bash
-playwright-cli route "**/*.jpg" --status=404
-playwright-cli route "https://api.example.com/**" --body='{"mock": true}'
-playwright-cli route-list
-playwright-cli unroute "**/*.jpg"
-playwright-cli unroute
+pw route "**/*.jpg" --status=404
+pw route "https://api.example.com/**" --body='{"mock": true}'
+pw route-list
+pw unroute "**/*.jpg"
+pw unroute
 ```
 
 ### DevTools
 
 ```bash
-playwright-cli console
-playwright-cli console warning
-playwright-cli network
-playwright-cli run-code "async page => await page.context().grantPermissions(['geolocation'])"
-playwright-cli tracing-start
-playwright-cli tracing-stop
-playwright-cli video-start
-playwright-cli video-stop video.webm
-```
-
-## Open parameters
-```bash
-# Use specific browser when creating session
-playwright-cli open --browser=chrome
-playwright-cli open --browser=firefox
-playwright-cli open --browser=webkit
-playwright-cli open --browser=msedge
-# Connect to browser via extension
-playwright-cli open --extension
-
-# Use persistent profile (by default profile is in-memory)
-playwright-cli open --persistent
-# Use persistent profile with custom directory
-playwright-cli open --profile=/path/to/profile
-
-# Start with config file
-playwright-cli open --config=my-config.json
-
-# Close the browser
-playwright-cli close
-# Delete user data for the default session
-playwright-cli delete-data
+pw console
+pw console warning
+pw network
+pw run-code "async page => await page.context().grantPermissions(['geolocation'])"
+pw tracing-start
+pw tracing-stop
+pw video-start
+pw video-stop video.webm
 ```
 
 ## Snapshots
 
-After each command, playwright-cli provides a snapshot of the current browser state.
+After each command, pw provides a snapshot of the current browser state.
 
 ```bash
-> playwright-cli goto https://example.com
+> pw goto https://example.com
 ### Page
 - Page URL: https://example.com/
 - Page Title: Example Domain
@@ -209,79 +180,52 @@ After each command, playwright-cli provides a snapshot of the current browser st
 [Snapshot](.playwright-cli/page-2026-02-14T19-22-42-679Z.yml)
 ```
 
-You can also take a snapshot on demand using `playwright-cli snapshot` command.
+You can also take a snapshot on demand using `pw snapshot`.
 
-If `--filename` is not provided, a new snapshot file is created with a timestamp. Default to automatic file naming, use `--filename=` when artifact is a part of the workflow result.
-
-## Browser Sessions
-
-```bash
-# create new browser session named "mysession" with persistent profile
-playwright-cli -s=mysession open example.com --persistent
-# same with manually specified profile directory (use when requested explicitly)
-playwright-cli -s=mysession open example.com --profile=/path/to/profile
-playwright-cli -s=mysession click e6
-playwright-cli -s=mysession close  # stop a named browser
-playwright-cli -s=mysession delete-data  # delete user data for persistent session
-
-playwright-cli list
-# Close all browsers
-playwright-cli close-all
-# Forcefully kill all browser processes
-playwright-cli kill-all
-```
-
-## Local installation
-
-In some cases user might want to install playwright-cli locally. If running globally available `playwright-cli` binary fails, use `npx playwright-cli` to run the commands. For example:
-
-```bash
-npx playwright-cli open https://example.com
-npx playwright-cli click e1
-```
+If `--filename` is not provided, a new snapshot file is created with a timestamp. Use `--filename=` when the artifact is part of the workflow result.
 
 ## Example: Form submission
 
 ```bash
-playwright-cli open https://example.com/form
-playwright-cli snapshot
+pw open https://example.com/form
+pw snapshot
 
-playwright-cli fill e1 "user@example.com"
-playwright-cli fill e2 "password123"
-playwright-cli click e3
-playwright-cli snapshot
-playwright-cli close
+pw fill e1 "user@example.com"
+pw fill e2 "password123"
+pw click e3
+pw snapshot
+pw close
 ```
 
 ## Example: Multi-tab workflow
 
 ```bash
-playwright-cli open https://example.com
-playwright-cli tab-new https://example.com/other
-playwright-cli tab-list
-playwright-cli tab-select 0
-playwright-cli snapshot
-playwright-cli close
+pw open https://example.com
+pw tab-new https://example.com/other
+pw tab-list
+pw tab-select 0
+pw snapshot
+pw close
 ```
 
 ## Example: Debugging with DevTools
 
 ```bash
-playwright-cli open https://example.com
-playwright-cli click e4
-playwright-cli fill e7 "test"
-playwright-cli console
-playwright-cli network
-playwright-cli close
+pw open https://example.com
+pw click e4
+pw fill e7 "test"
+pw console
+pw network
+pw close
 ```
 
 ```bash
-playwright-cli open https://example.com
-playwright-cli tracing-start
-playwright-cli click e4
-playwright-cli fill e7 "test"
-playwright-cli tracing-stop
-playwright-cli close
+pw open https://example.com
+pw tracing-start
+pw click e4
+pw fill e7 "test"
+pw tracing-stop
+pw close
 ```
 
 ## Specific tasks

@@ -369,9 +369,5 @@ func (s *Service) documentURL(documentID string) string {
 	if documentID == "" {
 		return ""
 	}
-	base := strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
-	if base == "" {
-		base = defaultOpenBaseURL
-	}
-	return base + "/docx/" + documentID
+	return defaultWebBaseURL + "/docx/" + documentID
 }

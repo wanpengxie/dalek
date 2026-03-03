@@ -509,10 +509,7 @@ func (s *Service) tokenURL(tokenType, token string) string {
 	if token == "" {
 		return ""
 	}
-	base := strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
-	if base == "" {
-		base = defaultOpenBaseURL
-	}
+	base := defaultWebBaseURL
 	switch tokenType {
 	case larkdrive.TokenTypeV2Docx:
 		return base + "/docx/" + token

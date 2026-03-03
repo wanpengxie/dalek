@@ -10,6 +10,7 @@ import (
 )
 
 const defaultOpenBaseURL = "https://open.feishu.cn"
+const defaultWebBaseURL = "https://feishu.cn"
 
 type Config struct {
 	AppID     string
