@@ -18,6 +18,13 @@ func TestCLI_HelpShouldExitZero(t *testing.T) {
 		{"merge", "ls", "--help"},
 		{"merge", "discard", "--help"},
 		{"gateway", "send", "--help"},
+		{"feishu", "auth", "--help"},
+		{"feishu", "doc", "--help"},
+		{"feishu", "doc", "create", "--help"},
+		{"feishu", "wiki", "--help"},
+		{"feishu", "wiki", "ls", "--help"},
+		{"feishu", "perm", "--help"},
+		{"feishu", "perm", "share", "--help"},
 	}
 
 	for _, args := range cases {
