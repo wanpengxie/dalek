@@ -1021,20 +1021,45 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound contracts.Chann
 
 func buildPMAgentPrompt(inbound contracts.ChannelMessage) string {
 	content := inbound.ContentText
-	if content == "" {
+
+	// Extract image attachments from PayloadJSON and append local paths to prompt.
+	var attachmentLines []string
+	if raw, ok := inbound.PayloadJSON["attachments"]; ok {
+		var attachments []contracts.InboundAttachment
+		if b, err := json.Marshal(raw); err == nil {
+			if json.Unmarshal(b, &attachments) == nil {
+				for i, a := range attachments {
+					if a.Type == "image" && a.URL != "" {
+						attachmentLines = append(attachmentLines, fmt.Sprintf("[图片%d] %s", i+1, a.URL))
+					}
+				}
+			}
+		}
+	}
+
+	if content == "" && len(attachmentLines) == 0 {
 		return ""
 	}
 
+	var parts []string
+	if content != "" {
+		parts = append(parts, content)
+	}
+	if len(attachmentLines) > 0 {
+		parts = append(parts, strings.Join(attachmentLines, "\n"))
+	}
+	body := strings.Join(parts, "\n")
+
 	senderID := inbound.SenderID
 	if senderID == "" || strings.EqualFold(senderID, "anonymous") {
-		return content
+		return body
 	}
 
 	senderName := inbound.SenderName
 	if senderName == "" {
-		return fmt.Sprintf("[sender: %s]\n%s", senderID, content)
+		return fmt.Sprintf("[sender: %s]\n%s", senderID, body)
 	}
-	return fmt.Sprintf("[sender: %s (%s)]\n%s", senderName, senderID, content)
+	return fmt.Sprintf("[sender: %s (%s)]\n%s", senderName, senderID, body)
 }
 
 func copyCLIEvents(in []agentcli.Event) []agentcli.Event {
