@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"net/url"
 	"path/filepath"
 	"sort"
@@ -150,6 +151,12 @@ type MessageSender = daemonFeishuMessageSender
 
 type ChatReplySender interface {
 	SendChatReply(ctx context.Context, projectName, chatID, text, cardJSON string) error
+}
+
+// feishuImageDownloader is an optional capability for downloading images from feishu messages.
+// daemonFeishuHTTPSender implements this; NoopSender does not.
+type feishuImageDownloader interface {
+	downloadMessageImage(ctx context.Context, messageID, imageKey string) (string, error)
 }
 
 type daemonFeishuNoopSender struct{}
@@ -1068,6 +1075,57 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 			}
 		}()
 
+		// --- Image download: download images for image/post messages before submit ---
+		var imageAttachments []contracts.InboundAttachment
+		if imgDL, ok := sender.(feishuImageDownloader); ok {
+			msgType := strings.ToLower(strings.TrimSpace(req.Event.Message.MessageType))
+			switch msgType {
+			case "image":
+				var imgPayload struct {
+					ImageKey string `json:"image_key"`
+				}
+				if json.Unmarshal([]byte(req.Event.Message.Content), &imgPayload) == nil && imgPayload.ImageKey != "" {
+					dlCtx, dlCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					localPath, dlErr := imgDL.downloadMessageImage(dlCtx, msgID, imgPayload.ImageKey)
+					dlCancel()
+					if dlErr != nil {
+						logDaemonFeishuInfo(logger, "image download failed",
+							"msg_id", msgID,
+							"image_key", imgPayload.ImageKey,
+							"error", dlErr,
+						)
+						text = fmt.Sprintf("[图片消息，下载失败: %s]", imgPayload.ImageKey)
+					} else {
+						imageAttachments = append(imageAttachments, contracts.InboundAttachment{
+							Type: "image",
+							URL:  localPath,
+							Name: imgPayload.ImageKey,
+						})
+					}
+				}
+			case "post":
+				postImageKeys := extractPostImageKeys(req.Event.Message.Content)
+				for _, ik := range postImageKeys {
+					dlCtx, dlCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					localPath, dlErr := imgDL.downloadMessageImage(dlCtx, msgID, ik)
+					dlCancel()
+					if dlErr != nil {
+						logDaemonFeishuInfo(logger, "post image download failed",
+							"msg_id", msgID,
+							"image_key", ik,
+							"error", dlErr,
+						)
+					} else {
+						imageAttachments = append(imageAttachments, contracts.InboundAttachment{
+							Type: "image",
+							URL:  localPath,
+							Name: ik,
+						})
+					}
+				}
+			}
+		}
+
 		submitErr := gateway.Submit(reqCtx, channelsvc.GatewayInboundRequest{
 			ProjectName:    boundProject,
 			PeerProjectKey: chatID,
@@ -1080,6 +1138,7 @@ func newDaemonFeishuWebhookHandler(gateway *channelsvc.Gateway, resolver channel
 				SenderID:           senderID,
 				SenderName:         senderName,
 				Text:               text,
+				Attachments:        imageAttachments,
 				ReceivedAt:         time.Now().UTC().Format(time.RFC3339),
 			},
 			Callback: func(result channelsvc.ProcessResult, runErr error) {
@@ -2068,13 +2127,84 @@ func parseDaemonFeishuMessageText(messageType, content string) (string, bool) {
 		return content, true
 	case "post":
 		return content, true
+	case "image":
+		// image 消息返回占位文本，实际图片由 handler 层下载后作为 attachment 传入
+		var payload struct {
+			ImageKey string `json:"image_key"`
+		}
+		if json.Unmarshal([]byte(content), &payload) == nil && payload.ImageKey != "" {
+			return "[图片消息]", true
+		}
+		return "[图片消息]", true
 	default:
-		// 非文本消息类型（image/file/audio/media/sticker/share_chat/share_user 等）
+		// 非文本消息类型（file/audio/media/sticker/share_chat/share_user 等）
 		// 静默忽略，不触发"暂不支持此类消息"回复
 		return "", true
 	}
 }
 
+
+// extractPostImageKeys extracts all image_key values from tag=img nodes in post content.
+// Post content may be: {"zh_cn":{"content":[[...nodes...]]}} or {"title":"","content":[[...nodes...]]}.
+func extractPostImageKeys(content string) []string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(content), &raw); err != nil {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var keys []string
+
+	// Try direct "content" field first (flat structure)
+	if contentRaw, ok := raw["content"]; ok {
+		found := extractImageKeysFromPostContent(contentRaw, seen)
+		keys = append(keys, found...)
+	}
+
+	// Also try locale-based structure (e.g., "zh_cn", "en_us")
+	for k, v := range raw {
+		if k == "content" || k == "title" {
+			continue
+		}
+		var locale struct {
+			Content json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(v, &locale) == nil && len(locale.Content) > 0 {
+			found := extractImageKeysFromPostContent(locale.Content, seen)
+			keys = append(keys, found...)
+		}
+	}
+
+	return keys
+}
+
+// extractImageKeysFromPostContent parses [[...nodes...]] content array and collects img node image_keys.
+func extractImageKeysFromPostContent(contentRaw json.RawMessage, seen map[string]bool) []string {
+	var paragraphs [][]map[string]any
+	if err := json.Unmarshal(contentRaw, &paragraphs); err != nil {
+		return nil
+	}
+	var keys []string
+	for _, paragraph := range paragraphs {
+		for _, node := range paragraph {
+			tag, _ := node["tag"].(string)
+			if tag != "img" {
+				continue
+			}
+			imageKey, _ := node["image_key"].(string)
+			imageKey = strings.TrimSpace(imageKey)
+			if imageKey != "" && !seen[imageKey] {
+				seen[imageKey] = true
+				keys = append(keys, imageKey)
+			}
+		}
+	}
+	return keys
+}
 
 func BuildWebhookPath(secretPath string) string {
 	segment := NormalizeWebhookSecretPath(secretPath)
@@ -2699,6 +2829,113 @@ func (s *daemonFeishuHTTPSender) getTenantToken(ctx context.Context) (string, er
 	s.tokenUntil = until
 	s.mu.Unlock()
 	return token, nil
+}
+
+// downloadMessageImage downloads an image from a feishu message using Message Resource API.
+// It saves the image to /tmp/dalek-feishu-images/{messageID}/{imageKey}.jpg and returns the local path.
+func (s *daemonFeishuHTTPSender) downloadMessageImage(ctx context.Context, messageID, imageKey string) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("sender is nil")
+	}
+	messageID = strings.TrimSpace(messageID)
+	imageKey = strings.TrimSpace(imageKey)
+	if messageID == "" || imageKey == "" {
+		return "", fmt.Errorf("messageID or imageKey is empty")
+	}
+
+	dir := filepath.Join("/tmp", "dalek-feishu-images", messageID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create image dir: %w", err)
+	}
+
+	safeKey := imageKey
+	if len(safeKey) > 40 {
+		safeKey = safeKey[:40]
+	}
+	localPath := filepath.Join(dir, safeKey+".jpg")
+
+	dlCtx, dlCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer dlCancel()
+
+	u := strings.TrimRight(s.baseURL, "/") + "/open-apis/im/v1/messages/" + messageID + "/resources/" + imageKey + "?type=image"
+
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		token, tokenErr := s.getTenantToken(dlCtx)
+		if tokenErr != nil {
+			return "", fmt.Errorf("get token for image download: %w", tokenErr)
+		}
+
+		req, reqErr := http.NewRequestWithContext(dlCtx, http.MethodGet, u, nil)
+		if reqErr != nil {
+			return "", reqErr
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, doErr := s.client.Do(req)
+		if doErr != nil {
+			return "", fmt.Errorf("download image request: %w", doErr)
+		}
+
+		ct := resp.Header.Get("Content-Type")
+		raw, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("download image failed: http=%d body=%s", resp.StatusCode, string(raw))
+			if attempt == 1 && isDaemonFeishuInvalidTokenBody(raw) {
+				s.invalidateTenantToken()
+				s.logInfo("feishu token invalid, retry download image",
+					"message_id", messageID,
+					"image_key", imageKey,
+				)
+				continue
+			}
+			return "", lastErr
+		}
+
+		if readErr != nil {
+			return "", fmt.Errorf("download image read body: %w", readErr)
+		}
+
+		// If response Content-Type is application/json, it means an API error occurred
+		if strings.Contains(ct, "application/json") {
+			var apiResp struct {
+				Code int    `json:"code"`
+				Msg  string `json:"msg"`
+			}
+			lastErr = fmt.Errorf("download image got JSON response (API error): body=%s", string(raw))
+			if json.Unmarshal(raw, &apiResp) == nil && apiResp.Code == daemonFeishuInvalidTokenCode && attempt == 1 {
+				s.invalidateTenantToken()
+				s.logInfo("feishu token invalid (json body), retry download image",
+					"message_id", messageID,
+					"image_key", imageKey,
+				)
+				continue
+			}
+			return "", lastErr
+		}
+
+		if len(raw) == 0 {
+			return "", fmt.Errorf("download image: empty response body")
+		}
+
+		if err := os.WriteFile(localPath, raw, 0o644); err != nil {
+			return "", fmt.Errorf("write image file: %w", err)
+		}
+
+		s.logInfo("image downloaded",
+			"message_id", messageID,
+			"image_key", imageKey,
+			"local_path", localPath,
+			"size", len(raw),
+		)
+		return localPath, nil
+	}
+	if lastErr != nil {
+		return "", lastErr
+	}
+	return "", fmt.Errorf("download image failed: retry exhausted")
 }
 
 func (s *daemonFeishuHTTPSender) invalidateTenantToken() {

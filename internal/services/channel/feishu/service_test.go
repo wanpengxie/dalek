@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -933,14 +934,23 @@ func TestParseDaemonFeishuMessageText(t *testing.T) {
 			wantOK:      true,
 		},
 
-		// === 非文本类型（静默忽略）===
+		// === image 类型：返回占位文本 ===
 		{
-			name:        "image/silent ignore",
+			name:        "image/returns placeholder text",
 			messageType: "image",
-			content:     `{"image_key":"key1"}`,
-			wantText:    "",
+			content:     `{"image_key":"img_v2_key123"}`,
+			wantText:    "[图片消息]",
 			wantOK:      true,
 		},
+		{
+			name:        "image/empty content returns placeholder",
+			messageType: "image",
+			content:     `{}`,
+			wantText:    "[图片消息]",
+			wantOK:      true,
+		},
+
+		// === 非文本类型（静默忽略）===
 		{
 			name:        "file/silent ignore",
 			messageType: "file",
@@ -1002,5 +1012,244 @@ func TestParseDaemonFeishuMessageText(t *testing.T) {
 				t.Errorf("ok = %v, want %v", gotOK, tc.wantOK)
 			}
 		})
+	}
+}
+
+func TestExtractPostImageKeys(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name:    "empty content",
+			content: "",
+			want:    nil,
+		},
+		{
+			name:    "invalid json",
+			content: "not json",
+			want:    nil,
+		},
+		{
+			name:    "no img nodes",
+			content: `{"title":"","content":[[{"tag":"text","text":"hello"}]]}`,
+			want:    nil,
+		},
+		{
+			name:    "single img node (flat structure)",
+			content: `{"title":"","content":[[{"tag":"text","text":"hello"},{"tag":"img","image_key":"img_v2_abc123"}]]}`,
+			want:    []string{"img_v2_abc123"},
+		},
+		{
+			name:    "multiple img nodes in different paragraphs",
+			content: `{"title":"","content":[[{"tag":"img","image_key":"img_key_1"}],[{"tag":"text","text":"text"},{"tag":"img","image_key":"img_key_2"}]]}`,
+			want:    []string{"img_key_1", "img_key_2"},
+		},
+		{
+			name:    "duplicate image keys deduplicated",
+			content: `{"title":"","content":[[{"tag":"img","image_key":"img_dup"}],[{"tag":"img","image_key":"img_dup"}]]}`,
+			want:    []string{"img_dup"},
+		},
+		{
+			name:    "locale-based structure (zh_cn)",
+			content: `{"zh_cn":{"title":"","content":[[{"tag":"img","image_key":"img_locale_1"}]]}}`,
+			want:    []string{"img_locale_1"},
+		},
+		{
+			name:    "img node with empty image_key ignored",
+			content: `{"title":"","content":[[{"tag":"img","image_key":""},{"tag":"img","image_key":"img_valid"}]]}`,
+			want:    []string{"img_valid"},
+		},
+		{
+			name:    "mixed tags only img collected",
+			content: `{"title":"","content":[[{"tag":"text","text":"hi"},{"tag":"a","href":"http://x"},{"tag":"img","image_key":"img_mixed"}]]}`,
+			want:    []string{"img_mixed"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractPostImageKeys(tc.content)
+			if len(got) != len(tc.want) {
+				t.Fatalf("extractPostImageKeys() = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("extractPostImageKeys()[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestDownloadMessageImage_Success(t *testing.T) {
+	imageData := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A} // PNG magic bytes
+	tokenRequested := false
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "tenant_access_token") {
+			tokenRequested = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":                0,
+				"tenant_access_token": "test-token",
+				"expire":              7200,
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/resources/") {
+			auth := r.Header.Get("Authorization")
+			if auth != "Bearer test-token" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(imageData)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	sender := &daemonFeishuHTTPSender{
+		client:    ts.Client(),
+		baseURL:   ts.URL,
+		appID:     "test-app",
+		appSecret: "test-secret",
+	}
+
+	// Clean up test directory
+	testDir := filepath.Join("/tmp", "dalek-feishu-images", "msg_test_123")
+	defer os.RemoveAll(testDir)
+
+	localPath, err := sender.downloadMessageImage(context.Background(), "msg_test_123", "img_v2_key456")
+	if err != nil {
+		t.Fatalf("downloadMessageImage() error: %v", err)
+	}
+	if !tokenRequested {
+		t.Fatal("expected token to be requested")
+	}
+	if localPath == "" {
+		t.Fatal("expected non-empty local path")
+	}
+
+	// Verify file was written
+	data, readErr := os.ReadFile(localPath)
+	if readErr != nil {
+		t.Fatalf("failed to read downloaded file: %v", readErr)
+	}
+	if len(data) != len(imageData) {
+		t.Fatalf("image size mismatch: got %d, want %d", len(data), len(imageData))
+	}
+}
+
+func TestDownloadMessageImage_APIJsonError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "tenant_access_token") {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":                0,
+				"tenant_access_token": "test-token",
+				"expire":              7200,
+			})
+			return
+		}
+		// Return JSON error (simulates wrong API endpoint)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"code": 230002,
+			"msg":  "resource not found",
+		})
+	}))
+	defer ts.Close()
+
+	sender := &daemonFeishuHTTPSender{
+		client:    ts.Client(),
+		baseURL:   ts.URL,
+		appID:     "test-app",
+		appSecret: "test-secret",
+	}
+
+	_, err := sender.downloadMessageImage(context.Background(), "msg_err_test", "img_key_err")
+	if err == nil {
+		t.Fatal("expected error for JSON API response")
+	}
+	if !strings.Contains(err.Error(), "JSON response") {
+		t.Fatalf("error should mention JSON response, got: %v", err)
+	}
+}
+
+func TestDownloadMessageImage_TokenRefreshOnInvalid(t *testing.T) {
+	var tokenCalls int32
+	var resourceCalls int32
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "tenant_access_token") {
+			atomic.AddInt32(&tokenCalls, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code":                0,
+				"tenant_access_token": "new-token",
+				"expire":              7200,
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/resources/") {
+			call := atomic.AddInt32(&resourceCalls, 1)
+			if call == 1 {
+				// First call: return invalid token error
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"code": 99991663,
+					"msg":  "invalid token",
+				})
+				return
+			}
+			// Second call: success
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("fake-jpeg-data"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	sender := &daemonFeishuHTTPSender{
+		client:    ts.Client(),
+		baseURL:   ts.URL,
+		appID:     "test-app",
+		appSecret: "test-secret",
+	}
+
+	testDir := filepath.Join("/tmp", "dalek-feishu-images", "msg_retry_test")
+	defer os.RemoveAll(testDir)
+
+	localPath, err := sender.downloadMessageImage(context.Background(), "msg_retry_test", "img_retry_key")
+	if err != nil {
+		t.Fatalf("downloadMessageImage() error: %v", err)
+	}
+	if localPath == "" {
+		t.Fatal("expected non-empty local path")
+	}
+	if atomic.LoadInt32(&resourceCalls) < 2 {
+		t.Fatal("expected at least 2 resource calls (retry after token invalidation)")
+	}
+}
+
+func TestDownloadMessageImage_EmptyParams(t *testing.T) {
+	sender := &daemonFeishuHTTPSender{
+		client:  &http.Client{},
+		baseURL: "https://example.com",
+	}
+	_, err := sender.downloadMessageImage(context.Background(), "", "img_key")
+	if err == nil {
+		t.Fatal("expected error for empty messageID")
+	}
+	_, err = sender.downloadMessageImage(context.Background(), "msg_id", "")
+	if err == nil {
+		t.Fatal("expected error for empty imageKey")
 	}
 }
