@@ -76,24 +76,8 @@ func cmdFeishuAuth(args []string) {
 		)
 	}
 
-	homeDir, err := app.ResolveHomeDir(*home)
-	if err != nil {
-		exitRuntimeError(out, "解析 Home 目录失败", err.Error(), "通过 --home 指定有效目录，或设置 DALEK_HOME")
-	}
-	h, err := app.OpenHome(homeDir)
-	if err != nil {
-		exitRuntimeError(out, "打开 Home 失败", err.Error(), "检查 Home 目录权限与文件完整性")
-	}
-
-	clientCfg := resolveFeishuClientConfig(h.Config)
-	svc, err := feishudoc.New(clientCfg)
-	if err != nil {
-		exitRuntimeError(out,
-			"飞书凭据配置无效",
-			err.Error(),
-			fmt.Sprintf("检查 %s 的 daemon.public.feishu.app_id / app_secret", h.ConfigPath),
-		)
-	}
+	h := mustOpenFeishuHome(out, *home)
+	svc := mustBuildFeishuService(out, h)
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
@@ -130,4 +114,32 @@ func resolveFeishuClientConfig(cfg app.HomeConfig) feishudoc.Config {
 		AppSecret: strings.TrimSpace(normalized.Daemon.Public.Feishu.AppSecret),
 		BaseURL:   strings.TrimSpace(normalized.Daemon.Public.Feishu.BaseURL),
 	}
+}
+
+func mustOpenFeishuHome(out cliOutputFormat, homeFlag string) *app.Home {
+	homeDir, err := app.ResolveHomeDir(homeFlag)
+	if err != nil {
+		exitRuntimeError(out, "解析 Home 目录失败", err.Error(), "通过 --home 指定有效目录，或设置 DALEK_HOME")
+	}
+	h, err := app.OpenHome(homeDir)
+	if err != nil {
+		exitRuntimeError(out, "打开 Home 失败", err.Error(), "检查 Home 目录权限与文件完整性")
+	}
+	return h
+}
+
+func mustBuildFeishuService(out cliOutputFormat, h *app.Home) *feishudoc.Service {
+	if h == nil {
+		exitRuntimeError(out, "初始化 feishu 服务失败", "home 为空", "检查 Home 配置后重试")
+	}
+	clientCfg := resolveFeishuClientConfig(h.Config)
+	svc, err := feishudoc.New(clientCfg)
+	if err != nil {
+		exitRuntimeError(out,
+			"飞书凭据配置无效",
+			err.Error(),
+			fmt.Sprintf("检查 %s 的 daemon.public.feishu.app_id / app_secret", h.ConfigPath),
+		)
+	}
+	return svc
 }

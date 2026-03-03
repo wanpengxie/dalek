@@ -69,18 +69,11 @@ func (s *Service) Auth(ctx context.Context) (*AuthResult, error) {
 		return nil, fmt.Errorf("调用 tenant_access_token 接口失败: 响应为空")
 	}
 	if !resp.Success() {
-		msg := strings.TrimSpace(resp.Msg)
-		if msg == "" {
-			msg = "未知错误"
-		}
 		logID := ""
 		if resp.Err != nil {
 			logID = strings.TrimSpace(resp.Err.LogID)
 		}
-		if logID != "" {
-			return nil, fmt.Errorf("飞书认证失败(code=%d,msg=%s,log_id=%s)", resp.Code, msg, logID)
-		}
-		return nil, fmt.Errorf("飞书认证失败(code=%d,msg=%s)", resp.Code, msg)
+		return nil, newCodeError("飞书认证失败", resp.Code, resp.Msg, logID)
 	}
 	if strings.TrimSpace(resp.TenantAccessToken) == "" {
 		return nil, fmt.Errorf("飞书认证成功但 tenant_access_token 为空")
@@ -120,4 +113,41 @@ func normalizeBaseURL(raw string) string {
 		base = defaultOpenBaseURL
 	}
 	return base
+}
+
+func newCodeError(prefix string, code int, msg, logID string) error {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		prefix = "飞书接口调用失败"
+	}
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		msg = "未知错误"
+	}
+	logID = strings.TrimSpace(logID)
+	if logID != "" {
+		return fmt.Errorf("%s(code=%d,msg=%s,log_id=%s)", prefix, code, msg, logID)
+	}
+	return fmt.Errorf("%s(code=%d,msg=%s)", prefix, code, msg)
+}
+
+func stringValue(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return strings.TrimSpace(*v)
+}
+
+func intValue(v *int) int {
+	if v == nil {
+		return 0
+	}
+	return *v
+}
+
+func boolValue(v *bool) bool {
+	if v == nil {
+		return false
+	}
+	return *v
 }
