@@ -12,6 +12,7 @@ _pw_usage() {
 pw: shared playwright-cli wrapper
 
 Usage:
+  pw setup             First-time setup: install playwright-cli + generate config
   pw open [url]        Open browser once; when already running, create a new tab
   pw close [index]     Close current tab (or the specified tab index)
   pw stop              Stop browser session
@@ -32,6 +33,145 @@ _pw_require_cli() {
     echo "[pw] command not found: $PW_BIN" >&2
     exit 127
   fi
+}
+
+_pw_find_template() {
+  # skill dir inside project (git-tracked)
+  local project_skill="${PW_CALLER_CWD}/.claude/skills/playwright-cli/templates/cli.config.template.json"
+  if [[ -f "$project_skill" ]]; then
+    printf '%s\n' "$project_skill"
+    return 0
+  fi
+  # global skill dir
+  local global_skill="$PW_SKILL_DIR/templates/cli.config.template.json"
+  if [[ -f "$global_skill" ]]; then
+    printf '%s\n' "$global_skill"
+    return 0
+  fi
+  return 1
+}
+
+_pw_find_repo_root() {
+  local dir="$PW_CALLER_CWD"
+  while true; do
+    if [[ -d "$dir/.git" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    if [[ "$dir" == "/" ]]; then
+      break
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+_pw_setup() {
+  echo "[pw] === playwright-cli setup ==="
+  echo ""
+
+  # Step 1: install playwright-cli
+  if command -v "$PW_BIN" >/dev/null 2>&1; then
+    local ver=""
+    ver="$("$PW_BIN" --version 2>/dev/null || echo "unknown")"
+    echo "[pw] playwright-cli found: $ver"
+  else
+    echo "[pw] playwright-cli not found."
+    echo "[pw] install with:  npm install -g @playwright/cli@latest"
+    printf "[pw] install now? [y/N] "
+    read -r ans
+    if [[ "$ans" == "y" || "$ans" == "Y" ]]; then
+      npm install -g @playwright/cli@latest
+      echo "[pw] playwright-cli installed."
+    else
+      echo "[pw] skipped. install manually before using pw."
+    fi
+  fi
+  echo ""
+
+  # Step 2: install pw to PATH
+  local pw_script=""
+  pw_script="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  local pw_link="$HOME/.local/bin/pw"
+  mkdir -p "$HOME/.local/bin"
+  ln -sf "$pw_script" "$pw_link"
+  echo "[pw] linked: $pw_link -> $pw_script"
+  if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
+    echo "[pw] warning: ~/.local/bin is not in PATH. add to your shell profile:"
+    echo "[pw]   export PATH=\"\$HOME/.local/bin:\$PATH\""
+  fi
+  echo ""
+
+  # Step 3: generate ~/.playwright/ from templates
+  local config_dir="$HOME/.playwright"
+  local config_path="$config_dir/cli.config.json"
+
+  if [[ -f "$config_path" ]]; then
+    printf "[pw] config already exists: %s\n" "$config_path"
+    printf "[pw] overwrite? [y/N] "
+    read -r ans
+    if [[ "$ans" != "y" && "$ans" != "Y" ]]; then
+      echo "[pw] kept existing config."
+    else
+      _pw_render_config "$config_dir"
+    fi
+  else
+    _pw_render_config "$config_dir"
+  fi
+  echo ""
+
+  # Step 4: seed global skill cache + install to project
+  local repo_root=""
+  if repo_root="$(_pw_find_repo_root)"; then
+    local project_skill="$repo_root/.claude/skills/playwright-cli"
+    # seed global from project (if project has skill)
+    if [[ -d "$project_skill" ]]; then
+      mkdir -p "$PW_SKILL_DIR"
+      cp -R "$project_skill"/* "$PW_SKILL_DIR"/
+      echo "[pw] global skill cache seeded from project."
+    # install to project from global (if project missing)
+    elif [[ -d "$PW_SKILL_DIR" ]]; then
+      mkdir -p "$project_skill"
+      cp -R "$PW_SKILL_DIR"/* "$project_skill"/
+      echo "[pw] skill installed to $project_skill/"
+    else
+      echo "[pw] warning: no skill source found, skip skill install."
+    fi
+  fi
+  echo ""
+  echo "[pw] setup complete. run 'pw open' to start."
+}
+
+_pw_render_config() {
+  local config_dir="$1"
+
+  local template=""
+  if ! template="$(_pw_find_template)"; then
+    echo "[pw] error: config template not found." >&2
+    echo "[pw] expected at: .claude/skills/playwright-cli/templates/cli.config.template.json" >&2
+    return 1
+  fi
+  local template_dir=""
+  template_dir="$(dirname "$template")"
+
+  mkdir -p "$config_dir"
+
+  # Process all files in templates/
+  local f=""
+  while IFS= read -r -d '' f; do
+    local name=""
+    name="$(basename "$f")"
+    if [[ "$name" == *.template.json ]]; then
+      # Render template: replace __HOME__, strip .template suffix
+      local target_name="${name%.template.json}.json"
+      sed "s|__HOME__|$HOME|g" "$f" > "$config_dir/$target_name"
+      echo "[pw] rendered: $config_dir/$target_name"
+    else
+      # Copy companion files as-is
+      cp "$f" "$config_dir/$name"
+      echo "[pw] copied: $config_dir/$name"
+    fi
+  done < <(find "$template_dir" -mindepth 1 -maxdepth 1 -type f -print0)
 }
 
 _pw_find_config() {
@@ -66,26 +206,7 @@ _pw_find_config() {
 }
 
 _pw_init() {
-  mkdir -p "$PW_HOME/.playwright"
-  if [[ ! -f "$PW_HOME/.playwright/cli.config.json" ]]; then
-    local src_config=""
-    if src_config="$(_pw_find_config)"; then
-      local src_dir=""
-      src_dir="$(dirname "$src_config")"
-      cp "$src_config" "$PW_HOME/.playwright/cli.config.json"
-
-      # Copy top-level helper files (for example init scripts) but skip heavy dirs.
-      local f=""
-      while IFS= read -r -d '' f; do
-        local name=""
-        name="$(basename "$f")"
-        if [[ "$name" == "cli.config.json" ]]; then
-          continue
-        fi
-        cp "$f" "$PW_HOME/.playwright/$name"
-      done < <(find "$src_dir" -mindepth 1 -maxdepth 1 -type f -print0)
-    fi
-  fi
+  mkdir -p "$PW_HOME"
   _pw_find_skill
 }
 
@@ -102,9 +223,15 @@ _pw_find_skill() {
 }
 
 _pw_exec() {
+  local config=""
+  config="$(_pw_find_config)" || true
   (
     cd "$PW_HOME"
-    "$PW_BIN" "-s=$PW_SESSION" "$@"
+    if [[ -n "$config" ]]; then
+      "$PW_BIN" "-s=$PW_SESSION" "--config=$config" "$@"
+    else
+      "$PW_BIN" "-s=$PW_SESSION" "$@"
+    fi
   )
 }
 
@@ -123,6 +250,10 @@ shift
 case "$command" in
   help|-h|--help)
     _pw_usage
+    exit 0
+    ;;
+  setup)
+    _pw_setup
     exit 0
     ;;
   init-skill)

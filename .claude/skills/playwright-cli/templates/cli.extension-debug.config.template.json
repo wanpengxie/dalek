@@ -1,0 +1,16 @@
+{
+  "extension": true,
+  "browser": {
+    "browserName": "chromium",
+    "isolated": false,
+    "userDataDir": "__HOME__/.playwright/user-data",
+    "launchOptions": {
+      "channel": "chrome",
+      "headless": false
+    }
+  },
+  "outputMode": "file",
+  "snapshot": {
+    "mode": "full"
+  }
+}

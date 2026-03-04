@@ -1,0 +1,36 @@
+{
+  "browser": {
+    "browserName": "chromium",
+    "isolated": false,
+    "userDataDir": "__HOME__/.playwright/user-data-chromium",
+    "launchOptions": {
+      "channel": "chromium",
+      "headless": false,
+      "args": [
+        "--disable-blink-features=AutomationControlled",
+        "--lang=zh-CN,zh",
+        "--window-size=1366,900"
+      ]
+    },
+    "contextOptions": {
+      "viewport": {
+        "width": 1366,
+        "height": 900
+      },
+      "locale": "zh-CN",
+      "timezoneId": "Asia/Shanghai",
+      "colorScheme": "light"
+    },
+    "initScript": [
+      "__HOME__/.playwright/fingerprint.init.js"
+    ]
+  },
+  "outputDir": "/tmp/pw-snapshots",
+  "outputMode": "file",
+  "snapshot": {
+    "mode": "full"
+  },
+  "console": {
+    "level": "error"
+  }
+}
