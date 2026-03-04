@@ -2,9 +2,9 @@
 set -euo pipefail
 
 PW_BIN="${PW_BIN:-playwright-cli}"
-PW_HOME="${PW_HOME:-$HOME/.dalek/playwright}"
+PW_HOME="${PW_HOME:-$HOME/.dalek/tools/playwright}"
 PW_SESSION="${PW_SESSION:-shared}"
-PW_SKILL_DIR="${PW_SKILL_DIR:-$HOME/.dalek/playwright/skill}"
+PW_SKILL_DIR="${PW_SKILL_DIR:-$HOME/.dalek/tools/playwright/skill}"
 PW_CALLER_CWD="${PWD}"
 
 _pw_usage() {
@@ -21,9 +21,9 @@ Usage:
   pw <command> [...]   Forward any other command to playwright-cli
 
 Environment:
-  PW_HOME              Shared workspace path (default: ~/.dalek/playwright)
+  PW_HOME              Shared workspace path (default: ~/.dalek/tools/playwright)
   PW_SESSION           Shared session name (default: shared)
-  PW_SKILL_DIR         Skill source directory (default: ~/.dalek/playwright/skill)
+  PW_SKILL_DIR         Skill source directory (default: ~/.dalek/tools/playwright/skill)
   PW_BIN               playwright-cli binary (default: playwright-cli)
 EOF
 }

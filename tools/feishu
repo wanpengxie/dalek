@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+FEISHU_TOOL_HOME="${FEISHU_TOOL_HOME:-$HOME/.dalek/tools/feishu}"
+FEISHU_SKILL_DIR="${FEISHU_SKILL_DIR:-$FEISHU_TOOL_HOME/skill}"
+FEISHU_CALLER_CWD="${PWD}"
+
+_feishu_usage() {
+  cat <<'EOF'
+tools/feishu: feishu CLI setup helper
+
+Usage:
+  tools/feishu setup    First-time setup: build binary + seed skill cache
+
+Environment:
+  FEISHU_TOOL_HOME     Global tool directory (default: ~/.dalek/tools/feishu)
+  FEISHU_SKILL_DIR     Skill cache directory (default: ~/.dalek/tools/feishu/skill)
+EOF
+}
+
+_feishu_find_repo_root() {
+  local dir="$FEISHU_CALLER_CWD"
+  while true; do
+    if [[ -d "$dir/.git" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+    if [[ "$dir" == "/" ]]; then
+      break
+    fi
+    dir="$(dirname "$dir")"
+  done
+  return 1
+}
+
+_feishu_setup() {
+  echo "[feishu] === feishu CLI setup ==="
+  echo ""
+
+  local repo_root=""
+  if ! repo_root="$(_feishu_find_repo_root)"; then
+    echo "[feishu] error: not inside a git repository." >&2
+    exit 1
+  fi
+
+  # Step 1: build feishu binary
+  echo "[feishu] building feishu binary..."
+  local build_dir="$repo_root"
+  (cd "$build_dir" && go build -o bin/feishu ./cmd/feishu)
+  echo "[feishu] built: $build_dir/bin/feishu"
+
+  # Step 2: install to PATH
+  local feishu_bin="$HOME/.local/bin/feishu"
+  mkdir -p "$HOME/.local/bin"
+  cp "$build_dir/bin/feishu" "$feishu_bin"
+  chmod +x "$feishu_bin"
+  echo "[feishu] installed: $feishu_bin"
+  if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
+    echo "[feishu] warning: ~/.local/bin is not in PATH. add to your shell profile:"
+    echo "[feishu]   export PATH=\"\$HOME/.local/bin:\$PATH\""
+  fi
+  echo ""
+
+  # Step 3: seed skill cache (bidirectional)
+  local project_skill="$repo_root/.claude/skills/feishu"
+  # seed global from project (if project has skill)
+  if [[ -d "$project_skill" ]]; then
+    mkdir -p "$FEISHU_SKILL_DIR"
+    cp -R "$project_skill"/* "$FEISHU_SKILL_DIR"/
+    echo "[feishu] global skill cache seeded from project."
+  # install to project from global (if project missing)
+  elif [[ -d "$FEISHU_SKILL_DIR" ]]; then
+    mkdir -p "$project_skill"
+    cp -R "$FEISHU_SKILL_DIR"/* "$project_skill"/
+    echo "[feishu] skill installed to $project_skill/"
+  else
+    echo "[feishu] warning: no skill source found, skip skill sync."
+  fi
+  echo ""
+  echo "[feishu] setup complete. run 'feishu auth' to verify credentials."
+}
+
+if [[ $# -eq 0 ]]; then
+  _feishu_usage
+  exit 0
+fi
+
+command="$1"
+shift
+
+case "$command" in
+  help|-h|--help)
+    _feishu_usage
+    exit 0
+    ;;
+  setup)
+    _feishu_setup
+    exit 0
+    ;;
+  *)
+    echo "[feishu] unknown command: $command" >&2
+    echo "[feishu] this script only supports: setup" >&2
+    echo "[feishu] for runtime commands, use the feishu binary directly." >&2
+    exit 1
+    ;;
+esac

@@ -253,6 +253,32 @@ cheap sampler 每轮对每个 running worker 会做：
 
 - TUI `r` 现为“重新跑”，不再触发手动观测；watcher 由调度事件与后台采样按既有机制驱动。
 
+## 工具安装
+
+dalek 生态包含两个辅助工具，全局缓存统一在 `~/.dalek/tools/<tool>/`。
+
+### pw（浏览器自动化）
+
+```bash
+# 首次安装（安装 playwright-cli + 链接 pw 到 PATH + 渲染配置 + 种子 skill）
+./tools/pw setup
+
+# 新项目接入（从全局缓存复制 skill 到当前项目）
+pw init-skill
+```
+
+### feishu（飞书文档 CLI）
+
+```bash
+# 首次安装（编译二进制到 ~/.local/bin/feishu + 种子 skill）
+./tools/feishu setup
+
+# 新项目接入（从全局缓存复制 skill 到当前项目）
+feishu init-skill
+```
+
+详见 `.dalek/control/knowledge/tools-setup-guide.md`。
+
 ## 配置
 
 配置文件：`.dalek/config.json`
