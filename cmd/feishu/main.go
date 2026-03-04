@@ -58,12 +58,14 @@ func main() {
 		cmdWiki(rest[1:])
 	case "perm":
 		cmdPerm(rest[1:])
+	case "comment":
+		cmdComment(rest[1:])
 	case "help", "-h", "--help":
 		usage(0)
 	default:
 		exitUsageError(globalOutput,
 			fmt.Sprintf("未知命令: %s", rest[0]),
-			"仅支持 auth|doc|wiki|perm",
+			"仅支持 auth|doc|wiki|perm|comment",
 			"运行 feishu --help 查看可用命令",
 		)
 	}
@@ -81,6 +83,7 @@ func usage(code int) {
 	fmt.Fprintln(out, "  doc      文档操作（create/read/write/ls）")
 	fmt.Fprintln(out, "  wiki     知识空间操作（ls/nodes/create）")
 	fmt.Fprintln(out, "  perm     权限管理（share/add/ls）")
+	fmt.Fprintln(out, "  comment  评论管理（ls/get/create/reply/resolve）")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Global Flags:")
 	fmt.Fprintln(out, "  --home string          dalek Home 目录 (默认 ~/.dalek, env: DALEK_HOME)")

@@ -29,6 +29,8 @@ func cmdFeishu(args []string) {
 		cmdFeishuWiki(args[1:])
 	case "perm":
 		cmdFeishuPerm(args[1:])
+	case "comment":
+		cmdFeishuComment(args[1:])
 	case "help", "-h", "--help":
 		printFeishuUsage()
 		os.Exit(0)
@@ -47,6 +49,7 @@ func printFeishuUsage() {
 		"doc      文档操作（create/read/write/ls）",
 		"wiki     知识空间操作（ls/nodes/create）",
 		"perm     权限管理（share/add/ls）",
+		"comment  评论管理（ls/get/create/reply/resolve）",
 	})
 	fmt.Fprintln(os.Stderr, "Use \"dalek feishu <command> --help\" for more information.")
 }

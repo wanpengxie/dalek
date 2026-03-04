@@ -138,7 +138,7 @@ func usage(code int) {
 	fmt.Fprintln(out, "  version    打印当前 dalek binary 版本")
 	fmt.Fprintln(out, "  gateway    Channel Gateway（对话/通知/绑定）")
 	fmt.Fprintln(out, "  daemon     Daemon 进程管理（start/stop/status/logs）")
-	fmt.Fprintln(out, "  feishu     飞书文档协同（auth/doc/wiki/perm）")
+	fmt.Fprintln(out, "  feishu     飞书文档协同（auth/doc/wiki/perm/comment）")
 	fmt.Fprintln(out, "  init       初始化项目（注册当前 git repo）")
 	fmt.Fprintln(out, "  tui        启动交互式 TUI")
 	fmt.Fprintln(out)

@@ -6,7 +6,7 @@ allowed-tools: Bash(feishu), Bash(feishu *)
 
 # 飞书文档协同 (feishu)
 
-`feishu` 是独立的飞书文档 CLI，支持文档 CRUD、知识空间管理和权限控制。
+`feishu` 是独立的飞书文档 CLI，支持文档 CRUD、知识空间管理、权限控制和评论管理。
 
 所有命令通过 `--url` 接受飞书链接，自动解析文档 ID 和类型，用户无需手动提取 token。
 
@@ -33,6 +33,10 @@ cat report.md | feishu doc write --url https://feishu.cn/docx/xxxxxxxx -
 
 # 公开分享
 feishu perm share --url https://feishu.cn/docx/xxxxxxxx --link-share anyone_readable
+
+# 创建评论并回复
+feishu comment create --url https://feishu.cn/docx/xxxxxxxx --content "请补充验收标准"
+feishu comment reply --url https://feishu.cn/docx/xxxxxxxx --id <comment_id> --content "已补充"
 ```
 
 ## 文档操作 (doc)
@@ -69,6 +73,25 @@ feishu perm add --url <飞书链接> --member-type email --member-id user@exampl
 feishu perm ls --url <飞书链接>
 ```
 
+## 评论管理 (comment)
+
+```bash
+# 列出评论
+feishu comment ls --url <飞书链接>
+
+# 获取单条评论
+feishu comment get --url <飞书链接> --id <comment_id>
+
+# 创建评论
+feishu comment create --url <飞书链接> --content "请补充验收标准"
+
+# 回复评论
+feishu comment reply --url <飞书链接> --id <comment_id> --content "已补充"
+
+# 标记评论已解决
+feishu comment resolve --url <飞书链接> --id <comment_id>
+```
+
 ## 通用参数
 
 - `--url <飞书链接>` — 直接粘贴浏览器地址栏链接，自动解析
@@ -84,7 +107,7 @@ feishu doc create --title "Sprint Review" -o json
 feishu doc write --url <返回的链接> review.md
 feishu perm share --url <链接> --link-share anyone_editable
 
-# 读取现有文档 → 本地编辑 → 写回
+# 读取现有文档 → 本地编辑 → 追加写回
 feishu doc read --url <链接> draft.md
 # ... 编辑 draft.md ...
 feishu doc write --url <链接> draft.md
