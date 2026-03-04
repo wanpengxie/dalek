@@ -63,10 +63,14 @@ func PlanControlPlaneSeedUpdate(layout Layout, projectName string) ([]ControlPla
 	}
 	changes = append(changes, skillChanges...)
 
-	if missing, err := fileMissing(layout.ProjectAgentKernelPath); err != nil {
+	if differs, err := fileContentDiffers(layout.ProjectAgentKernelPath, defaultControlProjectAgentKernelTemplate(layout, projectName)); err != nil {
 		return nil, err
-	} else if missing {
-		changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentKernelPath, Action: "create"})
+	} else if differs {
+		action := "create"
+		if _, statErr := os.Stat(layout.ProjectAgentKernelPath); statErr == nil {
+			action = "update"
+		}
+		changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentKernelPath, Action: action})
 	}
 	if missing, err := fileMissing(layout.ProjectAgentUserPath); err != nil {
 		return nil, err
@@ -93,10 +97,20 @@ func UpdateControlPlaneSeed(layout Layout, projectName string) ([]ControlPlaneCh
 		return nil, err
 	}
 
-	if created, err := writeFileIfMissing(layout.ProjectAgentKernelPath, defaultControlProjectAgentKernelTemplate(layout, projectName), 0o644); err != nil {
-		return nil, err
-	} else if created {
-		changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentKernelPath, Action: "create"})
+	{
+		kernelExisted := true
+		if _, statErr := os.Stat(layout.ProjectAgentKernelPath); statErr != nil {
+			kernelExisted = false
+		}
+		if changed, err := writeFileForce(layout.ProjectAgentKernelPath, defaultControlProjectAgentKernelTemplate(layout, projectName), 0o644); err != nil {
+			return nil, err
+		} else if changed {
+			action := "create"
+			if kernelExisted {
+				action = "update"
+			}
+			changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentKernelPath, Action: action})
+		}
 	}
 	if created, err := writeFileIfMissing(layout.ProjectAgentUserPath, defaultControlProjectAgentUserTemplate(layout, projectName), 0o644); err != nil {
 		return nil, err
@@ -357,6 +371,17 @@ func fileMissing(path string) (bool, error) {
 		return true, nil
 	}
 	return false, err
+}
+
+func fileContentDiffers(path, expected string) (bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("读取文件失败(%s): %w", path, err)
+	}
+	return string(raw) != expected, nil
 }
 
 func readFileStringIfExists(path string) (string, bool, error) {

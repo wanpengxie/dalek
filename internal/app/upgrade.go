@@ -176,8 +176,8 @@ func (h *Home) UpgradeProject(ctx context.Context, opt UpgradeOptions) (UpgradeR
 	if err := repo.EnsureManagerBootstrap(layout, projectRef.Name); err != nil {
 		return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("更新 manager bootstrap 失败: %w", err)}
 	}
-	if err := repo.EnsureRepoAgentEntryPoints(projectRef.RepoRoot); err != nil {
-		return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("更新入口文件注入块失败: %w", err)}
+	if err := repo.OverwriteRepoAgentEntryPoints(projectRef.RepoRoot); err != nil {
+		return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("覆写入口文件失败: %w", err)}
 	}
 
 	recorded, err := repo.RecordProjectDalekVersion(
@@ -331,6 +331,9 @@ func collectBackupSources(layout repo.Layout, changes []UpgradeChange) []string 
 	}
 	appendIfExists(layout.DBPath)
 	appendIfExists(layout.ConfigPath)
+	appendIfExists(layout.ProjectAgentKernelPath)
+	appendIfExists(filepath.Join(layout.RepoRoot, "CLAUDE.md"))
+	appendIfExists(filepath.Join(layout.RepoRoot, "AGENTS.md"))
 	for _, change := range changes {
 		appendIfExists(change.Path)
 	}

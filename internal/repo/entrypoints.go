@@ -139,6 +139,70 @@ func stripInjectBlocks(doc string) string {
 	return strings.Join(out, "\n")
 }
 
+// OverwriteRepoAgentEntryPoints upgrade 专用：完整覆写 CLAUDE.md/AGENTS.md 为最新模板内容。
+// symlink 逻辑不变（缺失一个就创建 symlink）。
+func OverwriteRepoAgentEntryPoints(repoRoot string) error {
+	repoRoot = strings.TrimSpace(repoRoot)
+	if repoRoot == "" {
+		return fmt.Errorf("repo_root 为空")
+	}
+
+	claudePath := filepath.Join(repoRoot, "CLAUDE.md")
+	agentsPath := filepath.Join(repoRoot, "AGENTS.md")
+
+	block := defaultRepoEntrypointInjectBlock()
+	content := block + "\n\n" + agentKernelRefLine + "\n"
+
+	claudeExists, _, err := pathExists(claudePath)
+	if err != nil {
+		return err
+	}
+	agentsExists, _, err := pathExists(agentsPath)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case claudeExists && agentsExists:
+		if isSymlink(claudePath) {
+			return os.WriteFile(agentsPath, []byte(content), 0o644)
+		}
+		if isSymlink(agentsPath) {
+			return os.WriteFile(claudePath, []byte(content), 0o644)
+		}
+		if err := os.WriteFile(claudePath, []byte(content), 0o644); err != nil {
+			return err
+		}
+		return os.WriteFile(agentsPath, []byte(content), 0o644)
+
+	case claudeExists && !agentsExists:
+		if err := os.WriteFile(claudePath, []byte(content), 0o644); err != nil {
+			return err
+		}
+		return os.Symlink("CLAUDE.md", agentsPath)
+
+	case !claudeExists && agentsExists:
+		if err := os.WriteFile(agentsPath, []byte(content), 0o644); err != nil {
+			return err
+		}
+		return os.Symlink("AGENTS.md", claudePath)
+
+	default:
+		if err := os.WriteFile(agentsPath, []byte(content), 0o644); err != nil {
+			return err
+		}
+		return os.Symlink("AGENTS.md", claudePath)
+	}
+}
+
+func isSymlink(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeSymlink != 0
+}
+
 func EnsureRepoAgentEntryPointsVersioned(repoRoot string) error {
 	repoRoot = strings.TrimSpace(repoRoot)
 	if repoRoot == "" {
