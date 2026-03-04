@@ -92,12 +92,19 @@ _pw_setup() {
   # Step 2: install pw to PATH
   local pw_script=""
   pw_script="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-  local pw_link="$HOME/.local/bin/pw"
-  mkdir -p "$HOME/.local/bin"
-  ln -sf "$pw_script" "$pw_link"
-  echo "[pw] linked: $pw_link -> $pw_script"
-  if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
-    echo "[pw] warning: ~/.local/bin is not in PATH. add to your shell profile:"
+  local install_dir="$HOME/.local/bin"
+  local install_path="$install_dir/pw"
+  # skip if already running from the install location
+  if [[ "$pw_script" == "$install_path" ]]; then
+    echo "[pw] already installed at $install_path"
+  else
+    mkdir -p "$install_dir"
+    cp "$pw_script" "$install_path"
+    chmod +x "$install_path"
+    echo "[pw] installed: $install_path"
+  fi
+  if ! echo "$PATH" | tr ':' '\n' | grep -qx "$install_dir"; then
+    echo "[pw] warning: $install_dir is not in PATH. add to your shell profile:"
     echo "[pw]   export PATH=\"\$HOME/.local/bin:\$PATH\""
   fi
   echo ""
