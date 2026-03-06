@@ -30,7 +30,7 @@ func (s *Service) resolveAgentSettings(providerRaw, modelRaw string) (agentprovi
 		model = agentprovider.DefaultModel(agentprovider.ProviderCodex)
 	}
 	reasoning := strings.TrimSpace(strings.ToLower(baseExecCfg.ReasoningEffort))
-	if providerName == agentprovider.ProviderClaude {
+	if providerName == agentprovider.ProviderClaude || providerName == agentprovider.ProviderGemini {
 		reasoning = ""
 	}
 	resolvedExecCfg := baseExecCfg

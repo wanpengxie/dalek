@@ -29,7 +29,7 @@ func main() {
 	gh := gfs.String("home", "", "dalek Home 目录（默认 ~/.dalek，env: DALEK_HOME）")
 	gp := gfs.String("project", "", "项目名（可选，默认从当前目录推断）")
 	gfs.StringVar(gp, "p", "", "项目名（可选，默认从当前目录推断）")
-	gap := gfs.String("agent-provider", "", "全局覆盖 agent provider（codex|claude）")
+	gap := gfs.String("agent-provider", "", "全局覆盖 agent provider（codex|claude|gemini）")
 	gam := gfs.String("agent-model", "", "全局覆盖 agent model")
 	goOutput := gfs.String("output", string(outputText), "输出格式: text|json（默认 text）")
 	gfs.StringVar(goOutput, "o", string(outputText), "输出格式: text|json（默认 text）")
@@ -55,11 +55,11 @@ func main() {
 	globalAgentModel = strings.TrimSpace(*gam)
 	globalOutput = parseOutputOrExit(*goOutput, true)
 
-	if globalAgentProvider != "" && globalAgentProvider != "codex" && globalAgentProvider != "claude" {
+	if globalAgentProvider != "" && globalAgentProvider != "codex" && globalAgentProvider != "claude" && globalAgentProvider != "gemini" {
 		exitUsageError(globalOutput,
 			fmt.Sprintf("非法 --agent-provider: %s", globalAgentProvider),
-			"--agent-provider 仅支持 codex 或 claude",
-			"改为 --agent-provider codex 或 --agent-provider claude",
+			"--agent-provider 仅支持 codex、claude 或 gemini",
+			"改为 --agent-provider codex、--agent-provider claude 或 --agent-provider gemini",
 		)
 	}
 
@@ -146,7 +146,7 @@ func usage(code int) {
 	fmt.Fprintln(out, "  --home string               dalek Home 目录 (默认 ~/.dalek, env: DALEK_HOME)")
 	fmt.Fprintln(out, "  --project, -p string        项目名 (可选，默认从当前目录推断)")
 	fmt.Fprintln(out, "  --output, -o string         输出格式: text|json (默认 text；查询命令支持 json)")
-	fmt.Fprintln(out, "  --agent-provider string     全局覆盖 agent provider (codex|claude)")
+	fmt.Fprintln(out, "  --agent-provider string     全局覆盖 agent provider (codex|claude|gemini)")
 	fmt.Fprintln(out, "  --agent-model string        全局覆盖 agent model")
 	fmt.Fprintln(out, "  -h, --help                  显示帮助")
 	fmt.Fprintln(out)

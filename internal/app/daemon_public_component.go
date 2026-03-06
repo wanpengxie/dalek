@@ -29,11 +29,13 @@ type daemonPublicGatewayComponent struct {
 	queueDepth     int
 	webhookPath    string
 	feishuEnabled  bool
+	feishuDisabled string
 	verifyToken    string
 	adapter        string
 	sender         daemonFeishuMessageSender
 	tunnelProvider string
 	tunnelEnabled  bool
+	tunnelDisabled string
 	tunnelName     string
 	tunnelHost     string
 	tunnelBin      string
@@ -68,6 +70,13 @@ func newDaemonPublicGatewayComponent(home *Home, logger *slog.Logger, resolvers 
 	if strings.TrimSpace(webhookPath) == "" {
 		webhookPath = "/feishu/webhook"
 	}
+	feishuCfg, feishuDisabled := resolveDaemonPublicFeishuRuntimeConfig(feishuCfg)
+	ingressCfg, tunnelDisabled := resolveDaemonPublicIngressRuntimeConfig(
+		strings.TrimSpace(cfg.Daemon.Public.Listen),
+		webhookPath,
+		feishuCfg.Enabled,
+		ingressCfg,
+	)
 	return &daemonPublicGatewayComponent{
 		home:           home,
 		resolver:       resolver,
@@ -76,11 +85,13 @@ func newDaemonPublicGatewayComponent(home *Home, logger *slog.Logger, resolvers 
 		queueDepth:     cfg.Gateway.QueueDepth,
 		webhookPath:    webhookPath,
 		feishuEnabled:  feishuCfg.Enabled,
+		feishuDisabled: feishuDisabled,
 		verifyToken:    strings.TrimSpace(feishuCfg.VerificationToken),
 		adapter:        defaultDaemonFeishuAdapter,
 		sender:         newDaemonFeishuSender(feishuCfg, logger),
 		tunnelProvider: strings.TrimSpace(ingressCfg.Provider),
 		tunnelEnabled:  ingressCfg.Enabled,
+		tunnelDisabled: tunnelDisabled,
 		tunnelName:     strings.TrimSpace(ingressCfg.TunnelName),
 		tunnelHost:     strings.TrimSpace(ingressCfg.Hostname),
 		tunnelBin:      strings.TrimSpace(ingressCfg.CloudflaredBin),
@@ -102,6 +113,12 @@ func (c *daemonPublicGatewayComponent) Start(ctx context.Context) error {
 	}
 	if c.server != nil {
 		return fmt.Errorf("public gateway 已启动")
+	}
+	if reason := strings.TrimSpace(c.feishuDisabled); reason != "" {
+		c.logf("public feishu disabled; fallback to local-only gateway: %s", reason)
+	}
+	if reason := strings.TrimSpace(c.tunnelDisabled); reason != "" {
+		c.logf("public tunnel disabled; fallback to local-only gateway: %s", reason)
 	}
 
 	gatewayDBPath := strings.TrimSpace(c.home.GatewayDBPath)
@@ -204,6 +221,70 @@ func (c *daemonPublicGatewayComponent) Start(ctx context.Context) error {
 	}
 	c.logf("public gateway listening on %s webhook=%s", addr, webhookPath)
 	return nil
+}
+
+func resolveDaemonPublicFeishuRuntimeConfig(cfg HomeDaemonPublicFeishuConfig) (HomeDaemonPublicFeishuConfig, string) {
+	cfg = normalizeDaemonPublicFeishuRuntimeConfig(cfg)
+	if !cfg.Enabled {
+		return cfg, ""
+	}
+	missing := make([]string, 0, 3)
+	if strings.TrimSpace(cfg.AppID) == "" {
+		missing = append(missing, "app_id")
+	}
+	if strings.TrimSpace(cfg.AppSecret) == "" {
+		missing = append(missing, "app_secret")
+	}
+	if strings.TrimSpace(cfg.VerificationToken) == "" {
+		missing = append(missing, "verification_token")
+	}
+	if len(missing) == 0 {
+		return cfg, ""
+	}
+	cfg.Enabled = false
+	return cfg, fmt.Sprintf("daemon.public.feishu 缺少 %s", strings.Join(missing, "/"))
+}
+
+func resolveDaemonPublicIngressRuntimeConfig(listenAddr, webhookPath string, feishuEnabled bool, cfg HomeDaemonPublicIngressConfig) (HomeDaemonPublicIngressConfig, string) {
+	cfg = normalizeDaemonPublicIngressRuntimeConfig(cfg)
+	if !cfg.Enabled {
+		return cfg, ""
+	}
+	if !feishuEnabled {
+		cfg.Enabled = false
+		return cfg, "daemon.public.feishu 未启用"
+	}
+	if _, err := newDaemonPublicTunnelRuntimeConfig(
+		cfg.Provider,
+		true,
+		cfg.TunnelName,
+		cfg.Hostname,
+		cfg.CloudflaredBin,
+		listenAddr,
+		webhookPath,
+	); err != nil {
+		cfg.Enabled = false
+		return cfg, err.Error()
+	}
+	return cfg, ""
+}
+
+func normalizeDaemonPublicFeishuRuntimeConfig(cfg HomeDaemonPublicFeishuConfig) HomeDaemonPublicFeishuConfig {
+	cfg.AppID = strings.TrimSpace(cfg.AppID)
+	cfg.AppSecret = strings.TrimSpace(cfg.AppSecret)
+	cfg.VerificationToken = strings.TrimSpace(cfg.VerificationToken)
+	cfg.WebhookSecretPath = strings.TrimSpace(cfg.WebhookSecretPath)
+	cfg.WebhookPath = strings.TrimSpace(cfg.WebhookPath)
+	cfg.BaseURL = strings.TrimSpace(cfg.BaseURL)
+	return cfg
+}
+
+func normalizeDaemonPublicIngressRuntimeConfig(cfg HomeDaemonPublicIngressConfig) HomeDaemonPublicIngressConfig {
+	cfg.Provider = strings.TrimSpace(cfg.Provider)
+	cfg.TunnelName = strings.TrimSpace(cfg.TunnelName)
+	cfg.Hostname = strings.TrimSpace(cfg.Hostname)
+	cfg.CloudflaredBin = strings.TrimSpace(cfg.CloudflaredBin)
+	return cfg
 }
 
 func (c *daemonPublicGatewayComponent) Stop(ctx context.Context) error {

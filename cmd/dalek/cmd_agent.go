@@ -81,7 +81,7 @@ func cmdAgentRun(args []string) {
 		printSubcommandUsage(
 			fs,
 			"提交 subagent 运行",
-			"dalek agent run --prompt \"...\" [--provider codex|claude] [--model MODEL] [--sync] [--timeout 120m] [--output text|json]",
+			"dalek agent run --prompt \"...\" [--provider codex|claude|gemini] [--model MODEL] [--sync] [--timeout 120m] [--output text|json]",
 			"dalek agent run --prompt \"实现 ticket #58 的子任务\"",
 			"dalek agent run --prompt \"修复测试\" --provider claude --model sonnet",
 			"dalek agent run --prompt \"快速验证\" --sync --timeout 60m",
@@ -91,7 +91,7 @@ func cmdAgentRun(args []string) {
 	proj := fs.String("project", globalProject, "项目名（可选）")
 	projShort := fs.String("p", globalProject, "项目名（可选）")
 	prompt := fs.String("prompt", "", "任务提示词（必填）")
-	provider := fs.String("provider", "", "agent provider（可选，codex|claude）")
+	provider := fs.String("provider", "", "agent provider（可选，codex|claude|gemini）")
 	model := fs.String("model", "", "agent model（可选）")
 	requestID := fs.String("request-id", "", "幂等请求 ID（可选）")
 	syncMode := fs.Bool("sync", false, "同步执行（阻塞直到完成）")

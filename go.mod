@@ -15,6 +15,8 @@ require (
 
 require github.com/larksuite/oapi-sdk-go/v3 v3.5.3
 
+require github.com/wanpengxie/go-gemini-sdk v0.0.0-20260306174443-73ce0b6756eb // indirect
+
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

@@ -172,8 +172,8 @@ func normalizeAgentExecConfig(in AgentExecConfig) AgentExecConfig {
 		if out.ReasoningEffort == "" {
 			out.ReasoningEffort = provider.DefaultReasoningEffort(provider.ProviderCodex)
 		}
-	case provider.ProviderClaude:
-		// claude 不使用 reasoning_effort，避免跨 provider 残留。
+	case provider.ProviderClaude, provider.ProviderGemini:
+		// claude/gemini 不使用 reasoning_effort，避免跨 provider 残留。
 		out.ReasoningEffort = ""
 	}
 	if len(out.ExtraFlags) > 0 {

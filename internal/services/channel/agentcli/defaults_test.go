@@ -34,6 +34,22 @@ func TestResolveBackend_ConfigOverridesProviderAndModel(t *testing.T) {
 	}
 }
 
+func TestResolveBackend_GeminiUsesGeminiCommand(t *testing.T) {
+	got := ResolveBackend(ConfigOverride{
+		Provider: "gemini",
+		Model:    "gemini-2.5-pro",
+	})
+	if got.Provider != ProviderGemini {
+		t.Fatalf("provider mismatch: %s", got.Provider)
+	}
+	if got.Model != "gemini-2.5-pro" {
+		t.Fatalf("model mismatch: %s", got.Model)
+	}
+	if got.Backend.Command != "gemini" {
+		t.Fatalf("command mismatch: %s", got.Backend.Command)
+	}
+}
+
 func TestResolveBackend_EnvOverridesConfig(t *testing.T) {
 	t.Setenv("DALEK_GATEWAY_AGENT_PROVIDER", "codex")
 	t.Setenv("DALEK_GATEWAY_AGENT_MODEL", "gpt-5-env")

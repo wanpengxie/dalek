@@ -67,6 +67,7 @@ type ChatRunnerManager interface {
 }
 
 var createClaudeChatRunner = newClaudeChatRunner
+var createGeminiChatRunner = newGeminiChatRunner
 
 func newDefaultChatRunnerManager(taskRunner sdkrunner.TaskRunner) ChatRunnerManager {
 	return &defaultChatRunnerManager{
@@ -315,6 +316,8 @@ func (m *defaultChatRunnerManager) getOrCreateStatefulRunner(ctx context.Context
 	switch req.Provider {
 	case "claude":
 		runner, err = createClaudeChatRunner(ctx, req)
+	case "gemini":
+		runner, err = createGeminiChatRunner(ctx, req)
 	default:
 		runner = &sdkTaskBackedChatRunner{taskRunner: m.taskRunner}
 	}
@@ -351,7 +354,12 @@ func (m *defaultChatRunnerManager) evictStatefulRunner(key string, candidate Cha
 }
 
 func providerUsesStatefulChatRunner(provider string) bool {
-	return strings.ToLower(provider) == "claude"
+	switch strings.ToLower(provider) {
+	case "claude", "gemini":
+		return true
+	default:
+		return false
+	}
 }
 
 func shouldEvictStatefulRunner(err error) bool {

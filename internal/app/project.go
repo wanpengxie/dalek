@@ -181,7 +181,7 @@ func (p *Project) ApplyAgentProviderModel(provider, model string) error {
 	provider = agentprovider.NormalizeProvider(provider)
 	model = strings.TrimSpace(model)
 	if provider != "" && !agentprovider.IsSupportedProvider(provider) {
-		return fmt.Errorf("agent provider 仅支持 codex|claude: %s", provider)
+		return fmt.Errorf("agent provider 仅支持 codex|claude|gemini: %s", provider)
 	}
 	cfg := applyAgentProviderModel(p.core.Config, provider, model)
 	p.core.Config = cfg.WithDefaults()

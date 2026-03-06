@@ -8,6 +8,7 @@ import (
 const (
 	ProviderClaude = "claude"
 	ProviderCodex  = "codex"
+	ProviderGemini = "gemini"
 )
 
 func ResolveBackend(cfg ConfigOverride) ResolvedBackend {
@@ -20,6 +21,8 @@ func ResolveBackend(cfg ConfigOverride) ResolvedBackend {
 	switch provider {
 	case ProviderCodex:
 		backend = DefaultCodexBackend()
+	case ProviderGemini:
+		backend = DefaultGeminiBackend()
 	default:
 		backend = DefaultClaudeBackend()
 		provider = ProviderClaude
@@ -102,6 +105,20 @@ func DefaultCodexBackend() Backend {
 	})
 }
 
+func DefaultGeminiBackend() Backend {
+	return applyEnvOverrides(Backend{
+		Command: "gemini",
+
+		Output:       OutputJSON,
+		ResumeOutput: OutputJSON,
+		Input:        InputArg,
+
+		ModelArg:      "--model",
+		SessionMode:   SessionNone,
+		SessionFields: defaultSessionFields(),
+	})
+}
+
 func defaultSessionFields() []string {
 	return []string{
 		"session_id",
@@ -132,6 +149,8 @@ func normalizeProvider(raw string) string {
 		return ProviderClaude
 	case "codex", "codex-cli":
 		return ProviderCodex
+	case "gemini", "gemini-cli":
+		return ProviderGemini
 	default:
 		return ProviderClaude
 	}

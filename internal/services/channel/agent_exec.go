@@ -283,7 +283,7 @@ func sdkOutputMode(providerName string) agentcli.OutputMode {
 	switch strings.TrimSpace(strings.ToLower(providerName)) {
 	case agentcli.ProviderCodex:
 		return agentcli.OutputJSONL
-	case agentcli.ProviderClaude:
+	case agentcli.ProviderClaude, agentcli.ProviderGemini:
 		return agentcli.OutputJSON
 	default:
 		return agentcli.OutputText

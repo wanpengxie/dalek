@@ -5,6 +5,7 @@ import "strings"
 const (
 	ProviderCodex  = "codex"
 	ProviderClaude = "claude"
+	ProviderGemini = "gemini"
 )
 
 type Defaults struct {
@@ -20,11 +21,15 @@ var providerDefaults = map[string]Defaults{
 	ProviderClaude: {
 		Model: "opus",
 	},
+	ProviderGemini: {
+		Model: "gemini-2.5-pro",
+	},
 }
 
 var providerOrder = []string{
 	ProviderCodex,
 	ProviderClaude,
+	ProviderGemini,
 }
 
 func NormalizeProvider(raw string) string {

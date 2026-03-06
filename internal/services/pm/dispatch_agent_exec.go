@@ -80,6 +80,9 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 	if execMode == "" {
 		execMode = "sdk"
 	}
+	if execMode != "sdk" && agentCfg.Provider == provider.ProviderGemini {
+		return dispatchPromptBuildResult{}, fmt.Errorf("pm_agent.provider=gemini 仅支持 sdk mode")
+	}
 	var executor agentexec.Executor
 	if execMode == "sdk" {
 		executor = agentexec.NewSDKExecutor(agentexec.SDKConfig{
