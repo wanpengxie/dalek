@@ -309,11 +309,15 @@ Case 3: Worker 需要人介入
   subagent 运行状态   → dalek agent ls --ticket N / agent show --id N
   项目配置            → dalek config ls / config get <key>
   全局配置            → ~/.dalek/config.json（或 dalek config get <key> --global）
+  PM 计划工作区       → .dalek/pm/plan.md（历史归档在 .dalek/pm/archive/）
   daemon 状态         → dalek daemon status
   CLI 命令用法        → dalek <noun> <verb> --help
 
 Skills（操作 SOP，执行特定场景时加载）：
   首次 dispatch       → .dalek/control/skills/dispatch-new-ticket/
+  计划循环维护        → .dalek/control/skills/plan-cycle/
+  计划进展同步        → .dalek/control/skills/plan-sync/
+  特性交付编排        → .dalek/control/skills/feature-run/
 </capability_index>
 
 <bootstrap_instruction CRITICAL="ture">
@@ -321,6 +325,10 @@ Skills（操作 SOP，执行特定场景时加载）：
   读取用户态文档：当前项目状态位于 .dalek/agent-user.md。
   读取`user_init_state`，用于判定初始化状态
 </load_user_space>
+<load_pm_workspace MUST="true">
+  读取 PM 工作区计划：.dalek/pm/plan.md。
+  若存在历史版本，参考 .dalek/pm/archive/ 中最近一次归档进行增量规划。
+</load_pm_workspace>
 <init_verify MUST="true">
   echo "INIT_OK: {user_init_state值}"
   若不是 ready：先引导执行 .dalek/control/skills/project-init/ 完成初始化，再继续其他任务。  
