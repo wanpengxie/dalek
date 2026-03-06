@@ -12,7 +12,7 @@ type fakeRecordedConnectGeminiClient struct {
 	connectCtx   context.Context
 	connectCount int
 	turnCount    int
-	blocks       chan gemini.StreamBlock
+	messages     chan gemini.Message
 	errs         chan error
 }
 
@@ -22,30 +22,24 @@ func (f *fakeRecordedConnectGeminiClient) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (f *fakeRecordedConnectGeminiClient) Send(ctx context.Context, prompt string) error {
+func (f *fakeRecordedConnectGeminiClient) Query(ctx context.Context, prompt string) (geminiTurn, error) {
 	_ = ctx
 	f.turnCount++
-	f.blocks = make(chan gemini.StreamBlock, 2)
+	f.messages = make(chan gemini.Message, 2)
 	f.errs = make(chan error, 1)
-	f.blocks <- gemini.StreamBlock{
-		Kind:      gemini.BlockKindText,
-		RawType:   "agent_message_chunk",
+	f.messages <- &gemini.AssistantMessage{
 		SessionID: "gemini-sess-1",
-		Text:      "reply:" + prompt,
+		Content: []gemini.ContentBlock{
+			&gemini.TextBlock{Text: "reply:" + prompt},
+		},
 	}
-	f.blocks <- gemini.StreamBlock{
-		Kind:      gemini.BlockKindDone,
-		RawType:   "completed",
-		SessionID: "gemini-sess-1",
-		Done:      true,
+	f.messages <- &gemini.ResultMessage{
+		SessionID:  "gemini-sess-1",
+		StopReason: "completed",
 	}
-	close(f.blocks)
+	close(f.messages)
 	close(f.errs)
-	return nil
-}
-
-func (f *fakeRecordedConnectGeminiClient) ReceiveMessagesWithErrors() (<-chan gemini.StreamBlock, <-chan error) {
-	return f.blocks, f.errs
+	return fakeGeminiTurn{messages: f.messages, errs: f.errs}, nil
 }
 
 func (f *fakeRecordedConnectGeminiClient) Interrupt(ctx context.Context) error {
@@ -58,6 +52,15 @@ func (f *fakeRecordedConnectGeminiClient) Close() error { return nil }
 func (f *fakeRecordedConnectGeminiClient) SessionID() string { return "gemini-sess-1" }
 
 func (f *fakeRecordedConnectGeminiClient) Err() error { return nil }
+
+type fakeGeminiTurn struct {
+	messages <-chan gemini.Message
+	errs     <-chan error
+}
+
+func (f fakeGeminiTurn) Messages() <-chan gemini.Message { return f.messages }
+
+func (f fakeGeminiTurn) Errors() <-chan error { return f.errs }
 
 func TestGeminiChatRunner_ConnectUsesTurnContextAndReusesClient(t *testing.T) {
 	origFactory := createGeminiClient

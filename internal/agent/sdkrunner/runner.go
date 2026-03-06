@@ -500,78 +500,34 @@ func runGemini(ctx context.Context, req Request, onEvent EventHandler) (Result, 
 	}
 	opts = append(opts, gemini.WithCanUseTool(autoApproveGeminiTool))
 
-	client := gemini.NewClient(opts...)
-	if err := client.Connect(ctx); err != nil {
-		return out, err
-	}
-	defer func() {
-		_ = client.Close()
-	}()
-
-	if err := client.Send(ctx, req.Prompt); err != nil {
-		return out, err
-	}
-
-	blocks, errs := client.ReceiveMessagesWithErrors()
 	lines := make([]string, 0, 128)
-	var reply strings.Builder
-
-	finalize := func() Result {
-		out.Stdout = strings.Join(lines, "\n")
-		if out.SessionID == "" {
-			out.SessionID = strings.TrimSpace(client.SessionID())
+	texts := make([]string, 0, 16)
+	msgs, errs := gemini.Query(ctx, req.Prompt, opts...)
+	for msg := range msgs {
+		ev, sid, text := convertGeminiMessage(msg)
+		if sid != "" {
+			out.SessionID = sid
 		}
-		out.Text = strings.TrimSpace(reply.String())
-		if out.Text == "" {
-			out.Text = lastEventText(out.Events)
+		if text != "" {
+			texts = append(texts, text)
 		}
-		return out
-	}
-
-	for blocks != nil || errs != nil {
-		select {
-		case <-ctx.Done():
-			return finalize(), ctx.Err()
-		case err, ok := <-errs:
-			if !ok {
-				errs = nil
-				continue
-			}
-			if err != nil {
-				return finalize(), err
-			}
-		case block, ok := <-blocks:
-			if !ok {
-				blocks = nil
-				continue
-			}
-			item := convertGeminiStreamBlock(block)
-			if item.SessionID != "" {
-				out.SessionID = item.SessionID
-			}
-			out.Events = append(out.Events, item)
-			if item.RawJSON != "" {
-				lines = append(lines, item.RawJSON)
-			}
-			if isGeminiMessageBlock(block) && strings.TrimSpace(block.Text) != "" {
-				reply.WriteString(block.Text)
-			}
-			if onEvent != nil {
-				onEvent(item)
-			}
-			if block.Done || block.Kind == gemini.BlockKindDone {
-				if err := client.Err(); err != nil {
-					return finalize(), err
-				}
-				return finalize(), nil
-			}
+		out.Events = append(out.Events, ev)
+		if ev.RawJSON != "" {
+			lines = append(lines, ev.RawJSON)
+		}
+		if onEvent != nil {
+			onEvent(ev)
 		}
 	}
-
-	if err := client.Err(); err != nil {
-		return finalize(), err
+	out.Stdout = strings.Join(lines, "\n")
+	out.Text = lastNonEmpty(texts)
+	if out.Text == "" {
+		out.Text = lastEventText(out.Events)
 	}
-	return finalize(), nil
+	if err, ok := <-errs; ok && err != nil {
+		return out, err
+	}
+	return out, nil
 }
 
 func convertClaudeMessage(msg claude.Message) (Event, string, string) {
@@ -703,69 +659,117 @@ func extractCodexEventText(ev codexsdk.ThreadEvent) string {
 	return strings.TrimSpace(ev.Message)
 }
 
-func convertGeminiStreamBlock(block gemini.StreamBlock) Event {
-	eventType := strings.TrimSpace(block.RawType)
-	if eventType == "" {
-		eventType = geminiBlockEventType(block)
-	}
-	return Event{
-		Type:      eventType,
-		Text:      extractGeminiBlockText(block),
-		RawJSON:   mustJSON(block),
-		SessionID: strings.TrimSpace(block.SessionID),
+func convertGeminiMessage(msg gemini.Message) (Event, string, string) {
+	switch m := msg.(type) {
+	case *gemini.AssistantMessage:
+		eventType := geminiAssistantEventType(m)
+		eventText := extractGeminiAssistantEventText(m)
+		replyText := extractGeminiAssistantReplyText(m)
+		sid := strings.TrimSpace(m.SessionID)
+		return Event{
+			Type:      eventType,
+			Text:      eventText,
+			RawJSON:   mustJSON(m),
+			SessionID: sid,
+		}, sid, replyText
+	case *gemini.ResultMessage:
+		sid := strings.TrimSpace(m.SessionID)
+		eventType := "completed"
+		text := strings.TrimSpace(m.StopReason)
+		if strings.TrimSpace(m.Error) != "" {
+			text = strings.TrimSpace(m.Error)
+		}
+		if m.IsError {
+			eventType = "error"
+			if text == "" {
+				text = "gemini error"
+			}
+		} else if text == "" {
+			text = "completed"
+		}
+		return Event{
+			Type:      eventType,
+			Text:      text,
+			RawJSON:   mustJSON(m),
+			SessionID: sid,
+		}, sid, ""
+	default:
+		text := strings.TrimSpace(collectAnyText(msg))
+		return Event{
+			Type:    "message",
+			Text:    text,
+			RawJSON: mustJSON(msg),
+		}, "", text
 	}
 }
 
-func extractGeminiBlockText(block gemini.StreamBlock) string {
-	if s := strings.TrimSpace(block.Text); s != "" {
-		return s
+func geminiAssistantEventType(msg *gemini.AssistantMessage) string {
+	if msg == nil {
+		return "message"
 	}
-	if s := strings.TrimSpace(block.Error); s != "" {
-		return s
+	for _, block := range msg.Content {
+		switch block.(type) {
+		case *gemini.TextBlock:
+			return "message"
+		case *gemini.ThinkingBlock:
+			return "thinking"
+		case *gemini.ToolUseBlock:
+			return "tool_call"
+		case *gemini.ToolResultBlock:
+			return "tool_call_update"
+		}
 	}
-	if len(block.Data) > 0 {
-		var raw any
-		if err := json.Unmarshal(block.Data, &raw); err == nil {
-			if s := strings.TrimSpace(collectAnyText(raw)); s != "" {
-				return s
+	return "message"
+}
+
+func extractGeminiAssistantEventText(msg *gemini.AssistantMessage) string {
+	if msg == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(msg.Content))
+	for _, block := range msg.Content {
+		switch b := block.(type) {
+		case *gemini.TextBlock:
+			if s := strings.TrimSpace(b.Text); s != "" {
+				parts = append(parts, s)
+			}
+		case *gemini.ThinkingBlock:
+			if s := strings.TrimSpace(b.Thinking); s != "" {
+				parts = append(parts, s)
+			}
+		case *gemini.ToolUseBlock:
+			if s := strings.TrimSpace(b.Name); s != "" {
+				parts = append(parts, s)
+			}
+		case *gemini.ToolResultBlock:
+			if s := strings.TrimSpace(collectAnyText(b.Content)); s != "" {
+				parts = append(parts, s)
+			} else if s := strings.TrimSpace(b.Name); s != "" {
+				parts = append(parts, s)
+			}
+		default:
+			if s := strings.TrimSpace(collectAnyText(block)); s != "" {
+				parts = append(parts, s)
 			}
 		}
 	}
-	if s := strings.TrimSpace(block.ToolName); s != "" {
-		return s
-	}
-	if block.Done || block.Kind == gemini.BlockKindDone {
-		return "completed"
-	}
-	return geminiBlockEventType(block)
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
-func isGeminiMessageBlock(block gemini.StreamBlock) bool {
-	switch block.Kind {
-	case gemini.BlockKindText:
-		return true
-	default:
-		return false
+func extractGeminiAssistantReplyText(msg *gemini.AssistantMessage) string {
+	if msg == nil {
+		return ""
 	}
-}
-
-func geminiBlockEventType(block gemini.StreamBlock) string {
-	switch block.Kind {
-	case gemini.BlockKindText:
-		return "message"
-	case gemini.BlockKindThinking:
-		return "thinking"
-	case gemini.BlockKindToolCall:
-		return "tool_call"
-	case gemini.BlockKindToolResult:
-		return "tool_call_update"
-	case gemini.BlockKindDone:
-		return "completed"
-	case gemini.BlockKindError:
-		return "error"
-	default:
-		return "unknown"
+	parts := make([]string, 0, len(msg.Content))
+	for _, block := range msg.Content {
+		switch b := block.(type) {
+		case *gemini.TextBlock:
+			if s := strings.TrimSpace(b.Text); s != "" {
+				parts = append(parts, s)
+			}
+		}
 	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func parseCodexReasoningEffort(raw string) codexsdk.ModelReasoningEffort {

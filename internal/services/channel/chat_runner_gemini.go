@@ -15,16 +15,48 @@ import (
 
 type geminiClient interface {
 	Connect(ctx context.Context) error
-	Send(ctx context.Context, prompt string) error
-	ReceiveMessagesWithErrors() (<-chan gemini.StreamBlock, <-chan error)
+	Query(ctx context.Context, prompt string) (geminiTurn, error)
 	Interrupt(ctx context.Context) error
 	Close() error
 	SessionID() string
 	Err() error
 }
 
+type geminiTurn interface {
+	Messages() <-chan gemini.Message
+	Errors() <-chan error
+}
+
 var createGeminiClient = func(opts ...gemini.Option) geminiClient {
-	return gemini.NewClient(opts...)
+	return geminiClientAdapter{client: gemini.NewClient(opts...)}
+}
+
+type geminiClientAdapter struct {
+	client *gemini.Client
+}
+
+func (a geminiClientAdapter) Connect(ctx context.Context) error {
+	return a.client.Connect(ctx)
+}
+
+func (a geminiClientAdapter) Query(ctx context.Context, prompt string) (geminiTurn, error) {
+	return a.client.Query(ctx, prompt)
+}
+
+func (a geminiClientAdapter) Interrupt(ctx context.Context) error {
+	return a.client.Interrupt(ctx)
+}
+
+func (a geminiClientAdapter) Close() error {
+	return a.client.Close()
+}
+
+func (a geminiClientAdapter) SessionID() string {
+	return a.client.SessionID()
+}
+
+func (a geminiClientAdapter) Err() error {
+	return a.client.Err()
 }
 
 type geminiChatRunner struct {
@@ -99,15 +131,17 @@ func (r *geminiChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 	if err != nil {
 		return ChatRunResult{}, err
 	}
-	if err := client.Send(ctx, req.Prompt); err != nil {
+	turn, err := client.Query(ctx, req.Prompt)
+	if err != nil {
 		r.resetClientIfSame(client)
 		return ChatRunResult{}, err
 	}
 
-	blocksCh, errsCh := client.ReceiveMessagesWithErrors()
+	msgsCh, errsCh := turn.Messages(), turn.Errors()
 	lines := make([]string, 0, 128)
 	events := make([]agentcli.Event, 0, 64)
 	var reply strings.Builder
+	var resultErr error
 	out := ChatRunResult{
 		Command:    req.Command,
 		OutputMode: agentcli.OutputJSON,
@@ -129,7 +163,7 @@ func (r *geminiChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 		return out
 	}
 
-	for blocksCh != nil || errsCh != nil {
+	for msgsCh != nil || errsCh != nil {
 		select {
 		case <-ctx.Done():
 			return finalize(), ctx.Err()
@@ -142,12 +176,12 @@ func (r *geminiChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 				r.resetClientIfSame(client)
 				return finalize(), err
 			}
-		case block, ok := <-blocksCh:
+		case msg, ok := <-msgsCh:
 			if !ok {
-				blocksCh = nil
+				msgsCh = nil
 				continue
 			}
-			item := convertGeminiStreamBlockToAgentCLIEvent(block)
+			item, resultMessageErr := convertGeminiMessageToAgentCLIEvent(msg)
 			if item.SessionID != "" {
 				out.SessionID = item.SessionID
 			}
@@ -155,18 +189,14 @@ func (r *geminiChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 			if item.RawJSON != "" {
 				lines = append(lines, item.RawJSON)
 			}
-			if isGeminiChatMessageBlock(block) && strings.TrimSpace(block.Text) != "" {
-				reply.WriteString(block.Text)
+			if text := geminiChatReplyText(msg); text != "" {
+				reply.WriteString(text)
 			}
 			if onEvent != nil {
 				onEvent(item)
 			}
-			if block.Done || block.Kind == gemini.BlockKindDone {
-				if err := client.Err(); err != nil {
-					r.resetClientIfSame(client)
-					return finalize(), err
-				}
-				return finalize(), nil
+			if resultMessageErr != nil {
+				resultErr = resultMessageErr
 			}
 		}
 	}
@@ -174,6 +204,9 @@ func (r *geminiChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 	if err := client.Err(); err != nil {
 		r.resetClientIfSame(client)
 		return finalize(), err
+	}
+	if resultErr != nil {
+		return finalize(), resultErr
 	}
 	return finalize(), nil
 }
@@ -256,69 +289,126 @@ func (r *geminiChatRunner) resetClientLocked() error {
 	return err
 }
 
-func convertGeminiStreamBlockToAgentCLIEvent(block gemini.StreamBlock) agentcli.Event {
-	eventType := strings.TrimSpace(block.RawType)
-	if eventType == "" {
-		eventType = geminiChatBlockEventType(block)
-	}
-	return agentcli.Event{
-		Type:      eventType,
-		Text:      extractGeminiBlockTextForChat(block),
-		RawJSON:   mustJSONForChat(block),
-		SessionID: strings.TrimSpace(block.SessionID),
+func convertGeminiMessageToAgentCLIEvent(msg gemini.Message) (agentcli.Event, error) {
+	switch m := msg.(type) {
+	case *gemini.AssistantMessage:
+		return agentcli.Event{
+			Type:      geminiChatAssistantEventType(m),
+			Text:      extractGeminiAssistantTextForChat(m),
+			RawJSON:   mustJSONForChat(m),
+			SessionID: strings.TrimSpace(m.SessionID),
+		}, nil
+	case *gemini.ResultMessage:
+		text := extractGeminiResultTextForChat(m)
+		eventType := "completed"
+		if m.IsError {
+			eventType = "error"
+		}
+		var err error
+		if m.IsError {
+			err = fmt.Errorf("%s", text)
+		}
+		return agentcli.Event{
+			Type:      eventType,
+			Text:      text,
+			RawJSON:   mustJSONForChat(m),
+			SessionID: strings.TrimSpace(m.SessionID),
+		}, err
+	default:
+		text := strings.TrimSpace(collectAnyTextForChat(msg))
+		return agentcli.Event{
+			Type:    "message",
+			Text:    text,
+			RawJSON: mustJSONForChat(msg),
+		}, nil
 	}
 }
 
-func extractGeminiBlockTextForChat(block gemini.StreamBlock) string {
-	if s := strings.TrimSpace(block.Text); s != "" {
-		return s
+func extractGeminiAssistantTextForChat(msg *gemini.AssistantMessage) string {
+	if msg == nil {
+		return ""
 	}
-	if s := strings.TrimSpace(block.Error); s != "" {
-		return s
-	}
-	if len(block.Data) > 0 {
-		var raw any
-		if err := json.Unmarshal(block.Data, &raw); err == nil {
-			if s := strings.TrimSpace(collectAnyTextForChat(raw)); s != "" {
-				return s
+	parts := make([]string, 0, len(msg.Content))
+	for _, block := range msg.Content {
+		switch b := block.(type) {
+		case *gemini.TextBlock:
+			if s := strings.TrimSpace(b.Text); s != "" {
+				parts = append(parts, s)
+			}
+		case *gemini.ThinkingBlock:
+			if s := strings.TrimSpace(b.Thinking); s != "" {
+				parts = append(parts, s)
+			}
+		case *gemini.ToolUseBlock:
+			if s := strings.TrimSpace(b.Name); s != "" {
+				parts = append(parts, s)
+			}
+		case *gemini.ToolResultBlock:
+			if s := strings.TrimSpace(collectAnyTextForChat(b.Content)); s != "" {
+				parts = append(parts, s)
+			} else if s := strings.TrimSpace(b.Name); s != "" {
+				parts = append(parts, s)
+			}
+		default:
+			if s := strings.TrimSpace(collectAnyTextForChat(block)); s != "" {
+				parts = append(parts, s)
 			}
 		}
 	}
-	if s := strings.TrimSpace(block.ToolName); s != "" {
+	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+func geminiChatReplyText(msg gemini.Message) string {
+	assistant, ok := msg.(*gemini.AssistantMessage)
+	if !ok || assistant == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(assistant.Content))
+	for _, block := range assistant.Content {
+		textBlock, ok := block.(*gemini.TextBlock)
+		if !ok {
+			continue
+		}
+		if s := strings.TrimSpace(textBlock.Text); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+func geminiChatAssistantEventType(msg *gemini.AssistantMessage) string {
+	if msg == nil {
+		return "message"
+	}
+	for _, block := range msg.Content {
+		switch block.(type) {
+		case *gemini.TextBlock:
+			return "message"
+		case *gemini.ThinkingBlock:
+			return "thinking"
+		case *gemini.ToolUseBlock:
+			return "tool_call"
+		case *gemini.ToolResultBlock:
+			return "tool_call_update"
+		}
+	}
+	return "message"
+}
+
+func extractGeminiResultTextForChat(msg *gemini.ResultMessage) string {
+	if msg == nil {
+		return "completed"
+	}
+	if s := strings.TrimSpace(msg.Error); s != "" {
 		return s
 	}
-	if block.Done || block.Kind == gemini.BlockKindDone {
-		return "completed"
+	if s := strings.TrimSpace(msg.StopReason); s != "" {
+		return s
 	}
-	return geminiChatBlockEventType(block)
-}
-
-func isGeminiChatMessageBlock(block gemini.StreamBlock) bool {
-	switch block.Kind {
-	case gemini.BlockKindText:
-		return true
-	default:
-		return false
+	if msg.IsError {
+		return "gemini turn failed"
 	}
-}
-
-func geminiChatBlockEventType(block gemini.StreamBlock) string {
-	switch block.Kind {
-	case gemini.BlockKindText:
-		return "message"
-	case gemini.BlockKindThinking:
-		return "thinking"
-	case gemini.BlockKindToolCall:
-		return "tool_call"
-	case gemini.BlockKindToolResult:
-		return "tool_call_update"
-	case gemini.BlockKindDone:
-		return "completed"
-	case gemini.BlockKindError:
-		return "error"
-	default:
-		return "unknown"
-	}
+	return "completed"
 }
 
 func geminiChatEnvList(extra map[string]string) []string {
