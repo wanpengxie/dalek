@@ -11,6 +11,7 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/repo"
+	"dalek/internal/services/agentexec"
 )
 
 func TestDispatchTicket_SingleModeRunsPMAgent(t *testing.T) {
@@ -234,6 +235,18 @@ echo "ran" > "` + workerMarker + `"
 
 func TestDispatchTicket_DefaultAutoStartWhenNotStarted(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
+
+	svc.dispatchAgentExecutor = func(ctx context.Context, requestID string, ticket contracts.Ticket, worker contracts.Worker, entryPromptOverride string) (dispatchPromptBuildResult, error) {
+		return dispatchPromptBuildResult{
+			TemplatePath: "test://dispatch",
+			EntryPrompt:  "dispatch auto-start prompt",
+		}, nil
+	}
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, "dispatch_default_auto_start")
+		makeSemanticReport(t, svc, run.ID, "done")
+		return &fakeAgentRunHandle{runID: run.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+	}
 
 	tk := createTicket(t, p.DB, "dispatch-default-auto-start")
 	out, err := svc.DispatchTicket(context.Background(), tk.ID)

@@ -34,9 +34,10 @@ type WorkerLoopResult struct {
 //  1. 启动 worker SDK handle（launchWorkerSDKHandle）
 //  2. handle.Wait() 等待 agent 完成
 //  3. 读取本轮 run 在 DB 中的 next_action
-//  4. 如果 next_action == "continue"，用"继续执行任务"作为 prompt 重新启动
-//  5. 否则（wait_user/done/空）退出循环
-//  6. 退出时标记 worker 为 stopped
+//  4. 如果 next_action 为空，补报重试 1 次
+//  5. 如果 next_action == "continue"，用"继续执行任务"作为 prompt 重新启动
+//  6. 否则（wait_user/done）退出循环；连续两轮空 report 视为异常退出
+//  7. 退出时标记 worker 为 stopped；连续两轮空 report 标记为 failed
 //
 // 无超时限制：agent 可能运行数小时。内部使用 cancel-only context：
 // 只透传主动 cancel，不继承调用方 deadline。
@@ -51,6 +52,7 @@ func (s *Service) executeWorkerLoop(ctx context.Context, t contracts.Ticket, w c
 
 	result := WorkerLoopResult{}
 	prompt := strings.TrimSpace(entryPrompt)
+	emptyReportRetried := false
 
 	// 推断 injected_cmd 标识
 	p, _, _ := s.require()
@@ -99,12 +101,42 @@ func (s *Service) executeWorkerLoop(ctx context.Context, t contracts.Ticket, w c
 			}, time.Now())
 
 		// 4) 判断是否继续
-		if strings.TrimSpace(strings.ToLower(nextAction)) != string(contracts.NextContinue) {
+		normalizedAction := strings.TrimSpace(strings.ToLower(nextAction))
+		if normalizedAction == "" {
+			if !emptyReportRetried {
+				emptyReportRetried = true
+				_ = s.worker.AppendWorkerTaskEvent(loopCtx, w.ID, "worker_loop_empty_next_action_retry",
+					fmt.Sprintf("stage=%d run_id=%d 缺少 next_action，触发补报重试", result.Stages, handle.RunID()),
+					map[string]any{
+						"stage":  result.Stages,
+						"run_id": handle.RunID(),
+					}, time.Now())
+				prompt = emptyReportRetryPrompt
+				continue
+			}
+			break
+		}
+		if normalizedAction != string(contracts.NextContinue) {
 			break
 		}
 
 		// 5) 用默认 prompt 继续下一轮
 		prompt = defaultContinuePrompt
+	}
+
+	if strings.TrimSpace(result.LastNextAction) == "" {
+		missingErr := &workerLoopMissingReportError{
+			Stages:    result.Stages,
+			LastRunID: result.LastRunID,
+		}
+		_ = s.worker.AppendWorkerTaskEvent(loopCtx, w.ID, "worker_loop_empty_next_action_exhausted",
+			missingErr.Error(),
+			map[string]any{
+				"stages":      result.Stages,
+				"last_run_id": result.LastRunID,
+			}, time.Now())
+		s.markWorkerLoopExit(loopCtx, w, missingErr.Error())
+		return result, missingErr
 	}
 
 	// 6) 退出时标记 worker 为 stopped

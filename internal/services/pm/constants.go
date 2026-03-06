@@ -24,7 +24,8 @@ const (
 )
 
 const (
-	defaultContinuePrompt = "继续执行任务"
+	defaultContinuePrompt  = "继续执行任务"
+	emptyReportRetryPrompt = "上一轮执行已结束，但没有提交 worker report。请先检查当前代码、测试和 worktree 状态，并在本轮结束前必须执行 dalek worker report --next <continue|done|wait_user> --summary \"...\" 完成收口；如果需要人工介入，请使用 wait_user 并明确 blockers。"
 )
 
 const (
