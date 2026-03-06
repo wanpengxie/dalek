@@ -127,7 +127,7 @@ func (c HomeConfig) WithDefaults() HomeConfig {
 	}
 	out.Agent.Provider = strings.TrimSpace(strings.ToLower(out.Agent.Provider))
 	switch out.Agent.Provider {
-	case "", agentprovider.ProviderCodex, agentprovider.ProviderClaude:
+	case "", agentprovider.ProviderCodex, agentprovider.ProviderClaude, agentprovider.ProviderGemini:
 	default:
 		out.Agent.Provider = ""
 	}
@@ -320,7 +320,7 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 	case ConfigKeyAgentProvider:
 		provider := agentprovider.NormalizeProvider(rawValue)
 		if !agentprovider.IsSupportedProvider(provider) {
-			return "", fmt.Errorf("agent.provider 仅支持 codex 或 claude")
+			return "", fmt.Errorf("agent.provider 仅支持 codex、claude 或 gemini")
 		}
 		switch scope {
 		case ScopeGlobal:
@@ -459,17 +459,17 @@ func applyAgentProviderModelOverride(cfg *repo.Config, providerRaw, model string
 			if prevPMProvider != providerName {
 				cfg.PMAgent.Model = ""
 			}
-			if providerName == agentprovider.ProviderCodex {
-				defaultCodexModel := agentprovider.DefaultModel(agentprovider.ProviderCodex)
+			defaultModel := agentprovider.DefaultModel(providerName)
+			if providerName == agentprovider.ProviderCodex && defaultModel != "" {
 				if strings.TrimSpace(cfg.WorkerAgent.Model) == "" {
-					cfg.WorkerAgent.Model = defaultCodexModel
+					cfg.WorkerAgent.Model = defaultModel
 				}
 				if strings.TrimSpace(cfg.PMAgent.Model) == "" {
-					cfg.PMAgent.Model = defaultCodexModel
+					cfg.PMAgent.Model = defaultModel
 				}
 			}
 		}
-		if providerName == agentprovider.ProviderClaude {
+		if providerName == agentprovider.ProviderClaude || providerName == agentprovider.ProviderGemini {
 			cfg.WorkerAgent.ReasoningEffort = ""
 			cfg.PMAgent.ReasoningEffort = ""
 		}

@@ -33,6 +33,21 @@ func TestNewFromConfig_ClaudeWithCommandOverride(t *testing.T) {
 	}
 }
 
+func TestNewFromConfig_GeminiWithCommandOverride(t *testing.T) {
+	p, err := NewFromConfig(AgentConfig{
+		Provider: "gemini",
+		Command:  "/tmp/fake-gemini",
+		Model:    "gemini-2.5-pro",
+	})
+	if err != nil {
+		t.Fatalf("NewFromConfig(gemini) failed: %v", err)
+	}
+	bin, _ := p.BuildCommand("hello")
+	if bin != "/tmp/fake-gemini" {
+		t.Fatalf("unexpected gemini bin: %q", bin)
+	}
+}
+
 func TestNewFromConfig_RejectsShellProvider(t *testing.T) {
 	if _, err := NewFromConfig(AgentConfig{
 		Provider: "shell",
@@ -55,15 +70,21 @@ func TestProviderDefaults(t *testing.T) {
 	if got := DefaultReasoningEffort(ProviderClaude); got != "" {
 		t.Fatalf("unexpected claude default reasoning_effort: %q", got)
 	}
+	if got := DefaultModel(ProviderGemini); got != "gemini-2.5-pro" {
+		t.Fatalf("unexpected gemini default model: %q", got)
+	}
+	if got := DefaultReasoningEffort(ProviderGemini); got != "" {
+		t.Fatalf("unexpected gemini default reasoning_effort: %q", got)
+	}
 }
 
 func TestSupportedProviders(t *testing.T) {
 	got := SupportedProviders()
-	if len(got) != 2 || got[0] != ProviderCodex || got[1] != ProviderClaude {
+	if len(got) != 3 || got[0] != ProviderCodex || got[1] != ProviderClaude || got[2] != ProviderGemini {
 		t.Fatalf("unexpected supported providers: %#v", got)
 	}
-	if !IsSupportedProvider(" codex ") || !IsSupportedProvider("CLAUDE") {
-		t.Fatalf("expected codex/claude supported")
+	if !IsSupportedProvider(" codex ") || !IsSupportedProvider("CLAUDE") || !IsSupportedProvider("Gemini") {
+		t.Fatalf("expected codex/claude/gemini supported")
 	}
 	if IsSupportedProvider("shell") {
 		t.Fatalf("shell should not be supported")

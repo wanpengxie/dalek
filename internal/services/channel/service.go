@@ -957,6 +957,9 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound contracts.Chann
 	if mode == "" {
 		mode = "sdk"
 	}
+	if mode != "sdk" && resolved.Provider == agentcli.ProviderGemini {
+		return pmAgentTurnResponse{}, fmt.Errorf("gateway agent provider=gemini 仅支持 sdk mode")
+	}
 	var runResult agentcli.Result
 	if mode == "sdk" {
 		approvalHandler := s.buildSDKToolApprovalHandler(ctx, conv.ID, job.ID)

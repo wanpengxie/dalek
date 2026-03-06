@@ -254,6 +254,13 @@ func TestForProviderCodex(t *testing.T) {
 	}
 }
 
+func TestForProviderGemini(t *testing.T) {
+	r := ForProvider("gemini")
+	if _, ok := r.(geminiRenderer); !ok {
+		t.Errorf("expected geminiRenderer, got %T", r)
+	}
+}
+
 func TestForProviderUnknown(t *testing.T) {
 	r := ForProvider("unknown")
 	if _, ok := r.(fallbackRenderer); !ok {
@@ -290,7 +297,7 @@ func TestTruncate(t *testing.T) {
 }
 
 func TestEmptyRawJSONNoPanic(t *testing.T) {
-	for _, provider := range []string{"claude", "codex", "unknown"} {
+	for _, provider := range []string{"claude", "codex", "gemini", "unknown"} {
 		r := ForProvider(provider)
 		// Should not panic
 		_ = r.Render(1, "item.completed", "", "")
@@ -300,7 +307,7 @@ func TestEmptyRawJSONNoPanic(t *testing.T) {
 }
 
 func TestInvalidJSONNoPanic(t *testing.T) {
-	for _, provider := range []string{"claude", "codex", "unknown"} {
+	for _, provider := range []string{"claude", "codex", "gemini", "unknown"} {
 		r := ForProvider(provider)
 		// Should not panic
 		_ = r.Render(1, "item.completed", "{invalid json!!!", "fallback text")
@@ -344,6 +351,36 @@ func TestClaudeToolUseBlockWrite(t *testing.T) {
 	}
 	if steps[0].Summary != "write: /tmp/test.go" {
 		t.Errorf("unexpected summary: %s", steps[0].Summary)
+	}
+}
+
+func TestGeminiMessageChunkRender(t *testing.T) {
+	r := ForProvider("gemini")
+	raw := `{"type":"message_chunk","raw_type":"agent_message_chunk","text":"hello"}`
+	steps := r.Render(1, "agent_message_chunk", raw, "hello")
+	if len(steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(steps))
+	}
+	if steps[0].StepType != StepMessage {
+		t.Fatalf("unexpected step type: %s", steps[0].StepType)
+	}
+	if steps[0].Detail != "hello" {
+		t.Fatalf("unexpected detail: %q", steps[0].Detail)
+	}
+}
+
+func TestGeminiToolCallRender(t *testing.T) {
+	r := ForProvider("gemini")
+	raw := `{"type":"tool_call","tool_name":"bash","data":{"command":"go test ./..."}}`
+	steps := r.Render(1, "tool_call", raw, "")
+	if len(steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(steps))
+	}
+	if steps[0].StepType != StepToolCall {
+		t.Fatalf("unexpected step type: %s", steps[0].StepType)
+	}
+	if steps[0].Summary != "$ go test ./..." {
+		t.Fatalf("unexpected summary: %q", steps[0].Summary)
 	}
 }
 

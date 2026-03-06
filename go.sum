@@ -59,6 +59,8 @@ github.com/wanpengxie/go-claude-agent-sdk v0.0.0-20260221184206-fd82e55ba70b h1:
 github.com/wanpengxie/go-claude-agent-sdk v0.0.0-20260221184206-fd82e55ba70b/go.mod h1:YUWZYGbLe3TPioTt+N1ZuS9DwTQmtDqZFfKYIf8VMo0=
 github.com/wanpengxie/go-codex-sdk v0.0.0-20260220092417-38ea33ca8343 h1:R2lLTkoQFNpHKquGz5eYSEi5v1zd621iNERcLIHw1E4=
 github.com/wanpengxie/go-codex-sdk v0.0.0-20260220092417-38ea33ca8343/go.mod h1:w19ayv32PiNs9uueP3pkiDKWWNy5zyNCyZSmSZvRS4I=
+github.com/wanpengxie/go-gemini-sdk v0.0.0-20260306053247-aceb3e8f7163 h1:Mx7Ie2w+cTN3LcDQ5xlhYF3T//QbXmq78hvODBD9CWE=
+github.com/wanpengxie/go-gemini-sdk v0.0.0-20260306053247-aceb3e8f7163/go.mod h1:TSwvkn7su08lcB7Yb2G8SPyf9qdREcG3nR/DyjCaKYc=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e h1:JVG44RsyaB9T2KIHavMF/ppJZNG9ZpyihvCd0w101no=
 github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e/go.mod h1:RbqR21r5mrJuqunuUZ/Dhy/avygyECGrLceyNeo4LiM=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

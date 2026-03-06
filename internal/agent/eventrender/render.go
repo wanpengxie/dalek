@@ -42,6 +42,8 @@ func ForProvider(providerName string) Renderer {
 		return claudeRenderer{}
 	case provider.ProviderCodex:
 		return codexRenderer{}
+	case provider.ProviderGemini:
+		return geminiRenderer{}
 	default:
 		return fallbackRenderer{}
 	}

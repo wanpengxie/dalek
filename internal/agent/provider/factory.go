@@ -23,6 +23,13 @@ var providerConstructors = map[string]constructor{
 			ExtraFlags: append([]string(nil), cfg.ExtraFlags...),
 		}
 	},
+	ProviderGemini: func(cfg AgentConfig) Provider {
+		return GeminiProvider{
+			Command:    cfg.Command,
+			Model:      cfg.Model,
+			ExtraFlags: append([]string(nil), cfg.ExtraFlags...),
+		}
+	},
 }
 
 func NewFromConfig(cfg AgentConfig) (Provider, error) {

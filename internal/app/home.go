@@ -473,17 +473,17 @@ func applyAgentProviderModel(cfg repo.Config, providerRaw, model string) repo.Co
 			if prevPMProvider != providerName {
 				cfg.PMAgent.Model = ""
 			}
-			if providerName == provider.ProviderCodex {
-				defaultCodexModel := provider.DefaultModel(provider.ProviderCodex)
+			defaultModel := provider.DefaultModel(providerName)
+			if providerName == provider.ProviderCodex && defaultModel != "" {
 				if strings.TrimSpace(cfg.WorkerAgent.Model) == "" {
-					cfg.WorkerAgent.Model = defaultCodexModel
+					cfg.WorkerAgent.Model = defaultModel
 				}
 				if strings.TrimSpace(cfg.PMAgent.Model) == "" {
-					cfg.PMAgent.Model = defaultCodexModel
+					cfg.PMAgent.Model = defaultModel
 				}
 			}
 		}
-		if providerName == provider.ProviderClaude {
+		if providerName == provider.ProviderClaude || providerName == provider.ProviderGemini {
 			cfg.WorkerAgent.ReasoningEffort = ""
 			cfg.PMAgent.ReasoningEffort = ""
 		}

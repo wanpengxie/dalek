@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 
 	claude "github.com/wanpengxie/go-claude-agent-sdk"
 	codexsdk "github.com/wanpengxie/go-codex-sdk"
+	gemini "github.com/wanpengxie/go-gemini-sdk"
 )
 
 const (
@@ -307,6 +309,9 @@ func Run(ctx context.Context, req Request, onEvent EventHandler) (out Result, ru
 	case "claude":
 		out, runErr = runClaude(ctx, req, onEvent)
 		return out, runErr
+	case "gemini":
+		out, runErr = runGemini(ctx, req, onEvent)
+		return out, runErr
 	default:
 		runErr = fmt.Errorf("unknown sdk provider: %s", req.Provider)
 		return Result{}, runErr
@@ -432,6 +437,7 @@ func runClaude(ctx context.Context, req Request, onEvent EventHandler) (Result, 
 	}
 	opts = append(opts, claude.WithIncludePartialMessages())
 	opts = append(opts, claude.WithSettingSources(claude.SettingSourceProject))
+	opts = append(opts, claude.WithCanUseTool(autoApproveClaudeTool))
 
 	msgs, errs := claude.Query(ctx, req.Prompt, opts...)
 	lines := make([]string, 0, 128)
@@ -461,6 +467,111 @@ func runClaude(ctx context.Context, req Request, onEvent EventHandler) (Result, 
 		return out, err
 	}
 	return out, nil
+}
+
+func autoApproveClaudeTool(ctx context.Context, toolName string, input map[string]any, permCtx claude.ToolPermissionContext) (claude.PermissionResult, error) {
+	_ = ctx
+	_ = toolName
+	_ = input
+	_ = permCtx
+	return &claude.PermissionResultAllow{}, nil
+}
+
+func runGemini(ctx context.Context, req Request, onEvent EventHandler) (Result, error) {
+	out := Result{
+		Provider:   "gemini",
+		OutputMode: OutputModeJSON,
+	}
+	opts := make([]gemini.Option, 0, 8)
+	if strings.TrimSpace(req.Model) != "" {
+		opts = append(opts, gemini.WithModel(strings.TrimSpace(req.Model)))
+	}
+	if strings.TrimSpace(req.WorkDir) != "" {
+		opts = append(opts, gemini.WithWorkDir(strings.TrimSpace(req.WorkDir)))
+	}
+	if strings.TrimSpace(req.Command) != "" {
+		opts = append(opts, gemini.WithBinaryPath(strings.TrimSpace(req.Command)))
+	}
+	if env := geminiEnvList(req.Env); len(env) > 0 {
+		opts = append(opts, gemini.WithEnv(env...))
+	}
+	if addDirs := SDKAdditionalDirectories(req.WorkDir); len(addDirs) > 0 {
+		opts = append(opts, gemini.WithAddDirs(addDirs...))
+	}
+	opts = append(opts, gemini.WithCanUseTool(autoApproveGeminiTool))
+
+	client := gemini.NewClient(opts...)
+	if err := client.Connect(ctx); err != nil {
+		return out, err
+	}
+	defer func() {
+		_ = client.Close()
+	}()
+
+	if err := client.Send(ctx, req.Prompt); err != nil {
+		return out, err
+	}
+
+	blocks, errs := client.ReceiveMessagesWithErrors()
+	lines := make([]string, 0, 128)
+	var reply strings.Builder
+
+	finalize := func() Result {
+		out.Stdout = strings.Join(lines, "\n")
+		if out.SessionID == "" {
+			out.SessionID = strings.TrimSpace(client.SessionID())
+		}
+		out.Text = strings.TrimSpace(reply.String())
+		if out.Text == "" {
+			out.Text = lastEventText(out.Events)
+		}
+		return out
+	}
+
+	for blocks != nil || errs != nil {
+		select {
+		case <-ctx.Done():
+			return finalize(), ctx.Err()
+		case err, ok := <-errs:
+			if !ok {
+				errs = nil
+				continue
+			}
+			if err != nil {
+				return finalize(), err
+			}
+		case block, ok := <-blocks:
+			if !ok {
+				blocks = nil
+				continue
+			}
+			item := convertGeminiStreamBlock(block)
+			if item.SessionID != "" {
+				out.SessionID = item.SessionID
+			}
+			out.Events = append(out.Events, item)
+			if item.RawJSON != "" {
+				lines = append(lines, item.RawJSON)
+			}
+			if isGeminiMessageBlock(block) && strings.TrimSpace(block.Text) != "" {
+				reply.WriteString(block.Text)
+			}
+			if onEvent != nil {
+				onEvent(item)
+			}
+			if block.Done || block.Kind == gemini.BlockKindDone {
+				if err := client.Err(); err != nil {
+					return finalize(), err
+				}
+				return finalize(), nil
+			}
+		}
+	}
+
+	if err := client.Err(); err != nil {
+		return finalize(), err
+	}
+	return finalize(), nil
 }
 
 func convertClaudeMessage(msg claude.Message) (Event, string, string) {
@@ -592,6 +703,71 @@ func extractCodexEventText(ev codexsdk.ThreadEvent) string {
 	return strings.TrimSpace(ev.Message)
 }
 
+func convertGeminiStreamBlock(block gemini.StreamBlock) Event {
+	eventType := strings.TrimSpace(block.RawType)
+	if eventType == "" {
+		eventType = geminiBlockEventType(block)
+	}
+	return Event{
+		Type:      eventType,
+		Text:      extractGeminiBlockText(block),
+		RawJSON:   mustJSON(block),
+		SessionID: strings.TrimSpace(block.SessionID),
+	}
+}
+
+func extractGeminiBlockText(block gemini.StreamBlock) string {
+	if s := strings.TrimSpace(block.Text); s != "" {
+		return s
+	}
+	if s := strings.TrimSpace(block.Error); s != "" {
+		return s
+	}
+	if len(block.Data) > 0 {
+		var raw any
+		if err := json.Unmarshal(block.Data, &raw); err == nil {
+			if s := strings.TrimSpace(collectAnyText(raw)); s != "" {
+				return s
+			}
+		}
+	}
+	if s := strings.TrimSpace(block.ToolName); s != "" {
+		return s
+	}
+	if block.Done || block.Kind == gemini.BlockKindDone {
+		return "completed"
+	}
+	return geminiBlockEventType(block)
+}
+
+func isGeminiMessageBlock(block gemini.StreamBlock) bool {
+	switch block.Kind {
+	case gemini.BlockKindText:
+		return true
+	default:
+		return false
+	}
+}
+
+func geminiBlockEventType(block gemini.StreamBlock) string {
+	switch block.Kind {
+	case gemini.BlockKindText:
+		return "message"
+	case gemini.BlockKindThinking:
+		return "thinking"
+	case gemini.BlockKindToolCall:
+		return "tool_call"
+	case gemini.BlockKindToolResult:
+		return "tool_call_update"
+	case gemini.BlockKindDone:
+		return "completed"
+	case gemini.BlockKindError:
+		return "error"
+	default:
+		return "unknown"
+	}
+}
+
 func parseCodexReasoningEffort(raw string) codexsdk.ModelReasoningEffort {
 	switch strings.TrimSpace(strings.ToLower(raw)) {
 	case string(codexsdk.ReasoningMinimal):
@@ -607,6 +783,73 @@ func parseCodexReasoningEffort(raw string) codexsdk.ModelReasoningEffort {
 	default:
 		return ""
 	}
+}
+
+func geminiEnvList(extra map[string]string) []string {
+	env := normalizeEnvMap(extra)
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+"="+env[key])
+	}
+	return out
+}
+
+func autoApproveGeminiTool(ctx context.Context, call gemini.ToolCallInfo, options []gemini.PermissionOption) (string, error) {
+	_ = ctx
+	_ = call
+	return pickGeminiPermissionOption(true, options), nil
+}
+
+func pickGeminiPermissionOption(allow bool, options []gemini.PermissionOption) string {
+	if allow {
+		if id := findGeminiPermissionOptionByPrefix(options, "allow_"); id != "" {
+			return id
+		}
+		if id := findGeminiPermissionOptionByPrefix(options, "ask_"); id != "" {
+			return id
+		}
+	} else {
+		if id := findGeminiPermissionOptionByPrefix(options, "reject_"); id != "" {
+			return id
+		}
+		if id := findGeminiPermissionOptionByPrefix(options, "deny_"); id != "" {
+			return id
+		}
+		if id := findGeminiPermissionOptionByPrefix(options, "ask_"); id != "" {
+			return id
+		}
+	}
+	for _, option := range options {
+		if id := strings.TrimSpace(option.OptionIDValue()); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func findGeminiPermissionOptionByPrefix(options []gemini.PermissionOption, prefix string) string {
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	if prefix == "" {
+		return ""
+	}
+	for _, option := range options {
+		id := strings.TrimSpace(option.OptionIDValue())
+		if id == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(id), prefix) {
+			return id
+		}
+	}
+	return ""
 }
 
 func mergeEnvMap(extra map[string]string) map[string]string {

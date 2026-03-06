@@ -66,6 +66,46 @@ func TestChatRunnerManager_ClaudeStatefulReuseByConversation(t *testing.T) {
 	}
 }
 
+func TestChatRunnerManager_GeminiStatefulReuseByConversation(t *testing.T) {
+	origFactory := createGeminiChatRunner
+	t.Cleanup(func() { createGeminiChatRunner = origFactory })
+
+	var (
+		mu         sync.Mutex
+		createCnt  int
+		created    []*fakeChatRunner
+		nextResult = ChatRunResult{Text: "ok", SessionID: "sess-1", OutputMode: agentcli.OutputJSON}
+	)
+	createGeminiChatRunner = func(ctx context.Context, req ChatRunRequest) (ChatRunner, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		createCnt++
+		r := &fakeChatRunner{result: nextResult}
+		created = append(created, r)
+		return r, nil
+	}
+
+	manager := newDefaultChatRunnerManager(nil)
+	req := ChatRunRequest{
+		ConversationID: "conv-1",
+		Provider:       "gemini",
+		Model:          "gemini-2.5-pro",
+		Prompt:         "hello",
+	}
+	if _, err := manager.RunTurn(context.Background(), req, nil); err != nil {
+		t.Fatalf("run1 failed: %v", err)
+	}
+	if _, err := manager.RunTurn(context.Background(), req, nil); err != nil {
+		t.Fatalf("run2 failed: %v", err)
+	}
+	if createCnt != 1 {
+		t.Fatalf("expected create count=1, got=%d", createCnt)
+	}
+	if created[0].turnCount != 2 {
+		t.Fatalf("expected same runner reused for 2 turns, got=%d", created[0].turnCount)
+	}
+}
+
 func TestChatRunnerManager_StatelessUsesTaskRunner(t *testing.T) {
 	taskRunner := &fakeTaskRunner{
 		result: sdkrunner.Result{
