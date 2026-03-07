@@ -80,6 +80,15 @@ type scheduleResult struct {
 	Errors            []string
 }
 
+const managerTickFinalizeTimeout = 30 * time.Second
+
+func managerTickFinalizeContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		return context.WithTimeout(context.Background(), managerTickFinalizeTimeout)
+	}
+	return context.WithTimeout(context.WithoutCancel(parent), managerTickFinalizeTimeout)
+}
+
 func (s *Service) managerDispatchTimeout() time.Duration {
 	p, _, err := s.require()
 	if err != nil {
@@ -167,7 +176,11 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	res.Capacity = capacity
 
 	if !st.AutopilotEnabled {
-		s.saveManagerTickState(ctx, db, st, now, lastEventID, maxRunning, opt)
+		finalizeCtx, finalizeCancel := managerTickFinalizeContext(ctx)
+		defer finalizeCancel()
+		if err := s.saveManagerTickState(finalizeCtx, db, st, now, lastEventID, maxRunning, opt); err != nil {
+			res.Errors = append(res.Errors, err.Error())
+		}
 		return res, nil
 	}
 
@@ -183,13 +196,18 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	})
 	res.applyScheduleResult(scheduleResult)
 
-	scheduled, planErr := s.maybeSchedulePlannerRun(ctx, db, st, now)
+	finalizeCtx, finalizeCancel := managerTickFinalizeContext(ctx)
+	defer finalizeCancel()
+
+	scheduled, planErr := s.maybeSchedulePlannerRun(finalizeCtx, db, st, now)
 	if planErr != nil {
 		res.Errors = append(res.Errors, planErr.Error())
 	}
 	res.PlannerRunScheduled = scheduled
 
-	s.saveManagerTickState(ctx, db, st, now, lastEventID, maxRunning, opt)
+	if err := s.saveManagerTickState(finalizeCtx, db, st, now, lastEventID, maxRunning, opt); err != nil {
+		res.Errors = append(res.Errors, err.Error())
+	}
 
 	return res, nil
 }
@@ -227,13 +245,57 @@ func (res *ManagerTickResult) applyScheduleResult(step scheduleResult) {
 	res.Errors = append(res.Errors, step.Errors...)
 }
 
-func (s *Service) saveManagerTickState(ctx context.Context, db *gorm.DB, st *contracts.PMState, now time.Time, lastEventID uint, maxRunning int, opt ManagerTickOptions) {
+func (s *Service) saveManagerTickState(ctx context.Context, db *gorm.DB, st *contracts.PMState, now time.Time, lastEventID uint, maxRunning int, opt ManagerTickOptions) error {
+	if st == nil {
+		return nil
+	}
+	if db == nil {
+		return fmt.Errorf("db 不能为空")
+	}
 	st.LastTickAt = &now
 	st.LastEventID = lastEventID
 	if opt.MaxRunningWorkers > 0 && opt.MaxRunningWorkers != st.MaxRunningWorkers {
 		st.MaxRunningWorkers = maxRunning
 	}
-	_ = db.WithContext(ctx).Save(st).Error
+	updates := map[string]any{
+		"last_tick_at":               st.LastTickAt,
+		"last_event_id":              st.LastEventID,
+		"max_running_workers":        st.MaxRunningWorkers,
+		"planner_dirty":              st.PlannerDirty,
+		"planner_wake_version":       st.PlannerWakeVersion,
+		"planner_active_task_run_id": st.PlannerActiveTaskRunID,
+		"planner_cooldown_until":     st.PlannerCooldownUntil,
+		"planner_last_error":         strings.TrimSpace(st.PlannerLastError),
+		"planner_last_run_at":        st.PlannerLastRunAt,
+		"updated_at":                 now,
+	}
+	res := db.WithContext(ctx).Model(&contracts.PMState{}).
+		Where("id = ?", st.ID).
+		Updates(updates)
+	if res.Error != nil {
+		s.slog().Warn("pm manager tick save state failed",
+			"pm_state_id", st.ID,
+			"planner_dirty", st.PlannerDirty,
+			"planner_wake_version", st.PlannerWakeVersion,
+			"error", res.Error,
+		)
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		err := fmt.Errorf("pm state 保存失败：id=%d 未命中", st.ID)
+		s.slog().Warn("pm manager tick save state missed row",
+			"pm_state_id", st.ID,
+			"planner_dirty", st.PlannerDirty,
+			"planner_wake_version", st.PlannerWakeVersion,
+		)
+		return err
+	}
+	s.slog().Debug("pm manager tick state persisted",
+		"pm_state_id", st.ID,
+		"planner_dirty", st.PlannerDirty,
+		"planner_wake_version", st.PlannerWakeVersion,
+	)
+	return nil
 }
 
 func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRuntime, st *contracts.PMState, lastEventID uint) consumeEventsResult {
@@ -483,10 +545,21 @@ func (s *Service) maybeSchedulePlannerRun(ctx context.Context, db *gorm.DB, st *
 	if st == nil {
 		return false, nil
 	}
-	if !st.AutopilotEnabled || !st.PlannerDirty || st.PlannerActiveTaskRunID != nil {
-		return false, nil
-	}
-	if st.PlannerCooldownUntil != nil && !now.After(*st.PlannerCooldownUntil) {
+	skipAutopilot := !st.AutopilotEnabled
+	skipDirty := !st.PlannerDirty
+	skipActiveRun := st.PlannerActiveTaskRunID != nil
+	skipCooldown := st.PlannerCooldownUntil != nil && !now.After(*st.PlannerCooldownUntil)
+	if skipAutopilot || skipDirty || skipActiveRun || skipCooldown {
+		s.slog().Debug("pm planner schedule skipped",
+			"skip_autopilot", skipAutopilot,
+			"skip_dirty", skipDirty,
+			"skip_active_run", skipActiveRun,
+			"skip_cooldown", skipCooldown,
+			"autopilot_enabled", st.AutopilotEnabled,
+			"planner_dirty", st.PlannerDirty,
+			"planner_active_task_run_id", st.PlannerActiveTaskRunID,
+			"planner_cooldown_until", st.PlannerCooldownUntil,
+		)
 		return false, nil
 	}
 
@@ -508,11 +581,20 @@ func (s *Service) maybeSchedulePlannerRun(ctx context.Context, db *gorm.DB, st *
 		}),
 	})
 	if err != nil {
+		s.slog().Warn("pm planner schedule create run failed",
+			"planner_wake_version", st.PlannerWakeVersion,
+			"error", err,
+		)
 		return false, err
 	}
 	runID := taskRun.ID
 	st.PlannerActiveTaskRunID = &runID
 	st.PlannerDirty = false
+	s.slog().Debug("pm planner schedule created run",
+		"task_run_id", runID,
+		"planner_wake_version", st.PlannerWakeVersion,
+		"planner_dirty_after", st.PlannerDirty,
+	)
 	return true, nil
 }
 

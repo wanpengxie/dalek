@@ -474,6 +474,87 @@ func TestManagerTick_SchedulesPlannerRunOnceAfterDirtyEvent(t *testing.T) {
 	}
 }
 
+type cancelingDispatchSubmitter struct {
+	cancel context.CancelFunc
+	called bool
+}
+
+func (s *cancelingDispatchSubmitter) SubmitTicketDispatch(_ context.Context, _ uint) error {
+	if s == nil {
+		return nil
+	}
+	s.called = true
+	if s.cancel != nil {
+		s.cancel()
+	}
+	return nil
+}
+
+func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	doneTicket := createTicket(t, p.DB, "manager-tick-merge-dirty-context-canceled")
+	doneWorker, err := svc.StartTicket(context.Background(), doneTicket.ID)
+	if err != nil {
+		t.Fatalf("start done ticket worker failed: %v", err)
+	}
+	if doneWorker == nil || doneWorker.ID == 0 {
+		t.Fatalf("expected done worker created")
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", doneTicket.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketDone,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set done ticket status failed: %v", err)
+	}
+
+	queuedTicket := createTicket(t, p.DB, "manager-tick-queued-cancel-parent")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", queuedTicket.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketQueued,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set queued ticket status failed: %v", err)
+	}
+
+	tickCtx, cancelTick := context.WithCancel(context.Background())
+	defer cancelTick()
+	submitter := &cancelingDispatchSubmitter{cancel: cancelTick}
+	svc.SetDispatchSubmitter(submitter)
+
+	res, err := svc.ManagerTick(tickCtx, ManagerTickOptions{})
+	if err != nil {
+		t.Fatalf("ManagerTick failed: %v", err)
+	}
+	if !submitter.called {
+		t.Fatalf("expected dispatch submitter called and parent context canceled")
+	}
+	if !containsTicketID(res.MergeProposed, doneTicket.ID) {
+		t.Fatalf("expected merge proposal for done ticket t%d, got=%v", doneTicket.ID, res.MergeProposed)
+	}
+	if !res.PlannerRunScheduled {
+		t.Fatalf("expected planner run scheduled after merge dirty even with parent context canceled, errors=%v", res.Errors)
+	}
+
+	st, err := svc.GetState(context.Background())
+	if err != nil {
+		t.Fatalf("GetState failed: %v", err)
+	}
+	if st.PlannerWakeVersion == 0 {
+		t.Fatalf("expected planner wake version incremented")
+	}
+	if st.PlannerActiveTaskRunID == nil {
+		t.Fatalf("expected planner active task run id persisted")
+	}
+
+	var plannerRun contracts.TaskRun
+	if err := p.DB.First(&plannerRun, *st.PlannerActiveTaskRunID).Error; err != nil {
+		t.Fatalf("load planner run failed: %v", err)
+	}
+	if plannerRun.TaskType != contracts.TaskTypePMPlannerRun {
+		t.Fatalf("expected planner run task type=%s, got=%s", contracts.TaskTypePMPlannerRun, plannerRun.TaskType)
+	}
+}
+
 func createWorkerRunForManagerTickTest(t *testing.T, svc *Service, p *core.Project, ticketID, workerID uint, prefix string) (core.TaskRuntime, contracts.TaskRun) {
 	t.Helper()
 

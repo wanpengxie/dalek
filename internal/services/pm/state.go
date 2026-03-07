@@ -102,8 +102,16 @@ func (s *Service) markPlannerDirty(st *contracts.PMState) {
 	if st == nil {
 		return
 	}
+	dirtyBefore := st.PlannerDirty
+	wakeVersionBefore := st.PlannerWakeVersion
 	st.PlannerDirty = true
 	st.PlannerWakeVersion++
+	s.slog().Debug("pm planner marked dirty",
+		"dirty_before", dirtyBefore,
+		"dirty_after", st.PlannerDirty,
+		"wake_version_before", wakeVersionBefore,
+		"wake_version_after", st.PlannerWakeVersion,
+	)
 }
 
 func (s *Service) clearPlannerRun(st *contracts.PMState, now time.Time) {
