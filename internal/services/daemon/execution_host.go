@@ -376,6 +376,83 @@ func (h *ExecutionHost) SubmitSubagentRun(ctx context.Context, req SubagentSubmi
 	}, nil
 }
 
+func (h *ExecutionHost) SubmitPlannerRun(ctx context.Context, req PlannerSubmitRequest) (PlannerSubmitReceipt, error) {
+	if h == nil || h.resolver == nil {
+		return PlannerSubmitReceipt{}, fmt.Errorf("execution host 未初始化")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	projectName := strings.TrimSpace(req.Project)
+	if projectName == "" {
+		return PlannerSubmitReceipt{}, fmt.Errorf("project 不能为空")
+	}
+	if req.TaskRunID == 0 {
+		return PlannerSubmitReceipt{}, fmt.Errorf("task_run_id 不能为空")
+	}
+
+	requestID := strings.TrimSpace(req.RequestID)
+	if requestID != "" {
+		if receipt, ok := h.lookupPlannerRequest(projectName, requestID); ok {
+			return receipt, nil
+		}
+	}
+	prompt := strings.TrimSpace(req.Prompt)
+	runID := req.TaskRunID
+
+	h.mu.Lock()
+	existing := h.runs[runID]
+	if existing == nil {
+		if requestID == "" {
+			requestID = NewRequestID("pln")
+		}
+		runCtx, cancel := context.WithCancel(context.Background())
+		handle := &executionRunHandle{
+			kind:        runKindPlanner,
+			project:     projectName,
+			requestID:   requestID,
+			runID:       runID,
+			entryPrompt: prompt,
+			runnerID:    "daemon_" + NewRequestID("runner"),
+			ctx:         runCtx,
+			cancel:      cancel,
+			ready:       make(chan struct{}),
+			done:        make(chan struct{}),
+		}
+		h.runs[runID] = handle
+		h.requests[requestID] = handle
+		h.addRunProjectIndexLocked(runID, projectName)
+		h.wg.Add(1)
+		h.mu.Unlock()
+		go h.executePlannerRun(handle)
+		return h.plannerReceiptFromHandle(handle), nil
+	}
+	if existing.project == "" {
+		existing.project = projectName
+	}
+	if existing.requestID == "" {
+		if requestID == "" {
+			requestID = NewRequestID("pln")
+		}
+		existing.requestID = requestID
+	}
+	if existing.entryPrompt == "" {
+		existing.entryPrompt = prompt
+	}
+	if existing.runnerID == "" {
+		existing.runnerID = "daemon_" + NewRequestID("runner")
+	}
+	if existing.requestID != "" {
+		h.requests[existing.requestID] = existing
+	}
+	if requestID != "" {
+		h.requests[requestID] = existing
+	}
+	h.addRunProjectIndexLocked(runID, projectName)
+	h.mu.Unlock()
+	return h.plannerReceiptFromHandle(existing), nil
+}
+
 func (h *ExecutionHost) GetRunStatus(ctx context.Context, runID uint) (*RunStatus, error) {
 	if h == nil || h.resolver == nil {
 		return nil, fmt.Errorf("execution host 未初始化")

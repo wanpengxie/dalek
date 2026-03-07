@@ -17,6 +17,7 @@ const defaultDaemonManagerTickInterval = 30 * time.Second
 
 type managerDispatchHost interface {
 	SubmitDispatch(ctx context.Context, req daemonsvc.DispatchSubmitRequest) (daemonsvc.DispatchSubmitReceipt, error)
+	SubmitPlannerRun(ctx context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error)
 }
 
 type managerRunProjectIndexWarmer interface {
@@ -413,7 +414,68 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 		m.logf("manager tick failed: source=%s project=%s err=%v", strings.TrimSpace(source), projectName, err)
 		return
 	}
-	m.logf("manager tick ok: source=%s project=%s running=%d blocked=%d capacity=%d started=%d dispatched=%d", strings.TrimSpace(source), projectName, res.Running, res.RunningBlocked, res.Capacity, len(res.StartedTickets), len(res.DispatchedTickets))
+	m.submitPlannerRunIfScheduled(parent, p, projectName, res)
+	m.logf("manager tick ok: source=%s project=%s running=%d blocked=%d capacity=%d started=%d dispatched=%d planner_scheduled=%v", strings.TrimSpace(source), projectName, res.Running, res.RunningBlocked, res.Capacity, len(res.StartedTickets), len(res.DispatchedTickets), res.PlannerRunScheduled)
+}
+
+func (m *daemonManagerComponent) submitPlannerRunIfScheduled(parent context.Context, p *Project, projectName string, res pmsvc.ManagerTickResult) {
+	if m == nil || m.host == nil || p == nil || !res.PlannerRunScheduled {
+		return
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	submitCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
+	defer cancel()
+	req, err := m.buildPlannerSubmitRequest(submitCtx, p, projectName)
+	if err != nil {
+		m.logf("manager planner submit skipped: project=%s err=%v", strings.TrimSpace(projectName), err)
+		return
+	}
+	if _, err := m.host.SubmitPlannerRun(submitCtx, req); err != nil {
+		m.logf("manager planner submit failed: project=%s run_id=%d request_id=%s err=%v", strings.TrimSpace(projectName), req.TaskRunID, req.RequestID, err)
+		return
+	}
+	m.logf("manager planner submit accepted: project=%s run_id=%d request_id=%s", strings.TrimSpace(projectName), req.TaskRunID, req.RequestID)
+}
+
+func (m *daemonManagerComponent) buildPlannerSubmitRequest(ctx context.Context, p *Project, projectName string) (daemonsvc.PlannerSubmitRequest, error) {
+	if p == nil || p.core == nil || p.core.DB == nil {
+		return daemonsvc.PlannerSubmitRequest{}, fmt.Errorf("project db 为空")
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		projectName = strings.TrimSpace(p.Name())
+	}
+	if projectName == "" {
+		return daemonsvc.PlannerSubmitRequest{}, fmt.Errorf("project 不能为空")
+	}
+	pmState, err := p.GetPMState(ctx)
+	if err != nil {
+		return daemonsvc.PlannerSubmitRequest{}, err
+	}
+	if pmState.PlannerActiveTaskRunID == nil || *pmState.PlannerActiveTaskRunID == 0 {
+		return daemonsvc.PlannerSubmitRequest{}, fmt.Errorf("planner active task run id 为空")
+	}
+	runID := *pmState.PlannerActiveTaskRunID
+	var run contracts.TaskRun
+	if err := p.core.DB.WithContext(ctx).
+		Select("id", "request_id", "owner_type", "task_type").
+		First(&run, runID).Error; err != nil {
+		return daemonsvc.PlannerSubmitRequest{}, err
+	}
+	if run.OwnerType != contracts.TaskOwnerPM || run.TaskType != contracts.TaskTypePMPlannerRun {
+		return daemonsvc.PlannerSubmitRequest{}, fmt.Errorf("planner active run 类型不匹配: run_id=%d owner=%s type=%s", runID, run.OwnerType, run.TaskType)
+	}
+	requestID := strings.TrimSpace(run.RequestID)
+	if requestID == "" {
+		requestID = fmt.Sprintf("pln_run_%d", runID)
+	}
+	return daemonsvc.PlannerSubmitRequest{
+		Project:   projectName,
+		RequestID: requestID,
+		TaskRunID: runID,
+	}, nil
 }
 
 func (m *daemonManagerComponent) NotifyProject(projectName string) {

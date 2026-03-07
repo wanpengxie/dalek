@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"dalek/internal/contracts"
 	"dalek/internal/infra"
 	"dalek/internal/repo"
 	"dalek/internal/services/core"
@@ -163,6 +164,64 @@ func TestPM_StatePlannerFields_DefaultZeroAndRoundTrip(t *testing.T) {
 	}
 	if got.PlannerLastRunAt == nil || got.PlannerLastRunAt.UTC().Unix() != now.Unix() {
 		t.Fatalf("planner_last_run_at mismatch: got=%v want=%v", got.PlannerLastRunAt, now)
+	}
+}
+
+func TestPlannerRunStateHelpers_ClearPlannerRun(t *testing.T) {
+	pmSvc, _ := newPMServiceForTest(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	activeRunID := uint(88)
+	st := &contracts.PMState{
+		PlannerDirty:           true,
+		PlannerActiveTaskRunID: &activeRunID,
+		PlannerLastError:       "old error",
+	}
+
+	pmSvc.clearPlannerRun(st, now)
+
+	if st.PlannerActiveTaskRunID != nil {
+		t.Fatalf("expected planner active run cleared, got=%v", st.PlannerActiveTaskRunID)
+	}
+	if st.PlannerLastError != "" {
+		t.Fatalf("expected planner_last_error cleared, got=%q", st.PlannerLastError)
+	}
+	if st.PlannerLastRunAt == nil || st.PlannerLastRunAt.UTC().Unix() != now.Unix() {
+		t.Fatalf("expected planner_last_run_at=%v, got=%v", now, st.PlannerLastRunAt)
+	}
+	if st.PlannerCooldownUntil == nil || st.PlannerCooldownUntil.UTC().Unix() != now.Add(plannerRunSuccessCooldown).Unix() {
+		t.Fatalf("expected planner cooldown=%v, got=%v", now.Add(plannerRunSuccessCooldown), st.PlannerCooldownUntil)
+	}
+	if !st.PlannerDirty {
+		t.Fatalf("clearPlannerRun should keep planner dirty flag as-is")
+	}
+}
+
+func TestPlannerRunStateHelpers_FailPlannerRun(t *testing.T) {
+	pmSvc, _ := newPMServiceForTest(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	activeRunID := uint(99)
+	st := &contracts.PMState{
+		PlannerDirty:           false,
+		PlannerActiveTaskRunID: &activeRunID,
+		PlannerLastError:       "",
+	}
+
+	pmSvc.failPlannerRun(st, now, " planner failed ")
+
+	if st.PlannerActiveTaskRunID != nil {
+		t.Fatalf("expected planner active run cleared, got=%v", st.PlannerActiveTaskRunID)
+	}
+	if !st.PlannerDirty {
+		t.Fatalf("expected planner dirty set true on failure")
+	}
+	if st.PlannerLastError != "planner failed" {
+		t.Fatalf("unexpected planner_last_error: %q", st.PlannerLastError)
+	}
+	if st.PlannerLastRunAt == nil || st.PlannerLastRunAt.UTC().Unix() != now.Unix() {
+		t.Fatalf("expected planner_last_run_at=%v, got=%v", now, st.PlannerLastRunAt)
+	}
+	if st.PlannerCooldownUntil == nil || st.PlannerCooldownUntil.UTC().Unix() != now.Add(plannerRunFailureCooldown).Unix() {
+		t.Fatalf("expected planner cooldown=%v, got=%v", now.Add(plannerRunFailureCooldown), st.PlannerCooldownUntil)
 	}
 }
 

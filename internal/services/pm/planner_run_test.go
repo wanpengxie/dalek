@@ -1,0 +1,190 @@
+package pm
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"dalek/internal/contracts"
+	"dalek/internal/services/core"
+)
+
+func TestRunPlannerJob_SuccessClearsActiveAndMarksRunSucceeded(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	pmState, err := svc.getOrInitPMState(ctx)
+	if err != nil {
+		t.Fatalf("getOrInitPMState failed: %v", err)
+	}
+	run := createPlannerTaskRunForTest(t, svc, p, fmt.Sprintf("planner-success-%d", time.Now().UnixNano()))
+	if err := p.DB.WithContext(ctx).Model(&contracts.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
+		"planner_active_task_run_id": run.ID,
+		"planner_dirty":              false,
+		"planner_last_error":         "old planner error",
+		"planner_last_run_at":        nil,
+		"planner_cooldown_until":     nil,
+		"updated_at":                 time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare pm state failed: %v", err)
+	}
+
+	if err := svc.RunPlannerJob(ctx, run.ID, PlannerRunOptions{RunnerID: "planner-runner-success"}); err != nil {
+		t.Fatalf("RunPlannerJob failed: %v", err)
+	}
+
+	var afterRun contracts.TaskRun
+	if err := p.DB.WithContext(ctx).First(&afterRun, run.ID).Error; err != nil {
+		t.Fatalf("load planner run failed: %v", err)
+	}
+	if afterRun.OrchestrationState != contracts.TaskSucceeded {
+		t.Fatalf("expected run succeeded, got=%s", afterRun.OrchestrationState)
+	}
+	if afterRun.FinishedAt == nil {
+		t.Fatalf("expected finished_at set")
+	}
+	if strings.TrimSpace(afterRun.RunnerID) != "" {
+		t.Fatalf("expected runner_id cleared after terminal, got=%q", afterRun.RunnerID)
+	}
+
+	var startedCnt int64
+	if err := p.DB.WithContext(ctx).Model(&contracts.TaskEvent{}).
+		Where("task_run_id = ? AND event_type = ?", run.ID, "task_started").
+		Count(&startedCnt).Error; err != nil {
+		t.Fatalf("count task_started failed: %v", err)
+	}
+	if startedCnt == 0 {
+		t.Fatalf("expected task_started event exists")
+	}
+	var succeededCnt int64
+	if err := p.DB.WithContext(ctx).Model(&contracts.TaskEvent{}).
+		Where("task_run_id = ? AND event_type = ?", run.ID, "task_succeeded").
+		Count(&succeededCnt).Error; err != nil {
+		t.Fatalf("count task_succeeded failed: %v", err)
+	}
+	if succeededCnt == 0 {
+		t.Fatalf("expected task_succeeded event exists")
+	}
+
+	afterState, err := svc.GetState(ctx)
+	if err != nil {
+		t.Fatalf("GetState failed: %v", err)
+	}
+	if afterState.PlannerActiveTaskRunID != nil {
+		t.Fatalf("expected planner active run cleared, got=%v", afterState.PlannerActiveTaskRunID)
+	}
+	if afterState.PlannerLastError != "" {
+		t.Fatalf("expected planner_last_error cleared, got=%q", afterState.PlannerLastError)
+	}
+	if afterState.PlannerDirty {
+		t.Fatalf("expected planner dirty unchanged=false after success")
+	}
+	assertPlannerCooldown(t, afterState.PlannerLastRunAt, afterState.PlannerCooldownUntil, plannerRunSuccessCooldown)
+}
+
+func TestRunPlannerJob_FailureMarksRunFailedAndResetsPlannerState(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	pmState, err := svc.getOrInitPMState(ctx)
+	if err != nil {
+		t.Fatalf("getOrInitPMState failed: %v", err)
+	}
+	run := createPlannerTaskRunForTest(t, svc, p, fmt.Sprintf("planner-failed-%d", time.Now().UnixNano()))
+	if err := p.DB.WithContext(ctx).Model(&contracts.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
+		"planner_active_task_run_id": run.ID,
+		"planner_dirty":              false,
+		"planner_last_error":         "",
+		"planner_last_run_at":        nil,
+		"planner_cooldown_until":     nil,
+		"updated_at":                 time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare pm state failed: %v", err)
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	runErr := svc.RunPlannerJob(canceledCtx, run.ID, PlannerRunOptions{RunnerID: "planner-runner-failed"})
+	if runErr == nil {
+		t.Fatalf("expected RunPlannerJob returns error when context canceled")
+	}
+
+	var afterRun contracts.TaskRun
+	if err := p.DB.WithContext(ctx).First(&afterRun, run.ID).Error; err != nil {
+		t.Fatalf("load planner run failed: %v", err)
+	}
+	if afterRun.OrchestrationState != contracts.TaskFailed {
+		t.Fatalf("expected run failed, got=%s", afterRun.OrchestrationState)
+	}
+	if strings.TrimSpace(afterRun.ErrorCode) != "planner_failed" {
+		t.Fatalf("expected error_code=planner_failed, got=%q", afterRun.ErrorCode)
+	}
+	if !strings.Contains(strings.ToLower(afterRun.ErrorMessage), "context canceled") {
+		t.Fatalf("expected error_message contains context canceled, got=%q", afterRun.ErrorMessage)
+	}
+
+	var failedCnt int64
+	if err := p.DB.WithContext(ctx).Model(&contracts.TaskEvent{}).
+		Where("task_run_id = ? AND event_type = ?", run.ID, "task_failed").
+		Count(&failedCnt).Error; err != nil {
+		t.Fatalf("count task_failed failed: %v", err)
+	}
+	if failedCnt == 0 {
+		t.Fatalf("expected task_failed event exists")
+	}
+
+	afterState, err := svc.GetState(ctx)
+	if err != nil {
+		t.Fatalf("GetState failed: %v", err)
+	}
+	if afterState.PlannerActiveTaskRunID != nil {
+		t.Fatalf("expected planner active run cleared after failure, got=%v", afterState.PlannerActiveTaskRunID)
+	}
+	if !afterState.PlannerDirty {
+		t.Fatalf("expected planner dirty true after failure")
+	}
+	if !strings.Contains(strings.ToLower(afterState.PlannerLastError), "context canceled") {
+		t.Fatalf("expected planner_last_error contains context canceled, got=%q", afterState.PlannerLastError)
+	}
+	assertPlannerCooldown(t, afterState.PlannerLastRunAt, afterState.PlannerCooldownUntil, plannerRunFailureCooldown)
+}
+
+func createPlannerTaskRunForTest(t *testing.T, svc *Service, p *core.Project, requestID string) contracts.TaskRun {
+	t.Helper()
+	rt, err := svc.taskRuntimeForDB(p.DB)
+	if err != nil {
+		t.Fatalf("taskRuntimeForDB failed: %v", err)
+	}
+	run, err := rt.CreateRun(context.Background(), contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerPM,
+		TaskType:           contracts.TaskTypePMPlannerRun,
+		ProjectKey:         p.Key,
+		SubjectType:        "pm",
+		SubjectID:          "planner",
+		RequestID:          strings.TrimSpace(requestID),
+		OrchestrationState: contracts.TaskPending,
+		RequestPayloadJSON: marshalJSON(map[string]any{
+			"wake_version": 1,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(planner) failed: %v", err)
+	}
+	return run
+}
+
+func assertPlannerCooldown(t *testing.T, lastRunAt, cooldownAt *time.Time, want time.Duration) {
+	t.Helper()
+	if lastRunAt == nil {
+		t.Fatalf("expected planner_last_run_at set")
+	}
+	if cooldownAt == nil {
+		t.Fatalf("expected planner_cooldown_until set")
+	}
+	got := cooldownAt.Sub(*lastRunAt)
+	if got < want-2*time.Second || got > want+2*time.Second {
+		t.Fatalf("unexpected cooldown duration: got=%s want≈%s", got, want)
+	}
+}

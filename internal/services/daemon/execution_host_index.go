@@ -72,6 +72,22 @@ func (h *ExecutionHost) lookupSubagentRequest(project string, requestID string) 
 	return h.subagentReceiptFromHandle(handle), true
 }
 
+func (h *ExecutionHost) lookupPlannerRequest(project string, requestID string) (PlannerSubmitReceipt, bool) {
+	h.mu.RLock()
+	handle := h.requests[requestID]
+	h.mu.RUnlock()
+	if handle == nil {
+		return PlannerSubmitReceipt{}, false
+	}
+	if handle.kind != runKindPlanner {
+		return PlannerSubmitReceipt{}, false
+	}
+	if handle.project != project {
+		return PlannerSubmitReceipt{}, false
+	}
+	return h.plannerReceiptFromHandle(handle), true
+}
+
 func (h *ExecutionHost) workerReceiptFromHandle(handle *executionRunHandle) WorkerRunSubmitReceipt {
 	if handle == nil {
 		return WorkerRunSubmitReceipt{}
@@ -102,6 +118,20 @@ func (h *ExecutionHost) subagentReceiptFromHandle(handle *executionRunHandle) Su
 		Provider:   handle.provider,
 		Model:      handle.model,
 		RuntimeDir: "",
+	}
+}
+
+func (h *ExecutionHost) plannerReceiptFromHandle(handle *executionRunHandle) PlannerSubmitReceipt {
+	if handle == nil {
+		return PlannerSubmitReceipt{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return PlannerSubmitReceipt{
+		Accepted:  true,
+		Project:   handle.project,
+		TaskRunID: handle.runID,
+		RequestID: handle.requestID,
 	}
 }
 

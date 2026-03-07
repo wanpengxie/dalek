@@ -88,8 +88,9 @@ func TestDaemonManagerComponent_NotifyProject_TriggersTick(t *testing.T) {
 }
 
 type stubManagerDispatchHost struct {
-	mu    sync.Mutex
-	calls []daemonsvc.DispatchSubmitRequest
+	mu           sync.Mutex
+	calls        []daemonsvc.DispatchSubmitRequest
+	plannerCalls []daemonsvc.PlannerSubmitRequest
 }
 
 func (s *stubManagerDispatchHost) SubmitDispatch(_ context.Context, req daemonsvc.DispatchSubmitRequest) (daemonsvc.DispatchSubmitReceipt, error) {
@@ -103,11 +104,31 @@ func (s *stubManagerDispatchHost) SubmitDispatch(_ context.Context, req daemonsv
 	}, nil
 }
 
+func (s *stubManagerDispatchHost) SubmitPlannerRun(_ context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.plannerCalls = append(s.plannerCalls, req)
+	return daemonsvc.PlannerSubmitReceipt{
+		Accepted:  true,
+		Project:   req.Project,
+		RequestID: req.RequestID,
+		TaskRunID: req.TaskRunID,
+	}, nil
+}
+
 func (s *stubManagerDispatchHost) snapshot() []daemonsvc.DispatchSubmitRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]daemonsvc.DispatchSubmitRequest, len(s.calls))
 	copy(out, s.calls)
+	return out
+}
+
+func (s *stubManagerDispatchHost) snapshotPlanner() []daemonsvc.PlannerSubmitRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]daemonsvc.PlannerSubmitRequest, len(s.plannerCalls))
+	copy(out, s.plannerCalls)
 	return out
 }
 
@@ -121,6 +142,15 @@ func (s *stubWarmupDispatchHost) SubmitDispatch(_ context.Context, req daemonsvc
 		Accepted: true,
 		Project:  req.Project,
 		TicketID: req.TicketID,
+	}, nil
+}
+
+func (s *stubWarmupDispatchHost) SubmitPlannerRun(_ context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error) {
+	return daemonsvc.PlannerSubmitReceipt{
+		Accepted:  true,
+		Project:   req.Project,
+		RequestID: req.RequestID,
+		TaskRunID: req.TaskRunID,
 	}, nil
 }
 
@@ -180,6 +210,88 @@ func TestDaemonManagerComponent_RunTickProject_UsesDispatchHostSubmitter(t *test
 	wantPrefix := fmt.Sprintf("mgr_t%d_", tk.ID)
 	if !strings.HasPrefix(calls[0].RequestID, wantPrefix) {
 		t.Fatalf("unexpected request id prefix: got=%q want_prefix=%q", calls[0].RequestID, wantPrefix)
+	}
+}
+
+func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t *testing.T) {
+	h, p := newIntegrationHomeProject(t)
+	ctx := context.Background()
+
+	tk, err := p.CreateTicketWithDescription(ctx, "manager planner submit wiring", "planner run should be submitted to execution host")
+	if err != nil {
+		t.Fatalf("CreateTicket failed: %v", err)
+	}
+	w, err := p.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	workerRun, err := p.task.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           "deliver_ticket",
+		ProjectKey:         p.Key(),
+		TicketID:           tk.ID,
+		WorkerID:           w.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", tk.ID),
+		RequestID:          fmt.Sprintf("planner-trigger-%d", now.UnixNano()),
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("create worker task run failed: %v", err)
+	}
+	if err := p.task.AppendEvent(ctx, contracts.TaskEventInput{
+		TaskRunID: workerRun.ID,
+		EventType: "watch_error",
+		Note:      "trigger planner dirty",
+	}); err != nil {
+		t.Fatalf("append watch_error event failed: %v", err)
+	}
+
+	host := &stubManagerDispatchHost{}
+	manager := newDaemonManagerComponent(h, nil)
+	manager.setDispatchHost(host)
+	manager.runTickProject(ctx, p.Name(), "test")
+
+	if got := len(host.snapshot()); got != 0 {
+		t.Fatalf("expected no dispatch submits in this scenario, got=%d", got)
+	}
+	plannerCalls := host.snapshotPlanner()
+	if len(plannerCalls) != 1 {
+		t.Fatalf("expected one planner submit call, got=%d", len(plannerCalls))
+	}
+	call := plannerCalls[0]
+	if call.Project != p.Name() {
+		t.Fatalf("unexpected planner submit project: got=%q want=%q", call.Project, p.Name())
+	}
+	if call.TaskRunID == 0 {
+		t.Fatalf("expected planner submit task_run_id > 0")
+	}
+	if strings.TrimSpace(call.RequestID) == "" {
+		t.Fatalf("expected planner submit request_id not empty")
+	}
+
+	pmState, err := p.GetPMState(ctx)
+	if err != nil {
+		t.Fatalf("GetPMState failed: %v", err)
+	}
+	if pmState.PlannerActiveTaskRunID == nil {
+		t.Fatalf("expected planner active task run id set")
+	}
+	if *pmState.PlannerActiveTaskRunID != call.TaskRunID {
+		t.Fatalf("planner active run mismatch: state=%d submit=%d", *pmState.PlannerActiveTaskRunID, call.TaskRunID)
+	}
+
+	var plannerRun contracts.TaskRun
+	if err := p.core.DB.WithContext(ctx).First(&plannerRun, call.TaskRunID).Error; err != nil {
+		t.Fatalf("load planner task run failed: %v", err)
+	}
+	if plannerRun.TaskType != contracts.TaskTypePMPlannerRun {
+		t.Fatalf("expected planner task type=%s, got=%s", contracts.TaskTypePMPlannerRun, plannerRun.TaskType)
+	}
+	if strings.TrimSpace(plannerRun.RequestID) != call.RequestID {
+		t.Fatalf("planner request id mismatch: task=%q submit=%q", plannerRun.RequestID, call.RequestID)
 	}
 }
 

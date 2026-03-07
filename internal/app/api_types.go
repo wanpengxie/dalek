@@ -46,6 +46,7 @@ type ShapedView = notebooksvc.ShapedView
 
 type ManagerTickOptions = pmsvc.ManagerTickOptions
 type ManagerTickResult = pmsvc.ManagerTickResult
+type PlannerRunOptions = pmsvc.PlannerRunOptions
 
 type ListTaskOptions struct {
 	OwnerType       contracts.TaskOwnerType

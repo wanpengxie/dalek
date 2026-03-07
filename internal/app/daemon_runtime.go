@@ -131,6 +131,16 @@ func (p *daemonProjectAdapter) RunSubagentJob(ctx context.Context, taskRunID uin
 	return p.project.RunSubagentJob(ctx, taskRunID, opt)
 }
 
+func (p *daemonProjectAdapter) RunPlannerJob(ctx context.Context, taskRunID uint, opt daemonsvc.PlannerRunOptions) error {
+	if p == nil || p.project == nil {
+		return fmt.Errorf("daemon project 为空")
+	}
+	opt.RunnerID = strings.TrimSpace(opt.RunnerID)
+	return p.project.RunPlannerJob(ctx, taskRunID, PlannerRunOptions{
+		RunnerID: opt.RunnerID,
+	})
+}
+
 func (p *daemonProjectAdapter) FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*daemonsvc.RunStatus, error) {
 	if p == nil || p.project == nil {
 		return nil, fmt.Errorf("daemon project 为空")

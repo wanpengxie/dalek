@@ -3,11 +3,17 @@ package pm
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"dalek/internal/contracts"
 
 	"gorm.io/gorm"
+)
+
+const (
+	plannerRunSuccessCooldown = 30 * time.Second
+	plannerRunFailureCooldown = 60 * time.Second
 )
 
 func (s *Service) getOrInitPMState(ctx context.Context) (*contracts.PMState, error) {
@@ -98,6 +104,39 @@ func (s *Service) markPlannerDirty(st *contracts.PMState) {
 	}
 	st.PlannerDirty = true
 	st.PlannerWakeVersion++
+}
+
+func (s *Service) clearPlannerRun(st *contracts.PMState, now time.Time) {
+	if st == nil {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cooldown := now.Add(plannerRunSuccessCooldown)
+	st.PlannerActiveTaskRunID = nil
+	st.PlannerLastError = ""
+	st.PlannerLastRunAt = &now
+	st.PlannerCooldownUntil = &cooldown
+}
+
+func (s *Service) failPlannerRun(st *contracts.PMState, now time.Time, errMsg string) {
+	if st == nil {
+		return
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	cooldown := now.Add(plannerRunFailureCooldown)
+	msg := strings.TrimSpace(errMsg)
+	if msg == "" {
+		msg = "planner run failed"
+	}
+	st.PlannerActiveTaskRunID = nil
+	st.PlannerDirty = true
+	st.PlannerLastError = msg
+	st.PlannerLastRunAt = &now
+	st.PlannerCooldownUntil = &cooldown
 }
 
 func clampMaxRunning(n int) int {

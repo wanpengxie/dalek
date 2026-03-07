@@ -57,6 +57,7 @@ type ExecutionHostProject interface {
 	DirectDispatchWorker(ctx context.Context, ticketID uint, opt WorkerRunOptions) (WorkerRunResult, error)
 	SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptions) (SubagentSubmission, error)
 	RunSubagentJob(ctx context.Context, taskRunID uint, opt SubagentRunOptions) error
+	RunPlannerJob(ctx context.Context, taskRunID uint, opt PlannerRunOptions) error
 	FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*RunStatus, error)
 	AddNote(ctx context.Context, rawText string) (NoteAddResult, error)
 	GetTaskStatus(ctx context.Context, runID uint) (*RunStatus, error)
@@ -136,6 +137,26 @@ type SubagentSubmitReceipt struct {
 	RuntimeDir string
 }
 
+type PlannerSubmitRequest struct {
+	Project string
+
+	RequestID string
+	TaskRunID uint
+	Prompt    string
+}
+
+type PlannerSubmitReceipt struct {
+	Accepted bool
+
+	Project   string
+	TaskRunID uint
+	RequestID string
+}
+
+type PlannerRunOptions struct {
+	RunnerID string
+}
+
 type NoteAddResult = notebooksvc.NoteAddResult
 
 type NoteSubmitRequest struct {
@@ -209,6 +230,7 @@ const (
 	runKindDispatch executionRunKind = "dispatch"
 	runKindWorker   executionRunKind = "worker_run"
 	runKindSubagent executionRunKind = "subagent"
+	runKindPlanner  executionRunKind = "planner_run"
 )
 
 type executionRunHandle struct {

@@ -80,6 +80,7 @@ type testExecutionHostProject struct {
 	directDispatchCalls   int
 	subagentCalls         int
 	runSubagentCalls      int
+	runPlannerCalls       int
 	lastDispatchAutoStart *bool
 
 	nextJobID   uint
@@ -108,6 +109,11 @@ type testExecutionHostProject struct {
 	runSubagentStarted      chan struct{}
 	runSubagentRelease      chan struct{}
 	runSubagentIgnoreCancel bool
+
+	runPlannerDelay        time.Duration
+	runPlannerStarted      chan struct{}
+	runPlannerRelease      chan struct{}
+	runPlannerIgnoreCancel bool
 }
 
 func (p *testExecutionHostProject) SubmitDispatchTicket(ctx context.Context, ticketID uint, opt DispatchSubmitOptions) (DispatchSubmission, error) {
@@ -229,6 +235,18 @@ func (p *testExecutionHostProject) RunSubagentJob(ctx context.Context, taskRunID
 	started := p.runSubagentStarted
 	release := p.runSubagentRelease
 	ignoreCancel := p.runSubagentIgnoreCancel
+	p.mu.Unlock()
+	notifyExecutionStarted(started)
+	return waitExecutionRelease(ctx, delay, release, ignoreCancel)
+}
+
+func (p *testExecutionHostProject) RunPlannerJob(ctx context.Context, taskRunID uint, opt PlannerRunOptions) error {
+	p.mu.Lock()
+	p.runPlannerCalls++
+	delay := p.runPlannerDelay
+	started := p.runPlannerStarted
+	release := p.runPlannerRelease
+	ignoreCancel := p.runPlannerIgnoreCancel
 	p.mu.Unlock()
 	notifyExecutionStarted(started)
 	return waitExecutionRelease(ctx, delay, release, ignoreCancel)
@@ -376,6 +394,12 @@ func (p *testExecutionHostProject) RunSubagentCount() int {
 	return p.runSubagentCalls
 }
 
+func (p *testExecutionHostProject) RunPlannerCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.runPlannerCalls
+}
+
 func (p *testExecutionHostProject) GetTaskStatusCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -506,6 +530,38 @@ func TestExecutionHost_OnRunSettled_SubagentRun(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("expected OnRunSettled callback for subagent run")
+	}
+}
+
+func TestExecutionHost_OnRunSettled_PlannerRun(t *testing.T) {
+	resolver := &testExecutionHostResolver{project: &testExecutionHostProject{}}
+	notifyCh := make(chan string, 1)
+	host, err := NewExecutionHost(resolver, ExecutionHostOptions{
+		OnRunSettled: func(project string) {
+			notifyCh <- strings.TrimSpace(project)
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	_, err = host.SubmitPlannerRun(context.Background(), PlannerSubmitRequest{
+		Project:   "demo",
+		RequestID: "planner-notify-test",
+		TaskRunID: 9001,
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("SubmitPlannerRun failed: %v", err)
+	}
+
+	select {
+	case got := <-notifyCh:
+		if got != "demo" {
+			t.Fatalf("unexpected project notify: got=%q want=%q", got, "demo")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected OnRunSettled callback for planner run")
 	}
 }
 
@@ -719,6 +775,45 @@ func TestExecutionHost_SubmitSubagent_IdempotentByRequestID(t *testing.T) {
 	}
 	if got := project.SubagentSubmitCount(); got != 1 {
 		t.Fatalf("expected only one SubmitSubagentRun call, got=%d", got)
+	}
+}
+
+func TestExecutionHost_SubmitPlannerRun_IdempotentByRequestID(t *testing.T) {
+	project := &testExecutionHostProject{}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	req := PlannerSubmitRequest{
+		Project:   "demo",
+		RequestID: "planner-idempotent-single",
+		TaskRunID: 3001,
+		Prompt:    "继续执行任务",
+	}
+	first, err := host.SubmitPlannerRun(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first SubmitPlannerRun failed: %v", err)
+	}
+	second, err := host.SubmitPlannerRun(context.Background(), req)
+	if err != nil {
+		t.Fatalf("second SubmitPlannerRun failed: %v", err)
+	}
+	if first.TaskRunID != second.TaskRunID {
+		t.Fatalf("expected same run id for duplicate request_id: first=%d second=%d", first.TaskRunID, second.TaskRunID)
+	}
+	if first.RequestID != second.RequestID {
+		t.Fatalf("expected same request_id in receipt: first=%q second=%q", first.RequestID, second.RequestID)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if got := project.RunPlannerCount(); got == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected only one RunPlannerJob call, got=%d", project.RunPlannerCount())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
