@@ -35,6 +35,13 @@ func (s *Service) getOrInitPMState(ctx context.Context) (*contracts.PMState, err
 		MaxRunningWorkers: 3,
 		LastTickAt:        nil,
 		LastEventID:       0,
+
+		PlannerDirty:           false,
+		PlannerWakeVersion:     0,
+		PlannerActiveTaskRunID: nil,
+		PlannerCooldownUntil:   nil,
+		PlannerLastError:       "",
+		PlannerLastRunAt:       nil,
 	}
 	if err := db.WithContext(ctx).Create(&st).Error; err != nil {
 		return nil, err

@@ -13,6 +13,7 @@ const (
 	TaskTypeDispatchTicket  = "dispatch_ticket"
 	TaskTypeDeliverTicket   = "deliver_ticket"
 	TaskTypePMDispatchAgent = "pm_dispatch_agent"
+	TaskTypePMPlannerRun    = "pm_planner_run"
 	TaskTypeSubagentRun     = "subagent_run"
 	TaskTypeChannelTurn     = "channel_turn"
 )

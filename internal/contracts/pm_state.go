@@ -19,6 +19,13 @@ type PMState struct {
 	LastRecoveryTaskRuns     int        `gorm:"not null;default:0"`
 	LastRecoveryNotes        int        `gorm:"not null;default:0"`
 	LastRecoveryWorkers      int        `gorm:"not null;default:0"`
+
+	PlannerDirty           bool       `gorm:"not null;default:false"`
+	PlannerWakeVersion     uint       `gorm:"not null;default:0"`
+	PlannerActiveTaskRunID *uint      `gorm:""`
+	PlannerCooldownUntil   *time.Time `gorm:""`
+	PlannerLastError       string     `gorm:"not null;default:''"`
+	PlannerLastRunAt       *time.Time `gorm:""`
 }
 
 func (PMState) TableName() string {

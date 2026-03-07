@@ -158,6 +158,58 @@ func TestOpenAndMigrate_TicketLabelColumnPresent(t *testing.T) {
 	}
 }
 
+func TestOpenAndMigrate_PMStatePlannerColumnsPresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	wantCols := []string{
+		"planner_dirty",
+		"planner_wake_version",
+		"planner_active_task_run_id",
+		"planner_cooldown_until",
+		"planner_last_error",
+		"planner_last_run_at",
+	}
+	for _, col := range wantCols {
+		ok, err := tableHasColumn(db, "pm_states", col)
+		if err != nil {
+			t.Fatalf("tableHasColumn(pm_states.%s) failed: %v", col, err)
+		}
+		if !ok {
+			t.Fatalf("pm_states should contain planner column: %s", col)
+		}
+	}
+
+	for _, col := range []string{"planner_wake_version", "planner_last_error"} {
+		if err := dropTableColumn(db, "pm_states", col); err != nil {
+			t.Fatalf("drop pm_states.%s failed: %v", col, err)
+		}
+	}
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 14;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations for v14 failed: %v", err)
+	}
+	if _, err := OpenAndMigrate(dbPath); err != nil {
+		t.Fatalf("OpenAndMigrate (reapply v14) failed: %v", err)
+	}
+
+	db2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	for _, col := range wantCols {
+		ok, err := tableHasColumn(db2, "pm_states", col)
+		if err != nil {
+			t.Fatalf("tableHasColumn(pm_states.%s) after reapply failed: %v", col, err)
+		}
+		if !ok {
+			t.Fatalf("pm_states should restore planner column after reapply: %s", col)
+		}
+	}
+}
+
 func TestOpenAndMigrate_RepairWorkerLogPathWhenOldV9Occupied(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)

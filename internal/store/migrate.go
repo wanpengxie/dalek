@@ -83,6 +83,11 @@ func storeMigrations() []Migration {
 			Name:    "ensure_ticket_label_column",
 			Up:      migrateEnsureTicketLabelColumn,
 		},
+		{
+			Version: 14,
+			Name:    "ensure_pm_state_planner_columns",
+			Up:      migrateEnsurePMStatePlannerColumns,
+		},
 	}
 }
 
@@ -353,6 +358,13 @@ UPDATE tickets
 SET label = ''
 WHERE label IS NULL;
 `).Error
+}
+
+func migrateEnsurePMStatePlannerColumns(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	return db.AutoMigrate(&PMState{})
 }
 
 func normalizeMigrations(migrations []Migration) ([]Migration, error) {

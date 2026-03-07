@@ -118,8 +118,26 @@ func TestCLI_E2E_BasicWorkflow(t *testing.T) {
 
 	// 6) manager status（确保 manager 子命令链路可用）
 	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "manager", "status")
-	if !strings.Contains(out, "autopilot=") {
+	if !strings.Contains(out, "autopilot=") || !strings.Contains(out, "planner_dirty=") || !strings.Contains(out, "planner_active_task_run_id=") {
 		t.Fatalf("manager status output unexpected:\n%s", out)
+	}
+	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "manager", "status", "-o", "json")
+	var managerStatus struct {
+		Schema                 string `json:"schema"`
+		PlannerDirty           bool   `json:"planner_dirty"`
+		PlannerActiveTaskRunID *uint  `json:"planner_active_task_run_id"`
+	}
+	if err := json.Unmarshal([]byte(out), &managerStatus); err != nil {
+		t.Fatalf("unmarshal manager status json failed: %v\nraw=%s", err, out)
+	}
+	if managerStatus.Schema != "dalek.manager.status.v1" {
+		t.Fatalf("unexpected manager status schema: %s", managerStatus.Schema)
+	}
+	if managerStatus.PlannerDirty {
+		t.Fatalf("planner_dirty should default false")
+	}
+	if managerStatus.PlannerActiveTaskRunID != nil {
+		t.Fatalf("planner_active_task_run_id should default nil, got=%v", *managerStatus.PlannerActiveTaskRunID)
 	}
 
 	// 7) remove + empty list

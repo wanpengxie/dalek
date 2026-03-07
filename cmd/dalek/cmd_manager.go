@@ -96,6 +96,18 @@ func cmdManagerStatus(args []string) {
 		if st.LastTickAt != nil {
 			lastTick = st.LastTickAt.Local().Format(time.RFC3339)
 		}
+		plannerActiveTaskRunID := any(nil)
+		if st.PlannerActiveTaskRunID != nil {
+			plannerActiveTaskRunID = *st.PlannerActiveTaskRunID
+		}
+		plannerCooldownUntil := any(nil)
+		if st.PlannerCooldownUntil != nil {
+			plannerCooldownUntil = st.PlannerCooldownUntil.Local().Format(time.RFC3339)
+		}
+		plannerLastRunAt := any(nil)
+		if st.PlannerLastRunAt != nil {
+			plannerLastRunAt = st.PlannerLastRunAt.Local().Format(time.RFC3339)
+		}
 		lastRecovery := any(nil)
 		if st.LastRecoveryAt != nil {
 			lastRecovery = map[string]any{
@@ -107,14 +119,20 @@ func cmdManagerStatus(args []string) {
 			}
 		}
 		printJSONOrExit(map[string]any{
-			"schema":              "dalek.manager.status.v1",
-			"autopilot":           st.AutopilotEnabled,
-			"max_running":         st.MaxRunningWorkers,
-			"last_tick_at":        lastTick,
-			"last_event_id":       st.LastEventID,
-			"last_recovery":       lastRecovery,
-			"worktree_gc_pending": gcPending,
-			"updated_at":          st.UpdatedAt.Local().Format(time.RFC3339),
+			"schema":                     "dalek.manager.status.v1",
+			"autopilot":                  st.AutopilotEnabled,
+			"max_running":                st.MaxRunningWorkers,
+			"planner_dirty":              st.PlannerDirty,
+			"planner_wake_version":       st.PlannerWakeVersion,
+			"planner_active_task_run_id": plannerActiveTaskRunID,
+			"planner_cooldown_until":     plannerCooldownUntil,
+			"planner_last_error":         strings.TrimSpace(st.PlannerLastError),
+			"planner_last_run_at":        plannerLastRunAt,
+			"last_tick_at":               lastTick,
+			"last_event_id":              st.LastEventID,
+			"last_recovery":              lastRecovery,
+			"worktree_gc_pending":        gcPending,
+			"updated_at":                 st.UpdatedAt.Local().Format(time.RFC3339),
 		})
 		return
 	}
@@ -123,7 +141,27 @@ func cmdManagerStatus(args []string) {
 	if st.LastTickAt != nil {
 		lastTick = st.LastTickAt.Local().Format("01-02 15:04:05")
 	}
-	fmt.Printf("autopilot=%v  max_running=%d  gc_pending=%d  last_tick=%s  last_event_id=%d\n", st.AutopilotEnabled, st.MaxRunningWorkers, gcPending, lastTick, st.LastEventID)
+	plannerActiveTaskRunID := "-"
+	if st.PlannerActiveTaskRunID != nil {
+		plannerActiveTaskRunID = fmt.Sprintf("%d", *st.PlannerActiveTaskRunID)
+	}
+	fmt.Printf(
+		"autopilot=%v  max_running=%d  planner_dirty=%v  planner_active_task_run_id=%s  gc_pending=%d  last_tick=%s  last_event_id=%d\n",
+		st.AutopilotEnabled,
+		st.MaxRunningWorkers,
+		st.PlannerDirty,
+		plannerActiveTaskRunID,
+		gcPending,
+		lastTick,
+		st.LastEventID,
+	)
+	fmt.Printf(
+		"planner_wake_version=%d  planner_cooldown_until=%s  planner_last_run_at=%s  planner_last_error=%s\n",
+		st.PlannerWakeVersion,
+		formatTimePtr(st.PlannerCooldownUntil),
+		formatTimePtr(st.PlannerLastRunAt),
+		emptyAsDash(strings.TrimSpace(st.PlannerLastError)),
+	)
 	if st.LastRecoveryAt != nil {
 		fmt.Printf(
 			"last_recovery=%s  dispatch_jobs=%d  task_runs=%d  notes=%d  workers=%d\n",
