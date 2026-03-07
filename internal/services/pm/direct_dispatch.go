@@ -4,6 +4,7 @@ import (
 	"context"
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -199,6 +200,20 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 
 	loopResult, err := s.executeWorkerLoop(ctx, t, *w, entryPrompt)
 	if err != nil {
+		var missingErr *workerLoopMissingReportError
+		if errors.As(err, &missingErr) {
+			if applyErr := s.applyMissingWorkerReportWaitUser(ctx, t.ID, *w, loopResult, "pm.direct_dispatch.missing_report"); applyErr == nil {
+				return DirectDispatchResult{
+					TicketID:       ticketID,
+					WorkerID:       w.ID,
+					Stages:         loopResult.Stages,
+					LastNextAction: string(contracts.NextWaitUser),
+					LastRunID:      loopResult.LastRunID,
+				}, nil
+			} else {
+				err = fmt.Errorf("worker loop 缺少 report，自动 blocked 失败: %w", applyErr)
+			}
+		}
 		loopErrMsg := strings.TrimSpace(err.Error())
 		rollbackTarget := prevWorkflow
 		if !fsm.CanTicketWorkflowTransition(contracts.TicketActive, rollbackTarget) {

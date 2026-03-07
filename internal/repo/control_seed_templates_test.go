@@ -20,8 +20,12 @@ func TestControlSeed_SkillTemplatesAvailableForTests(t *testing.T) {
 		"templates/project/control/skills/dispatch-new-ticket/SKILL.md",
 		"templates/project/control/skills/dispatch-new-ticket/references/output-contract.md",
 		"templates/project/control/skills/dispatch-new-ticket/assets/worker-agents.md.template",
+		"templates/project/control/skills/feature-run/SKILL.md",
 		"templates/project/control/skills/notebook-shaping/SKILL.md",
+		"templates/project/control/skills/plan-cycle/SKILL.md",
+		"templates/project/control/skills/plan-sync/SKILL.md",
 		"templates/project/control/skills/project-init/SKILL.md",
+		"templates/project/pm/plan.md",
 	}
 	for _, p := range paths {
 		got := MustReadSeedTemplate(p)
@@ -72,6 +76,23 @@ func TestEnsureControlPlaneSeed_RenderProjectIdentityInAgentUserTemplate(t *test
 	if info.Mode()&0o111 == 0 {
 		t.Fatalf("bootstrap placeholder should be executable, mode=%v", info.Mode())
 	}
+
+	if _, err := os.Stat(layout.PMDir); err != nil {
+		t.Fatalf("pm dir should exist, err=%v", err)
+	}
+	if _, err := os.Stat(layout.PMArchiveDir); err != nil {
+		t.Fatalf("pm archive dir should exist, err=%v", err)
+	}
+
+	planPath := filepath.Join(layout.PMDir, "plan.md")
+	gotPlan, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read pm plan failed: %v", err)
+	}
+	wantPlan := MustReadSeedTemplate("templates/project/pm/plan.md")
+	if string(gotPlan) != wantPlan {
+		t.Fatalf("pm plan should be seeded from template")
+	}
 }
 
 func TestPlanControlPlaneSeedUpdate_DetectSkillDrift(t *testing.T) {
@@ -102,6 +123,34 @@ func TestPlanControlPlaneSeedUpdate_DetectSkillDrift(t *testing.T) {
 	}
 }
 
+func TestPlanControlPlaneSeedUpdate_DetectMissingPMPlan(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := NewLayout(repoRoot)
+	if err := EnsureControlPlaneSeed(layout, "alpha"); err != nil {
+		t.Fatalf("EnsureControlPlaneSeed failed: %v", err)
+	}
+
+	planPath := filepath.Join(layout.PMDir, "plan.md")
+	if err := os.Remove(planPath); err != nil {
+		t.Fatalf("remove pm plan failed: %v", err)
+	}
+
+	changes, err := PlanControlPlaneSeedUpdate(layout, "alpha")
+	if err != nil {
+		t.Fatalf("PlanControlPlaneSeedUpdate failed: %v", err)
+	}
+	found := false
+	for _, change := range changes {
+		if change.Path == planPath && change.Action == "create" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected missing pm plan in plan changes, got=%+v", changes)
+	}
+}
+
 func TestUpdateControlPlaneSeed_OverwriteSkillsKeepKnowledge(t *testing.T) {
 	repoRoot := t.TempDir()
 	layout := NewLayout(repoRoot)
@@ -119,6 +168,10 @@ func TestUpdateControlPlaneSeed_OverwriteSkillsKeepKnowledge(t *testing.T) {
 	}
 	if err := os.WriteFile(knowledgePath, []byte("user-knowledge\n"), 0o644); err != nil {
 		t.Fatalf("write knowledge failed: %v", err)
+	}
+	planPath := filepath.Join(layout.PMDir, "plan.md")
+	if err := os.WriteFile(planPath, []byte("local-plan\n"), 0o644); err != nil {
+		t.Fatalf("write pm plan failed: %v", err)
 	}
 
 	changes, err := UpdateControlPlaneSeed(layout, "alpha")
@@ -142,15 +195,28 @@ func TestUpdateControlPlaneSeed_OverwriteSkillsKeepKnowledge(t *testing.T) {
 	if string(gotKnowledge) != "user-knowledge\n" {
 		t.Fatalf("knowledge should stay untouched, got=%q", string(gotKnowledge))
 	}
+	gotPlan, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read pm plan failed: %v", err)
+	}
+	if string(gotPlan) != "local-plan\n" {
+		t.Fatalf("pm plan should stay untouched, got=%q", string(gotPlan))
+	}
 
 	foundSkillUpdate := false
+	foundPMPlanCreate := false
 	for _, change := range changes {
 		if change.Path == skillPath && change.Action == "update" {
 			foundSkillUpdate = true
-			break
+		}
+		if change.Path == planPath && change.Action == "create" {
+			foundPMPlanCreate = true
 		}
 	}
 	if !foundSkillUpdate {
 		t.Fatalf("expected skill update in changes, got=%+v", changes)
+	}
+	if foundPMPlanCreate {
+		t.Fatalf("pm plan should not be recreated when already exists, got=%+v", changes)
 	}
 }

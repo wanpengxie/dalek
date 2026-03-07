@@ -34,6 +34,9 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 	if _, err := writeFileIfMissing(layout.ProjectAgentUserPath, defaultControlProjectAgentUserTemplate(layout, projectName), 0o644); err != nil {
 		return err
 	}
+	if _, err := writeFileIfMissing(pmPlanPath(layout), defaultPMPlanTemplate(), 0o644); err != nil {
+		return err
+	}
 	if _, err := ensureProjectBootstrap(layout); err != nil {
 		return err
 	}
@@ -82,6 +85,11 @@ func PlanControlPlaneSeedUpdate(layout Layout, projectName string) ([]ControlPla
 	} else if missing {
 		changes = append(changes, ControlPlaneChange{Path: layout.ProjectBootstrapPath, Action: "create"})
 	}
+	if missing, err := fileMissing(pmPlanPath(layout)); err != nil {
+		return nil, err
+	} else if missing {
+		changes = append(changes, ControlPlaneChange{Path: pmPlanPath(layout), Action: "create"})
+	}
 	return changes, nil
 }
 
@@ -121,6 +129,11 @@ func UpdateControlPlaneSeed(layout Layout, projectName string) ([]ControlPlaneCh
 		return nil, err
 	} else if created {
 		changes = append(changes, ControlPlaneChange{Path: layout.ProjectBootstrapPath, Action: "create"})
+	}
+	if created, err := writeFileIfMissing(pmPlanPath(layout), defaultPMPlanTemplate(), 0o644); err != nil {
+		return nil, err
+	} else if created {
+		changes = append(changes, ControlPlaneChange{Path: pmPlanPath(layout), Action: "create"})
 	}
 
 	for _, line := range []string{
@@ -217,6 +230,14 @@ func defaultProjectBootstrapTemplate() string {
 	return mustReadSeedTemplate("templates/project/bootstrap.sh")
 }
 
+func defaultPMPlanTemplate() string {
+	return mustReadSeedTemplate("templates/project/pm/plan.md")
+}
+
+func pmPlanPath(layout Layout) string {
+	return filepath.Join(layout.PMDir, "plan.md")
+}
+
 func ensureProjectBootstrap(layout Layout) (bool, error) {
 	current := strings.TrimSpace(layout.ProjectBootstrapPath)
 	if current == "" {
@@ -244,6 +265,8 @@ func ensureControlPlaneDirs(layout Layout) error {
 		layout.ControlSkillsDir,
 		layout.ControlKnowledgeDir,
 		layout.ControlToolsDir,
+		layout.PMDir,
+		layout.PMArchiveDir,
 		layout.RuntimeDir,
 		layout.RuntimeWorkersDir,
 		filepath.Join(layout.ControlSkillsDir, "dispatch-new-ticket"),

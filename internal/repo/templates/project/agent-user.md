@@ -7,6 +7,7 @@ version: "4.0"
 <project_identity>
 <name>{{.ProjectName}}</name>
 <project_key>{{.ProjectKey}}</project_key>
+<owner>{{.ProjectOwner}}</owner>
 <repo_root>{{.RepoRoot}}</repo_root>
 </project_identity>
 

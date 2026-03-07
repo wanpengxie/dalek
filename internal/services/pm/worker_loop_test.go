@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -125,23 +126,126 @@ func TestExecuteWorkerLoop_StopsOnWaitUser(t *testing.T) {
 	}
 }
 
-func TestExecuteWorkerLoop_StopsOnEmptyNextAction(t *testing.T) {
+func TestExecuteWorkerLoop_EmptyNextAction_RetrySucceeds(t *testing.T) {
 	svc, _, _ := newServiceForTest(t)
-	tk, w, runID := createWorkerLoopTestFixture(t, svc, "")
+	_, db, err := svc.require()
+	if err != nil {
+		t.Fatalf("require failed: %v", err)
+	}
 
+	tk := createTicket(t, db, "worker-loop-empty-retry-success")
+	w := contracts.Worker{
+		TicketID:     tk.ID,
+		Status:       contracts.WorkerRunning,
+		WorktreePath: t.TempDir(),
+		Branch:       "ts/worker-loop-empty-retry-success",
+	}
+	if err := db.Create(&w).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+	run1 := createWorkerTaskRun(t, db, tk.ID, w.ID, "wrk_empty_retry_success_1")
+	run2 := createWorkerTaskRun(t, db, tk.ID, w.ID, "wrk_empty_retry_success_2")
+	makeSemanticReport(t, svc, run2.ID, "done")
+
+	var prompts []string
+	var callCount atomic.Int32
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
-		return &fakeAgentRunHandle{runID: runID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+		prompts = append(prompts, prompt)
+		if callCount.Add(1) == 1 {
+			return &fakeAgentRunHandle{runID: run1.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+		}
+		return &fakeAgentRunHandle{runID: run2.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
 	}
 
 	result, err := svc.executeWorkerLoop(context.Background(), tk, w, "test prompt")
 	if err != nil {
 		t.Fatalf("executeWorkerLoop failed: %v", err)
 	}
-	if result.Stages != 1 {
-		t.Fatalf("expected 1 stage, got=%d", result.Stages)
+	if result.Stages != 2 {
+		t.Fatalf("expected 2 stages, got=%d", result.Stages)
+	}
+	if result.LastNextAction != "done" {
+		t.Fatalf("expected last_next_action=done, got=%q", result.LastNextAction)
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("expected 2 prompts, got=%d", len(prompts))
+	}
+	if prompts[0] != "test prompt" {
+		t.Fatalf("unexpected first prompt: %q", prompts[0])
+	}
+	if prompts[1] != emptyReportRetryPrompt {
+		t.Fatalf("unexpected retry prompt: %q", prompts[1])
+	}
+
+	var after contracts.Worker
+	if err := db.First(&after, w.ID).Error; err != nil {
+		t.Fatalf("load worker failed: %v", err)
+	}
+	if after.Status != contracts.WorkerStopped {
+		t.Fatalf("expected worker stopped after successful retry, got=%s", after.Status)
+	}
+}
+
+func TestExecuteWorkerLoop_EmptyNextAction_RetryExhaustedMarksWorkerFailed(t *testing.T) {
+	svc, _, _ := newServiceForTest(t)
+	_, db, err := svc.require()
+	if err != nil {
+		t.Fatalf("require failed: %v", err)
+	}
+
+	tk := createTicket(t, db, "worker-loop-empty-retry-failed")
+	w := contracts.Worker{
+		TicketID:     tk.ID,
+		Status:       contracts.WorkerRunning,
+		WorktreePath: t.TempDir(),
+		Branch:       "ts/worker-loop-empty-retry-failed",
+	}
+	if err := db.Create(&w).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+	run1 := createWorkerTaskRun(t, db, tk.ID, w.ID, "wrk_empty_retry_failed_1")
+	run2 := createWorkerTaskRun(t, db, tk.ID, w.ID, "wrk_empty_retry_failed_2")
+
+	var prompts []string
+	var callCount atomic.Int32
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		prompts = append(prompts, prompt)
+		if callCount.Add(1) == 1 {
+			return &fakeAgentRunHandle{runID: run1.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+		}
+		return &fakeAgentRunHandle{runID: run2.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+	}
+
+	result, err := svc.executeWorkerLoop(context.Background(), tk, w, "test prompt")
+	var missingErr *workerLoopMissingReportError
+	if !errors.As(err, &missingErr) {
+		t.Fatalf("expected workerLoopMissingReportError, got=%v", err)
+	}
+	if result.Stages != 2 {
+		t.Fatalf("expected 2 stages, got=%d", result.Stages)
 	}
 	if result.LastNextAction != "" {
 		t.Fatalf("expected empty last_next_action, got=%q", result.LastNextAction)
+	}
+	if missingErr.LastRunID != run2.ID {
+		t.Fatalf("expected missing report last_run_id=%d, got=%d", run2.ID, missingErr.LastRunID)
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("expected 2 prompts, got=%d", len(prompts))
+	}
+	if prompts[1] != emptyReportRetryPrompt {
+		t.Fatalf("unexpected retry prompt: %q", prompts[1])
+	}
+
+	var after contracts.Worker
+	if err := db.First(&after, w.ID).Error; err != nil {
+		t.Fatalf("load worker failed: %v", err)
+	}
+	if after.Status != contracts.WorkerFailed {
+		t.Fatalf("expected worker failed after retry exhausted, got=%s", after.Status)
+	}
+	if !strings.Contains(after.LastError, "连续两轮执行完成但未提交 report") {
+		t.Fatalf("unexpected worker last_error: %q", after.LastError)
 	}
 }
 

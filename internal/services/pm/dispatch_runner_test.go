@@ -5,10 +5,12 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"dalek/internal/contracts"
+	"dalek/internal/services/agentexec"
 )
 
 func TestStartLeaseRenewal_LogsOnFailure(t *testing.T) {
@@ -229,5 +231,76 @@ func TestStartLeaseRenewal_RecordsEvent(t *testing.T) {
 	}
 	if evCount == 0 {
 		t.Fatalf("expected at least one lease_renewal_failed event for task_run_id=%d", taskRun.ID)
+	}
+}
+
+func TestExecutePMDispatchJob_EmptyNextActionRetryExhaustedBlocksTicket(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "dispatch-runner-empty-report")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	run1 := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "dispatch_runner_empty_1")
+	run2 := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "dispatch_runner_empty_2")
+
+	svc.dispatchAgentExecutor = func(ctx context.Context, requestID string, ticket contracts.Ticket, worker contracts.Worker, entryPromptOverride string) (dispatchPromptBuildResult, error) {
+		return dispatchPromptBuildResult{
+			TemplatePath: "test://dispatch",
+			EntryPrompt:  "dispatch entry prompt",
+		}, nil
+	}
+
+	var prompts []string
+	var callCount atomic.Int32
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		prompts = append(prompts, prompt)
+		if callCount.Add(1) == 1 {
+			return &fakeAgentRunHandle{runID: run1.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+		}
+		return &fakeAgentRunHandle{runID: run2.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+	}
+
+	out, err := svc.executePMDispatchJob(context.Background(), contracts.PMDispatchJob{
+		RequestID: "dispatch_runner_empty_report",
+		TicketID:  tk.ID,
+		WorkerID:  w.ID,
+	}, tk, *w, runPMDispatchJobOptions{})
+	if err != nil {
+		t.Fatalf("executePMDispatchJob failed: %v", err)
+	}
+	if out.WorkerLoopStages != 2 {
+		t.Fatalf("expected 2 stages, got=%d", out.WorkerLoopStages)
+	}
+	if out.WorkerLoopNextAction != string(contracts.NextWaitUser) {
+		t.Fatalf("expected next_action wait_user, got=%q", out.WorkerLoopNextAction)
+	}
+	if len(prompts) != 2 || prompts[1] != emptyReportRetryPrompt {
+		t.Fatalf("unexpected prompt sequence: %#v", prompts)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketBlocked {
+		t.Fatalf("expected ticket blocked, got=%s", ticket.WorkflowStatus)
+	}
+
+	var inbox contracts.InboxItem
+	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+		t.Fatalf("expected needs_user inbox: %v", err)
+	}
+	if !strings.Contains(inbox.Body, "未提交 worker report") {
+		t.Fatalf("unexpected inbox body: %q", inbox.Body)
+	}
+
+	var eventCount int64
+	if err := p.DB.Model(&contracts.TaskEvent{}).Where("event_type = ?", "worker_loop_missing_report_blocked").Count(&eventCount).Error; err != nil {
+		t.Fatalf("count missing report events failed: %v", err)
+	}
+	if eventCount == 0 {
+		t.Fatalf("expected worker_loop_missing_report_blocked event")
 	}
 }

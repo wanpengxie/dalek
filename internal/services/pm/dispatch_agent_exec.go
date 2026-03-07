@@ -18,6 +18,13 @@ type dispatchPromptBuildResult struct {
 	EntryPrompt  string
 }
 
+func (s *Service) runPMDispatchAgent(ctx context.Context, requestID string, t contracts.Ticket, w contracts.Worker, entryPromptOverride string) (dispatchPromptBuildResult, error) {
+	if s.dispatchAgentExecutor != nil {
+		return s.dispatchAgentExecutor(ctx, requestID, t, w, entryPromptOverride)
+	}
+	return s.executePMDispatchAgent(ctx, requestID, t, w, entryPromptOverride)
+}
+
 func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, t contracts.Ticket, w contracts.Worker, entryPromptOverride string) (dispatchPromptBuildResult, error) {
 	p, _, err := s.require()
 	if err != nil {
