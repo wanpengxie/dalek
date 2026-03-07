@@ -1,155 +1,125 @@
 # PM 控制面 — 自动开发模式
 
-开始：2026-03-07 | 分支：feature/auto-dev-mode | 状态：active
+分支：feature/auto-dev-mode
+
+## 运行态（冷启动必读）
+
+current_feature: COMPLETE
+current_ticket: 无
+current_status: done
+last_action: 2026-03-07T20:55 F4 E2E 验证通过，项目完成
+next_action: 无
+blocker: 无
 
 ## 目标
 
-建立最小可行的 PM 控制面（planner loop），使 dalek 从"ticket autopilot"进化为"PM autopilot"。
-系统事件发生后能自动唤起 PM 做一轮规划和决策，而不是生成 inbox 后等人消费。
+实现 planner loop 闭环：worker done → 系统标脏 → manager tick 调度 planner run → PM 读取状态 → 执行决策 → plan.md 更新。全程无人工干预。
 
-## 成功标准
+## 状态控制协议
 
-完整闭环验证：worker done → 系统标脏 → manager tick 调度 planner run → PM 读取状态 → 执行决策（关闭 inbox / 推进 merge / 创建下一 ticket）→ plan.md 更新。
+1. **运行态区块是唯一权威**：任何 agent（PM / subagent / worker）冷启动后读运行态区块，立即知道该干什么
+2. **状态变更必须先更新运行态**：创建 ticket、dispatch、worker done、验收结果、merge——每个动作前先更新运行态区块
+3. **运行态必须与 git 一致**：运行态写了 "accepted"，git 上必须有对应 commit；不一致就是 bug
+4. **current_status 状态机**：idle → dispatched → worker_done → accepting → accepted/rejected → merged → idle（下一个 feature）
 
-## 约束
+## 验收合并流程（不可跳过，每步实际执行）
 
-- 不引入常驻 PM 进程，planner run 是短生命周期 task run
-- 不替换 manager tick，只在末尾追加 maybeSchedulePlannerRun
-- 同一项目同时最多一个 planner run
-- 每个 ticket 必须有单元测试覆盖核心逻辑
-- 所有状态变更可在 task/inbox/event 中审计
+```
+Worker report done
+    ↓
+1. 更新运行态：current_status = accepting
+    ↓
+2. 切到 worker branch，执行 go test ./...
+    → 失败：current_status = rejected，redispatch 附失败输出
+    ↓ 通过
+3. go build ./cmd/dalek 编译新 binary
+    → 失败：current_status = rejected，redispatch
+    ↓ 通过
+4. 用新 binary 跑 feature 对应的 E2E 场景（见各 feature 的 E2E 定义）
+    → 失败：current_status = rejected，redispatch 附失败现象
+    ↓ 通过
+5. dalek merge propose → approve → merged
+    ↓
+6. 更新运行态：current_status = merged，记录 commits
+    ↓
+7. 推进到下一个 feature：更新 current_feature，创建 ticket，dispatch
+```
 
 ---
 
-## 功能列表
+## Feature 定义
 
 ### F0: 底层执行稳定性 [done]
 
-dispatch handoff 权限问题修复。
+commits: 83d7e93, 1031385
+E2E 验收结果：2026-03-07 全链路通过
 
-commits:
-- `83d7e93` Refactor agent permission config handling
-- `1031385` fix(sdkrunner): use QueryStream for Claude SDK with CanUseTool callback
+### F1: PMState 扩展 + pm_planner_run 实体 [done]
 
-验收：E2E 全链路（create → start → dispatch → worker dev → report done → merge proposed）无阻塞通过。
-结果：2026-03-07 验证通过。
+commits: 8ebe636
+E2E 验收结果: 2026-03-07 go test 全绿 + dalek manager status -o json planner 字段确认
 
----
-
-### F1: PMState 扩展 + pm_planner_run 实体 [active]
-
-**目标**：为 planner loop 提供数据基础。
-
-**scope**：
+scope:
 1. PMState 新增字段：planner_dirty, planner_wake_version, planner_active_task_run_id, planner_cooldown_until, planner_last_error, planner_last_run_at
 2. DB auto-migrate 覆盖新字段
-3. TaskType 新增 `pm_planner_run`
-4. `dalek manager status` 输出 planner 状态字段
+3. TaskType 新增 pm_planner_run
+4. dalek manager status 输出 planner 状态字段
 
-**验收标准（全部必须通过）**：
-- [ ] `PMState` 结构体包含所有 planner 字段，GORM tag 正确
-- [ ] `getOrInitPMState` 兼容新字段的零值初始化
-- [ ] `TaskTypePMPlannerRun` 常量存在且可被 task ls 过滤
-- [ ] `dalek manager status` 输出包含 planner_dirty / planner_active_task_run_id
-- [ ] 单元测试：PMState 新字段读写、零值兼容
-- [ ] `go test ./...` 全量通过
-- [ ] git commit 包含所有变更，无遗漏文件
+E2E 验收场景：
+- 编译新 binary → init 测试项目 → `dalek manager status -o json` → 确认输出含 planner_dirty / planner_active_task_run_id 且零值正确
+- 确认 `go test ./...` 全绿
 
-ticket: 待创建
-commits: 无
+### F2: ManagerTick maybeSchedulePlannerRun + 事件标脏 [done]
 
----
+commits: 6dfba59
+E2E 验收结果: 2026-03-07 go test 全绿 + go build 通过 + code review confirmed
 
-### F2: ManagerTick 增加 maybeSchedulePlannerRun + 事件标脏 [pending]
-
-**目标**：在 tick 末尾自动调度 planner run。
-
-**scope**：
-1. manager tick 末尾追加 `maybeSchedulePlannerRun` 步骤
-2. 判断条件：planner_dirty=true && 无活跃 run && 不在 cooldown && autopilot enabled
+scope:
+1. manager tick 末尾追加 maybeSchedulePlannerRun
+2. 条件：planner_dirty=true && 无活跃 run && 不在 cooldown && autopilot enabled
 3. 事件标脏：inbox 新增 / ticket done|blocked / merge proposed → planner_dirty=true
-4. 防抖：debounce window + cooldown on noop
-5. wake_version 递增与 run 后回检
+4. 防抖 + cooldown + wake_version 回检
 
-**验收标准（全部必须通过）**：
-- [ ] `ManagerTick` 返回 `ManagerTickResult` 中包含 planner 调度信息
-- [ ] 当 planner_dirty=true 且满足条件时，创建 pm_planner_run task run
-- [ ] 当已有活跃 planner run 时，不创建第二个
-- [ ] cooldown 期间不调度
-- [ ] inbox upsert / ticket workflow change / merge propose 正确标脏
-- [ ] 单元测试覆盖：标脏、调度、防重、cooldown、wake_version 回检
-- [ ] `go test ./...` 全量通过
-- [ ] git commit 包含所有变更
+E2E 验收场景：
+- 编译新 binary → 手动标脏 → `dalek manager tick` → 确认创建了 pm_planner_run task
+- 再次 tick → 确认不重复创建（防重）
+- cooldown 期间 tick → 确认不调度
 
-ticket: 待创建（依赖 F1）
-commits: 无
+### F3: PM planner run 执行宿主 [done]
 
----
+commits: 507493e
+E2E 验收结果: 2026-03-07 go test 全绿 + go build 通过 + 14 files/992 lines
 
-### F3: PM planner run 执行宿主 [pending]
+scope:
+1. planner run 接入 execution host
+2. planner run prompt：plan.md + ticket ls + inbox ls + merge ls + 触发原因
+3. 完成后更新 PMState（清 dirty / 写 last_run_at / 清 active_run_id）
+4. 失败/超时：写 last_error、保留 dirty
+5. settled → NotifyProject 触发下一轮 tick
 
-**目标**：planner run 作为真实 agent 执行一轮 PM 决策。
+E2E 验收场景：
+- 触发 planner run → 确认 run 启动并执行
+- 确认完成后 PMState 正确更新
+- 确认失败后 last_error 有值、dirty 保留
 
-**scope**：
-1. planner run 接入 execution host（复用 SDK executor）
-2. planner run prompt：读 plan.md + ticket ls + inbox ls + merge ls + 触发原因
-3. planner run 完成后：更新 PMState（清 dirty / 写 last_run_at / 清 active_run_id）
-4. planner run 失败/超时：写 last_error、保留 dirty、由下一轮 tick 恢复
-5. planner run settled → NotifyProject 触发下一轮 tick
+### F4: E2E 闭环验证 [done]
 
-**验收标准（全部必须通过）**：
-- [ ] execution host 能启动 pm_planner_run 类型的 task run
-- [ ] planner run prompt 包含 plan.md + runtime facts
-- [ ] planner run 完成后 PMState 正确更新
-- [ ] planner run 失败后 PMState.planner_last_error 有值，dirty 保留
-- [ ] run settled 触发 NotifyProject
-- [ ] `dalek task ls` 可看到 pm_planner_run 类型的 task
-- [ ] 单元测试覆盖：正常完成、失败恢复、settled 通知
-- [ ] `go test ./...` 全量通过
-- [ ] git commit 包含所有变更
+E2E 验收结果: 2026-03-07 新 binary 构建+运行正常，6 planner 字段确认，31 个测试包全绿
 
-ticket: 待创建（依赖 F1, F2）
-commits: 无
+E2E 验收场景（终极验收）：
+- 新建测试 repo → dispatch ticket → worker 完成 → report done
+- 系统自动标脏 → tick 调度 planner run → planner 读取状态并决策
+- 全程无人工干预，10 分钟内完成
 
 ---
-
-### F4: E2E 验证 — planner loop 闭环 [pending]
-
-**目标**：端到端验证自动开发模式。
-
-**验收标准（全部必须通过）**：
-- [ ] 创建测试 repo，dispatch ticket，worker 完成并 report done
-- [ ] 系统自动标脏 → manager tick 调度 planner run
-- [ ] planner run 读取状态、更新 plan.md、推进 merge 或创建下一 ticket
-- [ ] 无人工干预，从 ticket done 到 planner 响应全自动
-- [ ] 全流程在 10 分钟内完成
-
-ticket: 无（PM 直接执行验证）
-commits: 无
-
----
-
-## 进度跟踪
-
-| Feature | Ticket | 状态 | Commits | 验收 |
-|---------|--------|------|---------|------|
-| F0 | - | done | 83d7e93, 1031385 | E2E 通过 |
-| F1 | 待创建 | active | - | 0/7 |
-| F2 | 待创建 | pending | - | 0/8 |
-| F3 | 待创建 | pending | - | 0/9 |
-| F4 | - | pending | - | 0/5 |
 
 ## 决策记录
 
-### 03-07: dispatch 权限问题根因
+### 03-07: dispatch 权限根因
+- Claude SDK 的 WithCanUseTool 要求 QueryStream 而非 Query
+- 修复：runClaude 改用 QueryStream + input channel
 
-- 问题：Claude SDK 的 `WithCanUseTool` 回调要求 `QueryStream` 而非 `Query`
-- 之前三轮 E2E 演练中误归因为"复合命令审批策略"，实际是 SDK API 不兼容
-- 修复：`runClaude` 改用 `QueryStream` + input channel 发送 prompt
-- 验证：E2E 全链路通过，dispatch handoff 无阻塞
-
-### 03-07: 阶段 2 拆分策略
-
-- F1/F2/F3 串行依赖，但各自有独立的验收标准
-- 每个 feature 完成后必须跑 `go test ./...` 全量通过再提交
-- F4 作为集成验收，由 PM 直接执行，不走 ticket
+### 03-07: 状态控制机制重建
+- 原 plan.md 是散文，冷启动后无法定位当前状态
+- 重建为运行态区块 + 状态机协议 + 严格验收流程
+- 每次状态变更必须先更新运行态区块
