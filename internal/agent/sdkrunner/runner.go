@@ -437,7 +437,16 @@ func runClaude(ctx context.Context, req Request, onEvent EventHandler) (Result, 
 	opts = append(opts, claude.WithSettingSources(claude.SettingSourceProject))
 	opts = append(opts, claude.WithCanUseTool(autoApproveClaudeTool))
 
-	msgs, errs := claude.Query(ctx, req.Prompt, opts...)
+	// WithCanUseTool requires QueryStream (streaming input), not Query.
+	// Send the prompt as a single user message then close the input channel.
+	inputCh := make(chan map[string]any, 1)
+	inputCh <- map[string]any{
+		"type":    "user",
+		"message": map[string]any{"role": "user", "content": req.Prompt},
+	}
+	close(inputCh)
+
+	msgs, errs := claude.QueryStream(ctx, inputCh, opts...)
 	lines := make([]string, 0, 128)
 	texts := make([]string, 0, 16)
 	for msg := range msgs {
