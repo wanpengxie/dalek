@@ -92,6 +92,14 @@ func (s *Service) SetMaxRunningWorkers(ctx context.Context, n int) (contracts.PM
 	return *st, nil
 }
 
+func (s *Service) markPlannerDirty(st *contracts.PMState) {
+	if st == nil {
+		return
+	}
+	st.PlannerDirty = true
+	st.PlannerWakeVersion++
+}
+
 func clampMaxRunning(n int) int {
 	if n <= 0 {
 		return 3

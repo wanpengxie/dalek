@@ -36,6 +36,8 @@ type ManagerTickResult struct {
 	EventsConsumed int
 	InboxUpserts   int
 
+	PlannerRunScheduled bool
+
 	StartedTickets    []uint
 	DispatchedTickets []uint
 	MergeProposed     []uint
@@ -149,10 +151,10 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	zombieResult := s.checkZombieWorkers(ctx, db, taskRuntime)
 	res.applyZombieCheckResult(zombieResult)
 
-	eventsResult := s.consumeTaskEvents(ctx, taskRuntime, st.LastEventID)
+	eventsResult := s.consumeTaskEvents(ctx, taskRuntime, st, st.LastEventID)
 	lastEventID := res.applyConsumeEventsResult(eventsResult)
 
-	scanResult, err := s.scanRunningWorkers(ctx, db, taskRuntime)
+	scanResult, err := s.scanRunningWorkers(ctx, db, taskRuntime, st)
 	if err != nil {
 		return res, err
 	}
@@ -169,7 +171,7 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		return res, nil
 	}
 
-	mergeResult := s.proposeMergesForDoneTickets(ctx, db, opt.DryRun)
+	mergeResult := s.proposeMergesForDoneTickets(ctx, db, st, opt.DryRun)
 	res.applyMergeProposalResult(mergeResult)
 
 	scheduleResult := s.scheduleQueuedTickets(ctx, db, scheduleOptions{
@@ -180,6 +182,13 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		DispatchTimeout:  opt.DispatchTimeout,
 	})
 	res.applyScheduleResult(scheduleResult)
+
+	scheduled, planErr := s.maybeSchedulePlannerRun(ctx, db, st, now)
+	if planErr != nil {
+		res.Errors = append(res.Errors, planErr.Error())
+	}
+	res.PlannerRunScheduled = scheduled
+
 	s.saveManagerTickState(ctx, db, st, now, lastEventID, maxRunning, opt)
 
 	return res, nil
@@ -227,7 +236,7 @@ func (s *Service) saveManagerTickState(ctx context.Context, db *gorm.DB, st *con
 	_ = db.WithContext(ctx).Save(st).Error
 }
 
-func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRuntime, lastEventID uint) consumeEventsResult {
+func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRuntime, st *contracts.PMState, lastEventID uint) consumeEventsResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -273,6 +282,7 @@ func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRu
 				out.Errors = append(out.Errors, uerr.Error())
 			} else if created {
 				out.InboxUpserts++
+				s.markPlannerDirty(st)
 			}
 
 		case "runtime_observation", "semantic_reported":
@@ -297,6 +307,7 @@ func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRu
 					out.Errors = append(out.Errors, uerr.Error())
 				} else if created {
 					out.InboxUpserts++
+					s.markPlannerDirty(st)
 				}
 			}
 		}
@@ -304,7 +315,7 @@ func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRu
 	return out
 }
 
-func (s *Service) scanRunningWorkers(ctx context.Context, db *gorm.DB, taskRuntime core.TaskRuntime) (scanWorkersResult, error) {
+func (s *Service) scanRunningWorkers(ctx context.Context, db *gorm.DB, taskRuntime core.TaskRuntime, st *contracts.PMState) (scanWorkersResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -387,6 +398,7 @@ func (s *Service) scanRunningWorkers(ctx context.Context, db *gorm.DB, taskRunti
 				out.Errors = append(out.Errors, uerr.Error())
 			} else if created {
 				out.InboxUpserts++
+				s.markPlannerDirty(st)
 			}
 			continue
 		}
@@ -396,7 +408,7 @@ func (s *Service) scanRunningWorkers(ctx context.Context, db *gorm.DB, taskRunti
 	return out, nil
 }
 
-func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, dryRun bool) mergeProposalResult {
+func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, st *contracts.PMState, dryRun bool) mergeProposalResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -447,6 +459,7 @@ func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, 
 			continue
 		}
 		out.MergeProposed = append(out.MergeProposed, t.ID)
+		s.markPlannerDirty(st)
 
 		_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
 			Key:         inboxKeyMergeApproval(mi.ID),
@@ -461,6 +474,46 @@ func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, 
 	}
 
 	return out
+}
+
+func (s *Service) maybeSchedulePlannerRun(ctx context.Context, db *gorm.DB, st *contracts.PMState, now time.Time) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if st == nil {
+		return false, nil
+	}
+	if !st.AutopilotEnabled || !st.PlannerDirty || st.PlannerActiveTaskRunID != nil {
+		return false, nil
+	}
+	if st.PlannerCooldownUntil != nil && !now.After(*st.PlannerCooldownUntil) {
+		return false, nil
+	}
+
+	taskRuntime, err := s.taskRuntimeForDB(db)
+	if err != nil {
+		return false, err
+	}
+	requestID := "pln_" + strings.TrimPrefix(newPMDispatchRequestID(), "dsp_")
+	taskRun, err := taskRuntime.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerPM,
+		TaskType:           contracts.TaskTypePMPlannerRun,
+		ProjectKey:         strings.TrimSpace(s.p.Key),
+		SubjectType:        "pm",
+		SubjectID:          "planner",
+		RequestID:          requestID,
+		OrchestrationState: contracts.TaskPending,
+		RequestPayloadJSON: marshalJSON(map[string]any{
+			"wake_version": st.PlannerWakeVersion,
+		}),
+	})
+	if err != nil {
+		return false, err
+	}
+	runID := taskRun.ID
+	st.PlannerActiveTaskRunID = &runID
+	st.PlannerDirty = false
+	return true, nil
 }
 
 func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt scheduleOptions) scheduleResult {
