@@ -3,6 +3,7 @@ package pm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -103,7 +104,7 @@ func (s *Service) executePMDispatchJob(ctx context.Context, job contracts.PMDisp
 		s.recordDispatchErrorEvent(ctx, now, w, fmt.Sprintf("dispatch_precheck_failed: %v", err))
 		return empty, err
 	}
-	promptMeta, err := s.executePMDispatchAgent(ctx, job.RequestID, t, w, strings.TrimSpace(opt.EntryPromptOverride))
+	promptMeta, err := s.runPMDispatchAgent(ctx, job.RequestID, t, w, strings.TrimSpace(opt.EntryPromptOverride))
 	if err != nil {
 		s.recordDispatchErrorEvent(ctx, now, w, fmt.Sprintf("pm_agent_failed: %v", err))
 		return empty, err
@@ -117,12 +118,24 @@ func (s *Service) executePMDispatchJob(ctx context.Context, job contracts.PMDisp
 
 	s.recordDispatchEvent(ctx, now, w, "worker_loop_start", "开始同步 worker loop")
 	loopResult, lerr := s.executeWorkerLoop(ctx, t, w, entryPrompt)
+	out.InjectedCmd = strings.TrimSpace(loopResult.InjectedCmd)
+	out.WorkerLoopStages = loopResult.Stages
 	if lerr != nil {
+		var missingErr *workerLoopMissingReportError
+		if errors.As(lerr, &missingErr) {
+			handledAt := time.Now()
+			s.recordDispatchErrorEvent(ctx, handledAt, w, fmt.Sprintf("worker_loop_missing_report: %v", missingErr))
+			if err := s.applyMissingWorkerReportWaitUser(ctx, t.ID, w, loopResult, "pm.dispatch_runner.missing_report"); err != nil {
+				return empty, fmt.Errorf("worker loop 缺少 report，自动 blocked 失败: %w", err)
+			}
+			out.WorkerLoopNextAction = string(contracts.NextWaitUser)
+			s.recordDispatchEvent(ctx, handledAt, w, "worker_loop_missing_report_blocked", missingErr.Error())
+			s.recordDispatchEvent(ctx, handledAt, w, "worker_loop_done", fmt.Sprintf("worker loop 完成 stages=%d next_action=%s", loopResult.Stages, out.WorkerLoopNextAction))
+			return out, nil
+		}
 		s.recordDispatchErrorEvent(ctx, now, w, fmt.Sprintf("worker_loop_failed: %v", lerr))
 		return empty, lerr
 	}
-	out.InjectedCmd = strings.TrimSpace(loopResult.InjectedCmd)
-	out.WorkerLoopStages = loopResult.Stages
 	out.WorkerLoopNextAction = strings.TrimSpace(loopResult.LastNextAction)
 	s.recordDispatchEvent(ctx, now, w, "worker_loop_done", fmt.Sprintf("worker loop 完成 stages=%d next_action=%s", loopResult.Stages, strings.TrimSpace(loopResult.LastNextAction)))
 	return out, nil

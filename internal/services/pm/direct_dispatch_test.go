@@ -5,11 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"dalek/internal/contracts"
 	"dalek/internal/repo"
+	"dalek/internal/services/agentexec"
 )
 
 func TestDirectDispatchWorker_AllowsStoppedWorkerWithAliveRuntime(t *testing.T) {
@@ -238,24 +240,10 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-wait","type":"agent_mess
 func TestDirectDispatchWorker_DefaultAutoStartWhenNotStarted(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 
-	fakeWorkerCodex := filepath.Join(t.TempDir(), "worker-codex-auto-start")
-	workerScript := `#!/usr/bin/env bash
-set -euo pipefail
-cat >/dev/null
-echo '{"type":"thread.started","thread_id":"thread-direct-dispatch-auto-start"}'
-echo '{"type":"item.completed","item":{"id":"msg-direct-auto-start","type":"agent_message","text":"direct dispatch auto-start ok"}}'
-`
-	if err := os.WriteFile(fakeWorkerCodex, []byte(workerScript), 0o755); err != nil {
-		t.Fatalf("write fake worker codex failed: %v", err)
-	}
-	if err := os.Chmod(fakeWorkerCodex, 0o755); err != nil {
-		t.Fatalf("chmod fake worker codex failed: %v", err)
-	}
-	p.Config.WorkerAgent = repo.AgentExecConfig{
-		Provider: "codex",
-		Mode:     "sdk",
-		Command:  fakeWorkerCodex,
-		Model:    "gpt-5.3-codex",
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, "direct_dispatch_default_auto_start")
+		makeSemanticReport(t, svc, run.ID, "done")
+		return &fakeAgentRunHandle{runID: run.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
 	}
 
 	tk := createTicket(t, p.DB, "direct-dispatch-default-auto-start")
@@ -275,6 +263,60 @@ echo '{"type":"item.completed","item":{"id":"msg-direct-auto-start","type":"agen
 	}
 	if w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
 		t.Fatalf("expected running/stopped worker after direct auto-start, got=%s", w.Status)
+	}
+}
+
+func TestDirectDispatchWorker_EmptyNextActionRetryExhaustedBlocksTicket(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "direct-dispatch-empty-report")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	run1 := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "direct_dispatch_empty_1")
+	run2 := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "direct_dispatch_empty_2")
+
+	var prompts []string
+	var callCount atomic.Int32
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		prompts = append(prompts, prompt)
+		if callCount.Add(1) == 1 {
+			return &fakeAgentRunHandle{runID: run1.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+		}
+		return &fakeAgentRunHandle{runID: run2.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+	}
+
+	out, err := svc.DirectDispatchWorker(context.Background(), tk.ID, DirectDispatchOptions{
+		EntryPrompt: "继续处理这个 ticket",
+	})
+	if err != nil {
+		t.Fatalf("DirectDispatchWorker failed: %v", err)
+	}
+	if out.Stages != 2 {
+		t.Fatalf("expected 2 stages, got=%d", out.Stages)
+	}
+	if out.LastNextAction != string(contracts.NextWaitUser) {
+		t.Fatalf("expected next_action wait_user, got=%q", out.LastNextAction)
+	}
+	if len(prompts) != 2 || prompts[1] != emptyReportRetryPrompt {
+		t.Fatalf("unexpected prompt sequence: %#v", prompts)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketBlocked {
+		t.Fatalf("expected ticket blocked, got=%s", ticket.WorkflowStatus)
+	}
+
+	var inbox contracts.InboxItem
+	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+		t.Fatalf("expected needs_user inbox: %v", err)
+	}
+	if !strings.Contains(inbox.Body, "未提交 worker report") {
+		t.Fatalf("unexpected inbox body: %q", inbox.Body)
 	}
 }
 
