@@ -6,10 +6,12 @@ import "dalek/internal/agent/provider"
 func AgentConfigFromExecConfig(exec AgentExecConfig) provider.AgentConfig {
 	normalized := normalizeAgentExecConfig(exec)
 	return provider.AgentConfig{
-		Provider:        normalized.Provider,
-		Model:           normalized.Model,
-		ReasoningEffort: normalized.ReasoningEffort,
-		ExtraFlags:      append([]string(nil), normalized.ExtraFlags...),
-		Command:         normalized.Command,
+		Provider:          normalized.Provider,
+		Model:             normalized.Model,
+		ReasoningEffort:   normalized.ReasoningEffort,
+		ExtraFlags:        append([]string(nil), normalized.ExtraFlags...),
+		DangerFullAccess:  normalized.DangerFullAccess,
+		BypassPermissions: normalized.BypassPermissions,
+		Command:           normalized.Command,
 	}.Normalize()
 }

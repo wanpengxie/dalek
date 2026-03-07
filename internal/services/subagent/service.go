@@ -282,12 +282,9 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 	}
 
 	res, runErr := s.taskRunner().Run(ctx, sdkrunner.Request{
-		Provider:        settings.Provider,
-		Model:           settings.Model,
-		ReasoningEffort: settings.ReasoningEffort,
-		Command:         settings.Command,
-		Prompt:          strings.TrimSpace(subRec.Prompt),
-		WorkDir:         workDir,
+		AgentConfig: settings,
+		Prompt:      strings.TrimSpace(subRec.Prompt),
+		WorkDir:     workDir,
 		Env: map[string]string{
 			"DALEK_PROJECT_KEY":          strings.TrimSpace(s.projectKey()),
 			"DALEK_REPO_ROOT":            strings.TrimSpace(s.repoRoot()),

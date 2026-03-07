@@ -15,11 +15,8 @@ import (
 )
 
 type SDKConfig struct {
-	Provider        string
-	Model           string
-	ReasoningEffort string
-	Command         string
-	Runner          sdkrunner.TaskRunner
+	AgentConfig provider.AgentConfig
+	Runner      sdkrunner.TaskRunner
 	BaseConfig
 	SessionID string
 	Timeout   time.Duration
@@ -35,6 +32,7 @@ type SDKExecutor struct {
 }
 
 func NewSDKExecutor(cfg SDKConfig) *SDKExecutor {
+	cfg.AgentConfig = cfg.AgentConfig.Normalize()
 	return &SDKExecutor{cfg: cfg}
 }
 
@@ -42,7 +40,7 @@ func (e *SDKExecutor) Execute(ctx context.Context, prompt string) (AgentRunHandl
 	if e == nil {
 		return nil, fmt.Errorf("sdk executor 为空")
 	}
-	if strings.TrimSpace(e.cfg.Provider) == "" {
+	if strings.TrimSpace(e.cfg.AgentConfig.Provider) == "" {
 		return nil, fmt.Errorf("sdk executor 缺少 provider")
 	}
 	if ctx == nil {
@@ -63,16 +61,16 @@ func (e *SDKExecutor) Execute(ctx context.Context, prompt string) (AgentRunHandl
 	}
 	streamLogPath := sdkStreamLogPathHint(e.cfg)
 	payload := marshalJSON(map[string]any{
-		"provider":         strings.TrimSpace(strings.ToLower(e.cfg.Provider)),
+		"provider":         strings.TrimSpace(strings.ToLower(e.cfg.AgentConfig.Provider)),
 		"mode":             "sdk",
-		"model":            strings.TrimSpace(e.cfg.Model),
+		"model":            strings.TrimSpace(e.cfg.AgentConfig.Model),
 		"session_id":       strings.TrimSpace(e.cfg.SessionID),
 		"stream_log_path":  streamLogPath,
 		"prompt_preview":   truncateRunes(prompt, 256),
-		"reasoning_effort": strings.TrimSpace(strings.ToLower(e.cfg.ReasoningEffort)),
+		"reasoning_effort": strings.TrimSpace(strings.ToLower(e.cfg.AgentConfig.ReasoningEffort)),
 	})
 	var err error
-	runID, err = lifecycle.Start(execCtx, payload, "sdk:"+strings.TrimSpace(strings.ToLower(e.cfg.Provider)), lease, "sdk executor started")
+	runID, err = lifecycle.Start(execCtx, payload, "sdk:"+strings.TrimSpace(strings.ToLower(e.cfg.AgentConfig.Provider)), lease, "sdk executor started")
 	if err != nil {
 		cancel()
 		return nil, err
@@ -213,14 +211,11 @@ func (h *sdkHandle) run() {
 		runner = sdkrunner.DefaultTaskRunner{}
 	}
 	r, err := runner.Run(h.execCtx, sdkrunner.Request{
-		Provider:        strings.TrimSpace(strings.ToLower(h.cfg.Provider)),
-		Model:           strings.TrimSpace(h.cfg.Model),
-		ReasoningEffort: strings.TrimSpace(strings.ToLower(h.cfg.ReasoningEffort)),
-		Command:         strings.TrimSpace(h.cfg.Command),
-		Prompt:          strings.TrimSpace(h.prompt),
-		SessionID:       strings.TrimSpace(h.cfg.SessionID),
-		WorkDir:         strings.TrimSpace(h.cfg.WorkDir),
-		Env:             h.cfg.Env,
+		AgentConfig: h.cfg.AgentConfig,
+		Prompt:      strings.TrimSpace(h.prompt),
+		SessionID:   strings.TrimSpace(h.cfg.SessionID),
+		WorkDir:     strings.TrimSpace(h.cfg.WorkDir),
+		Env:         h.cfg.Env,
 	}, onEvent)
 
 	parsedEvents := make([]any, 0, len(r.Events))

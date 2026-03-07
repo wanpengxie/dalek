@@ -37,6 +37,10 @@ func (s *Service) resolveAgentSettings(providerRaw, modelRaw string) (agentprovi
 	resolvedExecCfg.Provider = providerName
 	resolvedExecCfg.Model = model
 	resolvedExecCfg.ReasoningEffort = reasoning
+	// Subagents reuse provider/model defaults from worker_agent, but do not
+	// silently inherit elevated permission flags.
+	resolvedExecCfg.DangerFullAccess = false
+	resolvedExecCfg.BypassPermissions = false
 	resolved := repo.AgentConfigFromExecConfig(resolvedExecCfg)
 	if _, err := agentprovider.NewFromConfig(resolved); err != nil {
 		return agentprovider.AgentConfig{}, err

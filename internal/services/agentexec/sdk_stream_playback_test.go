@@ -8,12 +8,13 @@ import (
 	"testing"
 
 	"dalek/internal/agent/eventrender"
+	"dalek/internal/agent/provider"
 )
 
 func TestStartSDKStreamPlayback_UsesExplicitLogPath(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "sdk-stream.log")
 	playback, err := startSDKStreamPlayback(context.Background(), SDKConfig{
-		Provider:      "codex",
+		AgentConfig:   provider.AgentConfig{Provider: "codex"},
 		StreamLogPath: logPath,
 	}, 42)
 	if err != nil {
@@ -43,8 +44,8 @@ func TestStartSDKStreamPlayback_UsesExplicitLogPath(t *testing.T) {
 func TestStartSDKStreamPlayback_FallbackToWorkDir(t *testing.T) {
 	workDir := t.TempDir()
 	playback, err := startSDKStreamPlayback(context.Background(), SDKConfig{
-		Provider:   "codex",
-		BaseConfig: BaseConfig{WorkDir: workDir},
+		AgentConfig: provider.AgentConfig{Provider: "codex"},
+		BaseConfig:  BaseConfig{WorkDir: workDir},
 	}, 5)
 	if err != nil {
 		t.Fatalf("startSDKStreamPlayback failed: %v", err)
@@ -59,7 +60,7 @@ func TestStartSDKStreamPlayback_FallbackToWorkDir(t *testing.T) {
 
 func TestStartSDKStreamPlayback_RequiresPathOrWorkDir(t *testing.T) {
 	_, err := startSDKStreamPlayback(context.Background(), SDKConfig{
-		Provider: "codex",
+		AgentConfig: provider.AgentConfig{Provider: "codex"},
 	}, 1)
 	if err == nil || !strings.Contains(err.Error(), "stream_log_path/work_dir 同时为空") {
 		t.Fatalf("expected missing path/workdir error, got=%v", err)

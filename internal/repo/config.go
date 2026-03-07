@@ -28,13 +28,18 @@ type Config struct {
 }
 
 type AgentExecConfig struct {
-	Provider        string   `json:"provider"`
-	Mode            string   `json:"mode,omitempty"`
-	Model           string   `json:"model,omitempty"`
-	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
-	ExtraFlags      []string `json:"extra_flags,omitempty"`
+	Provider          string   `json:"provider"`
+	Mode              string   `json:"mode,omitempty"`
+	Model             string   `json:"model,omitempty"`
+	ReasoningEffort   string   `json:"reasoning_effort,omitempty"`
+	ExtraFlags        []string `json:"extra_flags,omitempty"`
+	DangerFullAccess  bool     `json:"danger_full_access,omitempty"`
+	BypassPermissions bool     `json:"bypass_permissions,omitempty"`
 	// Command 可选，用于覆盖 provider 可执行文件路径（例如自定义 codex/claude 二进制）。
 	Command string `json:"command,omitempty"`
+
+	dangerFullAccessSet  bool
+	bypassPermissionsSet bool
 }
 
 type GatewayAgentConfig struct {
@@ -69,6 +74,27 @@ const CurrentProjectSchemaVersion = 2
 
 var projectConfigDeprecationWarnf = func(format string, args ...any) {
 	log.Printf(format, args...)
+}
+
+func (c *AgentExecConfig) UnmarshalJSON(data []byte) error {
+	type alias AgentExecConfig
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*c = AgentExecConfig(decoded)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil
+	}
+	if _, exists := raw["danger_full_access"]; exists {
+		c.dangerFullAccessSet = true
+	}
+	if _, exists := raw["bypass_permissions"]; exists {
+		c.bypassPermissionsSet = true
+	}
+	return nil
 }
 
 func (c *Config) UnmarshalJSON(data []byte) error {
@@ -172,9 +198,17 @@ func normalizeAgentExecConfig(in AgentExecConfig) AgentExecConfig {
 		if out.ReasoningEffort == "" {
 			out.ReasoningEffort = provider.DefaultReasoningEffort(provider.ProviderCodex)
 		}
+		out.BypassPermissions = false
 	case provider.ProviderClaude, provider.ProviderGemini:
 		// claude/gemini 不使用 reasoning_effort，避免跨 provider 残留。
 		out.ReasoningEffort = ""
+		out.DangerFullAccess = false
+		if out.Provider != provider.ProviderClaude {
+			out.BypassPermissions = false
+		}
+	default:
+		out.DangerFullAccess = false
+		out.BypassPermissions = false
 	}
 	if len(out.ExtraFlags) > 0 {
 		flags := make([]string, 0, len(out.ExtraFlags))
@@ -232,6 +266,12 @@ func mergeAgentExecConfig(base AgentExecConfig, override AgentExecConfig) AgentE
 	}
 	if override.Command != "" {
 		out.Command = override.Command
+	}
+	if override.dangerFullAccessSet {
+		out.DangerFullAccess = override.DangerFullAccess
+	}
+	if override.bypassPermissionsSet {
+		out.BypassPermissions = override.BypassPermissions
 	}
 	if rawOverrideMode != "" {
 		out.Mode = normalizeExecMode(rawOverrideMode)

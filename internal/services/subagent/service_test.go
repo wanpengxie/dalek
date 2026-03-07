@@ -273,3 +273,40 @@ func TestResolveAgentSettings_SwitchToClaudeDoesNotInheritModel(t *testing.T) {
 		t.Fatalf("claude reasoning_effort should be empty, got=%q", got.ReasoningEffort)
 	}
 }
+
+func TestResolveAgentSettings_DoesNotInheritElevatedPermissions(t *testing.T) {
+	svc, _, project := newSubagentServiceForTest(t)
+	project.Config.WorkerAgent = repo.AgentExecConfig{
+		Provider:         "codex",
+		Model:            "gpt-5.3-codex",
+		ReasoningEffort:  "xhigh",
+		DangerFullAccess: true,
+	}
+
+	got, err := svc.resolveAgentSettings("", "")
+	if err != nil {
+		t.Fatalf("resolveAgentSettings failed: %v", err)
+	}
+	if got.Provider != agentprovider.ProviderCodex {
+		t.Fatalf("unexpected provider: %q", got.Provider)
+	}
+	if got.DangerFullAccess {
+		t.Fatalf("subagent should not inherit danger_full_access")
+	}
+
+	project.Config.WorkerAgent = repo.AgentExecConfig{
+		Provider:          "claude",
+		Model:             "opus",
+		BypassPermissions: true,
+	}
+	got, err = svc.resolveAgentSettings("", "")
+	if err != nil {
+		t.Fatalf("resolveAgentSettings failed: %v", err)
+	}
+	if got.Provider != agentprovider.ProviderClaude {
+		t.Fatalf("unexpected provider after switch: %q", got.Provider)
+	}
+	if got.BypassPermissions {
+		t.Fatalf("subagent should not inherit bypass_permissions")
+	}
+}

@@ -86,10 +86,12 @@ func (s *Service) runAgentSDK(ctx context.Context, req runAgentSDKRequest) (agen
 	}
 	providerName := strings.TrimSpace(strings.ToLower(req.Provider))
 	executor := agentexec.NewSDKExecutor(agentexec.SDKConfig{
-		Provider:        providerName,
-		Model:           strings.TrimSpace(req.Model),
-		ReasoningEffort: strings.TrimSpace(strings.ToLower(req.Reasoning)),
-		Command:         strings.TrimSpace(req.Command),
+		AgentConfig: provider.AgentConfig{
+			Provider:        providerName,
+			Model:           strings.TrimSpace(req.Model),
+			ReasoningEffort: strings.TrimSpace(strings.ToLower(req.Reasoning)),
+			Command:         strings.TrimSpace(req.Command),
+		},
 		Runner: channelSDKTaskRunner{
 			manager: manager,
 			req:     req,
@@ -203,10 +205,10 @@ func (r channelSDKTaskRunner) Run(ctx context.Context, req sdkrunner.Request, on
 	}
 	out, err := r.manager.RunTurn(ctx, ChatRunRequest{
 		ConversationID: strings.TrimSpace(r.req.ConversationID),
-		Provider:       strings.TrimSpace(strings.ToLower(req.Provider)),
-		Model:          strings.TrimSpace(req.Model),
-		Reasoning:      strings.TrimSpace(strings.ToLower(req.ReasoningEffort)),
-		Command:        strings.TrimSpace(req.Command),
+		Provider:       strings.TrimSpace(strings.ToLower(req.AgentConfig.Provider)),
+		Model:          strings.TrimSpace(req.AgentConfig.Model),
+		Reasoning:      strings.TrimSpace(strings.ToLower(req.AgentConfig.ReasoningEffort)),
+		Command:        strings.TrimSpace(req.AgentConfig.Command),
 		WorkDir:        strings.TrimSpace(req.WorkDir),
 		Prompt:         strings.TrimSpace(req.Prompt),
 		SessionID:      strings.TrimSpace(req.SessionID),
@@ -238,10 +240,10 @@ func (r channelSDKTaskRunner) Run(ctx context.Context, req sdkrunner.Request, on
 	}
 	mode := strings.TrimSpace(strings.ToLower(string(out.OutputMode)))
 	if mode == "" {
-		mode = string(sdkOutputMode(strings.TrimSpace(strings.ToLower(req.Provider))))
+		mode = string(sdkOutputMode(strings.TrimSpace(strings.ToLower(req.AgentConfig.Provider))))
 	}
 	return sdkrunner.Result{
-		Provider:   strings.TrimSpace(strings.ToLower(req.Provider)),
+		Provider:   strings.TrimSpace(strings.ToLower(req.AgentConfig.Provider)),
 		OutputMode: mode,
 		Text:       strings.TrimSpace(out.Text),
 		SessionID:  strings.TrimSpace(out.SessionID),

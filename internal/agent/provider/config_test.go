@@ -90,3 +90,39 @@ func TestSupportedProviders(t *testing.T) {
 		t.Fatalf("shell should not be supported")
 	}
 }
+
+func TestAgentConfigNormalize_ClearsCrossProviderFlags(t *testing.T) {
+	codex := (AgentConfig{
+		Provider:          "codex",
+		ReasoningEffort:   "xhigh",
+		BypassPermissions: true,
+	}).Normalize()
+	if codex.BypassPermissions {
+		t.Fatalf("codex should clear bypass_permissions")
+	}
+
+	claude := (AgentConfig{
+		Provider:         "claude",
+		ReasoningEffort:  "xhigh",
+		DangerFullAccess: true,
+	}).Normalize()
+	if claude.ReasoningEffort != "" {
+		t.Fatalf("claude should clear reasoning_effort, got=%q", claude.ReasoningEffort)
+	}
+	if claude.DangerFullAccess {
+		t.Fatalf("claude should clear danger_full_access")
+	}
+
+	gemini := (AgentConfig{
+		Provider:          "gemini",
+		ReasoningEffort:   "xhigh",
+		DangerFullAccess:  true,
+		BypassPermissions: true,
+	}).Normalize()
+	if gemini.ReasoningEffort != "" {
+		t.Fatalf("gemini should clear reasoning_effort, got=%q", gemini.ReasoningEffort)
+	}
+	if gemini.DangerFullAccess || gemini.BypassPermissions {
+		t.Fatalf("gemini should clear elevated permission flags: %+v", gemini)
+	}
+}

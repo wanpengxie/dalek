@@ -31,6 +31,12 @@ func TestConfigWithDefaults_SetsAgentAndTimeoutDefaults(t *testing.T) {
 	if cfg.WorkerAgent.ReasoningEffort != "xhigh" {
 		t.Fatalf("unexpected worker_agent.reasoning_effort default: %q", cfg.WorkerAgent.ReasoningEffort)
 	}
+	if cfg.WorkerAgent.DangerFullAccess {
+		t.Fatalf("expected worker_agent.danger_full_access=false by default")
+	}
+	if cfg.PMAgent.BypassPermissions {
+		t.Fatalf("expected pm_agent.bypass_permissions=false by default")
+	}
 	if cfg.PMDispatchTimeoutMS != 0 {
 		t.Fatalf("expected pm_dispatch_timeout_ms default=0, got=%d", cfg.PMDispatchTimeoutMS)
 	}
@@ -100,20 +106,45 @@ func TestMergeConfig_OverridesAgentCommand(t *testing.T) {
 	}
 }
 
+func TestMergeConfig_OverridesAgentPermissionFlags(t *testing.T) {
+	base := Config{}.WithDefaults()
+	got := MergeConfig(base, Config{
+		WorkerAgent: setAgentPermissionPresence(AgentExecConfig{
+			Provider:         "codex",
+			DangerFullAccess: true,
+		}, true, false),
+		PMAgent: setAgentPermissionPresence(AgentExecConfig{
+			Provider:          "claude",
+			BypassPermissions: true,
+		}, false, true),
+	})
+	if !got.WorkerAgent.DangerFullAccess {
+		t.Fatalf("expected worker_agent.danger_full_access=true")
+	}
+	if !got.PMAgent.BypassPermissions {
+		t.Fatalf("expected pm_agent.bypass_permissions=true")
+	}
+}
+
 func TestMergeConfig_SwitchProviderToClaudeClearsInheritedCodexModel(t *testing.T) {
 	base := Config{
 		WorkerAgent: AgentExecConfig{
-			Provider: "codex",
-			Model:    "gpt-5.3-codex",
+			Provider:         "codex",
+			Model:            "gpt-5.3-codex",
+			DangerFullAccess: true,
 		},
 		PMAgent: AgentExecConfig{
-			Provider: "codex",
-			Model:    "gpt-5.3-codex",
+			Provider:         "codex",
+			Model:            "gpt-5.3-codex",
+			DangerFullAccess: true,
 		},
 	}.WithDefaults()
 	got := MergeConfig(base, Config{
 		WorkerAgent: AgentExecConfig{Provider: "claude"},
-		PMAgent:     AgentExecConfig{Provider: "claude"},
+		PMAgent: setAgentPermissionPresence(AgentExecConfig{
+			Provider:          "claude",
+			BypassPermissions: true,
+		}, false, true),
 	})
 	if got.WorkerAgent.Provider != "claude" {
 		t.Fatalf("unexpected worker_agent.provider: %q", got.WorkerAgent.Provider)
@@ -124,6 +155,9 @@ func TestMergeConfig_SwitchProviderToClaudeClearsInheritedCodexModel(t *testing.
 	if got.WorkerAgent.ReasoningEffort != "" {
 		t.Fatalf("worker_agent.reasoning_effort should be empty for claude, got=%q", got.WorkerAgent.ReasoningEffort)
 	}
+	if got.WorkerAgent.DangerFullAccess {
+		t.Fatalf("worker_agent.danger_full_access should be cleared for claude")
+	}
 	if got.PMAgent.Provider != "claude" {
 		t.Fatalf("unexpected pm_agent.provider: %q", got.PMAgent.Provider)
 	}
@@ -133,22 +167,30 @@ func TestMergeConfig_SwitchProviderToClaudeClearsInheritedCodexModel(t *testing.
 	if got.PMAgent.ReasoningEffort != "" {
 		t.Fatalf("pm_agent.reasoning_effort should be empty for claude, got=%q", got.PMAgent.ReasoningEffort)
 	}
+	if !got.PMAgent.BypassPermissions {
+		t.Fatalf("expected pm_agent.bypass_permissions preserved for claude")
+	}
 }
 
 func TestMergeConfig_SwitchProviderToCodexRestoresDefaults(t *testing.T) {
 	base := Config{
 		WorkerAgent: AgentExecConfig{
-			Provider: "claude",
-			Model:    "claude-3-7-sonnet",
+			Provider:          "claude",
+			Model:             "claude-3-7-sonnet",
+			BypassPermissions: true,
 		},
 		PMAgent: AgentExecConfig{
-			Provider: "claude",
-			Model:    "claude-3-7-sonnet",
+			Provider:          "claude",
+			Model:             "claude-3-7-sonnet",
+			BypassPermissions: true,
 		},
 	}.WithDefaults()
 	got := MergeConfig(base, Config{
-		WorkerAgent: AgentExecConfig{Provider: "codex"},
-		PMAgent:     AgentExecConfig{Provider: "codex"},
+		WorkerAgent: setAgentPermissionPresence(AgentExecConfig{
+			Provider:         "codex",
+			DangerFullAccess: true,
+		}, true, false),
+		PMAgent: AgentExecConfig{Provider: "codex"},
 	})
 	if got.WorkerAgent.Provider != "codex" {
 		t.Fatalf("unexpected worker_agent.provider: %q", got.WorkerAgent.Provider)
@@ -159,6 +201,12 @@ func TestMergeConfig_SwitchProviderToCodexRestoresDefaults(t *testing.T) {
 	if got.WorkerAgent.ReasoningEffort != "xhigh" {
 		t.Fatalf("unexpected worker_agent.reasoning_effort default: %q", got.WorkerAgent.ReasoningEffort)
 	}
+	if !got.WorkerAgent.DangerFullAccess {
+		t.Fatalf("expected worker_agent.danger_full_access preserved for codex")
+	}
+	if got.WorkerAgent.BypassPermissions {
+		t.Fatalf("worker_agent.bypass_permissions should be cleared for codex")
+	}
 	if got.PMAgent.Provider != "codex" {
 		t.Fatalf("unexpected pm_agent.provider: %q", got.PMAgent.Provider)
 	}
@@ -167,6 +215,44 @@ func TestMergeConfig_SwitchProviderToCodexRestoresDefaults(t *testing.T) {
 	}
 	if got.PMAgent.ReasoningEffort != "xhigh" {
 		t.Fatalf("unexpected pm_agent.reasoning_effort default: %q", got.PMAgent.ReasoningEffort)
+	}
+	if got.PMAgent.BypassPermissions {
+		t.Fatalf("pm_agent.bypass_permissions should be cleared for codex")
+	}
+}
+
+func TestMergeConfig_ExplicitFalseClearsAgentPermissionFlags(t *testing.T) {
+	base := Config{
+		WorkerAgent: AgentExecConfig{
+			Provider:         "codex",
+			DangerFullAccess: true,
+		},
+		PMAgent: AgentExecConfig{
+			Provider:          "claude",
+			BypassPermissions: true,
+		},
+	}.WithDefaults()
+
+	var override Config
+	if err := json.Unmarshal([]byte(`{
+		"worker_agent": {
+			"provider": "codex",
+			"danger_full_access": false
+		},
+		"pm_agent": {
+			"provider": "claude",
+			"bypass_permissions": false
+		}
+	}`), &override); err != nil {
+		t.Fatalf("unmarshal override failed: %v", err)
+	}
+
+	got := MergeConfig(base, override)
+	if got.WorkerAgent.DangerFullAccess {
+		t.Fatalf("expected worker_agent.danger_full_access=false after explicit override")
+	}
+	if got.PMAgent.BypassPermissions {
+		t.Fatalf("expected pm_agent.bypass_permissions=false after explicit override")
 	}
 }
 
@@ -318,9 +404,10 @@ func TestLoadConfig_V1SchemaMigratesNotebookAndLogsDeprecation(t *testing.T) {
 
 func TestAgentConfigFromExecConfig_AppliesNormalizationAndDefaults(t *testing.T) {
 	got := AgentConfigFromExecConfig(AgentExecConfig{
-		Provider:   " CODEX ",
-		ExtraFlags: []string{" --foo ", "", " --bar "},
-		Command:    " /tmp/fake-codex ",
+		Provider:         " CODEX ",
+		ExtraFlags:       []string{" --foo ", "", " --bar "},
+		DangerFullAccess: true,
+		Command:          " /tmp/fake-codex ",
 	})
 	if got.Provider != agentprovider.ProviderCodex {
 		t.Fatalf("unexpected provider: %q", got.Provider)
@@ -337,13 +424,17 @@ func TestAgentConfigFromExecConfig_AppliesNormalizationAndDefaults(t *testing.T)
 	if len(got.ExtraFlags) != 2 || got.ExtraFlags[0] != "--foo" || got.ExtraFlags[1] != "--bar" {
 		t.Fatalf("unexpected extra_flags: %#v", got.ExtraFlags)
 	}
+	if !got.DangerFullAccess {
+		t.Fatalf("expected danger_full_access=true")
+	}
 }
 
 func TestAgentConfigFromExecConfig_ClaudeClearsReasoningEffort(t *testing.T) {
 	got := AgentConfigFromExecConfig(AgentExecConfig{
-		Provider:        "claude",
-		Model:           "claude-3-7-sonnet",
-		ReasoningEffort: "xhigh",
+		Provider:          "claude",
+		Model:             "claude-3-7-sonnet",
+		ReasoningEffort:   "xhigh",
+		BypassPermissions: true,
 	})
 	if got.Provider != agentprovider.ProviderClaude {
 		t.Fatalf("unexpected provider: %q", got.Provider)
@@ -351,4 +442,13 @@ func TestAgentConfigFromExecConfig_ClaudeClearsReasoningEffort(t *testing.T) {
 	if got.ReasoningEffort != "" {
 		t.Fatalf("claude reasoning_effort should be empty, got=%q", got.ReasoningEffort)
 	}
+	if !got.BypassPermissions {
+		t.Fatalf("expected bypass_permissions=true")
+	}
+}
+
+func setAgentPermissionPresence(cfg AgentExecConfig, dangerSet, bypassSet bool) AgentExecConfig {
+	cfg.dangerFullAccessSet = dangerSet
+	cfg.bypassPermissionsSet = bypassSet
+	return cfg
 }

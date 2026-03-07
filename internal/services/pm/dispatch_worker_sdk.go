@@ -53,10 +53,7 @@ func (s *Service) launchWorkerSDKHandle(
 	env[dispatchDepthEnvKey] = nextDispatchDepthEnvValue()
 
 	executor := agentexec.NewSDKExecutor(agentexec.SDKConfig{
-		Provider:        agentCfg.Provider,
-		Model:           agentCfg.Model,
-		ReasoningEffort: agentCfg.ReasoningEffort,
-		Command:         agentCfg.Command,
+		AgentConfig: agentCfg,
 		BaseConfig: agentexec.BaseConfig{
 			Runtime:     rt,
 			OwnerType:   contracts.TaskOwnerWorker,

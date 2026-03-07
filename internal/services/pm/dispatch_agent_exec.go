@@ -86,10 +86,7 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 	var executor agentexec.Executor
 	if execMode == "sdk" {
 		executor = agentexec.NewSDKExecutor(agentexec.SDKConfig{
-			Provider:        agentCfg.Provider,
-			Model:           agentCfg.Model,
-			ReasoningEffort: agentCfg.ReasoningEffort,
-			Command:         agentCfg.Command,
+			AgentConfig: agentCfg,
 			BaseConfig: agentexec.BaseConfig{
 				Runtime:     rt,
 				OwnerType:   contracts.TaskOwnerPM,

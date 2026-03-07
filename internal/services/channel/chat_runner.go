@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dalek/internal/agent/auditlog"
+	agentprovider "dalek/internal/agent/provider"
 	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/services/channel/agentcli"
 )
@@ -469,14 +470,16 @@ func (r *sdkTaskBackedChatRunner) RunTurn(ctx context.Context, req ChatRunReques
 	}
 	internalEvents := make([]agentcli.Event, 0, 64)
 	result, err := runner.Run(ctx, sdkrunner.Request{
-		Provider:        req.Provider,
-		Model:           req.Model,
-		ReasoningEffort: req.Reasoning,
-		Command:         req.Command,
-		Prompt:          req.Prompt,
-		SessionID:       req.SessionID,
-		WorkDir:         req.WorkDir,
-		Env:             req.Env,
+		AgentConfig: agentprovider.AgentConfig{
+			Provider:        req.Provider,
+			Model:           req.Model,
+			ReasoningEffort: req.Reasoning,
+			Command:         req.Command,
+		},
+		Prompt:    req.Prompt,
+		SessionID: req.SessionID,
+		WorkDir:   req.WorkDir,
+		Env:       req.Env,
 	}, func(ev sdkrunner.Event) {
 		item := agentcli.Event{
 			Type:      ev.Type,

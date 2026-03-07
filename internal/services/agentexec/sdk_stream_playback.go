@@ -58,7 +58,7 @@ func startSDKStreamPlayback(_ context.Context, cfg SDKConfig, runID uint) (*sdkS
 		return nil, err
 	}
 
-	prov := strings.TrimSpace(strings.ToLower(cfg.Provider))
+	prov := strings.TrimSpace(strings.ToLower(cfg.AgentConfig.Provider))
 	playback := &sdkStreamPlayback{
 		runID:    runID,
 		provider: prov,

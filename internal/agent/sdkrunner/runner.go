@@ -14,6 +14,7 @@ import (
 
 	"dalek/internal/agent/auditlog"
 	"dalek/internal/agent/eventlog"
+	agentprovider "dalek/internal/agent/provider"
 	"dalek/internal/repo"
 
 	claude "github.com/wanpengxie/go-claude-agent-sdk"
@@ -27,14 +28,11 @@ const (
 )
 
 type Request struct {
-	Provider        string
-	Model           string
-	ReasoningEffort string
-	Command         string
-	Prompt          string
-	SessionID       string
-	WorkDir         string
-	Env             map[string]string
+	AgentConfig agentprovider.AgentConfig
+	Prompt      string
+	SessionID   string
+	WorkDir     string
+	Env         map[string]string
 }
 
 type Event struct {
@@ -213,21 +211,18 @@ func Run(ctx context.Context, req Request, onEvent EventHandler) (out Result, ru
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	req.Provider = strings.TrimSpace(strings.ToLower(req.Provider))
+	req.AgentConfig = req.AgentConfig.Normalize()
 	req.Prompt = strings.TrimSpace(req.Prompt)
 	req.SessionID = strings.TrimSpace(req.SessionID)
-	req.Model = strings.TrimSpace(req.Model)
-	req.Command = strings.TrimSpace(req.Command)
 	req.WorkDir = strings.TrimSpace(req.WorkDir)
-	req.ReasoningEffort = strings.TrimSpace(strings.ToLower(req.ReasoningEffort))
 	startedAt := time.Now()
 	_ = auditlog.Append(req.WorkDir, map[string]any{
 		"layer":            "task_runner",
 		"phase":            "request",
-		"provider":         req.Provider,
-		"model":            req.Model,
-		"reasoning_effort": req.ReasoningEffort,
-		"command":          req.Command,
+		"provider":         req.AgentConfig.Provider,
+		"model":            req.AgentConfig.Model,
+		"reasoning_effort": req.AgentConfig.ReasoningEffort,
+		"command":          req.AgentConfig.Command,
 		"work_dir":         req.WorkDir,
 		"session_id":       req.SessionID,
 		"prompt":           req.Prompt,
@@ -237,10 +232,10 @@ func Run(ctx context.Context, req Request, onEvent EventHandler) (out Result, ru
 		_ = auditlog.Append(req.WorkDir, map[string]any{
 			"layer":            "task_runner",
 			"phase":            "response",
-			"provider":         req.Provider,
-			"model":            req.Model,
-			"reasoning_effort": req.ReasoningEffort,
-			"command":          req.Command,
+			"provider":         req.AgentConfig.Provider,
+			"model":            req.AgentConfig.Model,
+			"reasoning_effort": req.AgentConfig.ReasoningEffort,
+			"command":          req.AgentConfig.Command,
 			"work_dir":         req.WorkDir,
 			"session_id":       strings.TrimSpace(out.SessionID),
 			"duration_ms":      time.Since(startedAt).Milliseconds(),
@@ -252,7 +247,7 @@ func Run(ctx context.Context, req Request, onEvent EventHandler) (out Result, ru
 			"error":            errString(runErr),
 		})
 	}()
-	if req.Provider == "" {
+	if req.AgentConfig.Provider == "" {
 		runErr = fmt.Errorf("sdk provider 为空")
 		return Result{}, runErr
 	}
@@ -272,12 +267,12 @@ func Run(ctx context.Context, req Request, onEvent EventHandler) (out Result, ru
 		_ = evLogger.WriteHeader(eventlog.RunMeta{
 			RunID:           evLogRunID,
 			Project:         evLogProject,
-			Provider:        req.Provider,
-			Model:           req.Model,
+			Provider:        req.AgentConfig.Provider,
+			Model:           req.AgentConfig.Model,
 			SessionID:       req.SessionID,
 			WorkDir:         req.WorkDir,
 			Layer:           "task_runner",
-			ReasoningEffort: req.ReasoningEffort,
+			ReasoningEffort: req.AgentConfig.ReasoningEffort,
 		})
 		defer func() {
 			_ = evLogger.WriteFooter(eventlog.RunFooter{
@@ -302,7 +297,7 @@ func Run(ctx context.Context, req Request, onEvent EventHandler) (out Result, ru
 		}
 	}
 
-	switch req.Provider {
+	switch req.AgentConfig.Provider {
 	case "codex":
 		out, runErr = runCodex(ctx, req, onEvent)
 		return out, runErr
@@ -313,7 +308,7 @@ func Run(ctx context.Context, req Request, onEvent EventHandler) (out Result, ru
 		out, runErr = runGemini(ctx, req, onEvent)
 		return out, runErr
 	default:
-		runErr = fmt.Errorf("unknown sdk provider: %s", req.Provider)
+		runErr = fmt.Errorf("unknown sdk provider: %s", req.AgentConfig.Provider)
 		return Result{}, runErr
 	}
 }
@@ -332,7 +327,7 @@ func runCodex(ctx context.Context, req Request, onEvent EventHandler) (Result, e
 	}
 	env := mergeEnvMap(req.Env)
 	opts := codexsdk.CodexOptions{
-		CodexPathOverride: strings.TrimSpace(req.Command),
+		CodexPathOverride: strings.TrimSpace(req.AgentConfig.Command),
 	}
 	if len(env) > 0 {
 		opts.Env = env
@@ -342,8 +337,8 @@ func runCodex(ctx context.Context, req Request, onEvent EventHandler) (Result, e
 		return out, err
 	}
 	threadOpts := codexsdk.ThreadOptions{
-		Model:            strings.TrimSpace(req.Model),
-		SandboxMode:      codexsdk.SandboxWorkspaceWrite,
+		Model:            strings.TrimSpace(req.AgentConfig.Model),
+		SandboxMode:      codexSandboxMode(req),
 		WorkingDirectory: strings.TrimSpace(req.WorkDir),
 		SkipGitRepoCheck: true,
 		ApprovalPolicy:   codexsdk.ApprovalNever,
@@ -353,7 +348,7 @@ func runCodex(ctx context.Context, req Request, onEvent EventHandler) (Result, e
 	if addDirs := SDKAdditionalDirectories(req.WorkDir); len(addDirs) > 0 {
 		threadOpts.AdditionalDirectories = append(threadOpts.AdditionalDirectories, addDirs...)
 	}
-	if effort := parseCodexReasoningEffort(req.ReasoningEffort); effort != "" {
+	if effort := parseCodexReasoningEffort(req.AgentConfig.ReasoningEffort); effort != "" {
 		threadOpts.ModelReasoningEffort = effort
 	}
 
@@ -408,14 +403,14 @@ func runClaude(ctx context.Context, req Request, onEvent EventHandler) (Result, 
 		OutputMode: OutputModeJSON,
 	}
 	opts := make([]claude.Option, 0, 8)
-	if strings.TrimSpace(req.Model) != "" {
-		opts = append(opts, claude.WithModel(strings.TrimSpace(req.Model)))
+	if strings.TrimSpace(req.AgentConfig.Model) != "" {
+		opts = append(opts, claude.WithModel(strings.TrimSpace(req.AgentConfig.Model)))
 	}
 	if strings.TrimSpace(req.WorkDir) != "" {
 		opts = append(opts, claude.WithCwd(strings.TrimSpace(req.WorkDir)))
 	}
-	if strings.TrimSpace(req.Command) != "" {
-		opts = append(opts, claude.WithCLIPath(strings.TrimSpace(req.Command)))
+	if strings.TrimSpace(req.AgentConfig.Command) != "" {
+		opts = append(opts, claude.WithCLIPath(strings.TrimSpace(req.AgentConfig.Command)))
 	}
 	if strings.TrimSpace(req.SessionID) != "" {
 		opts = append(opts, claude.WithResume(strings.TrimSpace(req.SessionID)))
@@ -434,6 +429,9 @@ func runClaude(ctx context.Context, req Request, onEvent EventHandler) (Result, 
 	}
 	if settings := ClaudeRunnerSettingsJSON(); settings != "" {
 		opts = append(opts, claude.WithSettings(settings))
+	}
+	if mode := claudePermissionMode(req); mode != "" {
+		opts = append(opts, claude.WithPermissionMode(mode))
 	}
 	opts = append(opts, claude.WithIncludePartialMessages())
 	opts = append(opts, claude.WithSettingSources(claude.SettingSourceProject))
@@ -477,20 +475,34 @@ func autoApproveClaudeTool(ctx context.Context, toolName string, input map[strin
 	return &claude.PermissionResultAllow{}, nil
 }
 
+func codexSandboxMode(req Request) codexsdk.SandboxMode {
+	if req.AgentConfig.DangerFullAccess {
+		return codexsdk.SandboxDangerFullAccess
+	}
+	return codexsdk.SandboxWorkspaceWrite
+}
+
+func claudePermissionMode(req Request) claude.PermissionMode {
+	if req.AgentConfig.BypassPermissions {
+		return claude.PermissionBypassPermissions
+	}
+	return ""
+}
+
 func runGemini(ctx context.Context, req Request, onEvent EventHandler) (Result, error) {
 	out := Result{
 		Provider:   "gemini",
 		OutputMode: OutputModeJSON,
 	}
 	opts := make([]gemini.Option, 0, 8)
-	if strings.TrimSpace(req.Model) != "" {
-		opts = append(opts, gemini.WithModel(strings.TrimSpace(req.Model)))
+	if strings.TrimSpace(req.AgentConfig.Model) != "" {
+		opts = append(opts, gemini.WithModel(strings.TrimSpace(req.AgentConfig.Model)))
 	}
 	if strings.TrimSpace(req.WorkDir) != "" {
 		opts = append(opts, gemini.WithWorkDir(strings.TrimSpace(req.WorkDir)))
 	}
-	if strings.TrimSpace(req.Command) != "" {
-		opts = append(opts, gemini.WithBinaryPath(strings.TrimSpace(req.Command)))
+	if strings.TrimSpace(req.AgentConfig.Command) != "" {
+		opts = append(opts, gemini.WithBinaryPath(strings.TrimSpace(req.AgentConfig.Command)))
 	}
 	if env := geminiEnvList(req.Env); len(env) > 0 {
 		opts = append(opts, gemini.WithEnv(env...))
