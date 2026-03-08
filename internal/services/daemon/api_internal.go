@@ -121,6 +121,8 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/planner", s.withInternalAccess(s.handlePlanner))
 	mux.HandleFunc("/api/v1/merges", s.withInternalAccess(s.handleMerges))
 	mux.HandleFunc("/api/v1/inbox", s.withInternalAccess(s.handleInbox))
+	mux.HandleFunc("/api/v1/tickets", s.withInternalAccess(s.handleTickets))
+	mux.HandleFunc("/api/v1/tickets/", s.withInternalAccess(s.handleTickets))
 	mux.HandleFunc(gatewaysendsvc.Path, s.withInternalAccess(s.handleSend))
 	mux.HandleFunc(wsPath, s.withInternalAccess(wsHandler))
 

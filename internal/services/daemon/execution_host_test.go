@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
+
+	"gorm.io/gorm"
 )
 
 type testExecutionHostResolver struct {
@@ -93,6 +95,7 @@ type testExecutionHostProject struct {
 	projectName       string
 	statusByRun       map[uint]*RunStatus
 	eventsByRun       map[uint][]RunEvent
+	ticketViews       []TicketView
 	statusCalls       int
 	eventCalls        int
 	dashboardResult   DashboardResult
@@ -436,6 +439,28 @@ func (p *testExecutionHostProject) ListInbox(ctx context.Context, opt ListInboxO
 		items = items[:opt.Limit]
 	}
 	return items, nil
+}
+
+func (p *testExecutionHostProject) ListTicketViews(ctx context.Context) ([]TicketView, error) {
+	p.mu.Lock()
+	views := p.ticketViews
+	p.mu.Unlock()
+	out := make([]TicketView, len(views))
+	copy(out, views)
+	return out, nil
+}
+
+func (p *testExecutionHostProject) GetTicketViewByID(ctx context.Context, ticketID uint) (*TicketView, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, view := range p.ticketViews {
+		if view.Ticket.ID != ticketID {
+			continue
+		}
+		copied := view
+		return &copied, nil
+	}
+	return nil, gorm.ErrRecordNotFound
 }
 
 func copyDashboardMap(src map[string]int) map[string]int {
