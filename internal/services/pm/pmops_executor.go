@@ -32,9 +32,9 @@ func (s *Service) plannerPMOpExecutor(kind contracts.PMOpKind) plannerPMOpExecut
 	case contracts.PMOpCloseInbox:
 		return closeInboxPMOpExecutor{s: s}
 	case contracts.PMOpRunAcceptance:
-		return noopPMOpExecutor{kind: contracts.PMOpRunAcceptance, reason: "acceptance runner 未实现，记录为已处理"}
+		return runAcceptancePMOpExecutor{s: s}
 	case contracts.PMOpSetFeatureStatus:
-		return noopPMOpExecutor{kind: contracts.PMOpSetFeatureStatus, reason: "feature graph 状态写回在后续阶段实现，当前记录为已处理"}
+		return setFeatureStatusPMOpExecutor{s: s}
 	case contracts.PMOpWriteRequirementDoc:
 		return noopPMOpExecutor{kind: contracts.PMOpWriteRequirementDoc, reason: "需求文档写入由 planner 文本产出承载，当前记录为已处理"}
 	case contracts.PMOpWriteDesignDoc:
@@ -266,6 +266,15 @@ func (e approveMergePMOpExecutor) Reconcile(ctx context.Context, op contracts.PM
 func (e approveMergePMOpExecutor) Execute(ctx context.Context, op contracts.PMOp) (contracts.JSONMap, error) {
 	if e.s == nil {
 		return contracts.JSONMap{}, fmt.Errorf("pm service 为空")
+	}
+	if jsonMapBool(op.Arguments, "enforce_acceptance_gate") || jsonMapBool(op.Arguments, "feature_complete") {
+		gate, err := e.s.acceptanceGateState(ctx)
+		if err != nil {
+			return contracts.JSONMap{}, err
+		}
+		if !gate.Passed {
+			return contracts.JSONMap{}, fmt.Errorf("acceptance gate 未通过：done=%d total=%d", gate.Done, gate.Total)
+		}
 	}
 	mergeID := jsonMapUint(op.Arguments, "merge_item_id")
 	if mergeID == 0 {
@@ -514,4 +523,28 @@ func jsonMapUint(m contracts.JSONMap, key string) uint {
 		return 0
 	}
 	return uint(n)
+}
+
+func jsonMapBool(m contracts.JSONMap, key string) bool {
+	key = strings.TrimSpace(key)
+	if key == "" || m == nil {
+		return false
+	}
+	v, ok := m[key]
+	if !ok || v == nil {
+		return false
+	}
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "1", "true", "yes", "y", "on":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
