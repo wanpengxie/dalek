@@ -15,8 +15,9 @@ import (
 )
 
 type daemonWebComponent struct {
-	listen string
-	logger *slog.Logger
+	listen          string
+	internalAPIAddr string
+	logger          *slog.Logger
 
 	listener net.Listener
 	server   *http.Server
@@ -29,8 +30,9 @@ func newDaemonWebComponent(home *Home, logger *slog.Logger) *daemonWebComponent 
 		cfg = home.Config.WithDefaults()
 	}
 	return &daemonWebComponent{
-		listen: strings.TrimSpace(cfg.Daemon.Web.Listen),
-		logger: logger,
+		listen:          strings.TrimSpace(cfg.Daemon.Web.Listen),
+		internalAPIAddr: strings.TrimSpace(cfg.Daemon.Internal.Listen),
+		logger:          logger,
 	}
 }
 
@@ -50,6 +52,10 @@ func (c *daemonWebComponent) Start(ctx context.Context) error {
 	if addr == "" {
 		return fmt.Errorf("web listen 为空")
 	}
+	internalAPIAddr := strings.TrimSpace(c.internalAPIAddr)
+	if internalAPIAddr == "" {
+		return fmt.Errorf("internal api listen 为空")
+	}
 
 	staticFS, err := web.StaticFS()
 	if err != nil {
@@ -59,7 +65,7 @@ func (c *daemonWebComponent) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	handler := web.NewHandler(staticFS)
+	handler := web.NewHandler(staticFS, internalAPIAddr)
 	server := &http.Server{
 		Handler:           daemonsvc.RecoverMiddleware(c.logger.With("component", "web_console"))(handler),
 		ReadHeaderTimeout: 5 * time.Second,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -62,5 +63,54 @@ func TestDaemonWebComponent_MissingAssetReturnsNotFound(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing static file, got=%d", resp.StatusCode)
+	}
+}
+
+func TestDaemonWebComponent_ProxiesInternalAPI(t *testing.T) {
+	var gotPath string
+	var gotQuery string
+	internalAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(internalAPI.Close)
+
+	home, err := OpenHome(t.TempDir())
+	if err != nil {
+		t.Fatalf("OpenHome failed: %v", err)
+	}
+	home.Config.Daemon.Web.Listen = "127.0.0.1:0"
+	home.Config.Daemon.Internal.Listen = strings.TrimPrefix(internalAPI.URL, "http://")
+
+	comp := newDaemonWebComponent(home, nil)
+	if err := comp.Start(context.Background()); err != nil {
+		t.Fatalf("component start failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = comp.Stop(context.Background())
+	})
+
+	resp, err := http.Get("http://" + comp.listener.Addr().String() + "/api/v1/overview?project=demo")
+	if err != nil {
+		t.Fatalf("http get failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected proxied api status 200, got=%d", resp.StatusCode)
+	}
+	if gotPath != "/api/v1/overview" {
+		t.Fatalf("unexpected proxied path: %q", gotPath)
+	}
+	if gotQuery != "project=demo" {
+		t.Fatalf("unexpected proxied query: %q", gotQuery)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body failed: %v", err)
+	}
+	if string(body) != `{"ok":true}` {
+		t.Fatalf("unexpected proxied body: %q", string(body))
 	}
 }

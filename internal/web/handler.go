@@ -5,12 +5,19 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"path"
 	"strings"
 )
 
-func NewHandler(staticFS fs.FS) http.Handler {
+func NewHandler(staticFS fs.FS, internalAPIAddr string) http.Handler {
+	apiProxy := newAPIProxy(internalAPIAddr)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if apiProxy != nil && shouldProxyAPI(r.URL.Path) {
+			apiProxy.ServeHTTP(w, r)
+			return
+		}
 		target := resolveTargetPath(r.URL.Path)
 		if serveFile(staticFS, w, r, target) {
 			return
@@ -24,6 +31,23 @@ func NewHandler(staticFS fs.FS) http.Handler {
 		}
 		http.Error(w, "index.html not found", http.StatusInternalServerError)
 	})
+}
+
+func shouldProxyAPI(requestPath string) bool {
+	return requestPath == "/api/v1" || strings.HasPrefix(requestPath, "/api/v1/")
+}
+
+func newAPIProxy(internalAPIAddr string) http.Handler {
+	addr := strings.TrimSpace(internalAPIAddr)
+	if addr == "" {
+		return nil
+	}
+	target := &url.URL{Scheme: "http", Host: addr}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
+		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+	}
+	return proxy
 }
 
 func resolveTargetPath(rawPath string) string {
