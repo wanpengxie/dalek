@@ -247,6 +247,17 @@ func (s *Service) reconcilePlannerActiveRun(ctx context.Context, taskRuntime cor
 
 	switch run.OrchestrationState {
 	case contracts.TaskSucceeded:
+		if recovered, rerr := s.RecoverPlannerOpsForRun(ctx, runID, now); rerr != nil {
+			s.slog().Warn("pm planner reconcile recover ops failed",
+				"task_run_id", runID,
+				"error", rerr,
+			)
+		} else if recovered > 0 {
+			s.slog().Info("pm planner reconcile recovered running ops",
+				"task_run_id", runID,
+				"recovered_ops", recovered,
+			)
+		}
 		finishedAt := plannerRunTerminalTime(run, now)
 		s.clearPlannerRun(st, finishedAt)
 		s.slog().Info("pm planner reconciled succeeded terminal run",
@@ -254,6 +265,17 @@ func (s *Service) reconcilePlannerActiveRun(ctx context.Context, taskRuntime cor
 			"finished_at", finishedAt,
 		)
 	case contracts.TaskFailed, contracts.TaskCanceled:
+		if recovered, rerr := s.RecoverPlannerOpsForRun(ctx, runID, now); rerr != nil {
+			s.slog().Warn("pm planner reconcile recover ops failed",
+				"task_run_id", runID,
+				"error", rerr,
+			)
+		} else if recovered > 0 {
+			s.slog().Info("pm planner reconcile recovered running ops",
+				"task_run_id", runID,
+				"recovered_ops", recovered,
+			)
+		}
 		finishedAt := plannerRunTerminalTime(run, now)
 		msg := strings.TrimSpace(run.ErrorMessage)
 		if msg == "" {

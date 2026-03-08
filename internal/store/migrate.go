@@ -88,6 +88,11 @@ func storeMigrations() []Migration {
 			Name:    "ensure_pm_state_planner_columns",
 			Up:      migrateEnsurePMStatePlannerColumns,
 		},
+		{
+			Version: 15,
+			Name:    "add_pmops_journal_checkpoint_tables",
+			Up:      migrateAddPMOpsJournalCheckpointTables,
+		},
 	}
 }
 
@@ -365,6 +370,13 @@ func migrateEnsurePMStatePlannerColumns(db *gorm.DB) error {
 		return fmt.Errorf("db 为空")
 	}
 	return db.AutoMigrate(&PMState{})
+}
+
+func migrateAddPMOpsJournalCheckpointTables(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	return db.AutoMigrate(&PMOpJournalEntry{}, &PMCheckpoint{})
 }
 
 func normalizeMigrations(migrations []Migration) ([]Migration, error) {

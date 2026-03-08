@@ -210,6 +210,72 @@ func TestOpenAndMigrate_PMStatePlannerColumnsPresent(t *testing.T) {
 	}
 }
 
+func TestOpenAndMigrate_PMOpsJournalCheckpointTablesPresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	for _, col := range []string{
+		"instance_id",
+		"planner_run_id",
+		"op_id",
+		"kind",
+		"idempotency_key",
+		"status",
+		"result_json",
+	} {
+		ok, err := tableHasColumn(db, "loop_op_journal", col)
+		if err != nil {
+			t.Fatalf("tableHasColumn(loop_op_journal.%s) failed: %v", col, err)
+		}
+		if !ok {
+			t.Fatalf("loop_op_journal should contain column: %s", col)
+		}
+	}
+	for _, col := range []string{
+		"instance_id",
+		"planner_run_id",
+		"revision",
+		"graph_version",
+		"completed_ops_json",
+		"remaining_ops_json",
+		"failure_context",
+		"snapshot_json",
+	} {
+		ok, err := tableHasColumn(db, "loop_checkpoints", col)
+		if err != nil {
+			t.Fatalf("tableHasColumn(loop_checkpoints.%s) failed: %v", col, err)
+		}
+		if !ok {
+			t.Fatalf("loop_checkpoints should contain column: %s", col)
+		}
+	}
+
+	if err := dropTableColumn(db, "loop_op_journal", "idempotency_key"); err != nil {
+		t.Fatalf("drop loop_op_journal.idempotency_key failed: %v", err)
+	}
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 15;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations for v15 failed: %v", err)
+	}
+	if _, err := OpenAndMigrate(dbPath); err != nil {
+		t.Fatalf("OpenAndMigrate (reapply v15) failed: %v", err)
+	}
+
+	db2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	ok, err := tableHasColumn(db2, "loop_op_journal", "idempotency_key")
+	if err != nil {
+		t.Fatalf("tableHasColumn(loop_op_journal.idempotency_key) after reapply failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("loop_op_journal should restore idempotency_key after reapply")
+	}
+}
+
 func TestOpenAndMigrate_RepairWorkerLogPathWhenOldV9Occupied(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)

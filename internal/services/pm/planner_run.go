@@ -197,6 +197,34 @@ func (s *Service) completePlannerRunSuccess(ctx context.Context, taskRunID uint,
 	}
 
 	finishedAt := time.Now()
+	parsedOps, parseErr := parsePlannerPMOpsFromResult(res, taskRunID, requestID)
+	if parseErr != nil {
+		s.slog().Warn("planner pmops parse failed; fallback to empty ops",
+			"task_run_id", taskRunID,
+			"error", parseErr,
+		)
+		parsedOps = nil
+	}
+	pmopsSummary, pmopsErr := s.executePlannerPMOps(context.WithoutCancel(ctx), taskRunID, parsedOps, finishedAt)
+	if pmopsErr != nil {
+		return pmopsErr
+	}
+	pmopsPayload := map[string]any{
+		"parsed":           pmopsSummary.Parsed,
+		"planned":          pmopsSummary.Planned,
+		"succeeded":        pmopsSummary.Succeeded,
+		"failed":           pmopsSummary.Failed,
+		"superseded":       pmopsSummary.Superseded,
+		"completed_ops":    pmopsSummary.CompletedOps,
+		"remaining_ops":    pmopsSummary.RemainingOps,
+		"failure_context":  pmopsSummary.FailureContext,
+		"checkpoint_id":    pmopsSummary.CheckpointID,
+		"checkpoint_rev":   pmopsSummary.CheckpointRev,
+		"checkpoint_runid": taskRunID,
+	}
+	if parseErr != nil {
+		pmopsPayload["parse_error"] = strings.TrimSpace(parseErr.Error())
+	}
 	resultPayload := marshalJSON(map[string]any{
 		"runner_id":   strings.TrimSpace(runnerID),
 		"request_id":  requestID,
@@ -208,6 +236,7 @@ func (s *Service) completePlannerRunSuccess(ctx context.Context, taskRunID uint,
 		"stdout":      strings.TrimSpace(res.Stdout),
 		"stderr":      strings.TrimSpace(res.Stderr),
 		"events":      res.Events,
+		"pmops":       pmopsPayload,
 	})
 	finishCtx := context.WithoutCancel(ctx)
 	return db.WithContext(finishCtx).Transaction(func(tx *gorm.DB) error {

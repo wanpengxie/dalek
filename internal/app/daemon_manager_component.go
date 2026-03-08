@@ -53,6 +53,7 @@ type daemonManagerComponent struct {
 type recoveryProjectSummary struct {
 	DispatchJobs   int
 	TaskRuns       int
+	PlannerOps     int
 	Notes          int
 	Workers        int
 	TicketsQueued  int
@@ -205,6 +206,11 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 		} else {
 			summary.TaskRuns += recovered
 		}
+		if recovered, err := p.pm.RecoverPlannerOps(ctx, now); err != nil {
+			m.logf("recovery planner ops failed: project=%s err=%v", name, err)
+		} else {
+			summary.PlannerOps = recovered
+		}
 		if rolled, err := p.RecoverStuckShapingNotes(ctx, 5*time.Minute); err != nil {
 			m.logf("recovery note shaping failed: project=%s err=%v", name, err)
 		} else {
@@ -224,10 +230,11 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			}
 		}
 		m.logf(
-			"recovery summary: project=%s dispatch_jobs=%d task_runs=%d reopened_notes=%d fixed_workers=%d autopilot=%v queued=%d blocked=%d",
+			"recovery summary: project=%s dispatch_jobs=%d task_runs=%d planner_ops=%d reopened_notes=%d fixed_workers=%d autopilot=%v queued=%d blocked=%d",
 			name,
 			summary.DispatchJobs,
 			summary.TaskRuns,
+			summary.PlannerOps,
 			summary.Notes,
 			summary.Workers,
 			autopilotEnabled,
@@ -514,6 +521,13 @@ func (m *daemonManagerComponent) buildPlannerPrompt(ctx context.Context, p *Proj
 		Status: contracts.InboxSnoozed,
 		Limit:  plannerPromptListLimit,
 	})
+	plannerRecovery := contracts.JSONMap{}
+	var plannerRecoveryErr error
+	if p.pm == nil {
+		plannerRecoveryErr = fmt.Errorf("pm service 为空")
+	} else {
+		plannerRecovery, plannerRecoveryErr = p.pm.PlannerRecoverySnapshot(ctx, plannerPromptListLimit)
+	}
 
 	snapshot := map[string]any{
 		"generated_at":       time.Now().UTC().Format(time.RFC3339),
@@ -528,25 +542,46 @@ func (m *daemonManagerComponent) buildPlannerPrompt(ctx context.Context, p *Proj
 			"open":    plannerListSnapshot("dalek inbox ls --status open", inboxOpen, inboxOpenErr),
 			"snoozed": plannerListSnapshot("dalek inbox ls --status snoozed", inboxSnoozed, inboxSnoozedErr),
 		},
+		"planner_recovery": plannerListSnapshot("pm planner recovery context", plannerRecovery, plannerRecoveryErr),
 	}
 	snapshotJSON, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("planner prompt 构建失败: %w", err)
 	}
 
-	prompt := strings.TrimSpace(fmt.Sprintf(`你是 dalek 的 PM planner agent。请先理解项目计划和当前状态，再通过 dalek CLI 主动推进项目（创建/调整 ticket、dispatch worker、处理 merge/inbox）。
+	prompt := strings.TrimSpace(fmt.Sprintf(`你是 dalek 的 PM planner agent。请先理解项目计划和当前状态，然后仅输出结构化 PMOps 决策；实际执行由系统 executor 串行处理。
 
-	必须遵守：
-	1. 只能通过 dalek CLI 进行 PM 操作，不要直接访问数据库。
-	2. 你是 PM，不是 worker。不要直接修改产品源码、测试或功能实现文件；需求实现必须通过 ticket/worker 完成。
-	3. 你自己允许直接修改的仅限 .dalek/pm/* 状态文档、需求/设计文档、验收记录，以及在 merge 阶段执行 git merge 和 dalek merge merged。
-	4. 对 approval_required / needs_user / incident 先自行判断并吸收，只有确实缺少用户独有信息时才允许请求人工介入。
-	5. 避免重复动作，优先收敛阻塞项与高优先级事项。
-	6. 如果 git merge 在产品文件上产生冲突，不要手工修改冲突内容；必须 git merge --abort，保留主线干净状态，并创建/dispatch integration ticket 交给 worker 处理。
-	7. 在本轮结束前给出清晰结论：继续推进、已完成、或需要人工介入。
+		必须遵守：
+		1. 不要在本轮直接执行任何 dalek CLI 或 shell 命令；只能输出 PMOps。
+		2. 你是 PM，不是 worker。不要直接修改产品源码、测试或功能实现文件；需求实现必须通过 ticket/worker 完成。
+		3. 输出必须且仅必须包含一个 <pmops>...</pmops> JSON 块，JSON 顶层为 {"ops":[...]}。
+		4. 每个 op 必须包含：kind、idempotency_key、arguments。推荐同时给出 op_id、critical、preconditions。
+		5. 避免重复动作，优先收敛阻塞项与高优先级事项；结合 planner_recovery 上下文避免重复执行已完成 op。
+		6. 对 approval_required / needs_user / incident 先自行判断并吸收，只有确实缺少用户独有信息时才允许请求人工介入。
+		7. 如果 git merge 在产品文件上产生冲突，必须改为 create_integration_ticket，而不是手工解决冲突。
+		8. 可用 kind：write_requirement_doc, write_design_doc, create_ticket, dispatch_ticket, approve_merge, discard_merge, create_integration_ticket, close_inbox, run_acceptance, set_feature_status。
 
-【PLAN 文档：%s】
-%s
+		输出格式示例（严格遵守）：
+		<pmops>
+		{
+		  "ops": [
+		    {
+		      "op_id": "op-1",
+		      "kind": "create_ticket",
+		      "idempotency_key": "create_ticket:feature-x:hash",
+		      "critical": true,
+		      "arguments": {
+		        "title": "实现 xxx",
+		        "description": "..."
+		      },
+		      "preconditions": ["feature_x status=planned"]
+		    }
+		  ]
+		}
+		</pmops>
+
+	【PLAN 文档：%s】
+	%s
 
 【项目快照（对应 dalek ticket/merge/inbox ls）】
 %s

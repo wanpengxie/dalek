@@ -11,6 +11,8 @@ type WorkerStatusEvent = contracts.WorkerStatusEvent
 
 type PMState = contracts.PMState
 type PMDispatchJob = contracts.PMDispatchJob
+type PMOpJournalEntry = contracts.PMOpJournalEntry
+type PMCheckpoint = contracts.PMCheckpoint
 type TaskRun = contracts.TaskRun
 type SubagentRun = contracts.SubagentRun
 type TaskRuntimeSample = contracts.TaskRuntimeSample

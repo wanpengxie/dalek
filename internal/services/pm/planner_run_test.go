@@ -310,6 +310,150 @@ func TestRunPlannerJob_ProgressResetsTimeout(t *testing.T) {
 	}
 }
 
+func TestRunPlannerJob_ExecutesPMOpsAndWritesCheckpoint(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+	svc.SetTaskRunner(fakePlannerTaskRunner{
+		runFn: func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+			return sdkrunner.Result{
+				Provider: "codex",
+				Text: `<pmops>
+{
+  "ops": [
+    {
+      "op_id": "op-create-1",
+      "kind": "create_ticket",
+      "idempotency_key": "planner-run-create-ticket",
+      "critical": true,
+      "arguments": {
+        "title": "pmops-created-ticket",
+        "description": "created from planner run"
+      }
+    }
+  ]
+}
+</pmops>`,
+			}, nil
+		},
+	})
+
+	pmState, err := svc.getOrInitPMState(ctx)
+	if err != nil {
+		t.Fatalf("getOrInitPMState failed: %v", err)
+	}
+	run := createPlannerTaskRunForTest(t, svc, p, fmt.Sprintf("planner-pmops-success-%d", time.Now().UnixNano()))
+	if err := p.DB.WithContext(ctx).Model(&contracts.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
+		"planner_active_task_run_id": run.ID,
+		"planner_dirty":              false,
+		"planner_last_error":         "",
+		"planner_last_run_at":        nil,
+		"planner_cooldown_until":     nil,
+		"updated_at":                 time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare pm state failed: %v", err)
+	}
+
+	if err := svc.RunPlannerJob(ctx, run.ID, PlannerRunOptions{RunnerID: "planner-runner-pmops"}); err != nil {
+		t.Fatalf("RunPlannerJob failed: %v", err)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.WithContext(ctx).Where("title = ?", "pmops-created-ticket").Order("id desc").First(&ticket).Error; err != nil {
+		t.Fatalf("expected pmops created ticket: %v", err)
+	}
+
+	var journal contracts.PMOpJournalEntry
+	if err := p.DB.WithContext(ctx).
+		Where("planner_run_id = ? AND op_id = ?", run.ID, "op-create-1").
+		First(&journal).Error; err != nil {
+		t.Fatalf("load loop_op_journal failed: %v", err)
+	}
+	if journal.Status != contracts.PMOpStatusSucceeded {
+		t.Fatalf("expected journal status=succeeded, got=%s", journal.Status)
+	}
+
+	var checkpoint contracts.PMCheckpoint
+	if err := p.DB.WithContext(ctx).
+		Where("planner_run_id = ?", run.ID).
+		Order("id desc").
+		First(&checkpoint).Error; err != nil {
+		t.Fatalf("load checkpoint failed: %v", err)
+	}
+	if checkpoint.Revision <= 0 {
+		t.Fatalf("expected checkpoint revision > 0")
+	}
+}
+
+func TestRunPlannerJob_CriticalPMOpFailureMarksRunFailed(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+	svc.SetTaskRunner(fakePlannerTaskRunner{
+		runFn: func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+			return sdkrunner.Result{
+				Provider: "codex",
+				Text: `<pmops>
+{
+  "ops": [
+    {
+      "op_id": "op-unknown-1",
+      "kind": "unknown_op_kind",
+      "idempotency_key": "planner-run-unknown-op",
+      "critical": true,
+      "arguments": {}
+    }
+  ]
+}
+</pmops>`,
+			}, nil
+		},
+	})
+
+	pmState, err := svc.getOrInitPMState(ctx)
+	if err != nil {
+		t.Fatalf("getOrInitPMState failed: %v", err)
+	}
+	run := createPlannerTaskRunForTest(t, svc, p, fmt.Sprintf("planner-pmops-failed-%d", time.Now().UnixNano()))
+	if err := p.DB.WithContext(ctx).Model(&contracts.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
+		"planner_active_task_run_id": run.ID,
+		"planner_dirty":              false,
+		"planner_last_error":         "",
+		"planner_last_run_at":        nil,
+		"planner_cooldown_until":     nil,
+		"updated_at":                 time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare pm state failed: %v", err)
+	}
+
+	runErr := svc.RunPlannerJob(ctx, run.ID, PlannerRunOptions{RunnerID: "planner-runner-pmops-failed"})
+	if runErr == nil {
+		t.Fatalf("expected RunPlannerJob returns error")
+	}
+	if !strings.Contains(strings.ToLower(runErr.Error()), "unsupported") {
+		t.Fatalf("expected run error mentions unsupported op, got=%q", runErr.Error())
+	}
+
+	var afterRun contracts.TaskRun
+	if err := p.DB.WithContext(ctx).First(&afterRun, run.ID).Error; err != nil {
+		t.Fatalf("load planner run failed: %v", err)
+	}
+	if afterRun.OrchestrationState != contracts.TaskFailed {
+		t.Fatalf("expected run failed, got=%s", afterRun.OrchestrationState)
+	}
+
+	var journal contracts.PMOpJournalEntry
+	if err := p.DB.WithContext(ctx).
+		Where("planner_run_id = ? AND op_id = ?", run.ID, "op-unknown-1").
+		First(&journal).Error; err != nil {
+		t.Fatalf("load loop_op_journal failed: %v", err)
+	}
+	if journal.Status != contracts.PMOpStatusFailed {
+		t.Fatalf("expected journal status=failed, got=%s", journal.Status)
+	}
+	if strings.TrimSpace(journal.ErrorText) == "" {
+		t.Fatalf("expected journal error text populated")
+	}
+}
+
 func createPlannerTaskRunForTest(t *testing.T, svc *Service, p *core.Project, requestID string) contracts.TaskRun {
 	t.Helper()
 	rt, err := svc.taskRuntimeForDB(p.DB)
