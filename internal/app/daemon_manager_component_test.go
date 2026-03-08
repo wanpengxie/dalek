@@ -298,6 +298,12 @@ func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t 
 	if !strings.Contains(call.Prompt, "\"command\": \"dalek merge ls\"") {
 		t.Fatalf("expected prompt contains merge list snapshot command")
 	}
+	if !strings.Contains(call.Prompt, "不要直接修改产品源码、测试或功能实现文件") {
+		t.Fatalf("expected prompt enforces PM no-direct-code rule")
+	}
+	if !strings.Contains(call.Prompt, "git merge --abort") {
+		t.Fatalf("expected prompt instructs planner to abort product-file merge conflicts")
+	}
 	if !strings.Contains(call.Prompt, "\"command\": \"dalek inbox ls --status open\"") {
 		t.Fatalf("expected prompt contains inbox list snapshot command")
 	}

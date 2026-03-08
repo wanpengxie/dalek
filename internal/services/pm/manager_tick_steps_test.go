@@ -3,6 +3,7 @@ package pm
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -631,6 +632,74 @@ func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled
 	}
 	if plannerRun.TaskType != contracts.TaskTypePMPlannerRun {
 		t.Fatalf("expected planner run task type=%s, got=%s", contracts.TaskTypePMPlannerRun, plannerRun.TaskType)
+	}
+}
+
+func TestManagerTick_ReconcilesStaleFailedPlannerRunAndReschedules(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	pmState, err := svc.getOrInitPMState(ctx)
+	if err != nil {
+		t.Fatalf("getOrInitPMState failed: %v", err)
+	}
+	rt, err := svc.taskRuntimeForDB(p.DB)
+	if err != nil {
+		t.Fatalf("taskRuntimeForDB failed: %v", err)
+	}
+	failedRun := createPlannerTaskRunForTest(t, svc, p, fmt.Sprintf("planner-stale-failed-%d", time.Now().UnixNano()))
+	finishedAt := time.Now().Add(-2 * time.Minute).UTC().Truncate(time.Second)
+	startedAt := finishedAt.Add(-15 * time.Second)
+	if err := rt.MarkRunRunning(ctx, failedRun.ID, "planner-runner-stale", nil, startedAt, true); err != nil {
+		t.Fatalf("MarkRunRunning failed: %v", err)
+	}
+	if err := rt.MarkRunFailed(ctx, failedRun.ID, "planner_timeout", "planner run timed out after 5m0s: context deadline exceeded", finishedAt); err != nil {
+		t.Fatalf("MarkRunFailed failed: %v", err)
+	}
+	if err := p.DB.WithContext(ctx).Model(&contracts.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
+		"planner_active_task_run_id": failedRun.ID,
+		"planner_dirty":              false,
+		"planner_last_error":         "",
+		"planner_last_run_at":        nil,
+		"planner_cooldown_until":     nil,
+		"updated_at":                 time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare stale planner state failed: %v", err)
+	}
+
+	res, err := svc.ManagerTick(ctx, ManagerTickOptions{})
+	if err != nil {
+		t.Fatalf("ManagerTick failed: %v", err)
+	}
+	if !res.PlannerRunScheduled {
+		t.Fatalf("expected planner run rescheduled after stale failure reconciliation, errors=%v", res.Errors)
+	}
+
+	st, err := svc.GetState(ctx)
+	if err != nil {
+		t.Fatalf("GetState failed: %v", err)
+	}
+	if st.PlannerActiveTaskRunID == nil {
+		t.Fatalf("expected fresh planner run scheduled")
+	}
+	if *st.PlannerActiveTaskRunID == failedRun.ID {
+		t.Fatalf("expected stale planner run replaced, still=%d", failedRun.ID)
+	}
+	if st.PlannerDirty {
+		t.Fatalf("expected planner dirty cleared after reschedule")
+	}
+	if !strings.Contains(strings.ToLower(st.PlannerLastError), "timed out") {
+		t.Fatalf("expected planner_last_error retained from failed run, got=%q", st.PlannerLastError)
+	}
+
+	var cnt int64
+	if err := p.DB.WithContext(ctx).Model(&contracts.TaskRun{}).
+		Where("owner_type = ? AND task_type = ?", contracts.TaskOwnerPM, contracts.TaskTypePMPlannerRun).
+		Count(&cnt).Error; err != nil {
+		t.Fatalf("count planner runs failed: %v", err)
+	}
+	if cnt != 2 {
+		t.Fatalf("expected stale failed run plus one replacement run, got=%d", cnt)
 	}
 }
 

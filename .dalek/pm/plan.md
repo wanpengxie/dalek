@@ -106,6 +106,12 @@ blocker: 无
 
 当 planner agent 被唤醒时，请按以下优先级处理：
 
+### PM 角色边界（硬约束）
+- PM 负责拆解、调度、验收、merge 和证据沉淀，不直接实现 ticket 对应的产品代码。
+- 除 `.dalek/pm/*`、需求/设计文档、验收记录，以及 merge 集成动作外，PM 不得直接修改 `cmd/`、`internal/`、`web/`、测试文件或其他功能实现文件。
+- 一旦发现自己正准备直接写功能代码，必须立刻停止，改为创建 / dispatch / redispatch 合适的 worker ticket。
+- 如果 `git merge` 在产品文件上产生冲突，PM 必须立刻 `git merge --abort`，保持主线干净，然后创建 integration ticket 交给 worker 处理；PM 自己不能手工解冲突。
+
 ### 0. 若当前 feature 尚无需求/设计文档，先补文档
 - 先补齐需求文档与设计文档，再拆 ticket。
 - 文档未完成前，不进入大规模开发派发。
@@ -123,6 +129,7 @@ blocker: 无
   c. 再按 PM 标准执行当前 feature 定义中的**真实验收场景**
   d. 只有真实场景通过，才允许：`dalek merge approve --id N` → `git merge <branch> --no-edit` → `dalek merge merged --id N`
   e. 验收不通过：`dalek merge discard --id N` → 创建新 ticket 附失败原因
+- 若 `git merge` 发生产品文件冲突：`git merge --abort` → 创建 integration ticket（描述冲突文件、两侧分支、需要保留的行为）→ `dalek ticket dispatch --ticket N`
 
 ### 3. 推进 feature 进度
 - 读取下方【当前 Feature】定义

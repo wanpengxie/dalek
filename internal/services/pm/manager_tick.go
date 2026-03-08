@@ -156,6 +156,9 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	if err != nil {
 		return res, err
 	}
+	if err := s.reconcilePlannerActiveRun(ctx, taskRuntime, st, now); err != nil {
+		return res, err
+	}
 
 	zombieResult := s.checkZombieWorkers(ctx, db, taskRuntime)
 	res.applyZombieCheckResult(zombieResult)
@@ -210,6 +213,76 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	}
 
 	return res, nil
+}
+
+func (s *Service) reconcilePlannerActiveRun(ctx context.Context, taskRuntime core.TaskRuntime, st *contracts.PMState, now time.Time) error {
+	if st == nil || taskRuntime == nil || st.PlannerActiveTaskRunID == nil || *st.PlannerActiveTaskRunID == 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	runID := *st.PlannerActiveTaskRunID
+	run, err := taskRuntime.FindRunByID(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if run == nil {
+		s.failPlannerRun(st, now, fmt.Sprintf("planner active task run missing: run_id=%d", runID))
+		s.slog().Warn("pm planner active run missing; clearing stale state",
+			"task_run_id", runID,
+		)
+		return nil
+	}
+	if run.OwnerType != contracts.TaskOwnerPM || run.TaskType != contracts.TaskTypePMPlannerRun {
+		s.failPlannerRun(st, plannerRunTerminalTime(run, now), fmt.Sprintf("planner active task run type mismatch: run_id=%d owner=%s type=%s", runID, run.OwnerType, run.TaskType))
+		s.slog().Warn("pm planner active run type mismatch; clearing stale state",
+			"task_run_id", runID,
+			"owner_type", run.OwnerType,
+			"task_type", run.TaskType,
+		)
+		return nil
+	}
+
+	switch run.OrchestrationState {
+	case contracts.TaskSucceeded:
+		finishedAt := plannerRunTerminalTime(run, now)
+		s.clearPlannerRun(st, finishedAt)
+		s.slog().Info("pm planner reconciled succeeded terminal run",
+			"task_run_id", runID,
+			"finished_at", finishedAt,
+		)
+	case contracts.TaskFailed, contracts.TaskCanceled:
+		finishedAt := plannerRunTerminalTime(run, now)
+		msg := strings.TrimSpace(run.ErrorMessage)
+		if msg == "" {
+			msg = fmt.Sprintf("planner run ended with state=%s", run.OrchestrationState)
+		}
+		s.failPlannerRun(st, finishedAt, msg)
+		s.slog().Warn("pm planner reconciled failed terminal run",
+			"task_run_id", runID,
+			"state", run.OrchestrationState,
+			"finished_at", finishedAt,
+			"error", msg,
+		)
+	}
+	return nil
+}
+
+func plannerRunTerminalTime(run *contracts.TaskRun, fallback time.Time) time.Time {
+	if run != nil {
+		if run.FinishedAt != nil && !run.FinishedAt.IsZero() {
+			return *run.FinishedAt
+		}
+		if !run.UpdatedAt.IsZero() {
+			return run.UpdatedAt
+		}
+	}
+	if fallback.IsZero() {
+		return time.Now()
+	}
+	return fallback
 }
 
 func (res *ManagerTickResult) applyConsumeEventsResult(step consumeEventsResult) uint {

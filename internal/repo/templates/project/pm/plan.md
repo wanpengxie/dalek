@@ -9,6 +9,8 @@
 - In Scope:
 - Out of Scope:
 - 关键约束：
+- PM 只负责拆解、调度、验收和 merge，不直接实现产品代码；功能实现必须通过 ticket + worker 完成
+- 如果 merge 在产品文件上产生冲突，PM 必须 abort merge 并创建 integration ticket；不能手工解冲突
 
 ## 阶段计划
 | Phase | 目标 | 状态 | 验收标准 |
