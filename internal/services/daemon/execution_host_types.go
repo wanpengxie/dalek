@@ -64,9 +64,57 @@ type ExecutionHostProject interface {
 	ListTaskEvents(ctx context.Context, runID uint, limit int) ([]RunEvent, error)
 }
 
+// DashboardProject 暴露 web dashboard 聚合查询能力。
+// 这是可选扩展接口，ExecutionHostProject 可以不实现。
+type DashboardProject interface {
+	Dashboard(ctx context.Context) (DashboardResult, error)
+	GetPMState(ctx context.Context) (contracts.PMState, error)
+	ListMergeItems(ctx context.Context, opt ListMergeItemsOptions) ([]contracts.MergeItem, error)
+	ListInbox(ctx context.Context, opt ListInboxOptions) ([]contracts.InboxItem, error)
+}
+
 type DispatchSubmitOptions = pmsvc.DispatchSubmitOptions
 type DispatchSubmission = pmsvc.DispatchSubmission
 type DispatchRunOptions = pmsvc.DispatchRunOptions
+
+type DashboardResult struct {
+	TicketCounts map[string]int       `json:"ticket_counts"`
+	WorkerStats  DashboardWorkerStats `json:"worker_stats"`
+	PlannerState DashboardPlannerInfo `json:"planner_state"`
+	MergeCounts  map[string]int       `json:"merge_counts"`
+	InboxCounts  DashboardInboxCounts `json:"inbox_counts"`
+}
+
+type DashboardWorkerStats struct {
+	Running    int `json:"running"`
+	MaxRunning int `json:"max_running"`
+	Blocked    int `json:"blocked"`
+}
+
+type DashboardPlannerInfo struct {
+	Dirty           bool       `json:"dirty"`
+	WakeVersion     uint       `json:"wake_version"`
+	ActiveTaskRunID *uint      `json:"active_task_run_id,omitempty"`
+	CooldownUntil   *time.Time `json:"cooldown_until,omitempty"`
+	LastRunAt       *time.Time `json:"last_run_at,omitempty"`
+	LastError       string     `json:"last_error,omitempty"`
+}
+
+type DashboardInboxCounts struct {
+	Open     int `json:"open"`
+	Snoozed  int `json:"snoozed"`
+	Blockers int `json:"blockers"`
+}
+
+type ListMergeItemsOptions struct {
+	Status contracts.MergeStatus
+	Limit  int
+}
+
+type ListInboxOptions struct {
+	Status contracts.InboxStatus
+	Limit  int
+}
 
 type DispatchSubmitRequest struct {
 	Project   string

@@ -95,6 +95,16 @@ type testExecutionHostProject struct {
 	eventsByRun       map[uint][]RunEvent
 	statusCalls       int
 	eventCalls        int
+	dashboardResult   DashboardResult
+	pmState           contracts.PMState
+	mergeItems        []contracts.MergeItem
+	inboxItems        []contracts.InboxItem
+	dashboardCalls    int
+	pmStateCalls      int
+	listMergeCalls    int
+	listInboxCalls    int
+	lastMergeOpt      ListMergeItemsOptions
+	lastInboxOpt      ListInboxOptions
 
 	runDispatchDelay        time.Duration
 	runDispatchStarted      chan struct{}
@@ -360,6 +370,85 @@ func (p *testExecutionHostProject) ListTaskEvents(ctx context.Context, runID uin
 	return copied[len(copied)-limit:], nil
 }
 
+func (p *testExecutionHostProject) Dashboard(ctx context.Context) (DashboardResult, error) {
+	p.mu.Lock()
+	p.dashboardCalls++
+	result := p.dashboardResult
+	p.mu.Unlock()
+	result.TicketCounts = copyDashboardMap(result.TicketCounts)
+	result.MergeCounts = copyDashboardMap(result.MergeCounts)
+	result.PlannerState.ActiveTaskRunID = cloneDashboardUint(result.PlannerState.ActiveTaskRunID)
+	result.PlannerState.CooldownUntil = cloneDashboardTime(result.PlannerState.CooldownUntil)
+	result.PlannerState.LastRunAt = cloneDashboardTime(result.PlannerState.LastRunAt)
+	return result, nil
+}
+
+func (p *testExecutionHostProject) GetPMState(ctx context.Context) (contracts.PMState, error) {
+	p.mu.Lock()
+	p.pmStateCalls++
+	state := p.pmState
+	p.mu.Unlock()
+	state.PlannerActiveTaskRunID = cloneDashboardUint(state.PlannerActiveTaskRunID)
+	state.PlannerCooldownUntil = cloneDashboardTime(state.PlannerCooldownUntil)
+	state.PlannerLastRunAt = cloneDashboardTime(state.PlannerLastRunAt)
+	return state, nil
+}
+
+func (p *testExecutionHostProject) ListMergeItems(ctx context.Context, opt ListMergeItemsOptions) ([]contracts.MergeItem, error) {
+	p.mu.Lock()
+	p.listMergeCalls++
+	p.lastMergeOpt = opt
+	items := append([]contracts.MergeItem(nil), p.mergeItems...)
+	p.mu.Unlock()
+
+	if opt.Status != "" {
+		filtered := make([]contracts.MergeItem, 0, len(items))
+		for _, item := range items {
+			if item.Status == opt.Status {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+	if opt.Limit > 0 && len(items) > opt.Limit {
+		items = items[:opt.Limit]
+	}
+	return items, nil
+}
+
+func (p *testExecutionHostProject) ListInbox(ctx context.Context, opt ListInboxOptions) ([]contracts.InboxItem, error) {
+	p.mu.Lock()
+	p.listInboxCalls++
+	p.lastInboxOpt = opt
+	items := append([]contracts.InboxItem(nil), p.inboxItems...)
+	p.mu.Unlock()
+
+	if opt.Status != "" {
+		filtered := make([]contracts.InboxItem, 0, len(items))
+		for _, item := range items {
+			if item.Status == opt.Status {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+	if opt.Limit > 0 && len(items) > opt.Limit {
+		items = items[:opt.Limit]
+	}
+	return items, nil
+}
+
+func copyDashboardMap(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return map[string]int{}
+	}
+	dst := make(map[string]int, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
 func (p *testExecutionHostProject) DispatchSubmitCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -418,6 +507,18 @@ func (p *testExecutionHostProject) ListTaskEventsCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.eventCalls
+}
+
+func (p *testExecutionHostProject) LastMergeOptions() ListMergeItemsOptions {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastMergeOpt
+}
+
+func (p *testExecutionHostProject) LastInboxOptions() ListInboxOptions {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastInboxOpt
 }
 
 func TestExecutionHost_OnRunSettled_Dispatch(t *testing.T) {
