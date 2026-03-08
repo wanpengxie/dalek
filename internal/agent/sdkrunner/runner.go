@@ -437,7 +437,6 @@ func runClaude(ctx context.Context, req Request, onEvent EventHandler) (Result, 
 	}
 	opts = append(opts, claude.WithIncludePartialMessages())
 	opts = append(opts, claude.WithSettingSources(claude.SettingSourceProject))
-	opts = append(opts, claude.WithCanUseTool(autoApproveClaudeTool))
 
 	msgs, errs := claude.Query(ctx, req.Prompt, opts...)
 	lines := make([]string, 0, 128)
@@ -469,14 +468,6 @@ func runClaude(ctx context.Context, req Request, onEvent EventHandler) (Result, 
 	return out, nil
 }
 
-func autoApproveClaudeTool(ctx context.Context, toolName string, input map[string]any, permCtx claude.ToolPermissionContext) (claude.PermissionResult, error) {
-	_ = ctx
-	_ = toolName
-	_ = input
-	_ = permCtx
-	return &claude.PermissionResultAllow{}, nil
-}
-
 func runGemini(ctx context.Context, req Request, onEvent EventHandler) (Result, error) {
 	out := Result{
 		Provider:   "gemini",
@@ -498,7 +489,6 @@ func runGemini(ctx context.Context, req Request, onEvent EventHandler) (Result, 
 	if addDirs := SDKAdditionalDirectories(req.WorkDir); len(addDirs) > 0 {
 		opts = append(opts, gemini.WithAddDirs(addDirs...))
 	}
-	opts = append(opts, gemini.WithCanUseTool(autoApproveGeminiTool))
 
 	lines := make([]string, 0, 128)
 	texts := make([]string, 0, 16)
@@ -804,56 +794,6 @@ func geminiEnvList(extra map[string]string) []string {
 		out = append(out, key+"="+env[key])
 	}
 	return out
-}
-
-func autoApproveGeminiTool(ctx context.Context, call gemini.ToolCallInfo, options []gemini.PermissionOption) (string, error) {
-	_ = ctx
-	_ = call
-	return pickGeminiPermissionOption(true, options), nil
-}
-
-func pickGeminiPermissionOption(allow bool, options []gemini.PermissionOption) string {
-	if allow {
-		if id := findGeminiPermissionOptionByPrefix(options, "allow_"); id != "" {
-			return id
-		}
-		if id := findGeminiPermissionOptionByPrefix(options, "ask_"); id != "" {
-			return id
-		}
-	} else {
-		if id := findGeminiPermissionOptionByPrefix(options, "reject_"); id != "" {
-			return id
-		}
-		if id := findGeminiPermissionOptionByPrefix(options, "deny_"); id != "" {
-			return id
-		}
-		if id := findGeminiPermissionOptionByPrefix(options, "ask_"); id != "" {
-			return id
-		}
-	}
-	for _, option := range options {
-		if id := strings.TrimSpace(option.OptionIDValue()); id != "" {
-			return id
-		}
-	}
-	return ""
-}
-
-func findGeminiPermissionOptionByPrefix(options []gemini.PermissionOption, prefix string) string {
-	prefix = strings.ToLower(strings.TrimSpace(prefix))
-	if prefix == "" {
-		return ""
-	}
-	for _, option := range options {
-		id := strings.TrimSpace(option.OptionIDValue())
-		if id == "" {
-			continue
-		}
-		if strings.HasPrefix(strings.ToLower(id), prefix) {
-			return id
-		}
-	}
-	return ""
 }
 
 func mergeEnvMap(extra map[string]string) map[string]string {
