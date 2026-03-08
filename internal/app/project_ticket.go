@@ -14,6 +14,13 @@ func (p *Project) ListTicketViews(ctx context.Context) ([]TicketView, error) {
 	return p.ticketQuery.ListTicketViews(ctx)
 }
 
+func (p *Project) GetTicketViewByID(ctx context.Context, ticketID uint) (*TicketView, error) {
+	if p == nil || p.ticketQuery == nil {
+		return nil, fmt.Errorf("project ticket query service 为空")
+	}
+	return p.ticketQuery.GetTicketViewByID(ctx, ticketID)
+}
+
 func (p *Project) ListTickets(ctx context.Context, includeArchived bool) ([]contracts.Ticket, error) {
 	if p == nil || p.ticket == nil {
 		return nil, fmt.Errorf("project ticket service 为空")

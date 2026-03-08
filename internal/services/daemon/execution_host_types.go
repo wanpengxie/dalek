@@ -12,6 +12,7 @@ import (
 	notebooksvc "dalek/internal/services/notebook"
 	pmsvc "dalek/internal/services/pm"
 	subagentsvc "dalek/internal/services/subagent"
+	ticketsvc "dalek/internal/services/ticket"
 )
 
 const (
@@ -62,6 +63,8 @@ type ExecutionHostProject interface {
 	AddNote(ctx context.Context, rawText string) (NoteAddResult, error)
 	GetTaskStatus(ctx context.Context, runID uint) (*RunStatus, error)
 	ListTaskEvents(ctx context.Context, runID uint, limit int) ([]RunEvent, error)
+	ListTicketViews(ctx context.Context) ([]TicketView, error)
+	GetTicketViewByID(ctx context.Context, ticketID uint) (*TicketView, error)
 }
 
 type DispatchSubmitOptions = pmsvc.DispatchSubmitOptions
@@ -159,6 +162,7 @@ type PlannerRunOptions struct {
 }
 
 type NoteAddResult = notebooksvc.NoteAddResult
+type TicketView = ticketsvc.TicketView
 
 type NoteSubmitRequest struct {
 	Project string

@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -28,6 +29,16 @@ type ticketViewData struct {
 	runtimeProbeFailedByWorker map[uint]bool
 	latestTaskByTicket         map[uint]store.TaskStatusView
 	activeDispatchByTicket     map[uint]contracts.PMDispatchJob
+}
+
+func newTicketViewData() ticketViewData {
+	return ticketViewData{
+		latestWorkerByTicket:       map[uint]contracts.Worker{},
+		runtimeAliveByWorker:       map[uint]bool{},
+		runtimeProbeFailedByWorker: map[uint]bool{},
+		latestTaskByTicket:         map[uint]store.TaskStatusView{},
+		activeDispatchByTicket:     map[uint]contracts.PMDispatchJob{},
+	}
 }
 
 func (s *QueryService) require() (*core.Project, error) {
@@ -79,19 +90,90 @@ func (s *QueryService) ListTicketViews(ctx context.Context) ([]TicketView, error
 	return views, nil
 }
 
+func (s *QueryService) GetTicketViewByID(ctx context.Context, ticketID uint) (*TicketView, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ticketID == 0 {
+		return nil, fmt.Errorf("ticket id 不能为空")
+	}
+
+	db, err := s.db()
+	if err != nil {
+		return nil, err
+	}
+	data := newTicketViewData()
+
+	var t contracts.Ticket
+	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
+		return nil, err
+	}
+	data.tickets = append(data.tickets, t)
+
+	var worker contracts.Worker
+	if err := db.WithContext(ctx).
+		Where("ticket_id = ?", ticketID).
+		Order("id desc").
+		First(&worker).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	} else {
+		data.latestWorkerByTicket[ticketID] = worker
+	}
+
+	taskRuntime, err := s.taskRuntimeForDB(db)
+	if err != nil {
+		return nil, err
+	}
+	taskViews, err := taskRuntime.ListStatus(ctx, contracts.TaskListStatusOptions{
+		OwnerType:       contracts.TaskOwnerWorker,
+		TicketID:        ticketID,
+		IncludeTerminal: true,
+		Limit:           500,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, tv := range taskViews {
+		if tv.TicketID != ticketID {
+			continue
+		}
+		if _, ok := data.latestTaskByTicket[tv.TicketID]; ok {
+			continue
+		}
+		data.latestTaskByTicket[tv.TicketID] = tv
+		if tv.WorkerID != 0 {
+			state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
+			if state == string(contracts.TaskPending) || state == string(contracts.TaskRunning) {
+				data.runtimeAliveByWorker[tv.WorkerID] = true
+			}
+		}
+	}
+
+	var job contracts.PMDispatchJob
+	if err := db.WithContext(ctx).
+		Where("ticket_id = ? AND status IN ?", ticketID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
+		Order("id desc").
+		First(&job).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	} else {
+		data.activeDispatchByTicket[ticketID] = job
+	}
+
+	view := buildTicketView(t, data)
+	return &view, nil
+}
+
 func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData, error) {
 	db, err := s.db()
 	if err != nil {
 		return ticketViewData{}, err
 	}
 
-	data := ticketViewData{
-		latestWorkerByTicket:       map[uint]contracts.Worker{},
-		runtimeAliveByWorker:       map[uint]bool{},
-		runtimeProbeFailedByWorker: map[uint]bool{},
-		latestTaskByTicket:         map[uint]store.TaskStatusView{},
-		activeDispatchByTicket:     map[uint]contracts.PMDispatchJob{},
-	}
+	data := newTicketViewData()
 
 	if err := db.WithContext(ctx).
 		Where("workflow_status != ?", contracts.TicketArchived).

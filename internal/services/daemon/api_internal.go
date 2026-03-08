@@ -114,6 +114,8 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/subagent/submit", s.withInternalAccess(s.handleSubagentSubmit))
 	mux.HandleFunc("/api/notes", s.withInternalAccess(s.handleNoteSubmit))
 	mux.HandleFunc("/api/runs/", s.withInternalAccess(s.handleRuns))
+	mux.HandleFunc("/api/v1/tickets", s.withInternalAccess(s.handleTickets))
+	mux.HandleFunc("/api/v1/tickets/", s.withInternalAccess(s.handleTickets))
 	mux.HandleFunc(gatewaysendsvc.Path, s.withInternalAccess(s.handleSend))
 	mux.HandleFunc(wsPath, s.withInternalAccess(wsHandler))
 

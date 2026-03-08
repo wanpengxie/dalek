@@ -175,6 +175,23 @@ func (p *daemonProjectAdapter) FindLatestWorkerRun(ctx context.Context, ticketID
 	}, nil
 }
 
+func (p *daemonProjectAdapter) ListTicketViews(ctx context.Context) ([]daemonsvc.TicketView, error) {
+	if p == nil || p.project == nil {
+		return nil, fmt.Errorf("daemon project 为空")
+	}
+	return p.project.ListTicketViews(ctx)
+}
+
+func (p *daemonProjectAdapter) GetTicketViewByID(ctx context.Context, ticketID uint) (*daemonsvc.TicketView, error) {
+	if p == nil || p.project == nil {
+		return nil, fmt.Errorf("daemon project 为空")
+	}
+	if ticketID == 0 {
+		return nil, fmt.Errorf("ticket_id 不能为空")
+	}
+	return p.project.GetTicketViewByID(ctx, ticketID)
+}
+
 func (p *daemonProjectAdapter) AddNote(ctx context.Context, rawText string) (daemonsvc.NoteAddResult, error) {
 	if p == nil || p.project == nil {
 		return daemonsvc.NoteAddResult{}, fmt.Errorf("daemon project 为空")

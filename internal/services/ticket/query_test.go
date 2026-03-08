@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -308,5 +309,52 @@ func TestQueryService_ListTicketViews_SortsByPriorityThenCreatedAtThenID(t *test
 		if got[i] != want[i] {
 			t.Fatalf("unexpected order: got=%v want=%v", got, want)
 		}
+	}
+}
+
+func TestQueryService_GetTicketViewByID_ArchivedTicketIncluded(t *testing.T) {
+	svc, p := newQueryServiceForTest(t)
+
+	tk := contracts.Ticket{
+		Title:          "archived-ticket",
+		Description:    "done",
+		WorkflowStatus: contracts.TicketArchived,
+	}
+	if err := p.DB.Create(&tk).Error; err != nil {
+		t.Fatalf("create ticket failed: %v", err)
+	}
+
+	view, err := svc.GetTicketViewByID(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("GetTicketViewByID failed: %v", err)
+	}
+	if view == nil {
+		t.Fatalf("expected non-nil view")
+	}
+	if view.Ticket.ID != tk.ID {
+		t.Fatalf("unexpected ticket id: got=%d want=%d", view.Ticket.ID, tk.ID)
+	}
+	if view.Ticket.WorkflowStatus != contracts.TicketArchived {
+		t.Fatalf("unexpected workflow status: got=%s", view.Ticket.WorkflowStatus)
+	}
+
+	views, err := svc.ListTicketViews(context.Background())
+	if err != nil {
+		t.Fatalf("ListTicketViews failed: %v", err)
+	}
+	if len(views) != 0 {
+		t.Fatalf("expected archived ticket excluded from list, got=%d", len(views))
+	}
+}
+
+func TestQueryService_GetTicketViewByID_NotFound(t *testing.T) {
+	svc, _ := newQueryServiceForTest(t)
+
+	view, err := svc.GetTicketViewByID(context.Background(), 99999)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected gorm.ErrRecordNotFound, got err=%v", err)
+	}
+	if view != nil {
+		t.Fatalf("expected nil view when not found")
 	}
 }
