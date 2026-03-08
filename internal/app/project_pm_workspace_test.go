@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -67,16 +68,16 @@ func TestIntegration_PMWorkspaceStateSync_WritesStateFile(t *testing.T) {
 	if got.Schema != pmWorkspaceStateSchema {
 		t.Fatalf("unexpected schema: got=%q want=%q", got.Schema, pmWorkspaceStateSchema)
 	}
-	if got.Runtime.CurrentPhase != "doc-design" {
+	if got.Runtime.CurrentPhase != "ticket" {
 		t.Fatalf("unexpected current_phase: got=%q", got.Runtime.CurrentPhase)
 	}
-	if got.Runtime.CurrentTicket != "t-web-prd" {
+	if got.Runtime.CurrentTicket != "T-web-prd" {
 		t.Fatalf("unexpected current_ticket: got=%q", got.Runtime.CurrentTicket)
 	}
-	if got.Runtime.CurrentStatus != "planning" {
+	if got.Runtime.CurrentStatus != "done" {
 		t.Fatalf("unexpected current_status: got=%q", got.Runtime.CurrentStatus)
 	}
-	if got.Runtime.LastAction != "wrote PRD draft" {
+	if !strings.Contains(got.Runtime.LastAction, "synced plan graph @") {
 		t.Fatalf("unexpected last_action: got=%q", got.Runtime.LastAction)
 	}
 	if got.Runtime.NextAction != "design doc" {
@@ -100,11 +101,15 @@ func TestIntegration_PMWorkspaceStateSync_WritesStateFile(t *testing.T) {
 	if len(got.Feature.Tickets) != 3 {
 		t.Fatalf("unexpected planned ticket count: got=%d want=3", len(got.Feature.Tickets))
 	}
-	if got.Feature.Tickets[1].Status != "in_progress" {
-		t.Fatalf("unexpected ticket status: got=%q want=in_progress", got.Feature.Tickets[1].Status)
+	tickets := map[string]PMWorkspacePlannedTicket{}
+	for _, ticket := range got.Feature.Tickets {
+		tickets[ticket.ID] = ticket
 	}
-	if len(got.Feature.Tickets[2].DependsOn) != 2 {
-		t.Fatalf("unexpected dependency count: got=%d want=2", len(got.Feature.Tickets[2].DependsOn))
+	if tickets["T-web-design"].Status != "in_progress" {
+		t.Fatalf("unexpected T-web-design status: got=%q want=in_progress", tickets["T-web-design"].Status)
+	}
+	if len(tickets["T-web-api-overview"].DependsOn) != 2 {
+		t.Fatalf("unexpected dependency count: got=%d want=2", len(tickets["T-web-api-overview"].DependsOn))
 	}
 	if got.Feature.Acceptance.Status != "pending" {
 		t.Fatalf("unexpected acceptance status: got=%q want=pending", got.Feature.Acceptance.Status)
@@ -121,6 +126,9 @@ func TestIntegration_PMWorkspaceStateSync_WritesStateFile(t *testing.T) {
 	if got.Files.PlanPath != planPath {
 		t.Fatalf("unexpected plan path: got=%q want=%q", got.Files.PlanPath, planPath)
 	}
+	if got.Files.PlanJSONPath != p.PMPlanJSONPath() {
+		t.Fatalf("unexpected plan.json path: got=%q want=%q", got.Files.PlanJSONPath, p.PMPlanJSONPath())
+	}
 	if got.Files.StatePath != p.PMWorkspaceStatePath() {
 		t.Fatalf("unexpected state path: got=%q want=%q", got.Files.StatePath, p.PMWorkspaceStatePath())
 	}
@@ -130,8 +138,18 @@ func TestIntegration_PMWorkspaceStateSync_WritesStateFile(t *testing.T) {
 	if _, err := os.Stat(p.PMWorkspaceStatePath()); err != nil {
 		t.Fatalf("pm state file should exist: %v", err)
 	}
+	if _, err := os.Stat(p.PMPlanJSONPath()); err != nil {
+		t.Fatalf("pm plan.json file should exist: %v", err)
+	}
 	if _, err := os.Stat(p.PMAcceptancePath()); err != nil {
 		t.Fatalf("pm acceptance file should exist: %v", err)
+	}
+	planRendered, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read rendered plan.md failed: %v", err)
+	}
+	if !strings.Contains(string(planRendered), "## Goal") || !strings.Contains(string(planRendered), "## Execution Graph") {
+		t.Fatalf("rendered plan.md missing required sections")
 	}
 
 	loaded, err := p.LoadPMWorkspaceState()

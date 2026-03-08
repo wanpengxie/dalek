@@ -25,6 +25,7 @@ const (
 
 type PMWorkspaceFiles struct {
 	PlanPath       string `json:"plan_path"`
+	PlanJSONPath   string `json:"plan_json_path,omitempty"`
 	StatePath      string `json:"state_path"`
 	AcceptancePath string `json:"acceptance_path"`
 }
@@ -148,7 +149,7 @@ func (p *Project) LoadPMWorkspaceState() (PMWorkspaceState, error) {
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return PMWorkspaceState{}, err
 	}
-	return normalizePMWorkspaceState(state, path, p.PMPlanPath(), p.PMAcceptancePath()), nil
+	return normalizePMWorkspaceState(state, path, p.PMPlanPath(), p.PMPlanJSONPath(), p.PMAcceptancePath()), nil
 }
 
 func (p *Project) SyncPMWorkspaceState(ctx context.Context) (PMWorkspaceState, error) {
@@ -186,30 +187,35 @@ func (p *Project) buildPMWorkspaceState(ctx context.Context) (PMWorkspaceState, 
 		return PMWorkspaceState{}, err
 	}
 	planPath := p.PMPlanPath()
+	planJSONPath := p.PMPlanJSONPath()
 	statePath := p.PMWorkspaceStatePath()
 	acceptancePath := p.PMAcceptancePath()
 	repoRoot := strings.TrimSpace(p.RepoRoot())
-	plan := readPMPlanSnapshot(planPath)
-	if err := ensurePMAcceptanceFile(acceptancePath, plan.CurrentFeature); err != nil {
+	graph, _, err := loadOrMigratePlanGraph(planJSONPath, planPath, statePath, acceptancePath)
+	if err != nil {
+		return PMWorkspaceState{}, err
+	}
+	graph = normalizeFeatureGraph(graph, time.Now().UTC())
+	if err := SavePlanGraph(planJSONPath, graph); err != nil {
+		return PMWorkspaceState{}, err
+	}
+	if err := ensurePMAcceptanceFile(acceptancePath, graph.Goal); err != nil {
+		return PMWorkspaceState{}, err
+	}
+	if err := syncPlanMarkdownFromGraph(planPath, graph); err != nil {
 		return PMWorkspaceState{}, err
 	}
 	acceptance := readPMAcceptanceSnapshot(acceptancePath)
+	runtime, feature := SyncStateFromGraph(graph, acceptance, repoRoot, acceptancePath)
 	return normalizePMWorkspaceState(PMWorkspaceState{
 		Schema: pmWorkspaceStateSchema,
 		Files: PMWorkspaceFiles{
 			PlanPath:       planPath,
+			PlanJSONPath:   planJSONPath,
 			StatePath:      statePath,
 			AcceptancePath: acceptancePath,
 		},
-		Runtime: PMWorkspaceRuntime{
-			CurrentPhase:   plan.CurrentPhase,
-			CurrentTicket:  plan.CurrentTicket,
-			CurrentStatus:  plan.CurrentStatus,
-			LastAction:     plan.LastAction,
-			NextAction:     plan.NextAction,
-			Blocker:        plan.Blocker,
-			CurrentFeature: plan.CurrentFeature,
-		},
+		Runtime: runtime,
 		Snapshot: PMWorkspaceSnapshot{
 			TicketCounts: cloneIntMap(dashboard.TicketCounts),
 			WorkerStats:  dashboard.WorkerStats,
@@ -217,33 +223,21 @@ func (p *Project) buildPMWorkspaceState(ctx context.Context) (PMWorkspaceState, 
 			MergeCounts:  cloneIntMap(dashboard.MergeCounts),
 			InboxCounts:  dashboard.InboxCounts,
 		},
-		Feature: PMWorkspaceFeature{
-			Title:   plan.CurrentFeature,
-			Docs:    resolvePMWorkspaceDocs(repoRoot, plan.FeatureDocs),
-			Tickets: normalizePMPlannedTickets(plan.PlannedTickets),
-			Acceptance: PMWorkspaceAcceptance{
-				Path:           acceptancePath,
-				Exists:         fileExists(acceptancePath),
-				Status:         acceptance.Status,
-				RequiredChecks: cloneStringSlice(plan.Acceptance),
-				StartupCommand: acceptance.StartupCommand,
-				URL:            acceptance.URL,
-				Steps:          cloneStringSlice(acceptance.Steps),
-				Observations:   cloneStringSlice(acceptance.Observations),
-				Conclusion:     acceptance.Conclusion,
-			},
-		},
+		Feature:   feature,
 		UpdatedAt: time.Now().UTC(),
-	}, statePath, planPath, acceptancePath), nil
+	}, statePath, planPath, planJSONPath, acceptancePath), nil
 }
 
-func normalizePMWorkspaceState(state PMWorkspaceState, statePath, planPath, acceptancePath string) PMWorkspaceState {
+func normalizePMWorkspaceState(state PMWorkspaceState, statePath, planPath, planJSONPath, acceptancePath string) PMWorkspaceState {
 	state.Schema = strings.TrimSpace(state.Schema)
 	if state.Schema == "" {
 		state.Schema = pmWorkspaceStateSchema
 	}
 	if state.Files.PlanPath == "" {
 		state.Files.PlanPath = strings.TrimSpace(planPath)
+	}
+	if state.Files.PlanJSONPath == "" {
+		state.Files.PlanJSONPath = strings.TrimSpace(planJSONPath)
 	}
 	if state.Files.StatePath == "" {
 		state.Files.StatePath = strings.TrimSpace(statePath)

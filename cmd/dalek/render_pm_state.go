@@ -28,6 +28,7 @@ func renderPMWorkspaceStateText(w io.Writer, state app.PMWorkspaceState) error {
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "-- Files --")
 	fmt.Fprintf(&b, "plan=%s\n", emptyAsValue(state.Files.PlanPath, "-"))
+	fmt.Fprintf(&b, "plan_json=%s\n", emptyAsValue(state.Files.PlanJSONPath, "-"))
 	fmt.Fprintf(&b, "state=%s\n", emptyAsValue(state.Files.StatePath, "-"))
 	fmt.Fprintf(&b, "acceptance=%s\n", emptyAsValue(state.Files.AcceptancePath, "-"))
 	fmt.Fprintln(&b)
