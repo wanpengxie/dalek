@@ -41,14 +41,14 @@
 
   function formatMaybe(value) {
     if (value === null || value === undefined || value === "") {
-      return "—";
+      return "N/A";
     }
     return String(value);
   }
 
   function formatTimestamp(value) {
     if (!value) {
-      return "—";
+      return "N/A";
     }
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
@@ -102,7 +102,7 @@
       ${renderPageHeader(page)}
       <div class="loading-panel">
         <div class="spinner" aria-hidden="true"></div>
-        <p>Loading data…</p>
+        <p>Loading data...</p>
       </div>
     `;
   }
