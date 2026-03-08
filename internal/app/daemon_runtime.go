@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"dalek/internal/contracts"
 	daemonsvc "dalek/internal/services/daemon"
 )
 
@@ -240,4 +241,94 @@ func (p *daemonProjectAdapter) ListTaskEvents(ctx context.Context, runID uint, l
 		})
 	}
 	return out, nil
+}
+
+func (p *daemonProjectAdapter) Dashboard(ctx context.Context) (daemonsvc.DashboardResult, error) {
+	if p == nil || p.project == nil {
+		return daemonsvc.DashboardResult{}, fmt.Errorf("daemon project 为空")
+	}
+	result, err := p.project.Dashboard(ctx)
+	if err != nil {
+		return daemonsvc.DashboardResult{}, err
+	}
+	return daemonsvc.DashboardResult{
+		TicketCounts: cloneDashboardMap(result.TicketCounts),
+		WorkerStats: daemonsvc.DashboardWorkerStats{
+			Running:    result.WorkerStats.Running,
+			MaxRunning: result.WorkerStats.MaxRunning,
+			Blocked:    result.WorkerStats.Blocked,
+		},
+		PlannerState: daemonsvc.DashboardPlannerInfo{
+			Dirty:           result.PlannerState.Dirty,
+			WakeVersion:     result.PlannerState.WakeVersion,
+			ActiveTaskRunID: cloneUintPtr(result.PlannerState.ActiveTaskRunID),
+			CooldownUntil:   cloneTimePtr(result.PlannerState.CooldownUntil),
+			LastRunAt:       cloneTimePtr(result.PlannerState.LastRunAt),
+			LastError:       strings.TrimSpace(result.PlannerState.LastError),
+		},
+		MergeCounts: cloneDashboardMap(result.MergeCounts),
+		InboxCounts: daemonsvc.DashboardInboxCounts{
+			Open:     result.InboxCounts.Open,
+			Snoozed:  result.InboxCounts.Snoozed,
+			Blockers: result.InboxCounts.Blockers,
+		},
+	}, nil
+}
+
+func (p *daemonProjectAdapter) GetPMState(ctx context.Context) (contracts.PMState, error) {
+	if p == nil || p.project == nil {
+		return contracts.PMState{}, fmt.Errorf("daemon project 为空")
+	}
+	state, err := p.project.GetPMState(ctx)
+	if err != nil {
+		return contracts.PMState{}, err
+	}
+	state.PlannerLastError = strings.TrimSpace(state.PlannerLastError)
+	state.PlannerActiveTaskRunID = cloneUintPtr(state.PlannerActiveTaskRunID)
+	state.PlannerCooldownUntil = cloneTimePtr(state.PlannerCooldownUntil)
+	state.PlannerLastRunAt = cloneTimePtr(state.PlannerLastRunAt)
+	return state, nil
+}
+
+func (p *daemonProjectAdapter) ListMergeItems(ctx context.Context, opt daemonsvc.ListMergeItemsOptions) ([]contracts.MergeItem, error) {
+	if p == nil || p.project == nil {
+		return nil, fmt.Errorf("daemon project 为空")
+	}
+	items, err := p.project.ListMergeItems(ctx, ListMergeOptions{
+		Status: opt.Status,
+		Limit:  opt.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]contracts.MergeItem, len(items))
+	copy(out, items)
+	return out, nil
+}
+
+func (p *daemonProjectAdapter) ListInbox(ctx context.Context, opt daemonsvc.ListInboxOptions) ([]contracts.InboxItem, error) {
+	if p == nil || p.project == nil {
+		return nil, fmt.Errorf("daemon project 为空")
+	}
+	items, err := p.project.ListInbox(ctx, ListInboxOptions{
+		Status: opt.Status,
+		Limit:  opt.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]contracts.InboxItem, len(items))
+	copy(out, items)
+	return out, nil
+}
+
+func cloneDashboardMap(src map[string]int) map[string]int {
+	if len(src) == 0 {
+		return map[string]int{}
+	}
+	dst := make(map[string]int, len(src))
+	for key, value := range src {
+		dst[strings.TrimSpace(key)] = value
+	}
+	return dst
 }

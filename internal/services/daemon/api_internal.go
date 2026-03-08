@@ -20,7 +20,10 @@ import (
 	"gorm.io/gorm"
 )
 
-const internalAPIMaxJSONBodyBytes int64 = 1 << 20
+const (
+	internalAPIMaxJSONBodyBytes int64 = 1 << 20
+	internalAPIDashboardListCap int   = 2000
+)
 
 type InternalAPIConfig struct {
 	ListenAddr string
@@ -114,6 +117,10 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/subagent/submit", s.withInternalAccess(s.handleSubagentSubmit))
 	mux.HandleFunc("/api/notes", s.withInternalAccess(s.handleNoteSubmit))
 	mux.HandleFunc("/api/runs/", s.withInternalAccess(s.handleRuns))
+	mux.HandleFunc("/api/v1/overview", s.withInternalAccess(s.handleOverview))
+	mux.HandleFunc("/api/v1/planner", s.withInternalAccess(s.handlePlanner))
+	mux.HandleFunc("/api/v1/merges", s.withInternalAccess(s.handleMerges))
+	mux.HandleFunc("/api/v1/inbox", s.withInternalAccess(s.handleInbox))
 	mux.HandleFunc(gatewaysendsvc.Path, s.withInternalAccess(s.handleSend))
 	mux.HandleFunc(wsPath, s.withInternalAccess(wsHandler))
 
@@ -205,6 +212,94 @@ func (s *InternalAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"ok":      true,
 		"service": "dalek.daemon.internal",
 	})
+}
+
+func (s *InternalAPI) handleOverview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET")
+		return
+	}
+	projectName, err := parseProjectQuery(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	overview, err := s.host.GetProjectDashboard(r.Context(), projectName)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
+}
+
+func (s *InternalAPI) handlePlanner(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET")
+		return
+	}
+	projectName, err := parseProjectQuery(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	planner, err := s.host.GetProjectPlannerState(r.Context(), projectName)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, planner)
+}
+
+func (s *InternalAPI) handleMerges(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET")
+		return
+	}
+	projectName, err := parseProjectQuery(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	status, err := parseMergeStatusQuery(r.URL.Query().Get("status"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	items, err := s.host.ListProjectMerges(r.Context(), projectName, status, internalAPIDashboardListCap)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	if items == nil {
+		items = []contracts.MergeItem{}
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *InternalAPI) handleInbox(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET")
+		return
+	}
+	projectName, err := parseProjectQuery(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	status, err := parseInboxStatusQuery(r.URL.Query().Get("status"))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	items, err := s.host.ListProjectInbox(r.Context(), projectName, status, internalAPIDashboardListCap)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	if items == nil {
+		items = []contracts.InboxItem{}
+	}
+	writeJSON(w, http.StatusOK, items)
 }
 
 func (s *InternalAPI) handleSend(w http.ResponseWriter, r *http.Request) {
@@ -492,6 +587,49 @@ func parseRunRoute(path string) (uint, string, bool) {
 		return 0, "", false
 	}
 	return uint(runID64), tail, true
+}
+
+func parseProjectQuery(r *http.Request) (string, error) {
+	if r == nil || r.URL == nil {
+		return "", fmt.Errorf("request 为空")
+	}
+	projectName := strings.TrimSpace(r.URL.Query().Get("project"))
+	if projectName == "" {
+		return "", fmt.Errorf("project 不能为空")
+	}
+	return projectName, nil
+}
+
+func parseMergeStatusQuery(raw string) (contracts.MergeStatus, error) {
+	status := contracts.MergeStatus(strings.TrimSpace(strings.ToLower(raw)))
+	if status == "" {
+		return "", nil
+	}
+	switch status {
+	case contracts.MergeProposed,
+		contracts.MergeChecksRunning,
+		contracts.MergeReady,
+		contracts.MergeApproved,
+		contracts.MergeMerged,
+		contracts.MergeDiscarded,
+		contracts.MergeBlocked:
+		return status, nil
+	default:
+		return "", fmt.Errorf("merge status 非法: %s", strings.TrimSpace(raw))
+	}
+}
+
+func parseInboxStatusQuery(raw string) (contracts.InboxStatus, error) {
+	status := contracts.InboxStatus(strings.TrimSpace(strings.ToLower(raw)))
+	if status == "" {
+		return "", nil
+	}
+	switch status {
+	case contracts.InboxOpen, contracts.InboxDone, contracts.InboxSnoozed:
+		return status, nil
+	default:
+		return "", fmt.Errorf("inbox status 非法: %s", strings.TrimSpace(raw))
+	}
 }
 
 func remoteIP(remoteAddr string) (net.IP, error) {

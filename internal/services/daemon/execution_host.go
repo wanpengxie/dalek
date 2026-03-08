@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"dalek/internal/contracts"
 )
 
 type ExecutionHost struct {
@@ -570,4 +572,100 @@ func (h *ExecutionHost) CancelRun(runID uint) (CancelResult, error) {
 		RequestID: "",
 		Reason:    "run 不在当前 daemon 执行上下文中（可能已结束或由旧实例启动）",
 	}, nil
+}
+
+func (h *ExecutionHost) GetProjectDashboard(ctx context.Context, projectName string) (DashboardResult, error) {
+	project, err := h.openDashboardProject(projectName)
+	if err != nil {
+		return DashboardResult{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return project.Dashboard(ctx)
+}
+
+func (h *ExecutionHost) GetProjectPlannerState(ctx context.Context, projectName string) (DashboardPlannerInfo, error) {
+	project, err := h.openDashboardProject(projectName)
+	if err != nil {
+		return DashboardPlannerInfo{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	state, err := project.GetPMState(ctx)
+	if err != nil {
+		return DashboardPlannerInfo{}, err
+	}
+	return DashboardPlannerInfo{
+		Dirty:           state.PlannerDirty,
+		WakeVersion:     state.PlannerWakeVersion,
+		ActiveTaskRunID: cloneDashboardUint(state.PlannerActiveTaskRunID),
+		CooldownUntil:   cloneDashboardTime(state.PlannerCooldownUntil),
+		LastRunAt:       cloneDashboardTime(state.PlannerLastRunAt),
+		LastError:       strings.TrimSpace(state.PlannerLastError),
+	}, nil
+}
+
+func (h *ExecutionHost) ListProjectMerges(ctx context.Context, projectName string, status contracts.MergeStatus, limit int) ([]contracts.MergeItem, error) {
+	project, err := h.openDashboardProject(projectName)
+	if err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return project.ListMergeItems(ctx, ListMergeItemsOptions{
+		Status: status,
+		Limit:  limit,
+	})
+}
+
+func (h *ExecutionHost) ListProjectInbox(ctx context.Context, projectName string, status contracts.InboxStatus, limit int) ([]contracts.InboxItem, error) {
+	project, err := h.openDashboardProject(projectName)
+	if err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return project.ListInbox(ctx, ListInboxOptions{
+		Status: status,
+		Limit:  limit,
+	})
+}
+
+func (h *ExecutionHost) openDashboardProject(projectName string) (DashboardProject, error) {
+	if h == nil || h.resolver == nil {
+		return nil, fmt.Errorf("execution host 未初始化")
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return nil, fmt.Errorf("project 不能为空")
+	}
+	project, err := h.resolver.OpenProject(projectName)
+	if err != nil {
+		return nil, err
+	}
+	dashboardProject, ok := project.(DashboardProject)
+	if !ok {
+		return nil, fmt.Errorf("project %s 不支持 dashboard 查询", projectName)
+	}
+	return dashboardProject, nil
+}
+
+func cloneDashboardUint(src *uint) *uint {
+	if src == nil {
+		return nil
+	}
+	out := *src
+	return &out
+}
+
+func cloneDashboardTime(src *time.Time) *time.Time {
+	if src == nil {
+		return nil
+	}
+	out := *src
+	return &out
 }
