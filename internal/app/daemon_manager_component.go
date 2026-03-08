@@ -443,7 +443,7 @@ func (m *daemonManagerComponent) submitPlannerRunIfScheduled(parent context.Cont
 	}
 	submitCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
 	defer cancel()
-	req, err := m.buildPlannerSubmitRequest(submitCtx, p, projectName)
+	req, err := m.buildPlannerSubmitRequest(submitCtx, p, projectName, res)
 	if err != nil {
 		m.logf("manager planner submit skipped: project=%s err=%v", strings.TrimSpace(projectName), err)
 		return
@@ -455,7 +455,7 @@ func (m *daemonManagerComponent) submitPlannerRunIfScheduled(parent context.Cont
 	m.logf("manager planner submit accepted: project=%s run_id=%d request_id=%s", strings.TrimSpace(projectName), req.TaskRunID, req.RequestID)
 }
 
-func (m *daemonManagerComponent) buildPlannerSubmitRequest(ctx context.Context, p *Project, projectName string) (daemonsvc.PlannerSubmitRequest, error) {
+func (m *daemonManagerComponent) buildPlannerSubmitRequest(ctx context.Context, p *Project, projectName string, res pmsvc.ManagerTickResult) (daemonsvc.PlannerSubmitRequest, error) {
 	if p == nil || p.core == nil || p.core.DB == nil {
 		return daemonsvc.PlannerSubmitRequest{}, fmt.Errorf("project db 为空")
 	}
@@ -487,7 +487,7 @@ func (m *daemonManagerComponent) buildPlannerSubmitRequest(ctx context.Context, 
 	if requestID == "" {
 		requestID = fmt.Sprintf("pln_run_%d", runID)
 	}
-	prompt, err := m.buildPlannerPrompt(ctx, p, projectName, runID, requestID)
+	prompt, err := m.buildPlannerPrompt(ctx, p, projectName, runID, requestID, res)
 	if err != nil {
 		return daemonsvc.PlannerSubmitRequest{}, err
 	}
@@ -499,7 +499,7 @@ func (m *daemonManagerComponent) buildPlannerSubmitRequest(ctx context.Context, 
 	}, nil
 }
 
-func (m *daemonManagerComponent) buildPlannerPrompt(ctx context.Context, p *Project, projectName string, runID uint, requestID string) (string, error) {
+func (m *daemonManagerComponent) buildPlannerPrompt(ctx context.Context, p *Project, projectName string, runID uint, requestID string, res pmsvc.ManagerTickResult) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -543,6 +543,11 @@ func (m *daemonManagerComponent) buildPlannerPrompt(ctx context.Context, p *Proj
 			"snoozed": plannerListSnapshot("dalek inbox ls --status snoozed", inboxSnoozed, inboxSnoozedErr),
 		},
 		"planner_recovery": plannerListSnapshot("pm planner recovery context", plannerRecovery, plannerRecoveryErr),
+		"surface_conflicts": map[string]any{
+			"source":          "manager_tick",
+			"items":           res.SurfaceConflicts,
+			"serial_deferred": res.SerialDeferred,
+		},
 	}
 	snapshotJSON, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {

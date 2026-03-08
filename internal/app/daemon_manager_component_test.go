@@ -307,6 +307,9 @@ func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t 
 	if !strings.Contains(call.Prompt, "\"command\": \"dalek inbox ls --status open\"") {
 		t.Fatalf("expected prompt contains inbox list snapshot command")
 	}
+	if !strings.Contains(call.Prompt, "\"surface_conflicts\"") {
+		t.Fatalf("expected prompt contains surface_conflicts snapshot")
+	}
 
 	pmState, err := p.GetPMState(ctx)
 	if err != nil {

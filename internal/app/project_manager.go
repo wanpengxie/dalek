@@ -36,6 +36,13 @@ func (p *Project) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	return p.pm.ManagerTick(ctx, opt)
 }
 
+func (p *Project) GetPMHealthMetrics(ctx context.Context, opt PMHealthMetricsOptions) (PMHealthMetrics, error) {
+	if p == nil || p.pm == nil {
+		return PMHealthMetrics{}, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.CalculateHealthMetrics(ctx, opt)
+}
+
 func (p *Project) RunPlannerJob(ctx context.Context, taskRunID uint, opt PlannerRunOptions) error {
 	if p == nil || p.pm == nil {
 		return fmt.Errorf("project pm service 为空")

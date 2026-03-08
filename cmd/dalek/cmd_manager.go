@@ -90,6 +90,14 @@ func cmdManagerStatus(args []string) {
 			"稍后重试，或检查数据库状态",
 		)
 	}
+	healthMetrics, err := p.GetPMHealthMetrics(context.Background(), app.PMHealthMetricsOptions{})
+	if err != nil {
+		exitRuntimeError(out,
+			"读取健康指标失败",
+			err.Error(),
+			"稍后重试，或检查数据库状态",
+		)
+	}
 
 	if out == outputJSON {
 		lastTick := any(nil)
@@ -132,6 +140,7 @@ func cmdManagerStatus(args []string) {
 			"last_event_id":              st.LastEventID,
 			"last_recovery":              lastRecovery,
 			"worktree_gc_pending":        gcPending,
+			"health_metrics":             healthMetrics,
 			"updated_at":                 st.UpdatedAt.Local().Format(time.RFC3339),
 		})
 		return
@@ -172,6 +181,23 @@ func cmdManagerStatus(args []string) {
 			st.LastRecoveryWorkers,
 		)
 	}
+	fmt.Printf(
+		"health window=%s..%s  planner_timeout_rate=%.2f%%(%d/%d)  dispatch_bootstrap_failure_rate=%.2f%%(%d/%d)  terminal_state_conflict_count=%d  duplicate_terminal_report_count=%d  merge_discard_count=%d  integration_ticket_count=%d  manual_intervention_count=%d  real_acceptance_pass_rate=%s\n",
+		healthMetrics.WindowStart.Local().Format("01-02 15:04:05"),
+		healthMetrics.WindowEnd.Local().Format("01-02 15:04:05"),
+		healthMetrics.PlannerTimeoutRate*100,
+		healthMetrics.PlannerTimeoutCount,
+		healthMetrics.PlannerRunCount,
+		healthMetrics.DispatchBootstrapFailureRate*100,
+		healthMetrics.DispatchBootstrapFailureCount,
+		healthMetrics.DispatchRunCount,
+		healthMetrics.TerminalStateConflictCount,
+		healthMetrics.DuplicateTerminalReportCount,
+		healthMetrics.MergeDiscardCount,
+		healthMetrics.IntegrationTicketCount,
+		healthMetrics.ManualInterventionCount,
+		formatNullablePercent(healthMetrics.RealAcceptancePassRate),
+	)
 }
 
 func cmdManagerPauseResume(args []string, enabled bool) {
@@ -279,13 +305,15 @@ func cmdManagerTick(args []string) {
 			"inbox_upserts":      res.InboxUpserts,
 			"started_tickets":    res.StartedTickets,
 			"dispatched_tickets": res.DispatchedTickets,
+			"serial_deferred":    res.SerialDeferred,
 			"merge_proposed":     res.MergeProposed,
+			"surface_conflicts":  res.SurfaceConflicts,
 			"errors":             res.Errors,
 		})
 		return
 	}
 
-	fmt.Printf("%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  inbox=%d  merge_proposed=%d\n",
+	fmt.Printf("%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  serial_deferred=%d  inbox=%d  merge_proposed=%d  surface_conflicts=%d\n",
 		res.At.Local().Format("01-02 15:04:05"),
 		res.AutopilotEnabled,
 		res.Running, res.RunningBlocked,
@@ -293,8 +321,10 @@ func cmdManagerTick(args []string) {
 		res.Capacity,
 		len(res.StartedTickets),
 		len(res.DispatchedTickets),
+		len(res.SerialDeferred),
 		res.InboxUpserts,
 		len(res.MergeProposed),
+		len(res.SurfaceConflicts),
 	)
 	if len(res.Errors) > 0 {
 		for _, e := range res.Errors {
@@ -388,7 +418,9 @@ func cmdManagerRun(args []string) {
 			"inbox_upserts":      res.InboxUpserts,
 			"started_tickets":    res.StartedTickets,
 			"dispatched_tickets": res.DispatchedTickets,
+			"serial_deferred":    res.SerialDeferred,
 			"merge_proposed":     res.MergeProposed,
+			"surface_conflicts":  res.SurfaceConflicts,
 			"errors":             res.Errors,
 		})
 		return
@@ -398,7 +430,7 @@ func cmdManagerRun(args []string) {
 	if *dispatchTimeout > 0 {
 		timeoutText = dispatchTimeout.String()
 	}
-	fmt.Printf("%s  mode=sync_dispatch  dispatch_timeout=%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  inbox=%d  merge_proposed=%d\n",
+	fmt.Printf("%s  mode=sync_dispatch  dispatch_timeout=%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  serial_deferred=%d  inbox=%d  merge_proposed=%d  surface_conflicts=%d\n",
 		res.At.Local().Format("01-02 15:04:05"),
 		timeoutText,
 		res.AutopilotEnabled,
@@ -407,12 +439,21 @@ func cmdManagerRun(args []string) {
 		res.Capacity,
 		len(res.StartedTickets),
 		len(res.DispatchedTickets),
+		len(res.SerialDeferred),
 		res.InboxUpserts,
 		len(res.MergeProposed),
+		len(res.SurfaceConflicts),
 	)
 	if len(res.Errors) > 0 {
 		for _, e := range res.Errors {
 			fmt.Fprintln(os.Stderr, "error:", e)
 		}
 	}
+}
+
+func formatNullablePercent(v *float64) string {
+	if v == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.2f%%", (*v)*100)
 }
