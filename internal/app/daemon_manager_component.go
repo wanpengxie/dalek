@@ -502,6 +502,7 @@ func (m *daemonManagerComponent) buildPlannerPrompt(ctx context.Context, p *Proj
 	repoRoot := strings.TrimSpace(p.RepoRoot())
 	planPath := filepath.Join(repoRoot, ".dalek", "pm", "plan.md")
 	planText := readPlannerPlanMarkdown(planPath, plannerPromptPlanMaxBytes)
+	pmWorkspaceState, pmWorkspaceErr := p.SyncPMWorkspaceState(ctx)
 
 	ticketViews, ticketErr := p.ListTicketViews(ctx)
 	mergeItems, mergeErr := p.ListMergeItems(ctx, ListMergeOptions{Limit: plannerPromptListLimit})
@@ -520,6 +521,7 @@ func (m *daemonManagerComponent) buildPlannerPrompt(ctx context.Context, p *Proj
 		"repo_root":          repoRoot,
 		"planner_task_run":   runID,
 		"planner_request_id": strings.TrimSpace(requestID),
+		"pm_state":           plannerListSnapshot("dalek pm state sync", pmWorkspaceState, pmWorkspaceErr),
 		"ticket_ls":          plannerListSnapshot("dalek ticket ls", ticketViews, ticketErr),
 		"merge_ls":           plannerListSnapshot("dalek merge ls", mergeItems, mergeErr),
 		"inbox_ls": map[string]any{

@@ -286,6 +286,12 @@ func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t 
 	if !strings.Contains(call.Prompt, "Planner Plan") {
 		t.Fatalf("expected prompt contains planner plan markdown")
 	}
+	if !strings.Contains(call.Prompt, "\"command\": \"dalek pm state sync\"") {
+		t.Fatalf("expected prompt contains pm state sync snapshot command")
+	}
+	if !strings.Contains(call.Prompt, "\"schema\": \"dalek.pm.state.v1\"") {
+		t.Fatalf("expected prompt contains pm workspace state snapshot")
+	}
 	if !strings.Contains(call.Prompt, "\"command\": \"dalek ticket ls\"") {
 		t.Fatalf("expected prompt contains ticket list snapshot command")
 	}
