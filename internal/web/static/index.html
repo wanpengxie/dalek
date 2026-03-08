@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Dalek Web Console" />
+    <title>Dalek Web Console</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="top-nav">
+        <div class="brand">dalek console</div>
+        <nav aria-label="Primary">
+          <a data-route="overview" href="#/overview">Overview</a>
+          <a data-route="tickets" href="#/tickets">Tickets</a>
+          <a data-route="merges-inbox" href="#/merges-inbox">Merges &amp; Inbox</a>
+          <a data-route="planner-runtime" href="#/planner-runtime">Planner &amp; Runtime</a>
+        </nav>
+      </header>
+      <main class="content">
+        <section class="page-card">
+          <h1 id="page-title">Overview</h1>
+          <p id="page-subtitle">Overview page</p>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

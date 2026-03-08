@@ -79,6 +79,9 @@ func TestLoadHomeConfig_MissingUsesDefaults(t *testing.T) {
 	if cfg.Daemon.Public.Listen != "127.0.0.1:18080" {
 		t.Fatalf("unexpected default daemon.public.listen: %q", cfg.Daemon.Public.Listen)
 	}
+	if cfg.Daemon.Web.Listen != "127.0.0.1:18082" {
+		t.Fatalf("unexpected default daemon.web.listen: %q", cfg.Daemon.Web.Listen)
+	}
 	if !cfg.Daemon.Public.Feishu.Enabled {
 		t.Fatalf("unexpected default daemon.public.feishu.enabled: false")
 	}
@@ -217,6 +220,9 @@ func TestLoadHomeConfig_ExistingConfigWithDefaults(t *testing.T) {
 	}
 	if cfg.Daemon.Public.Listen != "0.0.0.0:18080" {
 		t.Fatalf("daemon.public.listen should be normalized: got=%q", cfg.Daemon.Public.Listen)
+	}
+	if cfg.Daemon.Web.Listen != "127.0.0.1:18082" {
+		t.Fatalf("daemon.web.listen should fallback to default: got=%q", cfg.Daemon.Web.Listen)
 	}
 	if cfg.Daemon.Public.Feishu.Enabled {
 		t.Fatalf("daemon.public.feishu.enabled should keep explicit false")

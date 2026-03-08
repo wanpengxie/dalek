@@ -1,0 +1,108 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --nav-bg: #0c1d34;
+  --surface: #ffffff;
+  --page-bg: linear-gradient(160deg, #f2f6ff 0%, #f6f9ff 48%, #edf5f4 100%);
+  --text: #0e1f3a;
+  --muted: #5a6681;
+  --active: #6ee7b7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--page-bg);
+  color: var(--text);
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.top-nav {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.875rem 1rem;
+  background: var(--nav-bg);
+  color: #f8fbff;
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+nav {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+nav a {
+  color: #dce6ff;
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+nav a:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+nav a.active {
+  color: #042531;
+  background: var(--active);
+}
+
+.content {
+  flex: 1;
+  width: min(920px, 100%);
+  margin: 0 auto;
+  padding: 1.25rem 1rem 2rem;
+}
+
+.page-card {
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 1.5rem;
+  border: 1px solid #dde6f9;
+  box-shadow: 0 10px 30px rgba(15, 32, 67, 0.08);
+}
+
+.page-card h1 {
+  margin: 0;
+  font-size: clamp(1.4rem, 2.8vw, 2rem);
+}
+
+.page-card p {
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+}
+
+@media (max-width: 680px) {
+  .top-nav {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  nav {
+    width: 100%;
+  }
+
+  nav a {
+    text-align: center;
+    flex: 1 1 calc(50% - 0.5rem);
+  }
+}

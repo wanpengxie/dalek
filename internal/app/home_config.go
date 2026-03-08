@@ -20,6 +20,7 @@ const (
 
 	defaultDaemonInternalListenAddr    = "127.0.0.1:18081"
 	defaultDaemonPublicListenAddr      = "127.0.0.1:18080"
+	defaultDaemonWebListenAddr         = "127.0.0.1:18082"
 	defaultDaemonMaxConcurrent         = 4
 	defaultDaemonPublicIngressProvider = "cloudflare_tunnel"
 	defaultDaemonPublicIngressName     = "dalek"
@@ -86,10 +87,15 @@ type HomeDaemonConfig struct {
 	MaxConcurrent int                      `json:"max_concurrent,omitempty"`
 	Internal      HomeDaemonInternalConfig `json:"internal"`
 	Public        HomeDaemonPublicConfig   `json:"public"`
+	Web           HomeDaemonWebConfig      `json:"web"`
 	Notebook      HomeDaemonNotebookConfig `json:"notebook,omitempty"`
 }
 
 type HomeDaemonInternalConfig struct {
+	Listen string `json:"listen"`
+}
+
+type HomeDaemonWebConfig struct {
 	Listen string `json:"listen"`
 }
 
@@ -154,6 +160,9 @@ func DefaultHomeConfig() HomeConfig {
 					TunnelName:     defaultDaemonPublicIngressName,
 					CloudflaredBin: defaultDaemonCloudflaredBin,
 				},
+			},
+			Web: HomeDaemonWebConfig{
+				Listen: defaultDaemonWebListenAddr,
 			},
 			Notebook: HomeDaemonNotebookConfig{
 				WorkerCount: defaultNotebookWorkerCount,
@@ -232,6 +241,10 @@ func (c HomeConfig) WithDefaults() HomeConfig {
 	out.Daemon.Public.Listen = strings.TrimSpace(out.Daemon.Public.Listen)
 	if out.Daemon.Public.Listen == "" {
 		out.Daemon.Public.Listen = defaultDaemonPublicListenAddr
+	}
+	out.Daemon.Web.Listen = strings.TrimSpace(out.Daemon.Web.Listen)
+	if out.Daemon.Web.Listen == "" {
+		out.Daemon.Web.Listen = defaultDaemonWebListenAddr
 	}
 	out.Daemon.Public.Feishu.AppID = strings.TrimSpace(out.Daemon.Public.Feishu.AppID)
 	out.Daemon.Public.Feishu.AppSecret = strings.TrimSpace(out.Daemon.Public.Feishu.AppSecret)

@@ -110,6 +110,7 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *slog.Logger) erro
 			internalAPI,
 			sendSweeper,
 			newDaemonPublicGatewayComponent(home, logger, gatewayResolver),
+			newDaemonWebComponent(home, logger),
 			manager,
 			notebook,
 		},
