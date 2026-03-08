@@ -91,6 +91,252 @@ nav a.active {
   color: var(--muted);
 }
 
+.page-body {
+  margin-top: 1.2rem;
+}
+
+.page-state {
+  border-radius: 12px;
+  border: 1px solid #d7e3fb;
+  background: #f8fbff;
+  padding: 0.9rem 1rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.page-state.loading {
+  background: #f3f8ff;
+  border-color: #c9dcff;
+  color: #24416e;
+}
+
+.page-state.error {
+  background: #fff4f4;
+  border-color: #f4caca;
+  color: #842029;
+}
+
+.page-state.info {
+  background: #f6f8fc;
+  border-color: #dde6f8;
+}
+
+.ticket-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.85rem;
+}
+
+.ticket-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.ticket-filter-button {
+  border: 1px solid #c8d5ef;
+  background: #f6f9ff;
+  color: #1f3b63;
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ticket-filter-button:hover {
+  border-color: #9bb7e8;
+}
+
+.ticket-filter-button.active {
+  border-color: #0c1d34;
+  background: #0c1d34;
+  color: #f5f9ff;
+}
+
+.ticket-count {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.ticket-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e2eaf8;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.ticket-table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+}
+
+.ticket-table th,
+.ticket-table td {
+  padding: 0.7rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid #edf2fb;
+  vertical-align: middle;
+}
+
+.ticket-table th {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #5a6681;
+  background: #f7faff;
+}
+
+.ticket-table tr:last-child td {
+  border-bottom: none;
+}
+
+.ticket-row {
+  cursor: pointer;
+}
+
+.ticket-row:hover {
+  background: #f4f8ff;
+}
+
+.ticket-row:focus-visible {
+  outline: 2px solid #2f6fe4;
+  outline-offset: -2px;
+  background: #eef5ff;
+}
+
+.ticket-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 1.1rem;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.status-badge.is-backlog {
+  background: #eef2ff;
+  color: #4156a3;
+}
+
+.status-badge.is-queued {
+  background: #eaf6ff;
+  color: #236191;
+}
+
+.status-badge.is-active {
+  background: #e8fff3;
+  color: #1c7a53;
+}
+
+.status-badge.is-blocked {
+  background: #fff4e9;
+  color: #a6531a;
+}
+
+.status-badge.is-done {
+  background: #edf8ef;
+  color: #256145;
+}
+
+.status-badge.is-archived {
+  background: #f0f1f4;
+  color: #5c6473;
+}
+
+.status-badge.is-unknown {
+  background: #f7f2ff;
+  color: #6f3da8;
+}
+
+.ticket-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-bottom: 0.9rem;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: #1a4e96;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.back-link:hover {
+  text-decoration: underline;
+}
+
+.ticket-detail-id {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.detail-sections {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.detail-section {
+  border: 1px solid #e3ebfb;
+  border-radius: 12px;
+  padding: 0.95rem;
+  background: #fbfdff;
+}
+
+.detail-section h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.detail-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.6rem 0.9rem;
+}
+
+.detail-field {
+  margin: 0;
+}
+
+.detail-label {
+  display: block;
+  margin: 0 0 0.12rem;
+  color: var(--muted);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.detail-value {
+  margin: 0;
+  line-height: 1.35;
+  font-size: 0.93rem;
+  word-break: break-word;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
 @media (max-width: 680px) {
   .top-nav {
     align-items: flex-start;
@@ -104,5 +350,22 @@ nav a.active {
   nav a {
     text-align: center;
     flex: 1 1 calc(50% - 0.5rem);
+  }
+
+  .ticket-toolbar {
+    align-items: flex-start;
+  }
+
+  .ticket-filter-button {
+    flex: 1 1 calc(50% - 0.5rem);
+    text-align: center;
+  }
+
+  .ticket-table {
+    min-width: 560px;
+  }
+
+  .detail-grid {
+    grid-template-columns: 1fr;
   }
 }
