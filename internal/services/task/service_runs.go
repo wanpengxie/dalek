@@ -245,7 +245,8 @@ func (s *Service) MarkRunSucceeded(ctx context.Context, runID uint, resultPayloa
 	if now.IsZero() {
 		now = time.Now()
 	}
-	res := db.WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ? AND orchestration_state != ?", runID, contracts.TaskCanceled).Updates(map[string]any{
+	runDB := db.WithContext(ctx)
+	res := runDB.Model(&contracts.TaskRun{}).Where("id = ? AND orchestration_state IN ?", runID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).Updates(map[string]any{
 		"orchestration_state": contracts.TaskSucceeded,
 		"result_payload_json": strings.TrimSpace(resultPayloadJSON),
 		"error_code":          "",
@@ -258,7 +259,7 @@ func (s *Service) MarkRunSucceeded(ctx context.Context, runID uint, resultPayloa
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		return ensureRunExistsForTerminalUpdate(db.WithContext(ctx), runID)
+		return resolveTerminalUpdateNoop(runDB, runID, contracts.TaskSucceeded, now)
 	}
 	return nil
 }
@@ -277,7 +278,8 @@ func (s *Service) MarkRunFailed(ctx context.Context, runID uint, errorCode strin
 	if now.IsZero() {
 		now = time.Now()
 	}
-	res := db.WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ? AND orchestration_state != ?", runID, contracts.TaskCanceled).Updates(map[string]any{
+	runDB := db.WithContext(ctx)
+	res := runDB.Model(&contracts.TaskRun{}).Where("id = ? AND orchestration_state IN ?", runID, []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}).Updates(map[string]any{
 		"orchestration_state": contracts.TaskFailed,
 		"error_code":          strings.TrimSpace(errorCode),
 		"error_message":       strings.TrimSpace(errorMessage),
@@ -289,7 +291,7 @@ func (s *Service) MarkRunFailed(ctx context.Context, runID uint, errorCode strin
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		return ensureRunExistsForTerminalUpdate(db.WithContext(ctx), runID)
+		return resolveTerminalUpdateNoop(runDB, runID, contracts.TaskFailed, now)
 	}
 	return nil
 }
@@ -308,14 +310,29 @@ func (s *Service) MarkRunCanceled(ctx context.Context, runID uint, errorCode str
 	if now.IsZero() {
 		now = time.Now()
 	}
-	return db.WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ?", runID).Updates(map[string]any{
+	runDB := db.WithContext(ctx)
+	fromState, found, err := findRunOrchestrationState(runDB, runID)
+	if err != nil {
+		return err
+	}
+	res := runDB.Model(&contracts.TaskRun{}).Where("id = ?", runID).Updates(map[string]any{
 		"orchestration_state": contracts.TaskCanceled,
 		"error_code":          strings.TrimSpace(errorCode),
 		"error_message":       strings.TrimSpace(errorMessage),
 		"runner_id":           "",
 		"lease_expires_at":    nil,
 		"finished_at":         &now,
-	}).Error
+	})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return nil
+	}
+	if !found || !isTerminalStateOverrideByCancel(fromState) {
+		return nil
+	}
+	return appendTerminalStateOverriddenEvent(runDB, runID, fromState, now)
 }
 
 func isRequestIDUniqueConflict(err error) bool {
@@ -341,6 +358,100 @@ func ensureRunExistsForTerminalUpdate(db *gorm.DB, runID uint) error {
 		return fmt.Errorf("task_run 不存在: run_id=%d", runID)
 	}
 	return nil
+}
+
+func resolveTerminalUpdateNoop(db *gorm.DB, runID uint, target contracts.TaskOrchestrationState, now time.Time) error {
+	if err := ensureRunExistsForTerminalUpdate(db, runID); err != nil {
+		return err
+	}
+	current, found, err := findRunOrchestrationState(db, runID)
+	if err != nil {
+		return err
+	}
+	if !found || !isTaskTerminalState(current) {
+		return nil
+	}
+	return appendTerminalUpdateRejectedEvent(db, runID, current, target, now)
+}
+
+func findRunOrchestrationState(db *gorm.DB, runID uint) (contracts.TaskOrchestrationState, bool, error) {
+	if db == nil {
+		return "", false, fmt.Errorf("task service db 为空")
+	}
+	var run contracts.TaskRun
+	if err := db.Select("id", "orchestration_state").First(&run, runID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return run.OrchestrationState, true, nil
+}
+
+func appendTerminalUpdateRejectedEvent(db *gorm.DB, runID uint, fromState, toState contracts.TaskOrchestrationState, now time.Time) error {
+	if db == nil {
+		return fmt.Errorf("task service db 为空")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return db.Create(&contracts.TaskEvent{
+		TaskRunID: runID,
+		EventType: "terminal_update_rejected",
+		FromStateJSON: contracts.JSONMap{
+			"orchestration_state": fromState,
+		},
+		ToStateJSON: contracts.JSONMap{
+			"orchestration_state": toState,
+		},
+		Note: fmt.Sprintf("terminal update rejected: %s -> %s", fromState, toState),
+		PayloadJSON: contracts.JSONMap{
+			"reason":        "terminal_state_guard",
+			"current_state": fromState,
+			"target_state":  toState,
+		},
+		CreatedAt: now,
+	}).Error
+}
+
+func appendTerminalStateOverriddenEvent(db *gorm.DB, runID uint, fromState contracts.TaskOrchestrationState, now time.Time) error {
+	if db == nil {
+		return fmt.Errorf("task service db 为空")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return db.Create(&contracts.TaskEvent{
+		TaskRunID: runID,
+		EventType: "terminal_state_overridden",
+		FromStateJSON: contracts.JSONMap{
+			"orchestration_state": fromState,
+		},
+		ToStateJSON: contracts.JSONMap{
+			"orchestration_state": contracts.TaskCanceled,
+		},
+		Note: "terminal state overridden by cancel",
+		PayloadJSON: contracts.JSONMap{
+			"reason":       "cancel_overrides_terminal",
+			"source":       "mark_run_canceled",
+			"from_state":   fromState,
+			"target_state": contracts.TaskCanceled,
+		},
+		CreatedAt: now,
+	}).Error
+}
+
+func isTaskTerminalState(state contracts.TaskOrchestrationState) bool {
+	switch state {
+	case contracts.TaskSucceeded, contracts.TaskFailed, contracts.TaskCanceled:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalStateOverrideByCancel(state contracts.TaskOrchestrationState) bool {
+	return state == contracts.TaskSucceeded || state == contracts.TaskFailed
 }
 
 func ensureRunCanMarkRunning(db *gorm.DB, runID uint) error {

@@ -69,7 +69,7 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 		if terr != nil {
 			return terr
 		}
-		return s.syncTaskRuntimeFromReportWithRuntime(ctx, rt, workerSnapshot, r, runtimeHealth, needs, summary, source, now)
+		return s.syncTaskRuntimeFromReportWithRuntime(ctx, rt, tx, workerSnapshot, r, runtimeHealth, needs, summary, source, now)
 	})
 
 	if workerSnapshot.ID != 0 && (workerSnapshot.RetryCount > 0 || workerSnapshot.LastRetryAt != nil || strings.TrimSpace(workerSnapshot.LastErrorHash) != "") {

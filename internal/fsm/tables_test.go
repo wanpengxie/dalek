@@ -125,8 +125,8 @@ func TestTaskRunOrchestrationTable(t *testing.T) {
 		{name: "running_to_succeeded", from: contracts.TaskRunning, to: contracts.TaskSucceeded, want: true},
 		{name: "running_to_failed", from: contracts.TaskRunning, to: contracts.TaskFailed, want: true},
 		{name: "running_to_canceled", from: contracts.TaskRunning, to: contracts.TaskCanceled, want: true},
-		{name: "succeeded_to_canceled", from: contracts.TaskSucceeded, to: contracts.TaskCanceled, want: true},
-		{name: "failed_to_canceled", from: contracts.TaskFailed, to: contracts.TaskCanceled, want: true},
+		{name: "succeeded_to_canceled_forbidden", from: contracts.TaskSucceeded, to: contracts.TaskCanceled, want: false},
+		{name: "failed_to_canceled_forbidden", from: contracts.TaskFailed, to: contracts.TaskCanceled, want: false},
 		{name: "canceled_to_running_forbidden", from: contracts.TaskCanceled, to: contracts.TaskRunning, want: false},
 		{name: "pending_to_succeeded_forbidden", from: contracts.TaskPending, to: contracts.TaskSucceeded, want: false},
 	}
@@ -142,7 +142,7 @@ func TestTaskRunOrchestrationTable(t *testing.T) {
 	if !TaskRunOrchestrationTable.IsTerminal(contracts.TaskCanceled) {
 		t.Fatalf("canceled should be terminal")
 	}
-	if TaskRunOrchestrationTable.IsTerminal(contracts.TaskSucceeded) || TaskRunOrchestrationTable.IsTerminal(contracts.TaskFailed) {
-		t.Fatalf("succeeded/failed should not be terminal in this table")
+	if !TaskRunOrchestrationTable.IsTerminal(contracts.TaskSucceeded) || !TaskRunOrchestrationTable.IsTerminal(contracts.TaskFailed) {
+		t.Fatalf("succeeded/failed should be terminal in this table")
 	}
 }

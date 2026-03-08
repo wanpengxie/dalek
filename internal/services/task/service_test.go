@@ -20,6 +20,10 @@ func newTaskServiceForTest(t *testing.T) *Service {
 	return New(db)
 }
 
+func ptrTime(v time.Time) *time.Time {
+	return &v
+}
+
 func TestService_TaskRunRoundTrip(t *testing.T) {
 	svc := newTaskServiceForTest(t)
 	ctx := context.Background()
@@ -283,6 +287,186 @@ func TestService_MarkRunFailed_DoesNotOverrideCanceled(t *testing.T) {
 	}
 	if status == nil || status.OrchestrationState != string(contracts.TaskCanceled) {
 		t.Fatalf("expected canceled state unchanged, got=%+v", status)
+	}
+}
+
+func TestService_MarkRunSucceeded_RejectsFromTerminalState(t *testing.T) {
+	svc := newTaskServiceForTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	cases := []struct {
+		name  string
+		state contracts.TaskOrchestrationState
+	}{
+		{name: "from_succeeded", state: contracts.TaskSucceeded},
+		{name: "from_failed", state: contracts.TaskFailed},
+		{name: "from_canceled", state: contracts.TaskCanceled},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requestID := "req-terminal-guard-succeed-" + tc.name
+			run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+				OwnerType:          contracts.TaskOwnerWorker,
+				TaskType:           "deliver_ticket",
+				ProjectKey:         "demo",
+				TicketID:           21,
+				WorkerID:           31,
+				SubjectType:        "ticket",
+				SubjectID:          "21",
+				RequestID:          requestID,
+				OrchestrationState: tc.state,
+				StartedAt:          &now,
+				FinishedAt:         ptrTime(now.Add(time.Second)),
+				ErrorCode:          "existing_error",
+				ErrorMessage:       "existing message",
+				ResultPayloadJSON:  `{"before":true}`,
+			})
+			if err != nil {
+				t.Fatalf("CreateRun failed: %v", err)
+			}
+
+			if err := svc.MarkRunSucceeded(ctx, run.ID, `{"after":true}`, now.Add(2*time.Second)); err != nil {
+				t.Fatalf("MarkRunSucceeded should reject terminal updates as no-op, got=%v", err)
+			}
+
+			var loaded contracts.TaskRun
+			if err := svc.db.WithContext(ctx).First(&loaded, run.ID).Error; err != nil {
+				t.Fatalf("load run failed: %v", err)
+			}
+			if loaded.OrchestrationState != tc.state {
+				t.Fatalf("expected state unchanged=%s, got=%s", tc.state, loaded.OrchestrationState)
+			}
+
+			var ev contracts.TaskEvent
+			if err := svc.db.WithContext(ctx).
+				Where("task_run_id = ? AND event_type = ?", run.ID, "terminal_update_rejected").
+				Order("id desc").
+				First(&ev).Error; err != nil {
+				t.Fatalf("expected terminal_update_rejected event: %v", err)
+			}
+			if got := ev.FromStateJSON["orchestration_state"]; got != string(tc.state) {
+				t.Fatalf("unexpected from_state=%v, want=%s", got, tc.state)
+			}
+			if got := ev.ToStateJSON["orchestration_state"]; got != string(contracts.TaskSucceeded) {
+				t.Fatalf("unexpected to_state=%v, want=%s", got, contracts.TaskSucceeded)
+			}
+		})
+	}
+}
+
+func TestService_MarkRunFailed_RejectsFromTerminalState(t *testing.T) {
+	svc := newTaskServiceForTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	cases := []struct {
+		name  string
+		state contracts.TaskOrchestrationState
+	}{
+		{name: "from_succeeded", state: contracts.TaskSucceeded},
+		{name: "from_failed", state: contracts.TaskFailed},
+		{name: "from_canceled", state: contracts.TaskCanceled},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requestID := "req-terminal-guard-fail-" + tc.name
+			run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+				OwnerType:          contracts.TaskOwnerWorker,
+				TaskType:           "deliver_ticket",
+				ProjectKey:         "demo",
+				TicketID:           22,
+				WorkerID:           32,
+				SubjectType:        "ticket",
+				SubjectID:          "22",
+				RequestID:          requestID,
+				OrchestrationState: tc.state,
+				StartedAt:          &now,
+				FinishedAt:         ptrTime(now.Add(time.Second)),
+				ErrorCode:          "existing_error",
+				ErrorMessage:       "existing message",
+				ResultPayloadJSON:  `{"before":true}`,
+			})
+			if err != nil {
+				t.Fatalf("CreateRun failed: %v", err)
+			}
+
+			if err := svc.MarkRunFailed(ctx, run.ID, "new_error", "after", now.Add(2*time.Second)); err != nil {
+				t.Fatalf("MarkRunFailed should reject terminal updates as no-op, got=%v", err)
+			}
+
+			var loaded contracts.TaskRun
+			if err := svc.db.WithContext(ctx).First(&loaded, run.ID).Error; err != nil {
+				t.Fatalf("load run failed: %v", err)
+			}
+			if loaded.OrchestrationState != tc.state {
+				t.Fatalf("expected state unchanged=%s, got=%s", tc.state, loaded.OrchestrationState)
+			}
+
+			var ev contracts.TaskEvent
+			if err := svc.db.WithContext(ctx).
+				Where("task_run_id = ? AND event_type = ?", run.ID, "terminal_update_rejected").
+				Order("id desc").
+				First(&ev).Error; err != nil {
+				t.Fatalf("expected terminal_update_rejected event: %v", err)
+			}
+			if got := ev.FromStateJSON["orchestration_state"]; got != string(tc.state) {
+				t.Fatalf("unexpected from_state=%v, want=%s", got, tc.state)
+			}
+			if got := ev.ToStateJSON["orchestration_state"]; got != string(contracts.TaskFailed) {
+				t.Fatalf("unexpected to_state=%v, want=%s", got, contracts.TaskFailed)
+			}
+		})
+	}
+}
+
+func TestService_MarkRunCanceled_FromTerminalStateAppendsDiagnostic(t *testing.T) {
+	svc := newTaskServiceForTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           "deliver_ticket",
+		ProjectKey:         "demo",
+		TicketID:           23,
+		WorkerID:           33,
+		SubjectType:        "ticket",
+		SubjectID:          "23",
+		RequestID:          "req-cancel-terminal-override",
+		OrchestrationState: contracts.TaskSucceeded,
+		StartedAt:          &now,
+		FinishedAt:         ptrTime(now.Add(time.Second)),
+		ResultPayloadJSON:  `{"ok":true}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun failed: %v", err)
+	}
+
+	if err := svc.MarkRunCanceled(ctx, run.ID, "manual_cancel", "force cancel", now.Add(2*time.Second)); err != nil {
+		t.Fatalf("MarkRunCanceled failed: %v", err)
+	}
+
+	var loaded contracts.TaskRun
+	if err := svc.db.WithContext(ctx).First(&loaded, run.ID).Error; err != nil {
+		t.Fatalf("load run failed: %v", err)
+	}
+	if loaded.OrchestrationState != contracts.TaskCanceled {
+		t.Fatalf("expected canceled state, got=%s", loaded.OrchestrationState)
+	}
+
+	var ev contracts.TaskEvent
+	if err := svc.db.WithContext(ctx).
+		Where("task_run_id = ? AND event_type = ?", run.ID, "terminal_state_overridden").
+		Order("id desc").
+		First(&ev).Error; err != nil {
+		t.Fatalf("expected terminal_state_overridden event: %v", err)
+	}
+	if got := ev.FromStateJSON["orchestration_state"]; got != string(contracts.TaskSucceeded) {
+		t.Fatalf("unexpected from_state=%v", got)
+	}
+	if got := ev.ToStateJSON["orchestration_state"]; got != string(contracts.TaskCanceled) {
+		t.Fatalf("unexpected to_state=%v", got)
 	}
 }
 

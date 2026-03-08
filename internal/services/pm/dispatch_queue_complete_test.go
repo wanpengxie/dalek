@@ -242,3 +242,60 @@ func TestForceFailActiveDispatchesForTicket_FailsRunningJobAndTaskRun(t *testing
 		t.Fatalf("unexpected task run error code: %q", run.ErrorCode)
 	}
 }
+
+func TestForceFailActiveDispatchesForTicket_SkipsTerminalTaskRun(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+	tk := createTicket(t, p.DB, "dispatch-force-fail-skip-terminal")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
+	w := createDispatchWorker(t, p.DB, tk.ID)
+	job, err := svc.enqueuePMDispatchJob(ctx, tk.ID, w.ID, "req_force_skip_terminal")
+	if err != nil {
+		t.Fatalf("enqueue dispatch job failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
+		"orchestration_state": contracts.TaskSucceeded,
+		"result_payload_json": `{"ok":true}`,
+	}).Error; err != nil {
+		t.Fatalf("set task run succeeded failed: %v", err)
+	}
+
+	reason := "ticket stop: force fail terminal-protected dispatch"
+	got, err := svc.ForceFailActiveDispatchesForTicket(ctx, tk.ID, reason)
+	if err != nil {
+		t.Fatalf("ForceFailActiveDispatchesForTicket failed: %v", err)
+	}
+	if got != 1 {
+		t.Fatalf("expected dispatch job still be force-failed, got=%d", got)
+	}
+
+	var after contracts.TaskRun
+	if err := p.DB.First(&after, job.TaskRunID).Error; err != nil {
+		t.Fatalf("query task run failed: %v", err)
+	}
+	if after.OrchestrationState != contracts.TaskSucceeded {
+		t.Fatalf("expected terminal run not overwritten, got=%s", after.OrchestrationState)
+	}
+
+	var skippedCnt int64
+	if err := p.DB.Model(&contracts.TaskEvent{}).
+		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "dispatch_terminal_sync_skipped").
+		Count(&skippedCnt).Error; err != nil {
+		t.Fatalf("count dispatch_terminal_sync_skipped failed: %v", err)
+	}
+	if skippedCnt != 1 {
+		t.Fatalf("expected exactly one dispatch_terminal_sync_skipped event, got=%d", skippedCnt)
+	}
+
+	var forceFailCnt int64
+	if err := p.DB.Model(&contracts.TaskEvent{}).
+		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "dispatch_force_failed_on_stop").
+		Count(&forceFailCnt).Error; err != nil {
+		t.Fatalf("count dispatch_force_failed_on_stop failed: %v", err)
+	}
+	if forceFailCnt != 0 {
+		t.Fatalf("expected no dispatch_force_failed_on_stop when run already terminal, got=%d", forceFailCnt)
+	}
+}

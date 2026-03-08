@@ -138,10 +138,10 @@ func (s *Service) syncTaskRuntimeFromReport(ctx context.Context, w contracts.Wor
 	if err != nil {
 		return err
 	}
-	return s.syncTaskRuntimeFromReportWithRuntime(ctx, rt, w, r, runtimeHealth, needsUser, summary, source, now)
+	return s.syncTaskRuntimeFromReportWithRuntime(ctx, rt, nil, w, r, runtimeHealth, needsUser, summary, source, now)
 }
 
-func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt core.TaskRuntime, w contracts.Worker, r contracts.WorkerReport, runtimeHealth contracts.TaskRuntimeHealthState, needsUser bool, summary string, source string, now time.Time) error {
+func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt core.TaskRuntime, db *gorm.DB, w contracts.Worker, r contracts.WorkerReport, runtimeHealth contracts.TaskRuntimeHealthState, needsUser bool, summary string, source string, now time.Time) error {
 	if rt == nil {
 		return fmt.Errorf("task runtime service 为空")
 	}
@@ -151,9 +151,39 @@ func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt c
 	if now.IsZero() {
 		now = time.Now()
 	}
-	run, err := s.ensureActiveWorkerTaskRunWithRuntime(ctx, rt, w, "worker report created missing active task", now)
-	if err != nil {
-		return err
+	if db == nil {
+		p, rerr := s.require()
+		if rerr != nil {
+			return rerr
+		}
+		db = p.DB
+	}
+
+	next := strings.TrimSpace(strings.ToLower(r.NextAction))
+	var run contracts.TaskRun
+	if next == string(contracts.NextDone) {
+		activeRun, aerr := rt.LatestActiveWorkerRun(ctx, w.ID)
+		if aerr != nil {
+			return aerr
+		}
+		if activeRun != nil {
+			run = *activeRun
+		} else {
+			latestRun, lerr := latestWorkerTaskRun(ctx, db, w.ID)
+			if lerr != nil {
+				return lerr
+			}
+			if latestRun != nil && isTerminalTaskState(latestRun.OrchestrationState) {
+				return appendDuplicateTerminalReport(ctx, rt, latestRun.ID, latestRun.OrchestrationState, now, "worker report next_action=done ignored: run already terminal", source, r)
+			}
+		}
+	}
+	if run.ID == 0 {
+		createdRun, err := s.ensureActiveWorkerTaskRunWithRuntime(ctx, rt, w, "worker report created missing active task", now)
+		if err != nil {
+			return err
+		}
+		run = createdRun
 	}
 	if err := rt.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
 		TaskRunID:  run.ID,
@@ -199,10 +229,34 @@ func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt c
 		Note: fmt.Sprintf("report source=%s", strings.TrimSpace(source)),
 	})
 
-	next := strings.TrimSpace(strings.ToLower(r.NextAction))
 	if next == string(contracts.NextDone) {
+		currentRun, err := rt.FindRunByID(ctx, run.ID)
+		if err != nil {
+			return err
+		}
+		if currentRun == nil {
+			return fmt.Errorf("task_run 不存在: run_id=%d", run.ID)
+		}
+		if isTerminalTaskState(currentRun.OrchestrationState) {
+			return appendDuplicateTerminalReport(ctx, rt, currentRun.ID, currentRun.OrchestrationState, now, "worker report next_action=done ignored: run already terminal", source, r)
+		}
 		if err := rt.MarkRunSucceeded(ctx, run.ID, workerTaskJSON(r), now); err != nil {
 			return err
+		}
+		hasSucceededEvent, err := hasTaskEvent(ctx, db, run.ID, "task_succeeded")
+		if err != nil {
+			return err
+		}
+		if hasSucceededEvent {
+			afterRun, aerr := rt.FindRunByID(ctx, run.ID)
+			if aerr != nil {
+				return aerr
+			}
+			state := contracts.TaskSucceeded
+			if afterRun != nil {
+				state = afterRun.OrchestrationState
+			}
+			return appendDuplicateTerminalReport(ctx, rt, run.ID, state, now, "worker report next_action=done ignored: task_succeeded already recorded", source, r)
 		}
 		if err := rt.AppendEvent(ctx, contracts.TaskEventInput{
 			TaskRunID: run.ID,
@@ -215,6 +269,87 @@ func (s *Service) syncTaskRuntimeFromReportWithRuntime(ctx context.Context, rt c
 		}
 	}
 	return nil
+}
+
+func latestWorkerTaskRun(ctx context.Context, db *gorm.DB, workerID uint) (*contracts.TaskRun, error) {
+	if db == nil {
+		return nil, fmt.Errorf("task runtime db 为空")
+	}
+	if workerID == 0 {
+		return nil, fmt.Errorf("worker_id 不能为空")
+	}
+	var run contracts.TaskRun
+	if err := db.WithContext(ctx).
+		Where("owner_type = ? AND worker_id = ?", contracts.TaskOwnerWorker, workerID).
+		Order("id desc").
+		First(&run).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &run, nil
+}
+
+func hasTaskEvent(ctx context.Context, db *gorm.DB, runID uint, eventType string) (bool, error) {
+	if db == nil {
+		return false, fmt.Errorf("task runtime db 为空")
+	}
+	if runID == 0 {
+		return false, fmt.Errorf("run_id 不能为空")
+	}
+	eventType = strings.TrimSpace(eventType)
+	if eventType == "" {
+		return false, fmt.Errorf("event_type 不能为空")
+	}
+	var count int64
+	if err := db.WithContext(ctx).Model(&contracts.TaskEvent{}).
+		Where("task_run_id = ? AND event_type = ?", runID, eventType).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func appendDuplicateTerminalReport(ctx context.Context, rt core.TaskRuntime, runID uint, state contracts.TaskOrchestrationState, now time.Time, note string, source string, report contracts.WorkerReport) error {
+	if rt == nil {
+		return fmt.Errorf("task runtime service 为空")
+	}
+	if runID == 0 {
+		return fmt.Errorf("run_id 不能为空")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return rt.AppendEvent(ctx, contracts.TaskEventInput{
+		TaskRunID: runID,
+		EventType: "duplicate_terminal_report",
+		FromState: map[string]any{
+			"orchestration_state": state,
+		},
+		ToState: map[string]any{
+			"orchestration_state": state,
+		},
+		Note: strings.TrimSpace(note),
+		Payload: map[string]any{
+			"source":          strings.TrimSpace(source),
+			"next_action":     strings.TrimSpace(report.NextAction),
+			"runtime_health":  reportToRuntimeHealth(report),
+			"needs_user":      report.NeedsUser,
+			"orchestration":   state,
+			"duplicate_guard": "done_terminal_guard",
+		},
+		CreatedAt: now,
+	})
+}
+
+func isTerminalTaskState(state contracts.TaskOrchestrationState) bool {
+	switch state {
+	case contracts.TaskSucceeded, contracts.TaskFailed, contracts.TaskCanceled:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) finalizeWorkerTaskRunOnStopWithRuntime(ctx context.Context, rt core.TaskRuntime, w contracts.Worker, reason string, source string, now time.Time) error {

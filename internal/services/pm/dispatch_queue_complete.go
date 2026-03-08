@@ -57,8 +57,38 @@ func (s *Service) completePMDispatchJobSuccess(ctx context.Context, jobID uint, 
 		if job.TaskRunID == 0 {
 			return nil
 		}
+		currentState, found, serr := taskRunStateByIDTx(ctx, tx, job.TaskRunID)
+		if serr != nil {
+			return serr
+		}
+		if !found {
+			return fmt.Errorf("task_run 不存在: run_id=%d", job.TaskRunID)
+		}
+		if isTerminalTaskState(currentState) {
+			return appendDispatchTerminalSyncSkippedEventTx(ctx, tx, job.TaskRunID, currentState, contracts.TaskSucceeded, "dispatch_success_skip_terminal", "dispatch success terminal sync skipped because run is already terminal", now, contracts.JSONMap{
+				"source": "pm_dispatch_complete_success",
+			})
+		}
 		if err := taskRuntime.MarkRunSucceeded(ctx, job.TaskRunID, strings.TrimSpace(resultJSON), now); err != nil {
 			return err
+		}
+		afterState, _, aerr := taskRunStateByIDTx(ctx, tx, job.TaskRunID)
+		if aerr != nil {
+			return aerr
+		}
+		if afterState != contracts.TaskSucceeded {
+			return appendDispatchTerminalSyncSkippedEventTx(ctx, tx, job.TaskRunID, afterState, contracts.TaskSucceeded, "dispatch_success_guard_rejected", "dispatch success terminal sync skipped because state guard rejected update", now, contracts.JSONMap{
+				"source": "pm_dispatch_complete_success",
+			})
+		}
+		exists, exErr := hasTaskEventTx(ctx, tx, job.TaskRunID, "task_succeeded")
+		if exErr != nil {
+			return exErr
+		}
+		if exists {
+			return appendDispatchTerminalSyncSkippedEventTx(ctx, tx, job.TaskRunID, afterState, contracts.TaskSucceeded, "dispatch_success_duplicate_event", "dispatch success terminal event already exists; skip duplicate append", now, contracts.JSONMap{
+				"source": "pm_dispatch_complete_success",
+			})
 		}
 		if err := taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
 			TaskRunID: job.TaskRunID,
@@ -121,20 +151,59 @@ func (s *Service) completePMDispatchJobFailed(ctx context.Context, jobID uint, r
 		if job.TaskRunID == 0 {
 			return nil
 		}
-		if err := taskRuntime.MarkRunFailed(ctx, job.TaskRunID, "dispatch_failed", strings.TrimSpace(errMsg), now); err != nil {
-			return err
+		currentState, found, serr := taskRunStateByIDTx(ctx, tx, job.TaskRunID)
+		if serr != nil {
+			return serr
 		}
-		if err := taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
-			TaskRunID: job.TaskRunID,
-			EventType: "task_failed",
-			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
-			ToState: map[string]any{
-				"orchestration_state": contracts.TaskFailed,
-				"error_message":       strings.TrimSpace(errMsg),
-			},
-			Note: "pm dispatch failed",
-		}); err != nil {
-			return err
+		if !found {
+			return fmt.Errorf("task_run 不存在: run_id=%d", job.TaskRunID)
+		}
+		if isTerminalTaskState(currentState) {
+			if err := appendDispatchTerminalSyncSkippedEventTx(ctx, tx, job.TaskRunID, currentState, contracts.TaskFailed, "dispatch_failed_skip_terminal", "dispatch failed terminal sync skipped because run is already terminal", now, contracts.JSONMap{
+				"source": "pm_dispatch_complete_failed",
+			}); err != nil {
+				return err
+			}
+		} else {
+			if err := taskRuntime.MarkRunFailed(ctx, job.TaskRunID, "dispatch_failed", strings.TrimSpace(errMsg), now); err != nil {
+				return err
+			}
+			afterState, _, aerr := taskRunStateByIDTx(ctx, tx, job.TaskRunID)
+			if aerr != nil {
+				return aerr
+			}
+			if afterState != contracts.TaskFailed {
+				if err := appendDispatchTerminalSyncSkippedEventTx(ctx, tx, job.TaskRunID, afterState, contracts.TaskFailed, "dispatch_failed_guard_rejected", "dispatch failed terminal sync skipped because state guard rejected update", now, contracts.JSONMap{
+					"source": "pm_dispatch_complete_failed",
+				}); err != nil {
+					return err
+				}
+			} else {
+				exists, exErr := hasTaskEventTx(ctx, tx, job.TaskRunID, "task_failed")
+				if exErr != nil {
+					return exErr
+				}
+				if exists {
+					if err := appendDispatchTerminalSyncSkippedEventTx(ctx, tx, job.TaskRunID, afterState, contracts.TaskFailed, "dispatch_failed_duplicate_event", "dispatch failed terminal event already exists; skip duplicate append", now, contracts.JSONMap{
+						"source": "pm_dispatch_complete_failed",
+					}); err != nil {
+						return err
+					}
+				} else {
+					if err := taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
+						TaskRunID: job.TaskRunID,
+						EventType: "task_failed",
+						FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
+						ToState: map[string]any{
+							"orchestration_state": contracts.TaskFailed,
+							"error_message":       strings.TrimSpace(errMsg),
+						},
+						Note: "pm dispatch failed",
+					}); err != nil {
+						return err
+					}
+				}
+			}
 		}
 		var demoteErr error
 		statusEvent, demoteErr = s.demoteTicketBlockedOnDispatchFailedTx(ctx, tx, job, strings.TrimSpace(errMsg), now)
@@ -230,6 +299,21 @@ func (s *Service) ForceFailActiveDispatchesForTicket(ctx context.Context, ticket
 				return err
 			}
 			if !changed {
+				currentState, found, serr := taskRunStateByIDTx(ctx, tx, job.TaskRunID)
+				if serr != nil {
+					return serr
+				}
+				if found && isTerminalTaskState(currentState) {
+					if err := appendDispatchTerminalSyncSkippedEventTx(ctx, tx, job.TaskRunID, currentState, contracts.TaskFailed, "dispatch_force_fail_skip_terminal", "dispatch force-fail on stop skipped because run is already terminal", now, contracts.JSONMap{
+						"source":          "ticket_stop",
+						"ticket_id":       job.TicketID,
+						"worker_id":       job.WorkerID,
+						"dispatch_job_id": job.ID,
+						"request_id":      strings.TrimSpace(job.RequestID),
+					}); err != nil {
+						return err
+					}
+				}
 				continue
 			}
 			fromTaskState := contracts.TaskPending
@@ -285,4 +369,77 @@ func markDispatchTaskRunFailedOnStopTx(tx *gorm.DB, runID uint, errMsg string, n
 		return false, res.Error
 	}
 	return res.RowsAffected > 0, nil
+}
+
+func taskRunStateByIDTx(ctx context.Context, tx *gorm.DB, runID uint) (contracts.TaskOrchestrationState, bool, error) {
+	if tx == nil {
+		return "", false, fmt.Errorf("dispatch tx 为空")
+	}
+	if runID == 0 {
+		return "", false, nil
+	}
+	var run contracts.TaskRun
+	if err := tx.WithContext(ctx).Select("id", "orchestration_state").First(&run, runID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return run.OrchestrationState, true, nil
+}
+
+func hasTaskEventTx(ctx context.Context, tx *gorm.DB, runID uint, eventType string) (bool, error) {
+	if tx == nil {
+		return false, fmt.Errorf("dispatch tx 为空")
+	}
+	if runID == 0 {
+		return false, nil
+	}
+	eventType = strings.TrimSpace(eventType)
+	if eventType == "" {
+		return false, fmt.Errorf("event_type 不能为空")
+	}
+	var count int64
+	if err := tx.WithContext(ctx).Model(&contracts.TaskEvent{}).
+		Where("task_run_id = ? AND event_type = ?", runID, eventType).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func appendDispatchTerminalSyncSkippedEventTx(ctx context.Context, tx *gorm.DB, runID uint, fromState, targetState contracts.TaskOrchestrationState, reason string, note string, now time.Time, payload contracts.JSONMap) error {
+	if tx == nil || runID == 0 {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if payload == nil {
+		payload = contracts.JSONMap{}
+	}
+	payload["reason"] = strings.TrimSpace(reason)
+	payload["target_state"] = targetState
+	return tx.WithContext(ctx).Create(&contracts.TaskEvent{
+		TaskRunID: runID,
+		EventType: "dispatch_terminal_sync_skipped",
+		FromStateJSON: contracts.JSONMap{
+			"orchestration_state": fromState,
+		},
+		ToStateJSON: contracts.JSONMap{
+			"orchestration_state": targetState,
+		},
+		Note:        strings.TrimSpace(note),
+		PayloadJSON: payload,
+		CreatedAt:   now,
+	}).Error
+}
+
+func isTerminalTaskState(state contracts.TaskOrchestrationState) bool {
+	switch state {
+	case contracts.TaskSucceeded, contracts.TaskFailed, contracts.TaskCanceled:
+		return true
+	default:
+		return false
+	}
 }

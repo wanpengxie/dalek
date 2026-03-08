@@ -181,3 +181,82 @@ func TestApplyWorkerReport_ResetsZombieRetryState(t *testing.T) {
 		t.Fatalf("expected last_error_hash cleared, got=%q", got.LastErrorHash)
 	}
 }
+
+func TestApplyWorkerReport_DoneIsIdempotentForTerminalRun(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	root := t.TempDir()
+	tk := createTicket(t, p.DB, "report-done-idempotent")
+	w := contracts.Worker{
+		TicketID:     tk.ID,
+		Status:       contracts.WorkerRunning,
+		WorktreePath: root,
+		Branch:       "ts/demo-ticket-done-idempotent",
+	}
+	if err := p.DB.Create(&w).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+
+	report := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		Summary:    "任务已完成",
+		NextAction: string(contracts.NextDone),
+		HeadSHA:    "abc123",
+	}
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
+		t.Fatalf("first ApplyWorkerReport failed: %v", err)
+	}
+
+	var firstRun contracts.TaskRun
+	if err := p.DB.Where("worker_id = ?", w.ID).Order("id desc").First(&firstRun).Error; err != nil {
+		t.Fatalf("load first run failed: %v", err)
+	}
+	if firstRun.OrchestrationState != contracts.TaskSucceeded {
+		t.Fatalf("expected first run succeeded, got=%s", firstRun.OrchestrationState)
+	}
+	firstPayload := strings.TrimSpace(firstRun.ResultPayloadJSON)
+
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
+		t.Fatalf("second ApplyWorkerReport failed: %v", err)
+	}
+
+	var runCount int64
+	if err := p.DB.Model(&contracts.TaskRun{}).Where("worker_id = ?", w.ID).Count(&runCount).Error; err != nil {
+		t.Fatalf("count task runs failed: %v", err)
+	}
+	if runCount != 1 {
+		t.Fatalf("expected duplicate done not create extra run, got=%d", runCount)
+	}
+
+	var after contracts.TaskRun
+	if err := p.DB.First(&after, firstRun.ID).Error; err != nil {
+		t.Fatalf("load run after duplicate done failed: %v", err)
+	}
+	if after.OrchestrationState != contracts.TaskSucceeded {
+		t.Fatalf("expected run remains succeeded, got=%s", after.OrchestrationState)
+	}
+	if strings.TrimSpace(after.ResultPayloadJSON) != firstPayload {
+		t.Fatalf("expected result payload unchanged on duplicate done")
+	}
+
+	var succeededCount int64
+	if err := p.DB.Model(&contracts.TaskEvent{}).
+		Where("task_run_id = ? AND event_type = ?", firstRun.ID, "task_succeeded").
+		Count(&succeededCount).Error; err != nil {
+		t.Fatalf("count task_succeeded failed: %v", err)
+	}
+	if succeededCount != 1 {
+		t.Fatalf("expected only one task_succeeded event, got=%d", succeededCount)
+	}
+
+	var duplicateCount int64
+	if err := p.DB.Model(&contracts.TaskEvent{}).
+		Where("task_run_id = ? AND event_type = ?", firstRun.ID, "duplicate_terminal_report").
+		Count(&duplicateCount).Error; err != nil {
+		t.Fatalf("count duplicate_terminal_report failed: %v", err)
+	}
+	if duplicateCount != 1 {
+		t.Fatalf("expected one duplicate_terminal_report event, got=%d", duplicateCount)
+	}
+}

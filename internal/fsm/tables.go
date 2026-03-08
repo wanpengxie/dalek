@@ -82,6 +82,8 @@ var TaskRunOrchestrationTable = TransitionTable[contracts.TaskOrchestrationState
 	Name:          "task_run_orchestration",
 	InitialStates: []contracts.TaskOrchestrationState{contracts.TaskPending},
 	TerminalStates: []contracts.TaskOrchestrationState{
+		contracts.TaskSucceeded,
+		contracts.TaskFailed,
 		contracts.TaskCanceled,
 	},
 	Transitions: map[contracts.TaskOrchestrationState][]contracts.TaskOrchestrationState{
@@ -95,13 +97,9 @@ var TaskRunOrchestrationTable = TransitionTable[contracts.TaskOrchestrationState
 			contracts.TaskFailed,
 			contracts.TaskCanceled,
 		},
-		contracts.TaskSucceeded: {
-			contracts.TaskCanceled,
-		},
-		contracts.TaskFailed: {
-			contracts.TaskCanceled,
-		},
-		contracts.TaskCanceled: {},
+		contracts.TaskSucceeded: {},
+		contracts.TaskFailed:    {},
+		contracts.TaskCanceled:  {},
 	},
 }
 
