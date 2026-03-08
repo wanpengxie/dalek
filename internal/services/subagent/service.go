@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"context"
+	"dalek/internal/agent/progresstimeout"
 	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
@@ -206,17 +207,15 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 	if runnerID == "" {
 		runnerID = "daemon_" + newSubagentRequestID()
 	}
+	runCtx, watchdog := progresstimeout.New(ctx, 0)
+	defer watchdog.Stop()
 
 	now := s.nowTime()
-	var lease *time.Time
-	if deadline, ok := ctx.Deadline(); ok {
-		deadlineCopy := deadline
-		lease = &deadlineCopy
-	}
-	if err := s.task.MarkRunRunning(ctx, taskRunID, runnerID, lease, now, true); err != nil {
+	lease := watchdog.CurrentDeadline()
+	if err := s.task.MarkRunRunning(runCtx, taskRunID, runnerID, lease, now, true); err != nil {
 		return err
 	}
-	_ = s.task.AppendEvent(ctx, contracts.TaskEventInput{
+	_ = s.task.AppendEvent(runCtx, contracts.TaskEventInput{
 		TaskRunID: taskRunID,
 		EventType: "task_started",
 		FromState: map[string]any{"orchestration_state": contracts.TaskPending},
@@ -227,7 +226,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 		Note:      "subagent started",
 		CreatedAt: now,
 	})
-	_ = s.task.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
+	_ = s.task.AppendRuntimeSample(runCtx, contracts.TaskRuntimeSampleInput{
 		TaskRunID:  taskRunID,
 		State:      contracts.TaskHealthBusy,
 		NeedsUser:  false,
@@ -235,7 +234,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 		Source:     "agent.subagent.run",
 		ObservedAt: now,
 	})
-	_ = s.task.AppendSemanticReport(ctx, contracts.TaskSemanticReportInput{
+	_ = s.task.AppendSemanticReport(runCtx, contracts.TaskSemanticReportInput{
 		TaskRunID:  taskRunID,
 		Phase:      contracts.TaskPhaseImplementing,
 		Milestone:  "subagent_started",
@@ -267,6 +266,12 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 			raw = strings.TrimSpace(string(rawBytes))
 		}
 		_, _ = fmt.Fprintf(sdkStreamFile, "%s %s\n", ts, raw)
+		lease := watchdog.Touch()
+		if lease != nil {
+			leaseCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = s.task.RenewLease(leaseCtx, taskRunID, runnerID, lease)
+			cancel()
+		}
 		_ = s.task.AppendEvent(context.Background(), contracts.TaskEventInput{
 			TaskRunID: taskRunID,
 			EventType: "task_stream",
@@ -281,7 +286,7 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 		})
 	}
 
-	res, runErr := s.taskRunner().Run(ctx, sdkrunner.Request{
+	res, runErr := s.taskRunner().Run(runCtx, sdkrunner.Request{
 		AgentConfig: settings,
 		Prompt:      strings.TrimSpace(subRec.Prompt),
 		WorkDir:     workDir,
@@ -299,7 +304,45 @@ func (s *Service) Run(ctx context.Context, taskRunID uint, in RunInput) error {
 	errorCode := ""
 	errorMsg := ""
 	if runErr != nil {
-		if isSubagentCanceled(runErr, ctx.Err()) {
+		if watchdog.TimedOut() {
+			runErr = watchdog.TimeoutError("subagent run")
+		}
+		if isSubagentTimedOut(runErr) {
+			status = "failed"
+			errorCode = "agent_timeout"
+			errorMsg = strings.TrimSpace(runErr.Error())
+			if errorMsg == "" {
+				errorMsg = "subagent timed out without progress"
+			}
+			_ = s.task.MarkRunFailed(context.Background(), taskRunID, errorCode, errorMsg, finishedAt)
+			_ = s.task.AppendEvent(context.Background(), contracts.TaskEventInput{
+				TaskRunID: taskRunID,
+				EventType: "task_failed",
+				FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
+				ToState: map[string]any{
+					"orchestration_state": contracts.TaskFailed,
+					"error_code":          errorCode,
+				},
+				Note:      errorMsg,
+				CreatedAt: finishedAt,
+			})
+			_ = s.task.AppendRuntimeSample(context.Background(), contracts.TaskRuntimeSampleInput{
+				TaskRunID:  taskRunID,
+				State:      contracts.TaskHealthStalled,
+				NeedsUser:  true,
+				Summary:    errorMsg,
+				Source:     "agent.subagent.run",
+				ObservedAt: finishedAt,
+			})
+			_ = s.task.AppendSemanticReport(context.Background(), contracts.TaskSemanticReportInput{
+				TaskRunID:  taskRunID,
+				Phase:      contracts.TaskPhaseBlocked,
+				Milestone:  "subagent_timed_out",
+				NextAction: "wait_user",
+				Summary:    errorMsg,
+				ReportedAt: finishedAt,
+			})
+		} else if isSubagentCanceled(runErr, ctx.Err()) {
 			status = "canceled"
 			errorCode = "agent_canceled"
 			errorMsg = strings.TrimSpace(runErr.Error())

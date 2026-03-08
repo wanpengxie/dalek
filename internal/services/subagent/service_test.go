@@ -2,6 +2,7 @@ package subagent
 
 import (
 	"context"
+	"dalek/internal/agent/progresstimeout"
 	agentprovider "dalek/internal/agent/provider"
 	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeTaskRunner struct {
@@ -237,6 +239,54 @@ func TestService_Run_ErrorBranches(t *testing.T) {
 				t.Fatalf("unexpected error_code: got=%s want=%s", got, tc.expectErrCode)
 			}
 		})
+	}
+}
+
+func TestService_Run_TimeoutWithoutProgress(t *testing.T) {
+	svc, taskService, _ := newSubagentServiceForTest(t)
+	origTimeout := progresstimeout.DefaultTimeout
+	progresstimeout.DefaultTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { progresstimeout.DefaultTimeout = origTimeout })
+
+	submission, err := svc.Submit(context.Background(), SubmitInput{
+		RequestID: "subagent_run_timeout",
+		Prompt:    "run timeout",
+	})
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	svc.runner = fakeTaskRunner{runFn: func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+		<-ctx.Done()
+		return sdkrunner.Result{}, ctx.Err()
+	}}
+
+	err = svc.Run(context.Background(), submission.TaskRunID, RunInput{RunnerID: "runner-timeout"})
+	if err == nil {
+		t.Fatalf("expected timeout error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got=%v", err)
+	}
+
+	status, serr := taskService.GetStatusByRunID(context.Background(), submission.TaskRunID)
+	if serr != nil {
+		t.Fatalf("GetStatusByRunID failed: %v", serr)
+	}
+	if status == nil || status.OrchestrationState != string(contracts.TaskFailed) {
+		t.Fatalf("unexpected orchestration state: got=%+v", status)
+	}
+
+	resultBytes, rerr := os.ReadFile(filepath.Join(submission.RuntimeDir, "result.json"))
+	if rerr != nil {
+		t.Fatalf("read result.json failed: %v", rerr)
+	}
+	var result map[string]any
+	if jerr := json.Unmarshal(resultBytes, &result); jerr != nil {
+		t.Fatalf("parse result.json failed: %v", jerr)
+	}
+	if got := strings.TrimSpace(result["error_code"].(string)); got != "agent_timeout" {
+		t.Fatalf("unexpected error_code: got=%s want=agent_timeout", got)
 	}
 }
 

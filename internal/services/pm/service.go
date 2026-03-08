@@ -127,6 +127,17 @@ func (s *Service) taskRunner() sdkrunner.TaskRunner {
 	return runner
 }
 
+func (s *Service) plannerRunTimeout() time.Duration {
+	if s == nil || s.p == nil {
+		return defaultPlannerRunTimeout
+	}
+	ms := s.p.Config.WithDefaults().PMPlannerTimeoutMS
+	if ms <= 0 {
+		return defaultPlannerRunTimeout
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
 func (s *Service) slog() *slog.Logger {
 	if s == nil || s.logger == nil {
 		return core.DiscardLogger()

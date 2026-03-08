@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"dalek/internal/agent/progresstimeout"
 	"dalek/internal/contracts"
 
 	"errors"
@@ -114,6 +115,24 @@ func (t *RunLifecycleTracker) Finish(ctx context.Context, result AgentRunResult,
 	if msg == "" {
 		msg = "agent 执行失败"
 	}
+	if progresstimeout.Is(execErr) {
+		if err := t.base.Runtime.MarkRunFailed(writeCtx, t.runID, "agent_timeout", msg, now); err != nil {
+			slog.Warn("lifecycle_tracker: MarkRunFailed timeout failed during cleanup", "run_id", t.runID, "err", err)
+		}
+		_ = t.base.Runtime.AppendEvent(writeCtx, contracts.TaskEventInput{
+			TaskRunID: t.runID,
+			EventType: "task_failed",
+			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
+			ToState: map[string]any{
+				"orchestration_state": contracts.TaskFailed,
+				"error_code":          "agent_timeout",
+			},
+			Note:      msg,
+			CreatedAt: now,
+		})
+		slog.Info("lifecycle_tracker: run timed out", "run_id", t.runID, "msg", msg)
+		return
+	}
 	if isCanceledError(execErr) || isCanceledError(contextErr(ctx)) {
 		if err := t.base.Runtime.MarkRunCanceled(writeCtx, t.runID, "agent_canceled", msg, now); err != nil {
 			slog.Warn("lifecycle_tracker: MarkRunCanceled failed during cleanup", "run_id", t.runID, "err", err)
@@ -159,5 +178,8 @@ func contextErr(ctx context.Context) error {
 }
 
 func isCanceledError(err error) bool {
+	if progresstimeout.Is(err) {
+		return false
+	}
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }

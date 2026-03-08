@@ -40,6 +40,9 @@ func TestConfigWithDefaults_SetsAgentAndTimeoutDefaults(t *testing.T) {
 	if cfg.PMDispatchTimeoutMS != 0 {
 		t.Fatalf("expected pm_dispatch_timeout_ms default=0, got=%d", cfg.PMDispatchTimeoutMS)
 	}
+	if cfg.PMPlannerTimeoutMS != 0 {
+		t.Fatalf("expected pm_planner_timeout_ms default=0, got=%d", cfg.PMPlannerTimeoutMS)
+	}
 	if cfg.WorkerAgent.Mode != "sdk" {
 		t.Fatalf("unexpected worker_agent.mode default: %q", cfg.WorkerAgent.Mode)
 	}
@@ -74,6 +77,7 @@ func TestMergeConfig_OverridesPMDispatchTimeoutAndPMAgent(t *testing.T) {
 			Model:    "gpt-5-codex",
 		},
 		PMDispatchTimeoutMS: 12345,
+		PMPlannerTimeoutMS:  67890,
 	})
 	if strings.TrimSpace(got.PMAgent.Provider) != "codex" {
 		t.Fatalf("unexpected pm_agent.provider: %q", got.PMAgent.Provider)
@@ -83,6 +87,9 @@ func TestMergeConfig_OverridesPMDispatchTimeoutAndPMAgent(t *testing.T) {
 	}
 	if got.PMDispatchTimeoutMS != 12345 {
 		t.Fatalf("unexpected pm_dispatch_timeout_ms: got=%d", got.PMDispatchTimeoutMS)
+	}
+	if got.PMPlannerTimeoutMS != 67890 {
+		t.Fatalf("unexpected pm_planner_timeout_ms: got=%d", got.PMPlannerTimeoutMS)
 	}
 }
 
@@ -335,6 +342,9 @@ func TestLoadConfig_DoesNotRewriteWhenSchemaAndAgentsComplete(t *testing.T) {
 	}
 	if cfg.PMDispatchTimeoutMS != 0 {
 		t.Fatalf("expected pm_dispatch_timeout_ms default=0 after defaults, got=%d", cfg.PMDispatchTimeoutMS)
+	}
+	if cfg.PMPlannerTimeoutMS != 0 {
+		t.Fatalf("expected pm_planner_timeout_ms default=0 after defaults, got=%d", cfg.PMPlannerTimeoutMS)
 	}
 }
 

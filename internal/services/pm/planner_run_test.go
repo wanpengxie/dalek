@@ -199,6 +199,117 @@ func TestRunPlannerJob_CanceledMarksRunCanceledAndResetsPlannerState(t *testing.
 	assertPlannerCooldown(t, afterState.PlannerLastRunAt, afterState.PlannerCooldownUntil, plannerRunFailureCooldown)
 }
 
+func TestRunPlannerJob_TimeoutUsesConfiguredPlannerBudget(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	p.Config.PMPlannerTimeoutMS = 20
+	ctx := context.Background()
+	svc.SetTaskRunner(fakePlannerTaskRunner{
+		runFn: func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+			<-ctx.Done()
+			return sdkrunner.Result{}, ctx.Err()
+		},
+	})
+
+	pmState, err := svc.getOrInitPMState(ctx)
+	if err != nil {
+		t.Fatalf("getOrInitPMState failed: %v", err)
+	}
+	run := createPlannerTaskRunForTest(t, svc, p, fmt.Sprintf("planner-timeout-%d", time.Now().UnixNano()))
+	if err := p.DB.WithContext(ctx).Model(&contracts.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
+		"planner_active_task_run_id": run.ID,
+		"planner_dirty":              false,
+		"planner_last_error":         "",
+		"planner_last_run_at":        nil,
+		"planner_cooldown_until":     nil,
+		"updated_at":                 time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare pm state failed: %v", err)
+	}
+
+	runErr := svc.RunPlannerJob(ctx, run.ID, PlannerRunOptions{RunnerID: "planner-runner-timeout"})
+	if runErr == nil {
+		t.Fatalf("expected RunPlannerJob returns timeout error")
+	}
+	if !strings.Contains(runErr.Error(), "20ms") {
+		t.Fatalf("expected timeout error mentions configured budget, got=%q", runErr.Error())
+	}
+
+	var afterRun contracts.TaskRun
+	if err := p.DB.WithContext(ctx).First(&afterRun, run.ID).Error; err != nil {
+		t.Fatalf("load planner run failed: %v", err)
+	}
+	if afterRun.OrchestrationState != contracts.TaskFailed {
+		t.Fatalf("expected run failed, got=%s", afterRun.OrchestrationState)
+	}
+	if strings.TrimSpace(afterRun.ErrorCode) != "planner_timeout" {
+		t.Fatalf("expected error_code=planner_timeout, got=%q", afterRun.ErrorCode)
+	}
+	if !strings.Contains(afterRun.ErrorMessage, "20ms") {
+		t.Fatalf("expected error_message mentions configured budget, got=%q", afterRun.ErrorMessage)
+	}
+
+	afterState, err := svc.GetState(ctx)
+	if err != nil {
+		t.Fatalf("GetState failed: %v", err)
+	}
+	if !afterState.PlannerDirty {
+		t.Fatalf("expected planner dirty true after timeout")
+	}
+	if !strings.Contains(afterState.PlannerLastError, "20ms") {
+		t.Fatalf("expected planner_last_error mentions configured budget, got=%q", afterState.PlannerLastError)
+	}
+	assertPlannerCooldown(t, afterState.PlannerLastRunAt, afterState.PlannerCooldownUntil, plannerRunFailureCooldown)
+}
+
+func TestRunPlannerJob_ProgressResetsTimeout(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	p.Config.PMPlannerTimeoutMS = 20
+	ctx := context.Background()
+	svc.SetTaskRunner(fakePlannerTaskRunner{
+		runFn: func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+			for i := 0; i < 3; i++ {
+				if onEvent != nil {
+					onEvent(sdkrunner.Event{Type: "assistant", Text: "planner tick"})
+				}
+				time.Sleep(15 * time.Millisecond)
+			}
+			return sdkrunner.Result{
+				Provider:   "claude",
+				OutputMode: "json",
+				Text:       "planner completed",
+			}, nil
+		},
+	})
+
+	pmState, err := svc.getOrInitPMState(ctx)
+	if err != nil {
+		t.Fatalf("getOrInitPMState failed: %v", err)
+	}
+	run := createPlannerTaskRunForTest(t, svc, p, fmt.Sprintf("planner-progress-%d", time.Now().UnixNano()))
+	if err := p.DB.WithContext(ctx).Model(&contracts.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
+		"planner_active_task_run_id": run.ID,
+		"planner_dirty":              false,
+		"planner_last_error":         "",
+		"planner_last_run_at":        nil,
+		"planner_cooldown_until":     nil,
+		"updated_at":                 time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare pm state failed: %v", err)
+	}
+
+	if err := svc.RunPlannerJob(ctx, run.ID, PlannerRunOptions{RunnerID: "planner-runner-progress"}); err != nil {
+		t.Fatalf("RunPlannerJob failed: %v", err)
+	}
+
+	var afterRun contracts.TaskRun
+	if err := p.DB.WithContext(ctx).First(&afterRun, run.ID).Error; err != nil {
+		t.Fatalf("load planner run failed: %v", err)
+	}
+	if afterRun.OrchestrationState != contracts.TaskSucceeded {
+		t.Fatalf("expected run succeeded, got=%s", afterRun.OrchestrationState)
+	}
+}
+
 func createPlannerTaskRunForTest(t *testing.T, svc *Service, p *core.Project, requestID string) contracts.TaskRun {
 	t.Helper()
 	rt, err := svc.taskRuntimeForDB(p.DB)

@@ -13,7 +13,7 @@ import (
 )
 
 // launchWorkerSDKHandle 创建 SDK executor 并启动 agent，返回 handle 供调用方 Wait()。
-// 无超时限制（agent 可持续运行数小时）。
+// 底层统一使用 progress timeout：30 分钟无进展超时，任意事件会重置计时。
 func (s *Service) launchWorkerSDKHandle(
 	ctx context.Context,
 	t contracts.Ticket,

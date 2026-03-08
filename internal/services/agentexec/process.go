@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"dalek/internal/agent/progresstimeout"
 	"dalek/internal/agent/provider"
 	"dalek/internal/services/core"
 )
@@ -18,7 +19,8 @@ import (
 type ProcessConfig struct {
 	Provider provider.Provider
 	BaseConfig
-	Stdin   string
+	Stdin string
+	// Timeout is an inactivity window: any output resets the timer.
 	Timeout time.Duration
 }
 
@@ -40,17 +42,13 @@ func (e *ProcessExecutor) Execute(ctx context.Context, prompt string) (AgentRunH
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	execCtx := ctx
-	cancel := func() {}
-	if e.cfg.Timeout > 0 {
-		execCtx, cancel = context.WithTimeout(ctx, e.cfg.Timeout)
-	}
+	execCtx, watchdog := progresstimeout.New(ctx, e.cfg.Timeout)
 	lifecycle := NewRunLifecycleTracker(e.cfg.BaseConfig)
 
 	bin, args := e.cfg.Provider.BuildCommand(prompt)
 	bin = strings.TrimSpace(bin)
 	if bin == "" {
-		cancel()
+		watchdog.Stop()
 		return nil, fmt.Errorf("provider 返回空命令")
 	}
 
@@ -61,7 +59,7 @@ func (e *ProcessExecutor) Execute(ctx context.Context, prompt string) (AgentRunH
 		"prompt_preview": truncateRunes(prompt, 256),
 	}))
 	if err != nil {
-		cancel()
+		watchdog.Stop()
 		return nil, err
 	}
 
@@ -75,31 +73,32 @@ func (e *ProcessExecutor) Execute(ctx context.Context, prompt string) (AgentRunH
 	cmd.Env = mergeEnv(e.cfg.Env)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	stdoutWriter := newProgressBuffer(&stdout, watchdog, e.cfg.Runtime)
+	stderrWriter := newProgressBuffer(&stderr, watchdog, e.cfg.Runtime)
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
 
 	if err := cmd.Start(); err != nil {
 		_ = markProcessRunFailed(e.cfg.Runtime, runID, "agent_start_failed", err.Error())
-		cancel()
+		watchdog.Stop()
 		return nil, fmt.Errorf("启动 agent 失败: %w", err)
 	}
 
-	var lease *time.Time
-	if e.cfg.Timeout > 0 {
-		l := time.Now().Add(e.cfg.Timeout)
-		lease = &l
-	}
-	if err := lifecycle.MarkRunning(execCtx, fmt.Sprintf("pid:%d", cmd.Process.Pid), lease, "process executor started"); err != nil {
-		cancel()
+	runnerID := fmt.Sprintf("pid:%d", cmd.Process.Pid)
+	lease := watchdog.CurrentDeadline()
+	if err := lifecycle.MarkRunning(execCtx, runnerID, lease, "process executor started"); err != nil {
+		watchdog.Stop()
 		return nil, err
 	}
+	stdoutWriter.SetRun(runID, runnerID)
+	stderrWriter.SetRun(runID, runnerID)
 
 	return &processHandle{
 		runID:     runID,
 		provider:  e.cfg.Provider,
 		lifecycle: lifecycle,
 		cmd:       cmd,
-		cancel:    cancel,
+		watchdog:  watchdog,
 		execCtx:   execCtx,
 		stdoutBuf: &stdout,
 		stderrBuf: &stderr,
@@ -113,7 +112,7 @@ type processHandle struct {
 	lifecycle *RunLifecycleTracker
 
 	cmd       *exec.Cmd
-	cancel    context.CancelFunc
+	watchdog  *progresstimeout.Watchdog
 	execCtx   context.Context
 	stdoutBuf *bytes.Buffer
 	stderrBuf *bytes.Buffer
@@ -146,9 +145,7 @@ func (h *processHandle) Wait(ctx context.Context) (AgentRunResult, error) {
 	case <-ctx.Done():
 		slog.Info("process_handle: context canceled during wait, canceling process",
 			"run_id", h.runID, "err", ctx.Err())
-		if h.cancel != nil {
-			h.cancel()
-		}
+		_ = h.Cancel()
 		return AgentRunResult{}, ctx.Err()
 	}
 }
@@ -163,8 +160,8 @@ func (h *processHandle) start() {
 }
 
 func (h *processHandle) waitOnce() (AgentRunResult, error) {
-	if h.cancel != nil {
-		defer h.cancel()
+	if h.watchdog != nil {
+		defer h.watchdog.Stop()
 	}
 	if h.cmd == nil {
 		return AgentRunResult{}, fmt.Errorf("process handle 缺少 cmd")
@@ -190,11 +187,16 @@ func (h *processHandle) waitOnce() (AgentRunResult, error) {
 	if h.provider != nil {
 		res.Parsed = h.provider.ParseOutput(stdout)
 	}
+	if h.watchdog != nil && h.watchdog.TimedOut() {
+		timeoutErr := h.watchdog.TimeoutError("agent run")
+		h.lifecycle.Finish(h.execCtx, res, timeoutErr, "process executor finished")
+		return res, wrapAgentRunError(timeoutErr, stdout, stderr)
+	}
 
 	h.lifecycle.Finish(h.execCtx, res, err, "process executor finished")
 
 	if err != nil {
-		return res, fmt.Errorf("agent 执行失败: %s", errStringWithOutput(err, stdout, stderr))
+		return res, wrapAgentRunError(err, stdout, stderr)
 	}
 	return res, nil
 }
@@ -203,8 +205,8 @@ func (h *processHandle) Cancel() error {
 	if h == nil {
 		return fmt.Errorf("process handle 为空")
 	}
-	if h.cancel != nil {
-		h.cancel()
+	if h.watchdog != nil {
+		h.watchdog.Cancel()
 	}
 	return nil
 }

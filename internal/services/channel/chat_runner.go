@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"dalek/internal/agent/auditlog"
+	"dalek/internal/agent/progresstimeout"
 	agentprovider "dalek/internal/agent/provider"
 	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/services/channel/agentcli"
@@ -115,10 +116,21 @@ func (m *defaultChatRunnerManager) RunTurn(ctx context.Context, req ChatRunReque
 		appendChatRunnerResponseAudit(req, startedAt, ChatRunResult{}, err)
 		return ChatRunResult{}, err
 	}
+	runCtx, watchdog := progresstimeout.New(ctx, 0)
+	defer watchdog.Stop()
+	progressHandler := func(ev agentcli.Event) {
+		watchdog.Touch()
+		if onEvent != nil {
+			onEvent(ev)
+		}
+	}
 
 	if !providerUsesStatefulChatRunner(req.Provider) {
 		runner := &sdkTaskBackedChatRunner{taskRunner: m.taskRunner}
-		out, err := runner.RunTurn(ctx, req, onEvent)
+		out, err := runner.RunTurn(runCtx, req, progressHandler)
+		if watchdog.TimedOut() {
+			err = watchdog.TimeoutError("agent chat turn")
+		}
 		appendChatRunnerResponseAudit(req, startedAt, out, err)
 		return out, err
 	}
@@ -131,7 +143,10 @@ func (m *defaultChatRunnerManager) RunTurn(ctx context.Context, req ChatRunReque
 		appendChatRunnerResponseAudit(req, startedAt, ChatRunResult{}, err)
 		return ChatRunResult{}, err
 	}
-	result, runErr := runner.RunTurn(ctx, req, onEvent)
+	result, runErr := runner.RunTurn(runCtx, req, progressHandler)
+	if watchdog.TimedOut() {
+		runErr = watchdog.TimeoutError("agent chat turn")
+	}
 	if runErr != nil && shouldEvictStatefulRunner(runErr) {
 		m.evictStatefulRunner(key, runner)
 	}

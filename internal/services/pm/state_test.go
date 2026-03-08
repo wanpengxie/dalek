@@ -236,6 +236,22 @@ func TestManagerDispatchTimeout_UsesConfig(t *testing.T) {
 	}
 }
 
+func TestPlannerRunTimeout_UsesConfig(t *testing.T) {
+	pmSvc, p := newPMServiceForTest(t)
+
+	if got := pmSvc.plannerRunTimeout(); got != defaultPlannerRunTimeout {
+		t.Fatalf("unexpected default planner timeout: got=%v want=%v", got, defaultPlannerRunTimeout)
+	}
+
+	p.Config.PMPlannerTimeoutMS = 234567
+
+	got := pmSvc.plannerRunTimeout()
+	want := 234567 * time.Millisecond
+	if got != want {
+		t.Fatalf("unexpected planner timeout: got=%v want=%v", got, want)
+	}
+}
+
 func TestManagerStartTimeout_CoversBootstrap(t *testing.T) {
 	pmSvc, _ := newPMServiceForTest(t)
 

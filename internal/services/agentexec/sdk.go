@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"dalek/internal/agent/progresstimeout"
 	"dalek/internal/agent/provider"
 	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
@@ -19,7 +20,8 @@ type SDKConfig struct {
 	Runner      sdkrunner.TaskRunner
 	BaseConfig
 	SessionID string
-	Timeout   time.Duration
+	// Timeout is an inactivity window: any streamed event resets the timer.
+	Timeout time.Duration
 
 	StreamLogPath string
 
@@ -46,19 +48,12 @@ func (e *SDKExecutor) Execute(ctx context.Context, prompt string) (AgentRunHandl
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	execCtx := ctx
-	cancel := func() {}
-	if e.cfg.Timeout > 0 {
-		execCtx, cancel = context.WithTimeout(ctx, e.cfg.Timeout)
-	}
+	execCtx, watchdog := progresstimeout.New(ctx, e.cfg.Timeout)
 
 	lifecycle := NewRunLifecycleTracker(e.cfg.BaseConfig)
 	runID := uint(0)
-	var lease *time.Time
-	if e.cfg.Timeout > 0 {
-		l := time.Now().Add(e.cfg.Timeout)
-		lease = &l
-	}
+	runnerID := "sdk:" + strings.TrimSpace(strings.ToLower(e.cfg.AgentConfig.Provider))
+	lease := watchdog.CurrentDeadline()
 	streamLogPath := sdkStreamLogPathHint(e.cfg)
 	payload := marshalJSON(map[string]any{
 		"provider":         strings.TrimSpace(strings.ToLower(e.cfg.AgentConfig.Provider)),
@@ -70,9 +65,9 @@ func (e *SDKExecutor) Execute(ctx context.Context, prompt string) (AgentRunHandl
 		"reasoning_effort": strings.TrimSpace(strings.ToLower(e.cfg.AgentConfig.ReasoningEffort)),
 	})
 	var err error
-	runID, err = lifecycle.Start(execCtx, payload, "sdk:"+strings.TrimSpace(strings.ToLower(e.cfg.AgentConfig.Provider)), lease, "sdk executor started")
+	runID, err = lifecycle.Start(execCtx, payload, runnerID, lease, "sdk executor started")
 	if err != nil {
-		cancel()
+		watchdog.Stop()
 		return nil, err
 	}
 
@@ -83,7 +78,7 @@ func (e *SDKExecutor) Execute(ctx context.Context, prompt string) (AgentRunHandl
 		cfg:       e.cfg,
 		prompt:    strings.TrimSpace(prompt),
 		execCtx:   execCtx,
-		cancel:    cancel,
+		watchdog:  watchdog,
 		done:      make(chan struct{}),
 	}
 	h.start()
@@ -97,8 +92,8 @@ type sdkHandle struct {
 	cfg       SDKConfig
 	prompt    string
 
-	execCtx context.Context
-	cancel  context.CancelFunc
+	execCtx  context.Context
+	watchdog *progresstimeout.Watchdog
 
 	once sync.Once
 	done chan struct{}
@@ -134,8 +129,8 @@ func (h *sdkHandle) Cancel() error {
 	if h == nil {
 		return fmt.Errorf("sdk handle 为空")
 	}
-	if h.cancel != nil {
-		h.cancel()
+	if h.watchdog != nil {
+		h.watchdog.Cancel()
 	}
 	return nil
 }
@@ -148,8 +143,8 @@ func (h *sdkHandle) start() {
 
 func (h *sdkHandle) run() {
 	defer close(h.done)
-	if h.cancel != nil {
-		defer h.cancel()
+	if h.watchdog != nil {
+		defer h.watchdog.Stop()
 	}
 	playback, playbackErr := startSDKStreamPlayback(h.execCtx, h.cfg, h.runID)
 	if playback != nil {
@@ -178,6 +173,7 @@ func (h *sdkHandle) run() {
 
 	playbackWriteFailed := false
 	onEvent := func(ev sdkrunner.Event) {
+		touchAgentProgress(h.watchdog, h.cfg.Runtime, h.runID, "sdk:"+strings.TrimSpace(strings.ToLower(h.cfg.AgentConfig.Provider)))
 		if playback != nil {
 			if err := playback.AppendEvent(ev); err != nil && !playbackWriteFailed {
 				playbackWriteFailed = true
@@ -242,6 +238,9 @@ func (h *sdkHandle) run() {
 			finalErr = execErr
 		}
 	}
+	if h.watchdog != nil && h.watchdog.TimedOut() {
+		finalErr = h.watchdog.TimeoutError("agent run")
+	}
 	if finalErr != nil {
 		res.ExitCode = 1
 	}
@@ -261,7 +260,7 @@ func (h *sdkHandle) run() {
 	h.lifecycle.Finish(h.execCtx, res, finalErr, "sdk executor finished")
 
 	if finalErr != nil {
-		h.waitErr = fmt.Errorf("agent 执行失败: %s", errStringWithOutput(finalErr, res.Stdout, res.Stderr))
+		h.waitErr = wrapAgentRunError(finalErr, res.Stdout, res.Stderr)
 	}
 }
 

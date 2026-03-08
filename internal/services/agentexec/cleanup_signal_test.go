@@ -142,7 +142,6 @@ func TestProcessHandle_Wait_SignalCancel(t *testing.T) {
 	h := &processHandle{
 		runID:  42,
 		doneCh: make(chan struct{}), // 永不关闭，模拟进程永不结束
-		cancel: func() {},           // no-op cancel
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

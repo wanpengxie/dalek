@@ -3,9 +3,12 @@ package channel
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"dalek/internal/agent/progresstimeout"
 	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/services/channel/agentcli"
 )
@@ -236,9 +239,84 @@ func TestChatRunnerManager_ForceCloseConversation_StatefulRunner(t *testing.T) {
 	}
 }
 
+func TestChatRunnerManager_StatefulRunnerIdleTimeout(t *testing.T) {
+	origFactory := createClaudeChatRunner
+	origTimeout := progresstimeout.DefaultTimeout
+	t.Cleanup(func() {
+		createClaudeChatRunner = origFactory
+		progresstimeout.DefaultTimeout = origTimeout
+	})
+	progresstimeout.DefaultTimeout = 20 * time.Millisecond
+
+	runner := &fakeChatRunner{
+		runFn: func(ctx context.Context, req ChatRunRequest, onEvent ChatEventHandler) (ChatRunResult, error) {
+			<-ctx.Done()
+			return ChatRunResult{}, ctx.Err()
+		},
+	}
+	createClaudeChatRunner = func(ctx context.Context, req ChatRunRequest) (ChatRunner, error) {
+		return runner, nil
+	}
+
+	manager := newDefaultChatRunnerManager(nil)
+	_, err := manager.RunTurn(context.Background(), ChatRunRequest{
+		ConversationID: "conv-timeout",
+		Provider:       "claude",
+		Prompt:         "hello",
+	}, nil)
+	if err == nil {
+		t.Fatalf("expected timeout error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got=%v", err)
+	}
+	if !strings.Contains(err.Error(), "without progress") {
+		t.Fatalf("expected idle timeout message, got=%q", err.Error())
+	}
+}
+
+func TestChatRunnerManager_StatefulRunnerProgressResetsTimeout(t *testing.T) {
+	origFactory := createClaudeChatRunner
+	origTimeout := progresstimeout.DefaultTimeout
+	t.Cleanup(func() {
+		createClaudeChatRunner = origFactory
+		progresstimeout.DefaultTimeout = origTimeout
+	})
+	progresstimeout.DefaultTimeout = 20 * time.Millisecond
+
+	runner := &fakeChatRunner{
+		runFn: func(ctx context.Context, req ChatRunRequest, onEvent ChatEventHandler) (ChatRunResult, error) {
+			for i := 0; i < 3; i++ {
+				if onEvent != nil {
+					onEvent(agentcli.Event{Type: "assistant", Text: "tick"})
+				}
+				time.Sleep(15 * time.Millisecond)
+			}
+			return ChatRunResult{Text: "ok"}, nil
+		},
+	}
+	createClaudeChatRunner = func(ctx context.Context, req ChatRunRequest) (ChatRunner, error) {
+		return runner, nil
+	}
+
+	manager := newDefaultChatRunnerManager(nil)
+	res, err := manager.RunTurn(context.Background(), ChatRunRequest{
+		ConversationID: "conv-progress",
+		Provider:       "claude",
+		Prompt:         "hello",
+	}, nil)
+	if err != nil {
+		t.Fatalf("RunTurn failed: %v", err)
+	}
+	if res.Text != "ok" {
+		t.Fatalf("unexpected result text: %q", res.Text)
+	}
+}
+
 type fakeChatRunner struct {
 	runErr      error
 	result      ChatRunResult
+	runFn       func(ctx context.Context, req ChatRunRequest, onEvent ChatEventHandler) (ChatRunResult, error)
 	turnCount   int
 	closedCount int
 
@@ -253,6 +331,9 @@ type fakeChatRunner struct {
 
 func (f *fakeChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEvent ChatEventHandler) (ChatRunResult, error) {
 	f.turnCount++
+	if f.runFn != nil {
+		return f.runFn(ctx, req, onEvent)
+	}
 	return f.result, f.runErr
 }
 

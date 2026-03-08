@@ -68,13 +68,7 @@ func (s *Service) executePMDispatchAgent(ctx context.Context, requestID string, 
 	}
 
 	timeout := time.Duration(cfg.PMDispatchTimeoutMS) * time.Millisecond
-	runCtx := ctx
-	cancel := func() {}
-	if timeout > 0 {
-		runCtx, cancel = context.WithTimeout(ctx, timeout)
-	} else {
-		runCtx, cancel = context.WithCancel(ctx)
-	}
+	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	env := buildBaseEnv(p, t, w)

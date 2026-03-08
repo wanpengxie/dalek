@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"dalek/internal/agent/progresstimeout"
 	agentprovider "dalek/internal/agent/provider"
 	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
@@ -73,15 +74,12 @@ func (s *Service) completePlannerRunSuccess(ctx context.Context, taskRunID uint,
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	runCtx, cancel := context.WithTimeout(ctx, plannerRunTimeout)
-	defer cancel()
+	timeout := s.plannerRunTimeout()
+	runCtx, watchdog := progresstimeout.New(ctx, timeout)
+	defer watchdog.Stop()
 
 	startedAt := time.Now()
-	var lease *time.Time
-	if deadline, ok := runCtx.Deadline(); ok {
-		deadlineCopy := deadline
-		lease = &deadlineCopy
-	}
+	lease := watchdog.CurrentDeadline()
 
 	var requestID string
 	if err := db.WithContext(runCtx).Transaction(func(tx *gorm.DB) error {
@@ -145,8 +143,18 @@ func (s *Service) completePlannerRunSuccess(ctx context.Context, taskRunID uint,
 	if requestID != "" {
 		env[envPlannerRequest] = requestID
 	}
+	touchPlannerProgress := func() {
+		lease := watchdog.Touch()
+		if lease == nil {
+			return
+		}
+		leaseCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = taskRuntime.RenewLease(leaseCtx, taskRunID, runnerID, lease)
+	}
 
 	onEvent := func(ev sdkrunner.Event) {
+		touchPlannerProgress()
 		note := strings.TrimSpace(ev.Text)
 		if note == "" {
 			note = strings.TrimSpace(ev.Type)
@@ -168,6 +176,7 @@ func (s *Service) completePlannerRunSuccess(ctx context.Context, taskRunID uint,
 		})
 	}
 
+	touchPlannerProgress()
 	res, runErr := s.taskRunner().Run(runCtx, sdkrunner.Request{
 		AgentConfig: agentCfg,
 		Prompt:      strings.TrimSpace(prompt),
@@ -175,8 +184,11 @@ func (s *Service) completePlannerRunSuccess(ctx context.Context, taskRunID uint,
 		Env:         env,
 	}, onEvent)
 	if runErr != nil {
+		if watchdog.TimedOut() {
+			return watchdog.TimeoutError("planner run")
+		}
 		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("planner run timed out after %s: %w", plannerRunTimeout, context.DeadlineExceeded)
+			return fmt.Errorf("planner run timed out after %s: %w", timeout, context.DeadlineExceeded)
 		}
 		if errors.Is(runErr, context.Canceled) || errors.Is(runCtx.Err(), context.Canceled) {
 			return fmt.Errorf("planner run canceled: %w", context.Canceled)

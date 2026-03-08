@@ -39,7 +39,7 @@ const (
 	defaultWorkerReadyTimeout      = 8 * time.Second
 	defaultWorkerReadyPollInterval = 200 * time.Millisecond
 	workflowStatusNotifyTimeout    = 10 * time.Second
-	plannerRunTimeout              = 5 * time.Minute
+	defaultPlannerRunTimeout       = 30 * time.Minute
 
 	dispatchLeaseRenewInterval         = 10 * time.Second
 	dispatchLeaseTTLBuffer             = 60 * time.Second
