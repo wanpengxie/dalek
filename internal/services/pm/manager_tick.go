@@ -502,6 +502,7 @@ func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, 
 			continue
 		}
 		if cnt > 0 {
+			s.markPlannerDirty(st)
 			continue
 		}
 
