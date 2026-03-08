@@ -14,6 +14,7 @@ func TestCLI_HelpShouldExitZero(t *testing.T) {
 		{"ticket", "start", "--help"},
 		{"ticket", "edit", "--help"},
 		{"manager", "status", "--help"},
+		{"pm", "dashboard", "--help"},
 		{"inbox", "ls", "--help"},
 		{"merge", "ls", "--help"},
 		{"merge", "discard", "--help"},

@@ -82,6 +82,8 @@ func main() {
 		cmdTask(rest[1:])
 	case "manager":
 		cmdManager(rest[1:])
+	case "pm":
+		cmdPM(rest[1:])
 	case "inbox":
 		cmdInbox(rest[1:])
 	case "merge":
@@ -128,6 +130,7 @@ func usage(code int) {
 	fmt.Fprintln(out, "  note       Notebook 需求漏斗（add/ls/show/approve/reject/discard）")
 	fmt.Fprintln(out, "  task       任务运行时观测（查看/事件）")
 	fmt.Fprintln(out, "  manager    PM 调度器控制（状态/调度/暂停/恢复）")
+	fmt.Fprintln(out, "  pm         项目管理视角（dashboard）")
 	fmt.Fprintln(out, "  inbox      人工待处理项（查看/关闭/延后）")
 	fmt.Fprintln(out, "  merge      合并队列管理（提议/审批/标记）")
 	fmt.Fprintln(out, "  worker     Worker 内部命令（报告/直接运行）")

@@ -140,7 +140,31 @@ func TestCLI_E2E_BasicWorkflow(t *testing.T) {
 		t.Fatalf("planner_active_task_run_id should default nil, got=%v", *managerStatus.PlannerActiveTaskRunID)
 	}
 
-	// 7) remove + empty list
+	// 7) pm dashboard（text + json）
+	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "pm", "dashboard")
+	if !strings.Contains(out, "=== Project Dashboard ===") || !strings.Contains(out, "Tickets:") || !strings.Contains(out, "Workers:") || !strings.Contains(out, "Planner:") || !strings.Contains(out, "Merges:") || !strings.Contains(out, "Inbox:") {
+		t.Fatalf("pm dashboard text output unexpected:\n%s", out)
+	}
+	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "pm", "dashboard", "-o", "json")
+	var dashboard struct {
+		TicketCounts struct {
+			Backlog int `json:"backlog"`
+		} `json:"ticket_counts"`
+		WorkerStats struct {
+			MaxRunning int `json:"max_running"`
+		} `json:"worker_stats"`
+	}
+	if err := json.Unmarshal([]byte(out), &dashboard); err != nil {
+		t.Fatalf("unmarshal pm dashboard json failed: %v\nraw=%s", err, out)
+	}
+	if dashboard.TicketCounts.Backlog != 0 {
+		t.Fatalf("ticket backlog should default 0, got=%d", dashboard.TicketCounts.Backlog)
+	}
+	if dashboard.WorkerStats.MaxRunning != 3 {
+		t.Fatalf("worker max_running should default 3, got=%d", dashboard.WorkerStats.MaxRunning)
+	}
+
+	// 8) remove + empty list
 	out, _ = runCLIOK(t, bin, repo, "-home", home, "project", "rm", "-name", "demo")
 	if !strings.Contains(out, "demo removed") {
 		t.Fatalf("project rm output unexpected:\n%s", out)
