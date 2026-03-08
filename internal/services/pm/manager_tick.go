@@ -578,6 +578,20 @@ func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, 
 			s.markPlannerDirty(st)
 			continue
 		}
+		var latest contracts.MergeItem
+		if err := db.WithContext(ctx).
+			Where("ticket_id = ?", t.ID).
+			Order("id desc").
+			First(&latest).Error; err == nil {
+			if latest.Status == contracts.MergeDiscarded &&
+				latest.WorkerID == w.ID &&
+				strings.TrimSpace(latest.Branch) == branch &&
+				!t.UpdatedAt.After(latest.UpdatedAt) {
+				// A discarded merge for the current worker/branch should not be
+				// re-proposed until the ticket advances again.
+				continue
+			}
+		}
 
 		if dryRun {
 			out.MergeProposed = append(out.MergeProposed, t.ID)

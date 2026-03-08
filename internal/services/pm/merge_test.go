@@ -255,7 +255,7 @@ func TestApplyWorkerReport_DoneRecreatesMergeProposalAfterDiscarded(t *testing.T
 	}
 }
 
-func TestManagerTick_ProposesWhenOnlyDiscardedMergeExists(t *testing.T) {
+func TestManagerTick_SkipsReproposeWhenLatestDiscardedMergeMatchesUnchangedTicket(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-discarded-only")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
@@ -280,18 +280,18 @@ func TestManagerTick_ProposesWhenOnlyDiscardedMergeExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ManagerTick failed: %v", err)
 	}
-	if !containsTicketID(res.MergeProposed, tk.ID) {
-		t.Fatalf("manager tick should re-propose when only discarded exists, merge_proposed=%v", res.MergeProposed)
+	if containsTicketID(res.MergeProposed, tk.ID) {
+		t.Fatalf("manager tick should not re-propose unchanged discarded merge, merge_proposed=%v", res.MergeProposed)
 	}
 
 	var latest contracts.MergeItem
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&latest).Error; err != nil {
 		t.Fatalf("query latest merge item failed: %v", err)
 	}
-	if latest.Status != contracts.MergeProposed {
-		t.Fatalf("latest merge status should be proposed, got=%s", latest.Status)
+	if latest.Status != contracts.MergeDiscarded {
+		t.Fatalf("latest merge status should remain discarded, got=%s", latest.Status)
 	}
-	if latest.ID == mi.ID {
-		t.Fatalf("manager tick should create a new merge item")
+	if latest.ID != mi.ID {
+		t.Fatalf("manager tick should not create a new merge item")
 	}
 }
