@@ -142,26 +142,37 @@ func TestCLI_E2E_BasicWorkflow(t *testing.T) {
 
 	// 7) pm dashboard（text + json）
 	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "pm", "dashboard")
-	if !strings.Contains(out, "=== Project Dashboard ===") || !strings.Contains(out, "Tickets:") || !strings.Contains(out, "Workers:") || !strings.Contains(out, "Planner:") || !strings.Contains(out, "Merges:") || !strings.Contains(out, "Inbox:") {
+	if !strings.Contains(out, "=== Project Dashboard ===") ||
+		!strings.Contains(out, "-- Ticket Overview --") ||
+		!strings.Contains(out, "-- Worker Utilization --") ||
+		!strings.Contains(out, "-- Planner Status --") ||
+		!strings.Contains(out, "-- Merge Queue --") ||
+		!strings.Contains(out, "-- Inbox Todo --") {
 		t.Fatalf("pm dashboard text output unexpected:\n%s", out)
 	}
 	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "pm", "dashboard", "-o", "json")
 	var dashboard struct {
-		TicketCounts struct {
-			Backlog int `json:"backlog"`
-		} `json:"ticket_counts"`
-		WorkerStats struct {
-			MaxRunning int `json:"max_running"`
-		} `json:"worker_stats"`
+		Schema string `json:"schema"`
+		Data   struct {
+			TicketCounts struct {
+				Backlog int `json:"backlog"`
+			} `json:"ticket_counts"`
+			WorkerStats struct {
+				MaxRunning int `json:"max_running"`
+			} `json:"worker_stats"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(out), &dashboard); err != nil {
 		t.Fatalf("unmarshal pm dashboard json failed: %v\nraw=%s", err, out)
 	}
-	if dashboard.TicketCounts.Backlog != 1 {
-		t.Fatalf("ticket backlog should be 1 (created in step 4), got=%d", dashboard.TicketCounts.Backlog)
+	if dashboard.Schema != pmDashboardSchema {
+		t.Fatalf("unexpected pm dashboard schema: %s", dashboard.Schema)
 	}
-	if dashboard.WorkerStats.MaxRunning != 3 {
-		t.Fatalf("worker max_running should default 3, got=%d", dashboard.WorkerStats.MaxRunning)
+	if dashboard.Data.TicketCounts.Backlog != 1 {
+		t.Fatalf("ticket backlog should be 1 (created in step 4), got=%d", dashboard.Data.TicketCounts.Backlog)
+	}
+	if dashboard.Data.WorkerStats.MaxRunning != 3 {
+		t.Fatalf("worker max_running should default 3, got=%d", dashboard.Data.WorkerStats.MaxRunning)
 	}
 
 	// 8) remove + empty list

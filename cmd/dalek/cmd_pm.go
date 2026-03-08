@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 )
 
 func cmdPM(args []string) {
@@ -70,57 +69,21 @@ func cmdPMDashboard(args []string) {
 	}
 
 	if out == outputJSON {
-		printJSONOrExit(result)
+		if err := renderDashboardJSON(os.Stdout, result); err != nil {
+			exitRuntimeError(out,
+				"渲染 pm dashboard JSON 失败",
+				err.Error(),
+				"稍后重试，或检查输出目标是否可写",
+			)
+		}
 		return
 	}
 
-	fmt.Println("=== Project Dashboard ===")
-	fmt.Printf(
-		"Tickets:  backlog=%d  queued=%d  active=%d  blocked=%d  done=%d  archived=%d\n",
-		result.TicketCounts["backlog"],
-		result.TicketCounts["queued"],
-		result.TicketCounts["active"],
-		result.TicketCounts["blocked"],
-		result.TicketCounts["done"],
-		result.TicketCounts["archived"],
-	)
-	fmt.Printf(
-		"Workers:  running=%d/%d  blocked=%d\n",
-		result.WorkerStats.Running,
-		result.WorkerStats.MaxRunning,
-		result.WorkerStats.Blocked,
-	)
-	fmt.Printf(
-		"Planner:  dirty=%v  active_run=%s  last_run=%s\n",
-		result.PlannerState.Dirty,
-		formatDashboardRunID(result.PlannerState.ActiveTaskRunID),
-		formatDashboardTime(result.PlannerState.LastRunAt, "never"),
-	)
-	fmt.Printf(
-		"Merges:   proposed=%d  ready=%d  approved=%d  merged=%d\n",
-		result.MergeCounts["proposed"],
-		result.MergeCounts["ready"],
-		result.MergeCounts["approved"],
-		result.MergeCounts["merged"],
-	)
-	fmt.Printf(
-		"Inbox:    open=%d  snoozed=%d  blockers=%d\n",
-		result.InboxCounts.Open,
-		result.InboxCounts.Snoozed,
-		result.InboxCounts.Blockers,
-	)
-}
-
-func formatDashboardRunID(runID *uint) string {
-	if runID == nil || *runID == 0 {
-		return "none"
+	if err := renderDashboardText(os.Stdout, result); err != nil {
+		exitRuntimeError(out,
+			"渲染 pm dashboard 文本输出失败",
+			err.Error(),
+			"稍后重试，或检查输出目标是否可写",
+		)
 	}
-	return fmt.Sprintf("%d", *runID)
-}
-
-func formatDashboardTime(v *time.Time, empty string) string {
-	if v == nil || v.IsZero() {
-		return empty
-	}
-	return v.Local().Format(time.RFC3339)
 }
