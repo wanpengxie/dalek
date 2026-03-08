@@ -4,6 +4,8 @@ import (
 	"context"
 	"dalek/internal/contracts"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -216,6 +218,13 @@ func TestDaemonManagerComponent_RunTickProject_UsesDispatchHostSubmitter(t *test
 func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
+	planPath := filepath.Join(p.RepoRoot(), ".dalek", "pm", "plan.md")
+	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
+		t.Fatalf("mkdir planner plan dir failed: %v", err)
+	}
+	if err := os.WriteFile(planPath, []byte("# Planner Plan\n- prioritize blockers\n"), 0o644); err != nil {
+		t.Fatalf("write planner plan failed: %v", err)
+	}
 
 	tk, err := p.CreateTicketWithDescription(ctx, "manager planner submit wiring", "planner run should be submitted to execution host")
 	if err != nil {
@@ -270,6 +279,21 @@ func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t 
 	}
 	if strings.TrimSpace(call.RequestID) == "" {
 		t.Fatalf("expected planner submit request_id not empty")
+	}
+	if strings.TrimSpace(call.Prompt) == "" {
+		t.Fatalf("expected planner submit prompt not empty")
+	}
+	if !strings.Contains(call.Prompt, "Planner Plan") {
+		t.Fatalf("expected prompt contains planner plan markdown")
+	}
+	if !strings.Contains(call.Prompt, "\"command\": \"dalek ticket ls\"") {
+		t.Fatalf("expected prompt contains ticket list snapshot command")
+	}
+	if !strings.Contains(call.Prompt, "\"command\": \"dalek merge ls\"") {
+		t.Fatalf("expected prompt contains merge list snapshot command")
+	}
+	if !strings.Contains(call.Prompt, "\"command\": \"dalek inbox ls --status open\"") {
+		t.Fatalf("expected prompt contains inbox list snapshot command")
 	}
 
 	pmState, err := p.GetPMState(ctx)

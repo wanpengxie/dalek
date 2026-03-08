@@ -155,6 +155,7 @@ type PlannerSubmitReceipt struct {
 
 type PlannerRunOptions struct {
 	RunnerID string
+	Prompt   string
 }
 
 type NoteAddResult = notebooksvc.NoteAddResult

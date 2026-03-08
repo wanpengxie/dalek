@@ -82,6 +82,7 @@ type testExecutionHostProject struct {
 	runSubagentCalls      int
 	runPlannerCalls       int
 	lastDispatchAutoStart *bool
+	lastPlannerPrompt     string
 
 	nextJobID   uint
 	nextRunID   uint
@@ -243,6 +244,7 @@ func (p *testExecutionHostProject) RunSubagentJob(ctx context.Context, taskRunID
 func (p *testExecutionHostProject) RunPlannerJob(ctx context.Context, taskRunID uint, opt PlannerRunOptions) error {
 	p.mu.Lock()
 	p.runPlannerCalls++
+	p.lastPlannerPrompt = strings.TrimSpace(opt.Prompt)
 	delay := p.runPlannerDelay
 	started := p.runPlannerStarted
 	release := p.runPlannerRelease
@@ -398,6 +400,12 @@ func (p *testExecutionHostProject) RunPlannerCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.runPlannerCalls
+}
+
+func (p *testExecutionHostProject) LastPlannerPrompt() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return strings.TrimSpace(p.lastPlannerPrompt)
 }
 
 func (p *testExecutionHostProject) GetTaskStatusCount() int {
@@ -814,6 +822,9 @@ func TestExecutionHost_SubmitPlannerRun_IdempotentByRequestID(t *testing.T) {
 			t.Fatalf("expected only one RunPlannerJob call, got=%d", project.RunPlannerCount())
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if got := project.LastPlannerPrompt(); got != req.Prompt {
+		t.Fatalf("expected planner prompt forwarded, got=%q want=%q", got, req.Prompt)
 	}
 }
 

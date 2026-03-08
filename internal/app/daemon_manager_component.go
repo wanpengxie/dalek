@@ -3,8 +3,12 @@ package app
 import (
 	"context"
 	"dalek/internal/contracts"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +18,11 @@ import (
 )
 
 const defaultDaemonManagerTickInterval = 30 * time.Second
+
+const (
+	plannerPromptPlanMaxBytes = 24 * 1024
+	plannerPromptListLimit    = 200
+)
 
 type managerDispatchHost interface {
 	SubmitDispatch(ctx context.Context, req daemonsvc.DispatchSubmitRequest) (daemonsvc.DispatchSubmitReceipt, error)
@@ -471,11 +480,111 @@ func (m *daemonManagerComponent) buildPlannerSubmitRequest(ctx context.Context, 
 	if requestID == "" {
 		requestID = fmt.Sprintf("pln_run_%d", runID)
 	}
+	prompt, err := m.buildPlannerPrompt(ctx, p, projectName, runID, requestID)
+	if err != nil {
+		return daemonsvc.PlannerSubmitRequest{}, err
+	}
 	return daemonsvc.PlannerSubmitRequest{
 		Project:   projectName,
 		RequestID: requestID,
 		TaskRunID: runID,
+		Prompt:    prompt,
 	}, nil
+}
+
+func (m *daemonManagerComponent) buildPlannerPrompt(ctx context.Context, p *Project, projectName string, runID uint, requestID string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	repoRoot := strings.TrimSpace(p.RepoRoot())
+	planPath := filepath.Join(repoRoot, ".dalek", "pm", "plan.md")
+	planText := readPlannerPlanMarkdown(planPath, plannerPromptPlanMaxBytes)
+
+	ticketViews, ticketErr := p.ListTicketViews(ctx)
+	mergeItems, mergeErr := p.ListMergeItems(ctx, ListMergeOptions{Limit: plannerPromptListLimit})
+	inboxOpen, inboxOpenErr := p.ListInbox(ctx, ListInboxOptions{
+		Status: contracts.InboxOpen,
+		Limit:  plannerPromptListLimit,
+	})
+	inboxSnoozed, inboxSnoozedErr := p.ListInbox(ctx, ListInboxOptions{
+		Status: contracts.InboxSnoozed,
+		Limit:  plannerPromptListLimit,
+	})
+
+	snapshot := map[string]any{
+		"generated_at":       time.Now().UTC().Format(time.RFC3339),
+		"project":            strings.TrimSpace(projectName),
+		"repo_root":          repoRoot,
+		"planner_task_run":   runID,
+		"planner_request_id": strings.TrimSpace(requestID),
+		"ticket_ls":          plannerListSnapshot("dalek ticket ls", ticketViews, ticketErr),
+		"merge_ls":           plannerListSnapshot("dalek merge ls", mergeItems, mergeErr),
+		"inbox_ls": map[string]any{
+			"open":    plannerListSnapshot("dalek inbox ls --status open", inboxOpen, inboxOpenErr),
+			"snoozed": plannerListSnapshot("dalek inbox ls --status snoozed", inboxSnoozed, inboxSnoozedErr),
+		},
+	}
+	snapshotJSON, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("planner prompt 构建失败: %w", err)
+	}
+
+	prompt := strings.TrimSpace(fmt.Sprintf(`你是 dalek 的 PM planner agent。请先理解项目计划和当前状态，再通过 dalek CLI 主动推进项目（创建/调整 ticket、dispatch worker、处理 merge/inbox）。
+
+必须遵守：
+1. 只能通过 dalek CLI 进行 PM 操作，不要直接访问数据库。
+2. 避免重复动作，优先收敛阻塞项与高优先级事项。
+3. 在本轮结束前给出清晰结论：继续推进、已完成、或需要人工介入。
+
+【PLAN 文档：%s】
+%s
+
+【项目快照（对应 dalek ticket/merge/inbox ls）】
+%s
+`, strings.TrimSpace(planPath), planText, strings.TrimSpace(string(snapshotJSON))))
+	if prompt == "" {
+		return "", fmt.Errorf("planner prompt 为空")
+	}
+	return prompt, nil
+}
+
+func plannerListSnapshot(command string, items any, err error) map[string]any {
+	out := map[string]any{
+		"command": strings.TrimSpace(command),
+	}
+	if err != nil {
+		out["ok"] = false
+		out["error"] = strings.TrimSpace(err.Error())
+		return out
+	}
+	out["ok"] = true
+	out["items"] = items
+	return out
+}
+
+func readPlannerPlanMarkdown(path string, maxBytes int) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "(repo_root 为空，无法读取 .dalek/pm/plan.md)"
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Sprintf("(未找到文件: %s)", path)
+		}
+		return fmt.Sprintf("(读取失败: %v)", err)
+	}
+	text := strings.TrimSpace(string(b))
+	if text == "" {
+		return fmt.Sprintf("(文件为空: %s)", path)
+	}
+	if maxBytes > 0 && len(text) > maxBytes {
+		text = text[:maxBytes] + "\n\n...(truncated)"
+	}
+	return text
 }
 
 func (m *daemonManagerComponent) NotifyProject(projectName string) {

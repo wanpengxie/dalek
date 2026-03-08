@@ -136,8 +136,10 @@ func (p *daemonProjectAdapter) RunPlannerJob(ctx context.Context, taskRunID uint
 		return fmt.Errorf("daemon project 为空")
 	}
 	opt.RunnerID = strings.TrimSpace(opt.RunnerID)
+	opt.Prompt = strings.TrimSpace(opt.Prompt)
 	return p.project.RunPlannerJob(ctx, taskRunID, PlannerRunOptions{
 		RunnerID: opt.RunnerID,
+		Prompt:   opt.Prompt,
 	})
 }
 

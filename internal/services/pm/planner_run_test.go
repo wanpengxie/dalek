@@ -7,13 +7,44 @@ import (
 	"testing"
 	"time"
 
+	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
 )
 
+type fakePlannerTaskRunner struct {
+	runFn func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error)
+}
+
+func (f fakePlannerTaskRunner) Run(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+	if f.runFn != nil {
+		return f.runFn(ctx, req, onEvent)
+	}
+	return sdkrunner.Result{}, nil
+}
+
 func TestRunPlannerJob_SuccessClearsActiveAndMarksRunSucceeded(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
+	svc.SetTaskRunner(fakePlannerTaskRunner{
+		runFn: func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+			if strings.TrimSpace(req.Prompt) != "planner prompt for success" {
+				t.Fatalf("unexpected planner prompt: %q", req.Prompt)
+			}
+			if strings.TrimSpace(req.WorkDir) != strings.TrimSpace(p.RepoRoot) {
+				t.Fatalf("unexpected work dir: got=%q want=%q", req.WorkDir, p.RepoRoot)
+			}
+			if onEvent != nil {
+				onEvent(sdkrunner.Event{Type: "assistant", Text: "planner is evaluating project"})
+			}
+			return sdkrunner.Result{
+				Provider:   "claude",
+				OutputMode: "json",
+				Text:       "planner done",
+				SessionID:  "sess_planner_ok",
+			}, nil
+		},
+	})
 
 	pmState, err := svc.getOrInitPMState(ctx)
 	if err != nil {
@@ -31,7 +62,10 @@ func TestRunPlannerJob_SuccessClearsActiveAndMarksRunSucceeded(t *testing.T) {
 		t.Fatalf("prepare pm state failed: %v", err)
 	}
 
-	if err := svc.RunPlannerJob(ctx, run.ID, PlannerRunOptions{RunnerID: "planner-runner-success"}); err != nil {
+	if err := svc.RunPlannerJob(ctx, run.ID, PlannerRunOptions{
+		RunnerID: "planner-runner-success",
+		Prompt:   "planner prompt for success",
+	}); err != nil {
 		t.Fatalf("RunPlannerJob failed: %v", err)
 	}
 
@@ -57,6 +91,15 @@ func TestRunPlannerJob_SuccessClearsActiveAndMarksRunSucceeded(t *testing.T) {
 	}
 	if startedCnt == 0 {
 		t.Fatalf("expected task_started event exists")
+	}
+	var streamCnt int64
+	if err := p.DB.WithContext(ctx).Model(&contracts.TaskEvent{}).
+		Where("task_run_id = ? AND event_type = ?", run.ID, "task_stream").
+		Count(&streamCnt).Error; err != nil {
+		t.Fatalf("count task_stream failed: %v", err)
+	}
+	if streamCnt == 0 {
+		t.Fatalf("expected task_stream event exists")
 	}
 	var succeededCnt int64
 	if err := p.DB.WithContext(ctx).Model(&contracts.TaskEvent{}).
@@ -84,9 +127,14 @@ func TestRunPlannerJob_SuccessClearsActiveAndMarksRunSucceeded(t *testing.T) {
 	assertPlannerCooldown(t, afterState.PlannerLastRunAt, afterState.PlannerCooldownUntil, plannerRunSuccessCooldown)
 }
 
-func TestRunPlannerJob_FailureMarksRunFailedAndResetsPlannerState(t *testing.T) {
+func TestRunPlannerJob_CanceledMarksRunCanceledAndResetsPlannerState(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
+	svc.SetTaskRunner(fakePlannerTaskRunner{
+		runFn: func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+			return sdkrunner.Result{}, nil
+		},
+	})
 
 	pmState, err := svc.getOrInitPMState(ctx)
 	if err != nil {
@@ -115,24 +163,24 @@ func TestRunPlannerJob_FailureMarksRunFailedAndResetsPlannerState(t *testing.T) 
 	if err := p.DB.WithContext(ctx).First(&afterRun, run.ID).Error; err != nil {
 		t.Fatalf("load planner run failed: %v", err)
 	}
-	if afterRun.OrchestrationState != contracts.TaskFailed {
-		t.Fatalf("expected run failed, got=%s", afterRun.OrchestrationState)
+	if afterRun.OrchestrationState != contracts.TaskCanceled {
+		t.Fatalf("expected run canceled, got=%s", afterRun.OrchestrationState)
 	}
-	if strings.TrimSpace(afterRun.ErrorCode) != "planner_failed" {
-		t.Fatalf("expected error_code=planner_failed, got=%q", afterRun.ErrorCode)
+	if strings.TrimSpace(afterRun.ErrorCode) != "planner_canceled" {
+		t.Fatalf("expected error_code=planner_canceled, got=%q", afterRun.ErrorCode)
 	}
 	if !strings.Contains(strings.ToLower(afterRun.ErrorMessage), "context canceled") {
 		t.Fatalf("expected error_message contains context canceled, got=%q", afterRun.ErrorMessage)
 	}
 
-	var failedCnt int64
+	var canceledCnt int64
 	if err := p.DB.WithContext(ctx).Model(&contracts.TaskEvent{}).
-		Where("task_run_id = ? AND event_type = ?", run.ID, "task_failed").
-		Count(&failedCnt).Error; err != nil {
-		t.Fatalf("count task_failed failed: %v", err)
+		Where("task_run_id = ? AND event_type = ?", run.ID, "task_canceled").
+		Count(&canceledCnt).Error; err != nil {
+		t.Fatalf("count task_canceled failed: %v", err)
 	}
-	if failedCnt == 0 {
-		t.Fatalf("expected task_failed event exists")
+	if canceledCnt == 0 {
+		t.Fatalf("expected task_canceled event exists")
 	}
 
 	afterState, err := svc.GetState(ctx)

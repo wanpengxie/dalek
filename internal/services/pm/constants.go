@@ -21,6 +21,13 @@ const (
 	dispatchDepthEnvKey      = "DALEK_DISPATCH_DEPTH"
 	dispatchPromptTemplateID = "builtin://pm_dispatch_prompt_v1"
 	dispatchPromptTemplate   = "templates/pm/dispatch_prompt_v1.tmpl"
+
+	// Planner env keys.
+	envPlannerRunID     = "DALEK_PLANNER_RUN_ID"
+	envPlannerRequest   = "DALEK_PLANNER_REQUEST_ID"
+	envPlannerRunnerID  = "DALEK_PLANNER_RUNNER_ID"
+	envPlannerPromptTpl = "DALEK_PLANNER_PROMPT_TEMPLATE"
+	plannerPromptID     = "builtin://pm_planner_prompt_v1"
 )
 
 const (
@@ -32,6 +39,7 @@ const (
 	defaultWorkerReadyTimeout      = 8 * time.Second
 	defaultWorkerReadyPollInterval = 200 * time.Millisecond
 	workflowStatusNotifyTimeout    = 10 * time.Second
+	plannerRunTimeout              = 5 * time.Minute
 
 	dispatchLeaseRenewInterval         = 10 * time.Second
 	dispatchLeaseTTLBuffer             = 60 * time.Second

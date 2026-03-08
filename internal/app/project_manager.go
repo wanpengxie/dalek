@@ -41,5 +41,6 @@ func (p *Project) RunPlannerJob(ctx context.Context, taskRunID uint, opt Planner
 		return fmt.Errorf("project pm service 为空")
 	}
 	opt.RunnerID = strings.TrimSpace(opt.RunnerID)
+	opt.Prompt = strings.TrimSpace(opt.Prompt)
 	return p.pm.RunPlannerJob(ctx, taskRunID, opt)
 }

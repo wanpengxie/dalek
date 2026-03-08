@@ -224,6 +224,7 @@ func (h *ExecutionHost) executePlannerRun(handle *executionRunHandle) {
 	}
 	err = project.RunPlannerJob(handle.ctx, handle.runID, PlannerRunOptions{
 		RunnerID: handle.runnerID,
+		Prompt:   handle.entryPrompt,
 	})
 	if err != nil {
 		if handle.ctx.Err() != nil {

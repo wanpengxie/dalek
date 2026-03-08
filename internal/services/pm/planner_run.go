@@ -2,17 +2,25 @@ package pm
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
+	agentprovider "dalek/internal/agent/provider"
+	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
+	"dalek/internal/repo"
 
 	"gorm.io/gorm"
 )
 
+const defaultPlannerRunPrompt = "你是 dalek 的 PM planner agent。请基于当前项目状态做调度决策，并通过 dalek CLI 执行必要动作（如创建 ticket、dispatch worker、处理 merge/inbox）。"
+
 type PlannerRunOptions struct {
 	RunnerID string
+	Prompt   string
 }
 
 func (s *Service) RunPlannerJob(ctx context.Context, taskRunID uint, opt PlannerRunOptions) error {
@@ -30,12 +38,26 @@ func (s *Service) RunPlannerJob(ctx context.Context, taskRunID uint, opt Planner
 	if runnerID == "" {
 		runnerID = fmt.Sprintf("pm_planner_%d", taskRunID)
 	}
-	if err := s.completePlannerRunSuccess(ctx, taskRunID, runnerID); err != nil {
+	prompt := strings.TrimSpace(opt.Prompt)
+	if prompt == "" {
+		prompt = defaultPlannerRunPrompt
+	}
+	if err := s.completePlannerRunSuccess(ctx, taskRunID, runnerID, prompt); err != nil {
 		failMsg := strings.TrimSpace(err.Error())
 		if failMsg == "" {
 			failMsg = "planner run failed"
 		}
-		if ferr := s.completePlannerRunFailed(context.WithoutCancel(ctx), taskRunID, failMsg); ferr != nil {
+		failCtx := context.WithoutCancel(ctx)
+		var ferr error
+		switch {
+		case errors.Is(err, context.Canceled):
+			ferr = s.completePlannerRunCanceled(failCtx, taskRunID, "planner_canceled", failMsg)
+		case errors.Is(err, context.DeadlineExceeded):
+			ferr = s.completePlannerRunFailed(failCtx, taskRunID, "planner_timeout", failMsg)
+		default:
+			ferr = s.completePlannerRunFailed(failCtx, taskRunID, "planner_failed", failMsg)
+		}
+		if ferr != nil {
 			return fmt.Errorf("planner run failed: %w (mark failed also failed: %v)", err, ferr)
 		}
 		return err
@@ -43,21 +65,31 @@ func (s *Service) RunPlannerJob(ctx context.Context, taskRunID uint, opt Planner
 	return nil
 }
 
-func (s *Service) completePlannerRunSuccess(ctx context.Context, taskRunID uint, runnerID string) error {
-	_, db, err := s.require()
+func (s *Service) completePlannerRunSuccess(ctx context.Context, taskRunID uint, runnerID string, prompt string) error {
+	p, db, err := s.require()
 	if err != nil {
 		return err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	now := time.Now()
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	runCtx, cancel := context.WithTimeout(ctx, plannerRunTimeout)
+	defer cancel()
+
+	startedAt := time.Now()
+	var lease *time.Time
+	if deadline, ok := runCtx.Deadline(); ok {
+		deadlineCopy := deadline
+		lease = &deadlineCopy
+	}
+
+	var requestID string
+	if err := db.WithContext(runCtx).Transaction(func(tx *gorm.DB) error {
 		taskRuntime, terr := s.taskRuntimeForDB(tx)
 		if terr != nil {
 			return terr
 		}
-		run, rerr := taskRuntime.FindRunByID(ctx, taskRunID)
+		run, rerr := taskRuntime.FindRunByID(runCtx, taskRunID)
 		if rerr != nil {
 			return rerr
 		}
@@ -67,42 +99,124 @@ func (s *Service) completePlannerRunSuccess(ctx context.Context, taskRunID uint,
 		if run.OwnerType != contracts.TaskOwnerPM || run.TaskType != contracts.TaskTypePMPlannerRun {
 			return fmt.Errorf("task run 类型不匹配: run_id=%d owner=%s type=%s", taskRunID, run.OwnerType, run.TaskType)
 		}
-		if err := taskRuntime.MarkRunRunning(ctx, taskRunID, runnerID, nil, now, true); err != nil {
+		requestID = strings.TrimSpace(run.RequestID)
+		if err := taskRuntime.MarkRunRunning(runCtx, taskRunID, runnerID, lease, startedAt, true); err != nil {
 			return err
 		}
-		if err := taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
+		return taskRuntime.AppendEvent(runCtx, contracts.TaskEventInput{
 			TaskRunID: taskRunID,
 			EventType: "task_started",
+			FromState: map[string]any{
+				"orchestration_state": contracts.TaskPending,
+			},
 			ToState: map[string]any{
 				"orchestration_state": contracts.TaskRunning,
+				"runner_id":           runnerID,
 			},
-			Note: "pm planner run started",
-		}); err != nil {
-			return err
-		}
+			Note:      "pm planner run started",
+			CreatedAt: startedAt,
+		})
+	}); err != nil {
+		return err
+	}
 
-		// TODO: 在后续 ticket 中接入真实 planner prompt 构建与 agent 执行。
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	cfg := p.Config.WithDefaults()
+	agentCfg := repo.AgentConfigFromExecConfig(cfg.PMAgent)
+	if _, err := agentprovider.NewFromConfig(agentCfg); err != nil {
+		return fmt.Errorf("pm_agent 配置非法: %w", err)
+	}
+	taskRuntime, err := s.taskRuntime()
+	if err != nil {
+		return err
+	}
+	workDir := strings.TrimSpace(p.RepoRoot)
+	if workDir == "" {
+		return fmt.Errorf("planner repo_root 为空")
+	}
+	env := map[string]string{
+		envProjectKey:       strings.TrimSpace(p.Key),
+		envRepoRoot:         strings.TrimSpace(p.RepoRoot),
+		envDBPath:           strings.TrimSpace(p.DBPath()),
+		envPlannerRunID:     strconv.FormatUint(uint64(taskRunID), 10),
+		envPlannerRunnerID:  strings.TrimSpace(runnerID),
+		envPlannerPromptTpl: plannerPromptID,
+		dispatchDepthEnvKey: "0",
+	}
+	if requestID != "" {
+		env[envPlannerRequest] = requestID
+	}
 
-		pmState, serr := s.loadPMStateForUpdateTx(ctx, tx)
+	onEvent := func(ev sdkrunner.Event) {
+		note := strings.TrimSpace(ev.Text)
+		if note == "" {
+			note = strings.TrimSpace(ev.Type)
+		}
+		if note == "" {
+			note = "(empty)"
+		}
+		_ = taskRuntime.AppendEvent(context.Background(), contracts.TaskEventInput{
+			TaskRunID: taskRunID,
+			EventType: "task_stream",
+			Note:      note,
+			Payload: map[string]any{
+				"type":       strings.TrimSpace(ev.Type),
+				"text":       strings.TrimSpace(ev.Text),
+				"raw_json":   strings.TrimSpace(ev.RawJSON),
+				"session_id": strings.TrimSpace(ev.SessionID),
+			},
+			CreatedAt: time.Now(),
+		})
+	}
+
+	res, runErr := s.taskRunner().Run(runCtx, sdkrunner.Request{
+		AgentConfig: agentCfg,
+		Prompt:      strings.TrimSpace(prompt),
+		WorkDir:     workDir,
+		Env:         env,
+	}, onEvent)
+	if runErr != nil {
+		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("planner run timed out after %s: %w", plannerRunTimeout, context.DeadlineExceeded)
+		}
+		if errors.Is(runErr, context.Canceled) || errors.Is(runCtx.Err(), context.Canceled) {
+			return fmt.Errorf("planner run canceled: %w", context.Canceled)
+		}
+		return runErr
+	}
+
+	finishedAt := time.Now()
+	resultPayload := marshalJSON(map[string]any{
+		"runner_id":   strings.TrimSpace(runnerID),
+		"request_id":  requestID,
+		"mode":        "agent",
+		"provider":    strings.TrimSpace(res.Provider),
+		"output_mode": strings.TrimSpace(res.OutputMode),
+		"text":        strings.TrimSpace(res.Text),
+		"session_id":  strings.TrimSpace(res.SessionID),
+		"stdout":      strings.TrimSpace(res.Stdout),
+		"stderr":      strings.TrimSpace(res.Stderr),
+		"events":      res.Events,
+	})
+	finishCtx := context.WithoutCancel(ctx)
+	return db.WithContext(finishCtx).Transaction(func(tx *gorm.DB) error {
+		taskRuntime, terr := s.taskRuntimeForDB(tx)
+		if terr != nil {
+			return terr
+		}
+		pmState, serr := s.loadPMStateForUpdateTx(finishCtx, tx)
 		if serr != nil {
 			return serr
 		}
 		if plannerRunMatchesState(pmState, taskRunID) {
-			s.clearPlannerRun(pmState, now)
-			if err := s.persistPlannerStateTx(ctx, tx, pmState, now); err != nil {
+			s.clearPlannerRun(pmState, finishedAt)
+			if err := s.persistPlannerStateTx(finishCtx, tx, pmState, finishedAt); err != nil {
 				return err
 			}
 		}
-		if err := taskRuntime.MarkRunSucceeded(ctx, taskRunID, marshalJSON(map[string]any{
-			"runner_id": runnerID,
-			"mode":      "stub",
-		}), now); err != nil {
+		if err := taskRuntime.MarkRunSucceeded(finishCtx, taskRunID, resultPayload, finishedAt); err != nil {
 			return err
 		}
-		if err := taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
+		return taskRuntime.AppendEvent(finishCtx, contracts.TaskEventInput{
 			TaskRunID: taskRunID,
 			EventType: "task_succeeded",
 			FromState: map[string]any{
@@ -111,15 +225,39 @@ func (s *Service) completePlannerRunSuccess(ctx context.Context, taskRunID uint,
 			ToState: map[string]any{
 				"orchestration_state": contracts.TaskSucceeded,
 			},
-			Note: "pm planner run completed",
-		}); err != nil {
-			return err
-		}
-		return nil
+			Note:      "pm planner run completed",
+			CreatedAt: finishedAt,
+			Payload: map[string]any{
+				"provider":   strings.TrimSpace(res.Provider),
+				"session_id": strings.TrimSpace(res.SessionID),
+			},
+		})
 	})
 }
 
-func (s *Service) completePlannerRunFailed(ctx context.Context, taskRunID uint, errMsg string) error {
+func (s *Service) completePlannerRunFailed(ctx context.Context, taskRunID uint, errorCode string, errMsg string) error {
+	return s.completePlannerRunTerminal(ctx, taskRunID, plannerTerminalFailure{
+		state:     contracts.TaskFailed,
+		errorCode: errorCode,
+		errorMsg:  errMsg,
+	})
+}
+
+func (s *Service) completePlannerRunCanceled(ctx context.Context, taskRunID uint, errorCode string, errMsg string) error {
+	return s.completePlannerRunTerminal(ctx, taskRunID, plannerTerminalFailure{
+		state:     contracts.TaskCanceled,
+		errorCode: errorCode,
+		errorMsg:  errMsg,
+	})
+}
+
+type plannerTerminalFailure struct {
+	state     contracts.TaskOrchestrationState
+	errorCode string
+	errorMsg  string
+}
+
+func (s *Service) completePlannerRunTerminal(ctx context.Context, taskRunID uint, terminal plannerTerminalFailure) error {
 	_, db, err := s.require()
 	if err != nil {
 		return err
@@ -128,9 +266,23 @@ func (s *Service) completePlannerRunFailed(ctx context.Context, taskRunID uint, 
 		ctx = context.Background()
 	}
 	now := time.Now()
-	errMsg = strings.TrimSpace(errMsg)
-	if errMsg == "" {
-		errMsg = "planner run failed"
+	terminal.errorCode = strings.TrimSpace(terminal.errorCode)
+	if terminal.errorCode == "" {
+		switch terminal.state {
+		case contracts.TaskCanceled:
+			terminal.errorCode = "planner_canceled"
+		default:
+			terminal.errorCode = "planner_failed"
+		}
+	}
+	terminal.errorMsg = strings.TrimSpace(terminal.errorMsg)
+	if terminal.errorMsg == "" {
+		switch terminal.state {
+		case contracts.TaskCanceled:
+			terminal.errorMsg = "planner run canceled"
+		default:
+			terminal.errorMsg = "planner run failed"
+		}
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		taskRuntime, terr := s.taskRuntimeForDB(tx)
@@ -142,30 +294,39 @@ func (s *Service) completePlannerRunFailed(ctx context.Context, taskRunID uint, 
 			return serr
 		}
 		if plannerRunMatchesState(pmState, taskRunID) {
-			s.failPlannerRun(pmState, now, errMsg)
+			s.failPlannerRun(pmState, now, terminal.errorMsg)
 			if err := s.persistPlannerStateTx(ctx, tx, pmState, now); err != nil {
 				return err
 			}
 		}
-		if err := taskRuntime.MarkRunFailed(ctx, taskRunID, "planner_failed", errMsg, now); err != nil {
-			return err
+		eventType := "task_failed"
+		note := "pm planner run failed"
+		switch terminal.state {
+		case contracts.TaskCanceled:
+			if err := taskRuntime.MarkRunCanceled(ctx, taskRunID, terminal.errorCode, terminal.errorMsg, now); err != nil {
+				return err
+			}
+			eventType = "task_canceled"
+			note = "pm planner run canceled"
+		default:
+			if err := taskRuntime.MarkRunFailed(ctx, taskRunID, terminal.errorCode, terminal.errorMsg, now); err != nil {
+				return err
+			}
 		}
-		if err := taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
+		return taskRuntime.AppendEvent(ctx, contracts.TaskEventInput{
 			TaskRunID: taskRunID,
-			EventType: "task_failed",
+			EventType: eventType,
 			FromState: map[string]any{
 				"orchestration_state": contracts.TaskRunning,
 			},
 			ToState: map[string]any{
-				"orchestration_state": contracts.TaskFailed,
-				"error_code":          "planner_failed",
-				"error_message":       errMsg,
+				"orchestration_state": terminal.state,
+				"error_code":          terminal.errorCode,
+				"error_message":       terminal.errorMsg,
 			},
-			Note: "pm planner run failed",
-		}); err != nil {
-			return err
-		}
-		return nil
+			Note:      note,
+			CreatedAt: now,
+		})
 	})
 }
 

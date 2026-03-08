@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
 	"dalek/internal/services/agentexec"
 	"dalek/internal/services/core"
@@ -34,6 +35,7 @@ type Service struct {
 	// sdkHandleLauncher 用于测试注入，生产环境保持 nil（使用真实的 launchWorkerSDKHandle）。
 	sdkHandleLauncher     workerSDKHandleLauncherFunc
 	dispatchAgentExecutor dispatchAgentExecutorFunc
+	runner                sdkrunner.TaskRunner
 }
 
 func New(p *core.Project, workerSvc *worker.Service) *Service {
@@ -47,6 +49,7 @@ func New(p *core.Project, workerSvc *worker.Service) *Service {
 		logger:                  logger,
 		workerReadyTimeout:      defaultWorkerReadyTimeout,
 		workerReadyPollInterval: defaultWorkerReadyPollInterval,
+		runner:                  sdkrunner.DefaultTaskRunner{},
 	}
 }
 
@@ -100,6 +103,28 @@ func (s *Service) require() (*core.Project, *gorm.DB, error) {
 		return nil, nil, fmt.Errorf("pm service 缺少 task runtime")
 	}
 	return s.p, s.p.DB, nil
+}
+
+func (s *Service) SetTaskRunner(runner sdkrunner.TaskRunner) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runner = runner
+}
+
+func (s *Service) taskRunner() sdkrunner.TaskRunner {
+	if s == nil {
+		return sdkrunner.DefaultTaskRunner{}
+	}
+	s.mu.RLock()
+	runner := s.runner
+	s.mu.RUnlock()
+	if runner == nil {
+		return sdkrunner.DefaultTaskRunner{}
+	}
+	return runner
 }
 
 func (s *Service) slog() *slog.Logger {
