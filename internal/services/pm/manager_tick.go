@@ -40,7 +40,9 @@ type ManagerTickResult struct {
 
 	StartedTickets    []uint
 	DispatchedTickets []uint
+	SerialDeferred    []uint
 	MergeProposed     []uint
+	SurfaceConflicts  []SurfaceConflict
 
 	Errors []string
 }
@@ -72,11 +74,14 @@ type scheduleOptions struct {
 	DryRun           bool
 	SyncDispatch     bool
 	DispatchTimeout  time.Duration
+	PMState          *contracts.PMState
 }
 
 type scheduleResult struct {
 	StartedTickets    []uint
 	DispatchedTickets []uint
+	SerialDeferred    []uint
+	SurfaceConflicts  []SurfaceConflict
 	Errors            []string
 }
 
@@ -196,8 +201,10 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		DryRun:           opt.DryRun,
 		SyncDispatch:     opt.SyncDispatch,
 		DispatchTimeout:  opt.DispatchTimeout,
+		PMState:          st,
 	})
 	res.applyScheduleResult(scheduleResult)
+	res.SurfaceConflicts = uniqueSurfaceConflicts(res.SurfaceConflicts)
 
 	finalizeCtx, finalizeCancel := managerTickFinalizeContext(ctx)
 	defer finalizeCancel()
@@ -315,6 +322,8 @@ func (res *ManagerTickResult) applyMergeProposalResult(step mergeProposalResult)
 func (res *ManagerTickResult) applyScheduleResult(step scheduleResult) {
 	res.StartedTickets = append(res.StartedTickets, step.StartedTickets...)
 	res.DispatchedTickets = append(res.DispatchedTickets, step.DispatchedTickets...)
+	res.SerialDeferred = append(res.SerialDeferred, step.SerialDeferred...)
+	res.SurfaceConflicts = append(res.SurfaceConflicts, step.SurfaceConflicts...)
 	res.Errors = append(res.Errors, step.Errors...)
 }
 
@@ -691,8 +700,9 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 		ctx = context.Background()
 	}
 	out := scheduleResult{}
-	if opt.Capacity <= 0 || opt.DryRun {
-		return out
+	surfaceIndex, hasSurfaceIndex := s.tryLoadSurfaceConflictIndex()
+	if hasSurfaceIndex {
+		out.SurfaceConflicts = append(out.SurfaceConflicts, detectSurfaceConflictsFromIndex(surfaceIndex, surfaceIndex.ActiveTicketIDs)...)
 	}
 
 	runningTicketIDs := opt.RunningTicketIDs
@@ -709,6 +719,10 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 		Find(&queued).Error; err != nil {
 		return out
 	}
+	if opt.Capacity <= 0 || opt.DryRun {
+		out.SurfaceConflicts = uniqueSurfaceConflicts(out.SurfaceConflicts)
+		return out
+	}
 
 	capacity := opt.Capacity
 	for _, t := range queued {
@@ -717,6 +731,42 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 		}
 		if runningTicketIDs[t.ID] {
 			continue
+		}
+		if hasSurfaceIndex {
+			strategy, conflicts := evaluateSurfaceConflictStrategyForTicket(t.ID, runningTicketIDs, surfaceIndex)
+			if len(conflicts) > 0 {
+				out.SurfaceConflicts = append(out.SurfaceConflicts, conflicts...)
+			}
+			if strategy == SurfaceConflictIntegration {
+				created, _ := s.upsertOpenInbox(ctx, contracts.InboxItem{
+					Key:      inboxKeyTicketIncident(t.ID, "surface_conflict_integration"),
+					Status:   contracts.InboxOpen,
+					Severity: contracts.InboxWarn,
+					Reason:   contracts.InboxIncident,
+					Title:    fmt.Sprintf("建议 integration 策略：t%d", t.ID),
+					Body:     renderSurfaceConflictSummary(conflicts),
+					TicketID: t.ID,
+				})
+				if created && opt.PMState != nil {
+					s.markPlannerDirty(opt.PMState)
+				}
+			}
+			if strategy == SurfaceConflictSerial {
+				out.SerialDeferred = append(out.SerialDeferred, t.ID)
+				created, _ := s.upsertOpenInbox(ctx, contracts.InboxItem{
+					Key:      inboxKeyTicketIncident(t.ID, "surface_conflict_serial"),
+					Status:   contracts.InboxOpen,
+					Severity: contracts.InboxWarn,
+					Reason:   contracts.InboxIncident,
+					Title:    fmt.Sprintf("串行策略触发：t%d", t.ID),
+					Body:     renderSurfaceConflictSummary(conflicts),
+					TicketID: t.ID,
+				})
+				if created && opt.PMState != nil {
+					s.markPlannerDirty(opt.PMState)
+				}
+				continue
+			}
 		}
 
 		startCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.managerStartTimeout())
@@ -769,6 +819,7 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 		}
 		capacity--
 	}
+	out.SurfaceConflicts = uniqueSurfaceConflicts(out.SurfaceConflicts)
 	return out
 }
 

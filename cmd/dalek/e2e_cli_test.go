@@ -126,6 +126,9 @@ func TestCLI_E2E_BasicWorkflow(t *testing.T) {
 		Schema                 string `json:"schema"`
 		PlannerDirty           bool   `json:"planner_dirty"`
 		PlannerActiveTaskRunID *uint  `json:"planner_active_task_run_id"`
+		HealthMetrics          *struct {
+			PlannerTimeoutRate float64 `json:"planner_timeout_rate"`
+		} `json:"health_metrics"`
 	}
 	if err := json.Unmarshal([]byte(out), &managerStatus); err != nil {
 		t.Fatalf("unmarshal manager status json failed: %v\nraw=%s", err, out)
@@ -138,6 +141,9 @@ func TestCLI_E2E_BasicWorkflow(t *testing.T) {
 	}
 	if managerStatus.PlannerActiveTaskRunID != nil {
 		t.Fatalf("planner_active_task_run_id should default nil, got=%v", *managerStatus.PlannerActiveTaskRunID)
+	}
+	if managerStatus.HealthMetrics == nil {
+		t.Fatalf("manager status should include health_metrics")
 	}
 
 	// 7) pm dashboard（text + json）
