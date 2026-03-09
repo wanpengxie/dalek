@@ -34,14 +34,12 @@ const (
 	rowNone rowKind = iota
 	rowManager
 	rowTicket
-	rowMerge
 )
 
 type rowRef struct {
 	section  string
 	kind     rowKind
 	ticketID uint
-	mergeID  uint
 }
 
 const (
@@ -62,6 +60,7 @@ type tableLayout struct {
 	priority int
 	label    int
 	status   int
+	integ    int
 	runtime  int
 	title    int
 	output   int
@@ -71,9 +70,7 @@ type tickMsg struct{}
 
 type refreshedMsg struct {
 	Views           []app.TicketView
-	MergeItems      []contracts.MergeItem
 	ArchivedTickets []contracts.Ticket
-	MergeErr        error
 	ArchiveErr      error
 	Err             error
 
@@ -189,10 +186,8 @@ type model struct {
 	rowRefs         []rowRef
 	viewsByID       map[uint]app.TicketView
 	ticketsByID     map[uint]contracts.Ticket
-	mergeItems      []contracts.MergeItem
 	archivedTickets []contracts.Ticket
 	showArchiveRows bool
-	mergeErr        string
 	archiveErr      string
 	helpMsg         string
 	status          string
@@ -303,10 +298,8 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		rowRefs:         nil,
 		viewsByID:       map[uint]app.TicketView{},
 		ticketsByID:     map[uint]contracts.Ticket{},
-		mergeItems:      nil,
 		archivedTickets: nil,
 		showArchiveRows: false,
-		mergeErr:        "",
 		archiveErr:      "",
 		helpMsg:         "g 管理员  n notebook  c 新建  Enter tmux  s 启动  p 派发  i 中断  a 日志  k 停止  d 归档  r 重新跑  e 编辑  v 事件  Shift+K/J backlog排序  +/- 优先级  0-4 状态  t 配色  q 退出",
 		status:          "就绪",
@@ -446,13 +439,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.errMsg = ""
 		m.lastRefresh = time.Now()
-		m.mergeItems = msg.MergeItems
 		m.archivedTickets = msg.ArchivedTickets
-		if msg.MergeErr != nil {
-			m.mergeErr = msg.MergeErr.Error()
-		} else {
-			m.mergeErr = ""
-		}
 		if msg.ArchiveErr != nil {
 			m.archiveErr = msg.ArchiveErr.Error()
 		} else {
@@ -820,7 +807,7 @@ func (m model) tablePanelView(width int) string {
 }
 
 func (m *model) applyViews(views []app.TicketView) {
-	extraRows := len(m.mergeItems) + 6
+	extraRows := 6
 	if m.showArchiveRows {
 		extraRows += len(m.archivedTickets)
 	}
@@ -855,6 +842,7 @@ func (m *model) applyViews(views []app.TicketView) {
 		"-",
 		"-",
 		trimCell("manager", m.tableLayout.status),
+		"-",
 		trimCell("就绪", m.tableLayout.runtime),
 		trimCell("项目管理员", m.tableLayout.title),
 		trimCell("-", m.tableLayout.output),
@@ -895,6 +883,7 @@ func (m *model) applyViews(views []app.TicketView) {
 				trimCell(ticketPriorityShort(t.Priority), m.tableLayout.priority),
 				trimCell(labelOrDash(t.Label), m.tableLayout.label),
 				trimCell(status, m.tableLayout.status),
+				trimCell(formatIntegrationStatus(t.WorkflowStatus, t.IntegrationStatus), m.tableLayout.integ),
 				trimCell(runtime, m.tableLayout.runtime),
 				trimCell(t.Title, m.tableLayout.title),
 				trimCell(outputRef, m.tableLayout.output),
@@ -903,29 +892,9 @@ func (m *model) applyViews(views []app.TicketView) {
 		}
 	}
 
-	// 分区顺序：manager、running、wait、merge、backlog、done（archive 默认不展示）
+	// 分区顺序：manager、running、wait、backlog、done（archive 默认不展示）
 	addTicketRows("running", running)
 	addTicketRows("wait", waiting)
-
-	mergeItems := m.activeMergeItems()
-	for _, mi := range mergeItems {
-		branch := trimCell(strings.TrimSpace(mi.Branch), m.tableLayout.output)
-		if branch == "" {
-			branch = "-"
-		}
-		rows = append(rows, table.Row{
-			partitionCell("merge"),
-			trimCell(fmt.Sprintf("m%d", mi.ID), m.tableLayout.id),
-			"-",
-			"-",
-			trimCell(strings.TrimSpace(string(mi.Status)), m.tableLayout.status),
-			"-",
-			trimCell(fmt.Sprintf("t%d merge item", mi.TicketID), m.tableLayout.title),
-			branch,
-		})
-		refs = append(refs, rowRef{kind: rowMerge, section: "merge", mergeID: mi.ID, ticketID: mi.TicketID})
-	}
-
 	addTicketRows("backlog", backlog)
 	addTicketRows("done", done)
 
@@ -945,6 +914,7 @@ func (m *model) applyViews(views []app.TicketView) {
 				trimCell(ticketPriorityShort(t.Priority), m.tableLayout.priority),
 				trimCell(labelOrDash(t.Label), m.tableLayout.label),
 				trimCell("归档", m.tableLayout.status),
+				"-",
 				"-",
 				trimCell(t.Title, m.tableLayout.title),
 				"-",
@@ -986,8 +956,7 @@ func (m *model) applyViews(views []app.TicketView) {
 func sameRowRef(a, b rowRef) bool {
 	return a.kind == b.kind &&
 		a.section == b.section &&
-		a.ticketID == b.ticketID &&
-		a.mergeID == b.mergeID
+		a.ticketID == b.ticketID
 }
 
 func (m model) managerRowIndex() int {
@@ -997,72 +966,6 @@ func (m model) managerRowIndex() int {
 		}
 	}
 	return -1
-}
-
-func (m model) mergeItemByID(id uint) (contracts.MergeItem, bool) {
-	for _, mi := range m.mergeItems {
-		if mi.ID == id {
-			return mi, true
-		}
-	}
-	return contracts.MergeItem{}, false
-}
-
-func (m model) mergeInspectorLeftView(panelW int, mergeID uint) string {
-	innerW := max(10, panelW-4)
-	mi, ok := m.mergeItemByID(mergeID)
-	if !ok {
-		lines := []string{
-			panelTitle(fmt.Sprintf("元信息  m%d", mergeID)),
-			faint("merge item 不存在（可能已被更新）"),
-		}
-		lines = padBottom(lines, 6+tailShowLines)
-		return strings.Join(lines, "\n")
-	}
-	approved := "-"
-	if strings.TrimSpace(mi.ApprovedBy) != "" {
-		approved = strings.TrimSpace(mi.ApprovedBy)
-	}
-	approvedAt := "-"
-	if mi.ApprovedAt != nil {
-		approvedAt = mi.ApprovedAt.Local().Format("01-02 15:04")
-	}
-	lines := []string{
-		panelTitle(fmt.Sprintf("元信息  m%d", mi.ID)),
-		badge("merge", cWarn) + " " + badge(strings.TrimSpace(string(mi.Status)), cNeutral),
-		kvLine("ticket:", fmt.Sprintf("t%d", mi.TicketID), innerW),
-		kvLine("worker:", fmt.Sprintf("w%d", mi.WorkerID), innerW),
-		kvLine("branch:", oneLine(strings.TrimSpace(mi.Branch)), innerW),
-		kvLine("approved:", approved+" @ "+approvedAt, innerW),
-		kvLine("updated:", mi.UpdatedAt.Local().Format("01-02 15:04"), innerW),
-	}
-	if strings.TrimSpace(mi.ChecksJSON.String()) != "" {
-		lines = append(lines, kvLine("checks:", oneLine(strings.TrimSpace(mi.ChecksJSON.String())), innerW))
-	}
-	lines = padBottom(lines, 6+tailShowLines)
-	return strings.Join(lines, "\n")
-}
-
-func (m model) mergeInspectorRightView(panelW int, mergeID uint) string {
-	innerW := max(10, panelW-4)
-	mi, ok := m.mergeItemByID(mergeID)
-	if !ok {
-		lines := []string{
-			panelTitle("merge detail"),
-			faint("(merge item 不存在)"),
-		}
-		lines = padBottom(lines, 4+tailShowLines)
-		return strings.Join(lines, "\n")
-	}
-	lines := []string{
-		panelTitle("merge detail"),
-		kvLine("merge id:", fmt.Sprintf("m%d", mi.ID), innerW),
-		kvLine("status:", strings.TrimSpace(string(mi.Status)), innerW),
-		kvLine("branch:", oneLine(strings.TrimSpace(mi.Branch)), innerW),
-		faint("当前为 merge 队列条目；不提供 pane tail"),
-	}
-	lines = padBottom(lines, 4+tailShowLines)
-	return strings.Join(lines, "\n")
 }
 
 func (m model) inspectorView(width int) string {
@@ -1108,8 +1011,6 @@ func (m model) inspectorLeftView(panelW int) string {
 	switch sel.kind {
 	case rowManager:
 		return m.managerInspectorLeftView(panelW)
-	case rowMerge:
-		return m.mergeInspectorLeftView(panelW, sel.mergeID)
 	}
 	id := sel.ticketID
 	v, ok := m.viewsByID[id]
@@ -1125,6 +1026,7 @@ func (m model) inspectorLeftView(panelW int) string {
 			}
 			status := "待办"
 			status = formatTicketStatus(t.WorkflowStatus)
+			integration := formatIntegrationStatus(t.WorkflowStatus, t.IntegrationStatus)
 			lines := []string{
 				panelTitle(fmt.Sprintf("元信息  t%d", id)),
 				badge(status, cNeutral),
@@ -1132,6 +1034,7 @@ func (m model) inspectorLeftView(panelW int) string {
 				kvLine("标签:", labelOrDash(t.Label), innerW),
 				kvLine("描述:", desc, innerW),
 				kvLine("状态:", string(t.WorkflowStatus), innerW),
+				kvLine("集成:", integration, innerW),
 				kvLine("更新:", t.UpdatedAt.Local().Format("01-02 15:04"), innerW),
 				faint("该 ticket 当前不在活跃 worker 视图中"),
 			}
@@ -1213,12 +1116,14 @@ func (m model) inspectorLeftView(panelW int) string {
 	}
 	runtimeState := formatRuntimeState(v)
 	sessionState := formatSessionState(v)
+	integration := formatIntegrationStatus(t.WorkflowStatus, t.IntegrationStatus)
 
 	lines := []string{
 		panelTitle(fmt.Sprintf("元信息  t%d · dispatch/running", t.ID)),
 		statusB + " " + runtimeB + " " + processB,
 		kvLine("ticket:", title, innerW),
 		kvLine("标签:", labelOrDash(t.Label), innerW),
+		kvLine("集成:", integration, innerW),
 		kvLine("流程:", m.dispatchProcessState(v), innerW),
 		kvLine("run:", runID+"  runtime="+runtimeState, innerW),
 		kvLine("phase:", semPhase+"  next="+semNext, innerW),
@@ -1239,8 +1144,6 @@ func (m model) inspectorMiddleView(panelW int) string {
 	switch sel.kind {
 	case rowManager:
 		return m.managerInspectorMiddleView(panelW)
-	case rowMerge:
-		return m.mergeInspectorMiddleView(panelW, sel.mergeID)
 	}
 
 	id := sel.ticketID
@@ -1280,42 +1183,23 @@ func (m model) inspectorMiddleView(panelW int) string {
 	if runtimeSummary == "" {
 		runtimeSummary = "-"
 	}
+	integration := formatIntegrationStatus(v.Ticket.WorkflowStatus, v.Ticket.IntegrationStatus)
+	anchor := oneLine(strings.TrimSpace(v.Ticket.MergeAnchorSHA))
+	if anchor == "" {
+		anchor = "-"
+	}
 
 	lines := []string{
 		panelTitle(fmt.Sprintf("PM事实观察  t%d", v.Ticket.ID)),
 		badge("event_note", cInfo) + " " + badge(eventType, cNeutral),
 		kvLine("流程:", m.dispatchProcessState(v), innerW),
+		kvLine("integration:", integration, innerW),
+		kvLine("anchor:", anchor, innerW),
 		kvLine("last_event:", eventType+"  @ "+timeAndAge(v.LastEventAt), innerW),
 		kvLine("next_action:", semNext, innerW),
 		kvLine("semantic:", semSummary, innerW),
 		kvLine("runtime:", runtimeSummary, innerW),
 		kvLine("event_note:", eventNote, innerW),
-	}
-	lines = padBottom(lines, 4+tailShowLines)
-	return strings.Join(lines, "\n")
-}
-
-func (m model) mergeInspectorMiddleView(panelW int, mergeID uint) string {
-	innerW := max(10, panelW-4)
-	mi, ok := m.mergeItemByID(mergeID)
-	if !ok {
-		lines := []string{
-			panelTitle(fmt.Sprintf("PM事实观察  m%d", mergeID)),
-			faint("merge item 不存在（可能已被更新）"),
-		}
-		lines = padBottom(lines, 4+tailShowLines)
-		return strings.Join(lines, "\n")
-	}
-	checks := oneLine(strings.TrimSpace(mi.ChecksJSON.String()))
-	if checks == "" || checks == "{}" {
-		checks = "-"
-	}
-	lines := []string{
-		panelTitle(fmt.Sprintf("PM事实观察  m%d", mi.ID)),
-		badge("merge", cWarn) + " " + badge(strings.TrimSpace(string(mi.Status)), cNeutral),
-		kvLine("ticket:", fmt.Sprintf("t%d", mi.TicketID), innerW),
-		kvLine("facts:", "merge 没有 worker event_note，观察 checks_json", innerW),
-		kvLine("checks:", checks, innerW),
 	}
 	lines = padBottom(lines, 4+tailShowLines)
 	return strings.Join(lines, "\n")
@@ -1364,10 +1248,9 @@ func (m model) managerInspectorLeftView(panelW int) string {
 
 	views := m.orderedViews()
 	summary := summarizeQueueStatus(views)
+	integrationSummary := summarizeTicketIntegration(views)
 	issueTotal := len(collectPendingIssues(views, len(views)+1))
 	issuesPreview := collectPendingIssues(views, 2)
-	mergeItems := m.activeMergeItems()
-	mergeSummary := summarizeMergeQueue(mergeItems)
 
 	lines := []string{
 		panelTitle("元信息  manager"),
@@ -1376,15 +1259,12 @@ func (m model) managerInspectorLeftView(panelW int) string {
 		kvLine("state:", stateDir, innerW),
 		kvLine("交互:", "manager attach 已移除", innerW),
 		kvLine("队列:", fmt.Sprintf("待办%d 排队%d 阻塞%d 运行%d 完成%d", summary.Backlog, summary.Queued, summary.Blocked, summary.Running, summary.Done), innerW),
-		kvLine("merge:", fmt.Sprintf("总%d proposed%d checks%d ready%d approved%d blocked%d", mergeSummary.Total, mergeSummary.Proposed, mergeSummary.ChecksRunning, mergeSummary.Ready, mergeSummary.Approved, mergeSummary.Blocked), innerW),
+		kvLine("integration:", fmt.Sprintf("待合并%d 已合并%d 已放弃%d 未记录%d", integrationSummary.NeedsMerge, integrationSummary.Merged, integrationSummary.Abandoned, integrationSummary.Unset), innerW),
 		kvLine("待处理:", fmt.Sprintf("%d 项", issueTotal), innerW),
 		kvLine("提示:", "使用 manager tick/status 查看状态", innerW),
 	}
 	if strings.TrimSpace(cwd) != "" && cwd != repo {
 		lines = append(lines, kvLine("cwd:", cwd, innerW))
-	}
-	if strings.TrimSpace(m.mergeErr) != "" {
-		lines = append(lines, cutANSI(" merge加载失败: "+oneLine(m.mergeErr), innerW))
 	}
 	if strings.TrimSpace(m.archiveErr) != "" {
 		lines = append(lines, cutANSI(" archive加载失败: "+oneLine(m.archiveErr), innerW))
@@ -1394,16 +1274,6 @@ func (m model) managerInspectorLeftView(panelW int) string {
 	}
 	if issueTotal > len(issuesPreview) {
 		lines = append(lines, cutANSI(fmt.Sprintf(" ... 还有 %d 项", issueTotal-len(issuesPreview)), innerW))
-	}
-	for _, mi := range mergeItems {
-		if len(lines) >= 14 {
-			break
-		}
-		branch := oneLine(strings.TrimSpace(mi.Branch))
-		if len(branch) > 28 {
-			branch = branch[:28] + "..."
-		}
-		lines = append(lines, cutANSI(fmt.Sprintf(" - m%d t%d %s %s", mi.ID, mi.TicketID, strings.TrimSpace(string(mi.Status)), branch), innerW))
 	}
 	lines = padBottom(lines, 6+tailShowLines)
 	return strings.Join(lines, "\n")
@@ -1416,8 +1286,6 @@ func (m model) inspectorRightView(panelW int) string {
 	switch sel.kind {
 	case rowManager:
 		return m.managerInspectorRightView(panelW)
-	case rowMerge:
-		return m.mergeInspectorRightView(panelW, sel.mergeID)
 	}
 	id := sel.ticketID
 	view, viewOK := m.viewsByID[id]

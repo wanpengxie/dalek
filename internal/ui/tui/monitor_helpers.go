@@ -70,8 +70,6 @@ func partitionColor(section string) lipgloss.TerminalColor {
 		return cOk
 	case "wait":
 		return cWarn
-	case "merge":
-		return cTitle
 	case "backlog":
 		return cNeutral
 	case "done":
@@ -317,46 +315,46 @@ func (m model) orderedViews() []app.TicketView {
 	return out
 }
 
-type mergeQueueSummary struct {
-	Total         int
-	Proposed      int
-	ChecksRunning int
-	Ready         int
-	Approved      int
-	Blocked       int
+type ticketIntegrationSummary struct {
+	NeedsMerge int
+	Merged     int
+	Abandoned  int
+	Unset      int
 }
 
-func summarizeMergeQueue(items []contracts.MergeItem) mergeQueueSummary {
-	out := mergeQueueSummary{Total: len(items)}
-	for _, it := range items {
-		switch it.Status {
-		case contracts.MergeProposed:
-			out.Proposed++
-		case contracts.MergeChecksRunning:
-			out.ChecksRunning++
-		case contracts.MergeReady:
-			out.Ready++
-		case contracts.MergeApproved:
-			out.Approved++
-		case contracts.MergeBlocked:
-			out.Blocked++
-		}
-	}
-	return out
-}
-
-func (m model) activeMergeItems() []contracts.MergeItem {
-	out := make([]contracts.MergeItem, 0, len(m.mergeItems))
-	for _, it := range m.mergeItems {
-		switch it.Status {
-		case contracts.MergeProposed, contracts.MergeChecksRunning, contracts.MergeReady, contracts.MergeApproved, contracts.MergeBlocked:
-			out = append(out, it)
-		default:
-			// 终态（merged/discarded）及未知状态默认不进入活跃队列，避免 UI 残留。
+func summarizeTicketIntegration(views []app.TicketView) ticketIntegrationSummary {
+	out := ticketIntegrationSummary{}
+	for _, v := range views {
+		if v.DerivedStatus != contracts.TicketDone {
 			continue
 		}
+		switch contracts.CanonicalIntegrationStatus(v.Ticket.IntegrationStatus) {
+		case contracts.IntegrationNeedsMerge:
+			out.NeedsMerge++
+		case contracts.IntegrationMerged:
+			out.Merged++
+		case contracts.IntegrationAbandoned:
+			out.Abandoned++
+		default:
+			out.Unset++
+		}
 	}
 	return out
+}
+
+func formatIntegrationStatus(workflow contracts.TicketWorkflowStatus, integration contracts.IntegrationStatus) string {
+	switch contracts.CanonicalIntegrationStatus(integration) {
+	case contracts.IntegrationNeedsMerge:
+		return "待合并"
+	case contracts.IntegrationMerged:
+		return "已合并"
+	case contracts.IntegrationAbandoned:
+		return "已放弃"
+	}
+	if contracts.CanonicalTicketWorkflowStatus(workflow) == contracts.TicketDone {
+		return "未记录"
+	}
+	return "-"
 }
 
 func (m model) canCaptureTail(ref rowRef) bool {
@@ -388,13 +386,10 @@ func (m model) refreshCmd() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		views, err := m.p.ListTicketViews(ctx)
-		merges, merr := m.p.ListMergeItems(ctx, app.ListMergeOptions{Limit: 200})
 		tickets, terr := m.p.ListTickets(ctx, true)
 		return refreshedMsg{
 			Views:           views,
-			MergeItems:      merges,
 			ArchivedTickets: tickets,
-			MergeErr:        merr,
 			ArchiveErr:      terr,
 			Err:             err,
 			Manual:          false,
@@ -413,13 +408,10 @@ func (m model) manualRefreshCmd(ticketID uint) tea.Cmd {
 		defer cancel()
 
 		views, err := m.p.ListTicketViews(ctx)
-		merges, merr := m.p.ListMergeItems(ctx, app.ListMergeOptions{Limit: 200})
 		tickets, terr := m.p.ListTickets(ctx, true)
 		return refreshedMsg{
 			Views:           views,
-			MergeItems:      merges,
 			ArchivedTickets: tickets,
-			MergeErr:        merr,
 			ArchiveErr:      terr,
 			Err:             err,
 			Manual:          true,
@@ -719,15 +711,16 @@ func defaultTableLayout() tableLayout {
 		priority: 2,
 		label:    8,
 		status:   8,
+		integ:    8,
 		runtime:  10,
-		title:    34,
+		title:    28,
 		output:   18,
 	}
 }
 
 func tableTotalWidth(layout tableLayout) int {
-	const gapCount = 7
-	return layout.section + layout.id + layout.priority + layout.label + layout.status + layout.runtime + layout.title + layout.output + gapCount
+	const gapCount = 8
+	return layout.section + layout.id + layout.priority + layout.label + layout.status + layout.integ + layout.runtime + layout.title + layout.output + gapCount
 }
 
 func tableColumns(layout tableLayout) []table.Column {
@@ -737,6 +730,7 @@ func tableColumns(layout tableLayout) []table.Column {
 		{Title: "P", Width: layout.priority},
 		{Title: "标签", Width: layout.label},
 		{Title: "状态", Width: layout.status},
+		{Title: "集成", Width: layout.integ},
 		{Title: "运行", Width: layout.runtime},
 		{Title: "标题", Width: layout.title},
 		{Title: "输出", Width: layout.output},
@@ -752,7 +746,7 @@ func colorizePartitionColumn(view string) string {
 }
 
 func colorizePartitionLine(line string) string {
-	for _, section := range []string{"manager", "running", "wait", "merge", "backlog", "done", "archive"} {
+	for _, section := range []string{"manager", "running", "wait", "backlog", "done", "archive"} {
 		idx := strings.Index(line, section)
 		if idx < 0 {
 			continue

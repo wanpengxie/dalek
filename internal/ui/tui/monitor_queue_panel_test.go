@@ -12,7 +12,6 @@ import (
 
 func TestApplyViews_GroupOrderAndNoHeaderRows(t *testing.T) {
 	m := newModel(nil, nil, "")
-	m.mergeItems = []contracts.MergeItem{{ID: 7, TicketID: 3, Status: contracts.MergeProposed, Branch: "ts/demo/t3-abc"}}
 	m.archivedTickets = []contracts.Ticket{{ID: 99, Title: "已归档", WorkflowStatus: contracts.TicketArchived}}
 	m.applyViews([]app.TicketView{
 		{Ticket: contracts.Ticket{ID: 1, Title: "run"}, DerivedStatus: contracts.TicketActive, RuntimeHealthState: contracts.TaskHealthBusy},
@@ -21,7 +20,7 @@ func TestApplyViews_GroupOrderAndNoHeaderRows(t *testing.T) {
 		{Ticket: contracts.Ticket{ID: 4, Title: "done"}, DerivedStatus: contracts.TicketDone},
 	})
 
-	if len(m.rowRefs) < 6 {
+	if len(m.rowRefs) < 5 {
 		t.Fatalf("unexpected row count: %d", len(m.rowRefs))
 	}
 	if m.rowRefs[0].kind != rowManager || m.rowRefs[0].section != "manager" {
@@ -34,10 +33,15 @@ func TestApplyViews_GroupOrderAndNoHeaderRows(t *testing.T) {
 		}
 		gotOrder = append(gotOrder, r.section)
 	}
-	wantPrefix := []string{"running", "wait", "merge", "backlog", "done"}
+	wantPrefix := []string{"running", "wait", "backlog", "done"}
 	for i, want := range wantPrefix {
 		if i >= len(gotOrder) || gotOrder[i] != want {
 			t.Fatalf("unexpected section order at %d: got=%v wantPrefix=%v", i, gotOrder, wantPrefix)
+		}
+	}
+	for _, s := range gotOrder {
+		if s == "merge" {
+			t.Fatalf("merge section should be removed: gotOrder=%v", gotOrder)
 		}
 	}
 	for _, s := range gotOrder {
@@ -54,10 +58,6 @@ func TestApplyViews_GroupOrderAndNoHeaderRows(t *testing.T) {
 
 func TestManagerInspectorLeftView_ShowsPendingIssuePreview(t *testing.T) {
 	m := newModel(nil, nil, "")
-	m.mergeItems = []contracts.MergeItem{
-		{ID: 21, TicketID: 10, Status: contracts.MergeProposed, Branch: "ts/demo/t10-x1"},
-		{ID: 22, TicketID: 11, Status: contracts.MergeApproved, Branch: "ts/demo/t11-x2"},
-	}
 	m.applyViews([]app.TicketView{
 		{
 			Ticket:             contracts.Ticket{ID: 10, Title: "等待输入"},
@@ -67,8 +67,12 @@ func TestManagerInspectorLeftView_ShowsPendingIssuePreview(t *testing.T) {
 			RuntimeSummary:     "需要你确认输入",
 		},
 		{
-			Ticket:        contracts.Ticket{ID: 11, Title: "卡住"},
-			DerivedStatus: contracts.TicketBlocked,
+			Ticket:        contracts.Ticket{ID: 11, Title: "待合并", WorkflowStatus: contracts.TicketDone, IntegrationStatus: contracts.IntegrationNeedsMerge},
+			DerivedStatus: contracts.TicketDone,
+		},
+		{
+			Ticket:        contracts.Ticket{ID: 12, Title: "已合并", WorkflowStatus: contracts.TicketDone, IntegrationStatus: contracts.IntegrationMerged},
+			DerivedStatus: contracts.TicketDone,
 		},
 	})
 	for i, r := range m.rowRefs {
@@ -82,20 +86,19 @@ func TestManagerInspectorLeftView_ShowsPendingIssuePreview(t *testing.T) {
 	if !strings.Contains(got, "待处理:") {
 		t.Fatalf("pending section not shown: %q", got)
 	}
-	if !strings.Contains(got, "merge:") {
-		t.Fatalf("merge section not shown: %q", got)
+	if !strings.Contains(got, "integration:") {
+		t.Fatalf("integration section not shown: %q", got)
 	}
 	if !strings.Contains(got, "t10 等待输入：需要你确认输入") {
 		t.Fatalf("pending preview not shown: %q", got)
 	}
-	if !strings.Contains(got, "m21 t10 proposed") {
-		t.Fatalf("merge preview not shown: %q", got)
+	if strings.Contains(got, "merge:") {
+		t.Fatalf("merge summary should be removed: %q", got)
 	}
 }
 
-func TestSelectedRow_ReturnsManagerAndMergeKinds(t *testing.T) {
+func TestSelectedRow_ReturnsManagerAndTicketKinds(t *testing.T) {
 	m := newModel(nil, nil, "")
-	m.mergeItems = []contracts.MergeItem{{ID: 31, TicketID: 10, Status: contracts.MergeProposed, Branch: "ts/demo/t10-x1"}}
 	m.applyViews([]app.TicketView{{
 		Ticket:             contracts.Ticket{ID: 10, Title: "等待输入"},
 		DerivedStatus:      contracts.TicketActive,
@@ -110,41 +113,39 @@ func TestSelectedRow_ReturnsManagerAndMergeKinds(t *testing.T) {
 		t.Fatalf("unexpected manager row: %+v", mgr)
 	}
 
-	foundMerge := false
+	foundTicket := false
 	for i, r := range m.rowRefs {
-		if r.kind != rowMerge {
+		if r.kind != rowTicket {
 			continue
 		}
 		m.table.SetCursor(i)
 		sel := m.selectedRow()
-		if sel.kind != rowMerge || sel.mergeID != 31 {
-			t.Fatalf("unexpected merge row: %+v", sel)
+		if sel.kind != rowTicket || sel.ticketID != 10 {
+			t.Fatalf("unexpected ticket row: %+v", sel)
 		}
-		foundMerge = true
+		foundTicket = true
 		break
 	}
-	if !foundMerge {
-		t.Fatalf("merge row not found")
+	if !foundTicket {
+		t.Fatalf("ticket row not found")
 	}
 }
 
-func TestApplyViews_MergeSectionHidesDiscardedAndMerged(t *testing.T) {
+func TestApplyViews_DoneRowsRenderIntegrationStatus(t *testing.T) {
 	m := newModel(nil, nil, "")
-	m.mergeItems = []contracts.MergeItem{
-		{ID: 31, TicketID: 10, Status: contracts.MergeProposed, Branch: "ts/demo/t10-x1"},
-		{ID: 32, TicketID: 11, Status: contracts.MergeDiscarded, Branch: "ts/demo/t11-x2"},
-		{ID: 33, TicketID: 12, Status: contracts.MergeMerged, Branch: "ts/demo/t12-x3"},
-	}
 	m.applyViews([]app.TicketView{
-		{Ticket: contracts.Ticket{ID: 10, Title: "run"}, DerivedStatus: contracts.TicketActive, RuntimeHealthState: contracts.TaskHealthBusy},
+		{Ticket: contracts.Ticket{ID: 10, Title: "need merge", WorkflowStatus: contracts.TicketDone, IntegrationStatus: contracts.IntegrationNeedsMerge}, DerivedStatus: contracts.TicketDone},
+		{Ticket: contracts.Ticket{ID: 11, Title: "merged", WorkflowStatus: contracts.TicketDone, IntegrationStatus: contracts.IntegrationMerged}, DerivedStatus: contracts.TicketDone},
+		{Ticket: contracts.Ticket{ID: 12, Title: "abandoned", WorkflowStatus: contracts.TicketDone, IntegrationStatus: contracts.IntegrationAbandoned}, DerivedStatus: contracts.TicketDone},
 	})
 
-	for _, r := range m.rowRefs {
-		if r.kind != rowMerge {
-			continue
-		}
-		if r.mergeID != 31 {
-			t.Fatalf("only active merge item should remain visible, got mergeID=%d", r.mergeID)
+	got := ansi.Strip(m.tablePanelView(180))
+	if !strings.Contains(got, "集成") {
+		t.Fatalf("integration column should be visible, got=%q", got)
+	}
+	for _, want := range []string{"待合并", "已合并", "已放弃"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing integration status %q in table: %q", want, got)
 		}
 	}
 }

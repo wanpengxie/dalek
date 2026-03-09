@@ -19,14 +19,12 @@ func cmdMerge(args []string) {
 	switch sub {
 	case "ls":
 		cmdMergeList(args[1:])
-	case "propose":
-		cmdMergePropose(args[1:])
-	case "approve":
-		cmdMergeApprove(args[1:])
-	case "discard":
-		cmdMergeDiscard(args[1:])
-	case "merged":
-		cmdMergeMarked(args[1:])
+	case "propose", "approve", "discard", "merged":
+		if isHelpArgs(args[1:]) {
+			printMergeDeprecatedSubUsage(sub)
+			os.Exit(0)
+		}
+		exitMergeDeprecated(sub)
 	case "help", "-h", "--help":
 		printMergeUsage()
 		os.Exit(0)
@@ -40,13 +38,10 @@ func cmdMerge(args []string) {
 }
 
 func printMergeUsage() {
-	printGroupUsage("合并队列管理", "dalek merge <command> [flags]", []string{
-		"ls         列出 merge 项",
-		"propose    提议 merge",
-		"approve    审批 merge",
-		"discard    丢弃 merge",
-		"merged     标记已合并",
+	printGroupUsage("合并队列（已废弃）", "dalek merge <command> [flags]", []string{
+		"ls         列出历史 merge 记录（只读）",
 	})
+	fmt.Fprintln(os.Stderr, "提示: merge 写操作已迁移到 ticket integration 语义，请使用 dalek ticket integration。")
 	fmt.Fprintln(os.Stderr, "Use \"dalek merge <command> --help\" for more information.")
 }
 
@@ -56,7 +51,7 @@ func cmdMergeList(args []string) {
 	fs.Usage = func() {
 		printSubcommandUsage(
 			fs,
-			"列出 merge 队列",
+			"列出 merge 历史记录（只读）",
 			"dalek merge ls [--status STATUS] [-n 200] [--output text|json]",
 			"dalek merge ls",
 			"dalek merge ls --status proposed -o json",
@@ -118,6 +113,36 @@ func cmdMergeList(args []string) {
 		}
 		fmt.Printf("merge#%d  %s  t%d  branch=%s  approved_by=%s\n", it.ID, it.Status, it.TicketID, strings.TrimSpace(it.Branch), ab)
 	}
+}
+
+func exitMergeDeprecated(sub string) {
+	sub = strings.TrimSpace(sub)
+	exitUsageError(globalOutput,
+		fmt.Sprintf("merge %s 已废弃", sub),
+		"merge 写操作不再作为 PM 可见流程",
+		"改用 dalek ticket integration status|abandon",
+	)
+}
+
+func isHelpArgs(args []string) bool {
+	for _, a := range args {
+		switch strings.TrimSpace(a) {
+		case "help", "-h", "--help":
+			return true
+		}
+	}
+	return false
+}
+
+func printMergeDeprecatedSubUsage(sub string) {
+	out := os.Stderr
+	fmt.Fprintf(out, "merge %s（已废弃）\n", strings.TrimSpace(sub))
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Usage:")
+	fmt.Fprintln(out, "  dalek ticket integration status --ticket <id>")
+	fmt.Fprintln(out, "  dalek ticket integration abandon --ticket <id> --reason \"...\"")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "该子命令不再提供写操作。")
 }
 
 func cmdMergePropose(args []string) {

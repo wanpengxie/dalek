@@ -73,7 +73,7 @@ func printTicketUsage() {
 	fmt.Fprintln(out, "  set-priority 设置 ticket 优先级（high/medium/low/none）")
 	fmt.Fprintln(out, "  show        查看 ticket 详情")
 	fmt.Fprintln(out, "  start       启动 ticket（创建 worktree + worker runtime）")
-	fmt.Fprintln(out, "  dispatch    派发任务给 worker agent")
+	fmt.Fprintln(out, "  dispatch    兼容派发入口（推荐使用 start）")
 	fmt.Fprintln(out, "  integration 查看/标记 ticket integration 状态")
 	fmt.Fprintln(out, "  interrupt   软中断 worker（发送进程 SIGINT）")
 	fmt.Fprintln(out, "  stop        停止 worker")
@@ -850,7 +850,7 @@ func cmdTicketDispatch(args []string) {
 	fs.Usage = func() {
 		printSubcommandUsage(
 			fs,
-			"派发任务给 worker",
+			"兼容派发入口（推荐使用 ticket start）",
 			"dalek ticket dispatch --ticket <id> [--prompt \"...\"] [--auto-start=true|false] [--timeout 30s] [--output text|json]",
 			"dalek ticket dispatch --ticket 1",
 			"dalek ticket dispatch --ticket 1 --auto-start=false",
