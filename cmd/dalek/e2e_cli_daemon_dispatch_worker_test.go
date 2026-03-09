@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -233,12 +232,8 @@ func TestCLI_TicketDispatch_DaemonUnavailable_ShowsSyncFallback(t *testing.T) {
 	if !strings.Contains(stderr, "P50=28m, P90=96m（无历史时默认 20~120m）") {
 		t.Fatalf("stderr should contain P50/P90 estimate:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "如需同步执行（会阻塞当前终端），可使用：") {
-		t.Fatalf("stderr should contain structured sync fallback hint:\n%s", stderr)
-	}
-	wantFix := "dalek ticket dispatch --ticket 1 --sync --timeout 120m"
-	if !strings.Contains(stderr, wantFix) {
-		t.Fatalf("stderr should contain sync fallback command %q:\n%s", wantFix, stderr)
+	if strings.Contains(stderr, "--sync") {
+		t.Fatalf("stderr should not contain sync fallback hint:\n%s", stderr)
 	}
 }
 
@@ -268,41 +263,6 @@ func TestCLI_TicketDispatch_TimeoutMustBePositiveWhenProvided(t *testing.T) {
 			}
 			if !strings.Contains(stderr, "--timeout 必须为正值") {
 				t.Fatalf("stderr should contain positive timeout hint:\n%s", stderr)
-			}
-		})
-	}
-}
-
-func TestCLI_TicketDispatch_SyncRequiresPositiveTimeout(t *testing.T) {
-	bin := buildCLIBinary(t)
-	repo := initGitRepo(t)
-	home := filepath.Join(t.TempDir(), "home")
-	prepareDemoProjectWithOneTicket(t, bin, repo, home)
-
-	cases := []struct {
-		name      string
-		extraArgs []string
-	}{
-		{name: "missing"},
-		{name: "zero", extraArgs: []string{"--timeout", "0"}},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			args := []string{
-				"-home", home,
-				"-project", "demo",
-				"ticket", "dispatch",
-				"--ticket", "1",
-				"--sync",
-			}
-			args = append(args, tc.extraArgs...)
-			stdout, stderr, err := runCLI(t, bin, repo, args...)
-			if err == nil {
-				t.Fatalf("expected sync ticket dispatch fail when timeout invalid\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
-			}
-			if !strings.Contains(stderr, "--sync 模式必须指定 --timeout > 0") {
-				t.Fatalf("stderr should contain sync timeout requirement:\n%s", stderr)
 			}
 		})
 	}
@@ -500,47 +460,8 @@ func TestCLI_WorkerRun_DaemonUnavailable_ShowsSyncFallback(t *testing.T) {
 	if !strings.Contains(stderr, "P50=28m, P90=96m（无历史时默认 20~120m）") {
 		t.Fatalf("stderr should contain P50/P90 estimate:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "如需同步执行（会阻塞当前终端），可使用：") {
-		t.Fatalf("stderr should contain structured sync fallback hint:\n%s", stderr)
-	}
-	wantFix := fmt.Sprintf("dalek worker run --ticket %d --sync --timeout 120m", 1)
-	if !strings.Contains(stderr, wantFix) {
-		t.Fatalf("stderr should contain sync fallback command %q:\n%s", wantFix, stderr)
-	}
-}
-
-func TestCLI_WorkerRun_SyncRequiresPositiveTimeout(t *testing.T) {
-	bin := buildCLIBinary(t)
-	repo := initGitRepo(t)
-	home := filepath.Join(t.TempDir(), "home")
-	prepareDemoProjectWithOneTicket(t, bin, repo, home)
-
-	cases := []struct {
-		name      string
-		extraArgs []string
-	}{
-		{name: "missing"},
-		{name: "zero", extraArgs: []string{"--timeout", "0"}},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			args := []string{
-				"-home", home,
-				"-project", "demo",
-				"worker", "run",
-				"--ticket", "1",
-				"--sync",
-			}
-			args = append(args, tc.extraArgs...)
-			stdout, stderr, err := runCLI(t, bin, repo, args...)
-			if err == nil {
-				t.Fatalf("expected sync worker run fail when timeout invalid\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
-			}
-			if !strings.Contains(stderr, "--sync 模式必须指定 --timeout > 0") {
-				t.Fatalf("stderr should contain sync timeout requirement:\n%s", stderr)
-			}
-		})
+	if strings.Contains(stderr, "--sync") {
+		t.Fatalf("stderr should not contain sync fallback hint:\n%s", stderr)
 	}
 }
 

@@ -848,10 +848,10 @@ func cmdTicketDispatch(args []string) {
 		printSubcommandUsage(
 			fs,
 			"派发任务给 worker",
-			"dalek ticket dispatch --ticket <id> [--prompt \"...\"] [--auto-start=true|false] [--sync] [--timeout 120m] [--output text|json]",
+			"dalek ticket dispatch --ticket <id> [--prompt \"...\"] [--auto-start=true|false] [--timeout 30s] [--output text|json]",
 			"dalek ticket dispatch --ticket 1",
-			"dalek ticket dispatch --ticket 1 --auto-start=false --sync --timeout 120m",
-			"dalek ticket dispatch --ticket 1 --sync --timeout 120m",
+			"dalek ticket dispatch --ticket 1 --auto-start=false",
+			"dalek ticket dispatch --ticket 1 --timeout 30s",
 			"dalek ticket dispatch --ticket 1 --prompt \"补充说明\" -o json",
 		)
 	}
@@ -862,7 +862,6 @@ func cmdTicketDispatch(args []string) {
 	fs.UintVar(ticketID, "t", 0, "ticket ID (required)")
 	entryPrompt := fs.String("prompt", "", "补充本轮指令（可选）")
 	autoStart := fs.Bool("auto-start", true, "ticket 未启动时是否自动 start（默认 true）")
-	syncMode := fs.Bool("sync", false, "同步执行（阻塞直到完成）")
 	requestID := fs.String("request-id", "", "幂等请求 ID（可选）")
 	timeout := fs.Duration("timeout", 0, "超时（可选，必须 >0）")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
@@ -879,13 +878,6 @@ func cmdTicketDispatch(args []string) {
 			"dalek ticket dispatch --ticket 1",
 		)
 	}
-	if *syncMode && *timeout <= 0 {
-		exitUsageError(out,
-			"--sync 模式必须指定 --timeout > 0",
-			"同步执行需要设置超时，避免终端无限阻塞",
-			"dalek ticket dispatch --ticket 1 --sync --timeout 120m",
-		)
-	}
 	if timeoutProvided && *timeout <= 0 {
 		exitUsageError(out,
 			"非法参数 --timeout",
@@ -894,51 +886,6 @@ func cmdTicketDispatch(args []string) {
 		)
 	}
 	enforceDispatchDepthGuardOrExit(out, "dalek ticket dispatch")
-
-	if *syncMode {
-		p := mustOpenProjectWithOutput(out, *home, *proj)
-		ctx, cancel := projectCtx(*timeout)
-		defer cancel()
-		r, err := p.DispatchTicketWithOptions(ctx, uint(*ticketID), app.DispatchOptions{
-			EntryPrompt: strings.TrimSpace(*entryPrompt),
-			AutoStart:   autoStart,
-		})
-		if err != nil {
-			exitRuntimeError(out,
-				"派发任务失败",
-				err.Error(),
-				"确认 ticket 已启动并处于可派发状态后重试",
-			)
-		}
-
-		dispatchLogPath := ""
-		if w, werr := p.WorkerByID(ctx, r.WorkerID); werr == nil && w != nil {
-			dispatchLogPath = strings.TrimSpace(w.LogPath)
-		}
-		dispatchOutputRef := outputRefFromRuntime(dispatchLogPath)
-
-		if out == outputJSON {
-			payload := map[string]any{
-				"schema":       "dalek.ticket.dispatch.sync.v1",
-				"ticket_id":    r.TicketID,
-				"worker_id":    r.WorkerID,
-				"output_ref":   dispatchOutputRef,
-				"log_path":     dispatchLogPath,
-				"injected_cmd": strings.TrimSpace(r.InjectedCmd),
-				"mode":         "sync",
-			}
-			printJSONOrExit(payload)
-			return
-		}
-
-		fmt.Printf("t%d dispatched(sync): worker=w%d output=%s\n", r.TicketID, r.WorkerID, dispatchOutputRef)
-		if strings.TrimSpace(r.InjectedCmd) != "" {
-			fmt.Printf("cmd: %s\n", strings.TrimSpace(r.InjectedCmd))
-		} else if strings.TrimSpace(r.WorkerCommand) != "" {
-			fmt.Printf("worker_agent: %s\n", strings.TrimSpace(r.WorkerCommand))
-		}
-		return
-	}
 
 	p := mustOpenProjectWithOutput(out, *home, *proj)
 	_, daemonClient := mustOpenDaemonClient(out, *home)
@@ -962,7 +909,7 @@ func cmdTicketDispatch(args []string) {
 		exitRuntimeError(out,
 			"异步派发失败",
 			daemonRuntimeErrorCause(err),
-			"检查 daemon 日志（dalek daemon logs）后重试，或改用 --sync",
+			"检查 daemon 日志（dalek daemon logs）后重试",
 		)
 	}
 

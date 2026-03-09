@@ -75,10 +75,10 @@ func cmdWorkerRun(args []string) {
 	fs.Usage = func() {
 		printSubcommandUsage(
 			fs,
-			"直接派发 worker",
-			"dalek worker run --ticket <id> [--prompt \"...\"] [--sync] [--timeout 120m] [--output text|json]",
+			"通过 daemon 提交 worker run",
+			"dalek worker run --ticket <id> [--prompt \"...\"] [--timeout 30s] [--output text|json]",
 			"dalek worker run --ticket 1",
-			"dalek worker run --ticket 1 --sync --timeout 120m",
+			"dalek worker run --ticket 1 --timeout 30s",
 			"dalek worker run --ticket 1 --prompt \"继续执行任务\"",
 		)
 	}
@@ -87,7 +87,6 @@ func cmdWorkerRun(args []string) {
 	projShort := fs.String("p", globalProject, "项目名（可选）")
 	ticketID := fs.Uint("ticket", 0, "ticket id（必填）")
 	prompt := fs.String("prompt", "", "入口 prompt（可选；为空则默认继续执行任务）")
-	syncMode := fs.Bool("sync", false, "同步执行（阻塞直到完成）")
 	requestID := fs.String("request-id", "", "幂等请求 ID（可选）")
 	timeout := fs.Duration("timeout", 0, "超时（可选，必须 >0）")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
@@ -104,13 +103,6 @@ func cmdWorkerRun(args []string) {
 			"dalek worker run --ticket 1",
 		)
 	}
-	if *syncMode && *timeout <= 0 {
-		exitUsageError(out,
-			"--sync 模式必须指定 --timeout > 0",
-			"同步执行需要设置超时，避免终端无限阻塞",
-			"dalek worker run --ticket 1 --sync --timeout 120m",
-		)
-	}
 	if timeoutProvided && *timeout <= 0 {
 		exitUsageError(out,
 			"非法参数 --timeout",
@@ -120,33 +112,6 @@ func cmdWorkerRun(args []string) {
 	}
 	enforceDispatchDepthGuardOrExit(out, "dalek worker run")
 	p := mustOpenProjectWithOutput(out, *home, *proj)
-
-	if *syncMode {
-		ctx, cancel := projectCtx(*timeout)
-		defer cancel()
-		r, err := p.DirectDispatchWorker(ctx, uint(*ticketID), app.DirectDispatchOptions{EntryPrompt: strings.TrimSpace(*prompt)})
-		if err != nil {
-			exitRuntimeError(out,
-				"worker run 失败",
-				err.Error(),
-				"确认 ticket 存在且可执行后重试",
-			)
-		}
-		if out == outputJSON {
-			printJSONOrExit(map[string]any{
-				"schema":      "dalek.worker.run.sync.v1",
-				"mode":        "sync",
-				"ticket_id":   r.TicketID,
-				"worker_id":   r.WorkerID,
-				"stages":      r.Stages,
-				"next_action": strings.TrimSpace(r.LastNextAction),
-			})
-			return
-		}
-		fmt.Printf("t%d worker run 完成(sync): worker=w%d stages=%d next_action=%s\n",
-			r.TicketID, r.WorkerID, r.Stages, strings.TrimSpace(r.LastNextAction))
-		return
-	}
 
 	_, daemonClient := mustOpenDaemonClient(out, *home)
 	ctx, cancel := projectCtx(*timeout)
@@ -168,7 +133,7 @@ func cmdWorkerRun(args []string) {
 		exitRuntimeError(out,
 			"异步 worker run 失败",
 			daemonRuntimeErrorCause(err),
-			"检查 daemon 日志（dalek daemon logs）后重试，或改用 --sync",
+			"检查 daemon 日志（dalek daemon logs）后重试",
 		)
 	}
 

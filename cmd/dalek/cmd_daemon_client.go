@@ -42,23 +42,13 @@ func mustOpenDaemonClient(out cliOutputFormat, homeFlag string) (*app.Home, *app
 }
 
 func daemonUnavailableDispatchFix(ticketID uint) string {
-	return fmt.Sprintf(
-		"`dalek daemon start`\n"+
-			"当前命令属于长时任务，预计耗时：P50=28m, P90=96m（无历史时默认 20~120m）\n"+
-			"如需同步执行（会阻塞当前终端），可使用：\n"+
-			"  dalek ticket dispatch --ticket %d --sync --timeout 120m",
-		ticketID,
-	)
+	return "`dalek daemon start`\n" +
+		"当前命令属于长时任务，预计耗时：P50=28m, P90=96m（无历史时默认 20~120m）"
 }
 
 func daemonUnavailableWorkerRunFix(ticketID uint) string {
-	return fmt.Sprintf(
-		"`dalek daemon start`\n"+
-			"当前命令属于长时任务，预计耗时：P50=28m, P90=96m（无历史时默认 20~120m）\n"+
-			"如需同步执行（会阻塞当前终端），可使用：\n"+
-			"  dalek worker run --ticket %d --sync --timeout 120m",
-		ticketID,
-	)
+	return "`dalek daemon start`\n" +
+		"当前命令属于长时任务，预计耗时：P50=28m, P90=96m（无历史时默认 20~120m）"
 }
 
 func daemonUnavailableAgentRunFix() string {
