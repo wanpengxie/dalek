@@ -273,12 +273,14 @@ func TestCLI_TicketDispatch_DepthGuardBlocksNestedDispatch(t *testing.T) {
 	repo := initGitRepo(t)
 	home := filepath.Join(t.TempDir(), "home")
 	prepareDemoProjectWithOneTicket(t, bin, repo, home)
-	t.Setenv("DALEK_DISPATCH_DEPTH", "1")
 
-	stdout, stderr, err := runCLI(
+	stdout, stderr, err := runCLIWithEnv(
 		t,
 		bin,
 		repo,
+		map[string]string{
+			dispatchDepthEnvKey: "1",
+		},
 		"-home", home,
 		"-project", "demo",
 		"ticket", "dispatch",
@@ -312,12 +314,14 @@ func TestCLI_AgentRun_DepthGuardBlocksNestedDispatch(t *testing.T) {
 	repo := initGitRepo(t)
 	home := filepath.Join(t.TempDir(), "home")
 	prepareDemoProjectWithOneTicket(t, bin, repo, home)
-	t.Setenv("DALEK_DISPATCH_DEPTH", "1")
 
-	stdout, stderr, err := runCLI(
+	stdout, stderr, err := runCLIWithEnv(
 		t,
 		bin,
 		repo,
+		map[string]string{
+			dispatchDepthEnvKey: "1",
+		},
 		"-home", home,
 		"-project", "demo",
 		"agent", "run",
@@ -501,12 +505,14 @@ func TestCLI_WorkerRun_DepthGuardBlocksNestedDispatch(t *testing.T) {
 	repo := initGitRepo(t)
 	home := filepath.Join(t.TempDir(), "home")
 	prepareDemoProjectWithOneTicket(t, bin, repo, home)
-	t.Setenv("DALEK_DISPATCH_DEPTH", "1")
 
-	stdout, stderr, err := runCLI(
+	stdout, stderr, err := runCLIWithEnv(
 		t,
 		bin,
 		repo,
+		map[string]string{
+			dispatchDepthEnvKey: "1",
+		},
 		"-home", home,
 		"-project", "demo",
 		"worker", "run",

@@ -30,15 +30,15 @@ func TestStartTicket_PushesWorkflowAndMarksWorkerRunning(t *testing.T) {
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if got.WorkflowStatus != contracts.TicketQueued {
-		t.Fatalf("start 应推进 workflow_status backlog->queued，got=%s", got.WorkflowStatus)
+	if got.WorkflowStatus != contracts.TicketActive {
+		t.Fatalf("start 应推进 workflow_status 到 active，got=%s", got.WorkflowStatus)
 	}
 
 	var ev contracts.TicketWorkflowEvent
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query ticket workflow event failed: %v", err)
 	}
-	if ev.FromStatus != contracts.TicketBacklog || ev.ToStatus != contracts.TicketQueued {
+	if ev.FromStatus != contracts.TicketBacklog || ev.ToStatus != contracts.TicketActive {
 		t.Fatalf("unexpected workflow event transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 }

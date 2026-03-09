@@ -61,14 +61,15 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		return nil, fmt.Errorf("start 失败：未返回 worker")
 	}
 
-	// start 本身是“纳入系统执行”的动作：把 workflow 从 backlog 推进到 queued（仅 PM reducer 写）。
+	// start 本身是“纳入系统执行”的动作：把 workflow 推进到 active（仅 PM reducer 写）。
+	// queued 仅保留兼容路径，遇到历史 queued 数据时同样推进到 active。
 	// 注意：不要覆盖 done/blocked/active/archived 等更高阶段。
 	now := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ? AND (workflow_status = ? OR TRIM(COALESCE(workflow_status, '')) = '')", ticketID, contracts.TicketBacklog).
+			Where("id = ? AND (workflow_status IN (?, ?) OR TRIM(COALESCE(workflow_status, '')) = '')", ticketID, contracts.TicketBacklog, contracts.TicketQueued).
 			Updates(map[string]any{
-				"workflow_status": contracts.TicketQueued,
+				"workflow_status": contracts.TicketActive,
 				"updated_at":      now,
 			})
 		if res.Error != nil {
@@ -79,7 +80,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 			if from == "" {
 				from = contracts.TicketBacklog
 			}
-			if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketQueued, "pm.start", "start 推进 backlog->queued", map[string]any{
+			if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketActive, "pm.start", "start 推进到 active", map[string]any{
 				"ticket_id": ticketID,
 				"worker_id": w.ID,
 			}, now); err != nil {

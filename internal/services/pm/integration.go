@@ -143,12 +143,12 @@ func (s *Service) tryResolveMergeAnchorSHA(ctx context.Context, w *contracts.Wor
 	if w != nil {
 		wt := strings.TrimSpace(w.WorktreePath)
 		if wt != "" {
-			if out, err := infra.Run(checkCtx, wt, "git", "rev-parse", "HEAD"); err == nil {
+			if code, out, _, err := infra.RunExitCode(checkCtx, wt, "git", "rev-parse", "HEAD"); err == nil && code == 0 {
 				return strings.TrimSpace(out)
 			}
 		}
 	}
-	if out, err := infra.Run(checkCtx, p.RepoRoot, "git", "rev-parse", "HEAD"); err == nil {
+	if code, out, _, err := infra.RunExitCode(checkCtx, p.RepoRoot, "git", "rev-parse", "HEAD"); err == nil && code == 0 {
 		return strings.TrimSpace(out)
 	}
 	return ""
