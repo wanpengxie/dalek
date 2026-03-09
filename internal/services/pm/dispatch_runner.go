@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
+
+	"gorm.io/gorm"
 )
 
 type runPMDispatchJobOptions struct {
@@ -50,14 +52,54 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 	stopRenew := s.startLeaseRenewal(ctx, job, contracts.Worker{ID: job.WorkerID}, runnerID, leaseTTL)
 	defer close(stopRenew)
 
-	var t contracts.Ticket
-	if err := db.WithContext(ctx).First(&t, job.TicketID).Error; err != nil {
+	taskRuntime, err := s.taskRuntimeForDB(db)
+	if err != nil {
 		s.recordPMTaskFailure(ctx, job.TaskRunID, err)
 		_ = s.completePMDispatchJobFailed(context.Background(), job.ID, runnerID, err.Error())
 		return err
 	}
-	var w contracts.Worker
-	if err := db.WithContext(ctx).First(&w, job.WorkerID).Error; err != nil {
+	reqPayload, err := s.loadDispatchTaskRequestPayloadWithRuntime(ctx, taskRuntime, job.TaskRunID)
+	if err != nil {
+		s.recordPMTaskFailure(ctx, job.TaskRunID, err)
+		_ = s.completePMDispatchJobFailed(context.Background(), job.ID, runnerID, err.Error())
+		return err
+	}
+	autoStart := true
+	if job.TaskRunID != 0 && (reqPayload.TicketID != 0 || reqPayload.WorkerID != 0 || strings.TrimSpace(reqPayload.BaseBranch) != "" || strings.TrimSpace(reqPayload.Orchestrator) != "" || strings.TrimSpace(reqPayload.OrchestrationV) != "" || reqPayload.AutoStart) {
+		autoStart = reqPayload.AutoStart
+	}
+	s.recordPMTaskRuntime(ctx, job.TaskRunID, contracts.TaskHealthBusy, false, "dispatch resolving execution target", "pm_dispatch", map[string]any{
+		"request_id":  strings.TrimSpace(job.RequestID),
+		"auto_start":  autoStart,
+		"base_branch": strings.TrimSpace(reqPayload.BaseBranch),
+	})
+	s.recordPMTaskSemantic(ctx, job.TaskRunID, contracts.TaskPhasePlanning, "resolve_target", "continue", "dispatch 正在准备执行环境", map[string]any{
+		"request_id":  strings.TrimSpace(job.RequestID),
+		"auto_start":  autoStart,
+		"base_branch": strings.TrimSpace(reqPayload.BaseBranch),
+	})
+
+	t, targetWorker, err := s.resolveDispatchTarget(ctx, job.TicketID, autoStart, strings.TrimSpace(reqPayload.BaseBranch))
+	if err != nil {
+		s.recordPMTaskFailure(ctx, job.TaskRunID, err)
+		_ = s.completePMDispatchJobFailed(context.Background(), job.ID, runnerID, err.Error())
+		return err
+	}
+	if targetWorker == nil {
+		err = fmt.Errorf("dispatch target worker 解析失败")
+		s.recordPMTaskFailure(ctx, job.TaskRunID, err)
+		_ = s.completePMDispatchJobFailed(context.Background(), job.ID, runnerID, err.Error())
+		return err
+	}
+	if updatedJob, bindErr := s.bindDispatchJobWorker(ctx, job, *targetWorker, reqPayload); bindErr != nil {
+		s.recordPMTaskFailure(ctx, job.TaskRunID, bindErr)
+		_ = s.completePMDispatchJobFailed(context.Background(), job.ID, runnerID, bindErr.Error())
+		return bindErr
+	} else {
+		job = updatedJob
+	}
+	w := *targetWorker
+	if err := s.promoteTicketActiveForDispatch(ctx, job, runnerID); err != nil {
 		s.recordPMTaskFailure(ctx, job.TaskRunID, err)
 		_ = s.completePMDispatchJobFailed(context.Background(), job.ID, runnerID, err.Error())
 		return err
@@ -65,6 +107,7 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 
 	s.recordPMTaskSemantic(ctx, job.TaskRunID, contracts.TaskPhaseImplementing, "dispatch_pm_agent", "continue", "开始执行 PM dispatch agent", map[string]any{
 		"request_id": strings.TrimSpace(job.RequestID),
+		"worker_id":  w.ID,
 	})
 
 	result, err := s.executePMDispatchJob(ctx, job, t, w, opt)
@@ -88,6 +131,27 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 	if err := s.completePMDispatchJobSuccess(context.Background(), job.ID, runnerID, string(b)); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (s *Service) promoteTicketActiveForDispatch(ctx context.Context, job contracts.PMDispatchJob, runnerID string) error {
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	now := time.Now()
+	var statusEvent *StatusChangeEvent
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var promoteErr error
+		statusEvent, promoteErr = s.promoteTicketActiveOnDispatchClaimTx(ctx, tx, job, now)
+		return promoteErr
+	}); err != nil {
+		return err
+	}
+	s.emitStatusChangeHookAsync(statusEvent)
 	return nil
 }
 

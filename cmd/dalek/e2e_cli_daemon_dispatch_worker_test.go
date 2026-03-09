@@ -14,11 +14,12 @@ import (
 )
 
 type daemonDispatchSubmitPayload struct {
-	Project   string `json:"project"`
-	TicketID  uint   `json:"ticket_id"`
-	RequestID string `json:"request_id"`
-	Prompt    string `json:"prompt"`
-	AutoStart *bool  `json:"auto_start"`
+	Project    string `json:"project"`
+	TicketID   uint   `json:"ticket_id"`
+	RequestID  string `json:"request_id"`
+	Prompt     string `json:"prompt"`
+	AutoStart  *bool  `json:"auto_start"`
+	BaseBranch string `json:"base_branch"`
 }
 
 type daemonWorkerRunSubmitPayload struct {
@@ -63,7 +64,7 @@ func configureDaemonInternalListenForE2E(t *testing.T, homeDir, daemonURL string
 	}
 }
 
-func TestCLI_TicketDispatch_AsyncAccepted(t *testing.T) {
+func TestCLI_TicketStart_AsyncAccepted(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 	home := filepath.Join(t.TempDir(), "home")
@@ -91,6 +92,9 @@ func TestCLI_TicketDispatch_AsyncAccepted(t *testing.T) {
 		if payload.AutoStart == nil || !*payload.AutoStart {
 			t.Fatalf("expected auto_start=true by default, got=%v", payload.AutoStart)
 		}
+		if strings.TrimSpace(payload.BaseBranch) != "main" {
+			t.Fatalf("expected base_branch=main, got=%q", payload.BaseBranch)
+		}
 		called.Store(true)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
@@ -113,8 +117,9 @@ func TestCLI_TicketDispatch_AsyncAccepted(t *testing.T) {
 		repo,
 		"-home", home,
 		"-project", "demo",
-		"ticket", "dispatch",
+		"ticket", "start",
 		"--ticket", "1",
+		"--base", "main",
 		"--request-id", "dispatch-e2e-req",
 		"--prompt", "继续执行任务",
 		"-o", "json",
@@ -132,7 +137,7 @@ func TestCLI_TicketDispatch_AsyncAccepted(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &resp); err != nil {
 		t.Fatalf("decode response failed: %v\nraw=%s", err, stdout)
 	}
-	if resp.Schema != "dalek.ticket.dispatch.accepted.v1" {
+	if resp.Schema != "dalek.ticket.start.accepted.v1" {
 		t.Fatalf("unexpected schema: %q", resp.Schema)
 	}
 	if resp.Mode != "async" || !resp.Accepted {
@@ -146,42 +151,13 @@ func TestCLI_TicketDispatch_AsyncAccepted(t *testing.T) {
 	}
 }
 
-func TestCLI_TicketDispatch_AsyncAutoStartFalse(t *testing.T) {
+func TestCLI_TicketDispatch_Removed(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 	home := filepath.Join(t.TempDir(), "home")
 	prepareDemoProjectWithOneTicket(t, bin, repo, home)
 
-	var called atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/dispatch/submit" {
-			http.NotFound(w, r)
-			return
-		}
-		var payload daemonDispatchSubmitPayload
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Fatalf("decode payload failed: %v", err)
-		}
-		if payload.AutoStart == nil || *payload.AutoStart {
-			t.Fatalf("expected auto_start=false when CLI sets --auto-start=false, got=%v", payload.AutoStart)
-		}
-		called.Store(true)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"accepted":    true,
-			"project":     "demo",
-			"request_id":  "dispatch-e2e-auto-start-false",
-			"task_run_id": 7002,
-			"ticket_id":   1,
-			"worker_id":   9,
-		})
-	}))
-	t.Cleanup(server.Close)
-
-	configureDaemonInternalListenForE2E(t, home, server.URL)
-
-	_, _ = runCLIOK(
+	stdout, stderr, err := runCLI(
 		t,
 		bin,
 		repo,
@@ -189,16 +165,19 @@ func TestCLI_TicketDispatch_AsyncAutoStartFalse(t *testing.T) {
 		"-project", "demo",
 		"ticket", "dispatch",
 		"--ticket", "1",
-		"--request-id", "dispatch-e2e-auto-start-false",
-		"--auto-start=false",
-		"-o", "json",
 	)
-	if !called.Load() {
-		t.Fatalf("expected daemon submit endpoint called")
+	if err == nil {
+		t.Fatalf("expected ticket dispatch removed\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "ticket dispatch 已移除") {
+		t.Fatalf("stderr should mention removed command:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "请改用 ticket start") {
+		t.Fatalf("stderr should mention ticket start migration:\n%s", stderr)
 	}
 }
 
-func TestCLI_TicketDispatch_DaemonUnavailable_ShowsSyncFallback(t *testing.T) {
+func TestCLI_TicketStart_DaemonUnavailable_ShowsSyncFallback(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 	home := filepath.Join(t.TempDir(), "home")
@@ -212,13 +191,13 @@ func TestCLI_TicketDispatch_DaemonUnavailable_ShowsSyncFallback(t *testing.T) {
 		repo,
 		"-home", home,
 		"-project", "demo",
-		"ticket", "dispatch",
+		"ticket", "start",
 		"--ticket", "1",
 	)
 	if err == nil {
-		t.Fatalf("expected ticket dispatch fail when daemon unavailable\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+		t.Fatalf("expected ticket start fail when daemon unavailable\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
-	if !strings.Contains(stderr, "daemon 不在线，无法异步派发") {
+	if !strings.Contains(stderr, "daemon 不在线，无法启动并派发 ticket") {
 		t.Fatalf("stderr should contain daemon unavailable hint:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, "Fix: `dalek daemon start`") {
@@ -237,7 +216,7 @@ func TestCLI_TicketDispatch_DaemonUnavailable_ShowsSyncFallback(t *testing.T) {
 	}
 }
 
-func TestCLI_TicketDispatch_TimeoutMustBePositiveWhenProvided(t *testing.T) {
+func TestCLI_TicketStart_TimeoutMustBePositiveWhenProvided(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 	home := filepath.Join(t.TempDir(), "home")
@@ -251,24 +230,24 @@ func TestCLI_TicketDispatch_TimeoutMustBePositiveWhenProvided(t *testing.T) {
 				repo,
 				"-home", home,
 				"-project", "demo",
-				"ticket", "dispatch",
+				"ticket", "start",
 				"--ticket", "1",
 				"--timeout", timeoutArg,
 			)
 			if err == nil {
-				t.Fatalf("expected ticket dispatch fail when timeout=%s\nstdout:\n%s\nstderr:\n%s", timeoutArg, stdout, stderr)
+				t.Fatalf("expected ticket start fail when timeout=%s\nstdout:\n%s\nstderr:\n%s", timeoutArg, stdout, stderr)
 			}
 			if !strings.Contains(stderr, "非法参数 --timeout") {
 				t.Fatalf("stderr should contain timeout usage error:\n%s", stderr)
 			}
-			if !strings.Contains(stderr, "--timeout 必须为正值") {
+			if !strings.Contains(stderr, "--timeout 必须大于 0") {
 				t.Fatalf("stderr should contain positive timeout hint:\n%s", stderr)
 			}
 		})
 	}
 }
 
-func TestCLI_TicketDispatch_DepthGuardBlocksNestedDispatch(t *testing.T) {
+func TestCLI_TicketStart_DepthGuardBlocksNestedDispatch(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 	home := filepath.Join(t.TempDir(), "home")
@@ -283,14 +262,14 @@ func TestCLI_TicketDispatch_DepthGuardBlocksNestedDispatch(t *testing.T) {
 		},
 		"-home", home,
 		"-project", "demo",
-		"ticket", "dispatch",
+		"ticket", "start",
 		"--ticket", "1",
 		"-o", "json",
 	)
 	if err == nil {
-		t.Fatalf("expected ticket dispatch blocked by dispatch depth\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+		t.Fatalf("expected ticket start blocked by dispatch depth\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
-	if !strings.Contains(stderr, "禁止在二次派发上下文执行 dalek ticket dispatch") {
+	if !strings.Contains(stderr, "禁止在二次派发上下文执行 dalek ticket start") {
 		t.Fatalf("stderr should contain dispatch-depth guard error:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "daemon 不在线") {

@@ -324,19 +324,38 @@ func TestSubmitDispatchTicket_AutoStartWhenNotStarted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SubmitDispatchTicket should auto-start by default: %v", err)
 	}
-	if sub.JobID == 0 || sub.WorkerID == 0 {
+	if sub.JobID == 0 || sub.TaskRunID == 0 {
 		t.Fatalf("unexpected submission: %+v", sub)
 	}
+	if sub.WorkerID != 0 {
+		t.Fatalf("submit should not synchronously ensure worker, got worker_id=%d", sub.WorkerID)
+	}
 
-	var w contracts.Worker
-	if err := p.DB.First(&w, sub.WorkerID).Error; err != nil {
-		t.Fatalf("load worker failed: %v", err)
+	var workers int64
+	if err := p.DB.Model(&contracts.Worker{}).Where("ticket_id = ?", tk.ID).Count(&workers).Error; err != nil {
+		t.Fatalf("count workers failed: %v", err)
 	}
-	if w.Status != contracts.WorkerRunning {
-		t.Fatalf("expected running worker, got=%s", w.Status)
+	if workers != 0 {
+		t.Fatalf("submit should not create worker during acceptance, workers=%d", workers)
 	}
-	if strings.TrimSpace(w.LogPath) == "" {
-		t.Fatalf("expected runtime log path after submit auto-start")
+
+	rt, err := svc.taskRuntimeForDB(p.DB)
+	if err != nil {
+		t.Fatalf("taskRuntimeForDB failed: %v", err)
+	}
+	run, err := rt.FindRunByID(context.Background(), sub.TaskRunID)
+	if err != nil {
+		t.Fatalf("FindRunByID failed: %v", err)
+	}
+	payload, err := decodeDispatchTaskRequestPayload(run.RequestPayloadJSON)
+	if err != nil {
+		t.Fatalf("decodeDispatchTaskRequestPayload failed: %v", err)
+	}
+	if !payload.AutoStart {
+		t.Fatalf("expected task payload auto_start=true")
+	}
+	if payload.TicketID != tk.ID {
+		t.Fatalf("unexpected payload ticket_id: got=%d want=%d", payload.TicketID, tk.ID)
 	}
 }
 
@@ -366,7 +385,7 @@ func TestResolveDispatchTarget_WaitsCreatingWorkerReady(t *testing.T) {
 		}).Error
 	}()
 
-	_, target, err := svc.resolveDispatchTarget(context.Background(), tk.ID, false)
+	_, target, err := svc.resolveDispatchTarget(context.Background(), tk.ID, false, "")
 	if err != nil {
 		t.Fatalf("resolveDispatchTarget should wait creating->running, got err=%v", err)
 	}
@@ -393,7 +412,7 @@ func TestResolveDispatchTarget_TimeoutWhenWorkerKeepsCreating(t *testing.T) {
 	svc.workerReadyTimeout = 80 * time.Millisecond
 	svc.workerReadyPollInterval = 10 * time.Millisecond
 
-	_, _, err = svc.resolveDispatchTarget(context.Background(), tk.ID, false)
+	_, _, err = svc.resolveDispatchTarget(context.Background(), tk.ID, false, "")
 	if err == nil {
 		t.Fatalf("expected resolveDispatchTarget timeout error")
 	}

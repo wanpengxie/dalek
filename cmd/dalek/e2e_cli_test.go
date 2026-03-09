@@ -418,20 +418,26 @@ func TestCLI_TicketStopAll_PreservesRuntimeLogPath(t *testing.T) {
 	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "stop-all-1", "-desc", "stop-all-1")
 	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "stop-all-2", "-desc", "stop-all-2")
 
-	type startResp struct {
-		WorkerID uint `json:"worker_id"`
+	h, err := app.OpenHome(home)
+	if err != nil {
+		t.Fatalf("OpenHome failed: %v", err)
 	}
-	startRaw1, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "start", "--ticket", "1", "-o", "json")
-	startRaw2, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "start", "--ticket", "2", "-o", "json")
-	var start1, start2 startResp
-	if err := json.Unmarshal([]byte(strings.TrimSpace(startRaw1)), &start1); err != nil {
-		t.Fatalf("decode ticket start #1 failed: %v\nraw=%s", err, startRaw1)
+	project, err := h.OpenProjectByName("demo")
+	if err != nil {
+		t.Fatalf("OpenProjectByName failed: %v", err)
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(startRaw2)), &start2); err != nil {
-		t.Fatalf("decode ticket start #2 failed: %v\nraw=%s", err, startRaw2)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start1, err := project.StartTicket(ctx, 1)
+	if err != nil {
+		t.Fatalf("project.StartTicket(1) failed: %v", err)
 	}
-	if start1.WorkerID == 0 || start2.WorkerID == 0 {
-		t.Fatalf("ticket start should return non-zero worker id, got=%d/%d", start1.WorkerID, start2.WorkerID)
+	start2, err := project.StartTicket(ctx, 2)
+	if err != nil {
+		t.Fatalf("project.StartTicket(2) failed: %v", err)
+	}
+	if start1 == nil || start1.ID == 0 || start2 == nil || start2.ID == 0 {
+		t.Fatalf("project start should return non-zero worker ids, got=%v/%v", start1, start2)
 	}
 
 	stopRaw, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "stop", "--all", "-o", "json")
@@ -452,17 +458,10 @@ func TestCLI_TicketStopAll_PreservesRuntimeLogPath(t *testing.T) {
 		t.Fatalf("stop --all should stop 2 workers, count=%d stopped=%d raw=%s", stopResp.Count, len(stopResp.Stopped), stopRaw)
 	}
 
-	h, err := app.OpenHome(home)
-	if err != nil {
-		t.Fatalf("OpenHome failed: %v", err)
-	}
-	project, err := h.OpenProjectByName("demo")
-	if err != nil {
-		t.Fatalf("OpenProjectByName failed: %v", err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	for _, wid := range []uint{start1.WorkerID, start2.WorkerID} {
+	for _, wid := range []uint{start1.ID, start2.ID} {
+		if wid == 0 {
+			t.Fatalf("expected non-zero worker id in started workers")
+		}
 		w, err := project.WorkerByID(ctx, wid)
 		if err != nil {
 			t.Fatalf("WorkerByID(%d) failed: %v", wid, err)

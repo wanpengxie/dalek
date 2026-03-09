@@ -138,8 +138,9 @@ func (h *ExecutionHost) SubmitDispatch(ctx context.Context, req DispatchSubmitRe
 		return DispatchSubmitReceipt{}, err
 	}
 	submission, err := project.SubmitDispatchTicket(ctx, req.TicketID, DispatchSubmitOptions{
-		RequestID: requestID,
-		AutoStart: req.AutoStart,
+		RequestID:  requestID,
+		AutoStart:  req.AutoStart,
+		BaseBranch: strings.TrimSpace(req.BaseBranch),
 	})
 	if err != nil {
 		return DispatchSubmitReceipt{}, err

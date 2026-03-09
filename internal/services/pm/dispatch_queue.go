@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID uint, requestID string) (contracts.PMDispatchJob, error) {
+func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID uint, requestID string, payload dispatchTaskRequestPayload) (contracts.PMDispatchJob, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return contracts.PMDispatchJob{}, err
@@ -21,9 +21,6 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 	}
 	if ticketID == 0 {
 		return contracts.PMDispatchJob{}, fmt.Errorf("ticket_id 不能为空")
-	}
-	if workerID == 0 {
-		return contracts.PMDispatchJob{}, fmt.Errorf("worker_id 不能为空")
 	}
 	requestID = strings.TrimSpace(requestID)
 	var out contracts.PMDispatchJob
@@ -63,7 +60,7 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 			Order("id desc").
 			First(&active).Error
 		if err == nil {
-			if active.WorkerID != workerID {
+			if active.WorkerID != 0 && workerID != 0 && active.WorkerID != workerID {
 				return fmt.Errorf("存在进行中的 dispatch job 绑定其他 worker: job=%d worker=%d current_worker=%d", active.ID, active.WorkerID, workerID)
 			}
 			if active.TaskRunID == 0 {
@@ -83,12 +80,9 @@ func (s *Service) enqueuePMDispatchJob(ctx context.Context, ticketID, workerID u
 		if jobRequestID == "" {
 			jobRequestID = newPMDispatchRequestID()
 		}
-		requestPayload := marshalJSON(map[string]any{
-			"ticket_id":       ticketID,
-			"worker_id":       workerID,
-			"orchestrator":    "pm_dispatch",
-			"orchestration_v": "v1",
-		})
+		payload.TicketID = ticketID
+		payload.WorkerID = workerID
+		requestPayload := payload.JSON()
 		taskRun, err := taskRuntime.CreateRun(ctx, contracts.TaskRunCreateInput{
 			OwnerType:          contracts.TaskOwnerPM,
 			TaskType:           "dispatch_ticket",
@@ -176,7 +170,6 @@ func (s *Service) claimPMDispatchJob(ctx context.Context, jobID uint, runnerID s
 	lease := now.Add(leaseTTL)
 	claimed := false
 	var out contracts.PMDispatchJob
-	var statusEvent *StatusChangeEvent
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		taskRuntime, terr := s.taskRuntimeForDB(tx)
 		if terr != nil {
@@ -225,18 +218,10 @@ func (s *Service) claimPMDispatchJob(ctx context.Context, jobID uint, runnerID s
 				return err
 			}
 		}
-		if claimed {
-			var promoteErr error
-			statusEvent, promoteErr = s.promoteTicketActiveOnDispatchClaimTx(ctx, tx, out, now)
-			if promoteErr != nil {
-				return promoteErr
-			}
-		}
 		return nil
 	}); err != nil {
 		return contracts.PMDispatchJob{}, false, err
 	}
-	s.emitStatusChangeHookAsync(statusEvent)
 	return out, claimed, nil
 }
 

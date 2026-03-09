@@ -318,24 +318,22 @@ func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
 	}
 }
 
-func TestClaimPMDispatchJob_Promote_EmitsHook(t *testing.T) {
+func TestPromoteTicketActiveForDispatch_EmitsHook(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-dispatch-claim")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
-	job, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, "")
+	job, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, "", newDispatchTaskRequestPayload(tk.ID, w.ID, true, ""))
 	if err != nil {
 		t.Fatalf("enqueuePMDispatchJob failed: %v", err)
 	}
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
 	svc.SetStatusChangeHook(hook)
 
-	if _, claimed, err := svc.claimPMDispatchJob(context.Background(), job.ID, "runner-notify-claim", 2*time.Minute); err != nil {
-		t.Fatalf("claimPMDispatchJob failed: %v", err)
-	} else if !claimed {
-		t.Fatalf("expected claimed=true")
+	if err := svc.promoteTicketActiveForDispatch(context.Background(), job, "runner-notify-claim"); err != nil {
+		t.Fatalf("promoteTicketActiveForDispatch failed: %v", err)
 	}
 
 	ev := waitStatusEvent(t, hook.ch)
@@ -357,7 +355,7 @@ func TestCompletePMDispatchJobFailed_Demote_EmitsHook(t *testing.T) {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
-	job, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, "")
+	job, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, "", newDispatchTaskRequestPayload(tk.ID, w.ID, true, ""))
 	if err != nil {
 		t.Fatalf("enqueuePMDispatchJob failed: %v", err)
 	}

@@ -24,7 +24,7 @@ func TestEnqueuePMDispatchJob_RejectsActiveJobOnDifferentWorker(t *testing.T) {
 		t.Fatalf("create active job failed: %v", err)
 	}
 
-	_, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, 202, "")
+	_, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, 202, "", newDispatchTaskRequestPayload(tk.ID, 202, true, ""))
 	if err == nil {
 		t.Fatalf("expected enqueue fail on active job worker mismatch")
 	}
@@ -39,11 +39,11 @@ func TestEnqueuePMDispatchJob_IdempotentByRequestID(t *testing.T) {
 	w := createDispatchWorker(t, p.DB, tk.ID)
 
 	reqID := "req_dispatch_idempotent_001"
-	first, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, reqID)
+	first, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, reqID, newDispatchTaskRequestPayload(tk.ID, w.ID, true, ""))
 	if err != nil {
 		t.Fatalf("first enqueue failed: %v", err)
 	}
-	second, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, reqID)
+	second, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, reqID, newDispatchTaskRequestPayload(tk.ID, w.ID, true, ""))
 	if err != nil {
 		t.Fatalf("second enqueue failed: %v", err)
 	}

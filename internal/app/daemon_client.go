@@ -25,11 +25,12 @@ type DaemonAPIClient struct {
 }
 
 type DaemonDispatchSubmitRequest struct {
-	Project   string
-	TicketID  uint
-	RequestID string
-	Prompt    string
-	AutoStart *bool
+	Project    string
+	TicketID   uint
+	RequestID  string
+	Prompt     string
+	AutoStart  *bool
+	BaseBranch string
 }
 
 type DaemonDispatchSubmitReceipt struct {
@@ -190,6 +191,9 @@ func (c *DaemonAPIClient) SubmitDispatch(ctx context.Context, req DaemonDispatch
 	}
 	if req.AutoStart != nil {
 		payload["auto_start"] = *req.AutoStart
+	}
+	if strings.TrimSpace(req.BaseBranch) != "" {
+		payload["base_branch"] = strings.TrimSpace(req.BaseBranch)
 	}
 	var out struct {
 		Accepted  bool   `json:"accepted"`

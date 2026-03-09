@@ -103,7 +103,16 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 	return cap
 }
 
-func computeDerivedRuntimeHealth(latestWorker *contracts.Worker, sessionAlive bool, sessionProbeFailed bool, taskRunID uint, runtimeHealth contracts.TaskRuntimeHealthState) contracts.TaskRuntimeHealthState {
+func computeDerivedRuntimeHealth(latestWorker *contracts.Worker, sessionAlive bool, sessionProbeFailed bool, taskRunID uint, runtimeHealth contracts.TaskRuntimeHealthState, activeDispatch *contracts.PMDispatchJob) contracts.TaskRuntimeHealthState {
+	if activeDispatch != nil {
+		switch activeDispatch.Status {
+		case contracts.PMDispatchPending, contracts.PMDispatchRunning:
+			if runtimeHealth == contracts.TaskHealthWaitingUser || runtimeHealth == contracts.TaskHealthStalled {
+				return runtimeHealth
+			}
+			return contracts.TaskHealthBusy
+		}
+	}
 	if latestWorker == nil && taskRunID == 0 {
 		return contracts.TaskHealthUnknown
 	}

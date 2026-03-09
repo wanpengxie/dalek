@@ -4,13 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
 	"dalek/internal/repo"
-
-	"gorm.io/gorm"
 )
 
 type DispatchResult struct {
@@ -27,12 +24,16 @@ type DispatchOptions struct {
 	EntryPrompt string
 	// AutoStart=nil/true 时，dispatch 发现 worker 未就绪会先自动 start。
 	AutoStart *bool
+	// BaseBranch 非空时，auto-start worker 会优先从该基线创建/修复 worktree。
+	BaseBranch string
 }
 
 type DispatchSubmitOptions struct {
 	RequestID string
 	// AutoStart=nil/true 时，dispatch 发现 worker 未就绪会先自动 start。
 	AutoStart *bool
+	// BaseBranch 非空时，auto-start worker 会优先从该基线创建/修复 worktree。
+	BaseBranch string
 }
 
 type DispatchSubmission struct {
@@ -56,11 +57,16 @@ func (s *Service) DispatchTicket(ctx context.Context, ticketID uint) (DispatchRe
 }
 
 func (s *Service) SubmitDispatchTicket(ctx context.Context, ticketID uint, opt DispatchSubmitOptions) (DispatchSubmission, error) {
-	t, w, err := s.resolveDispatchTarget(ctx, ticketID, dispatchAutoStartEnabled(opt.AutoStart))
+	autoStart := dispatchAutoStartEnabled(opt.AutoStart)
+	t, w, err := s.prepareDispatchSubmission(ctx, ticketID, autoStart)
 	if err != nil {
 		return DispatchSubmission{}, err
 	}
-	job, err := s.enqueuePMDispatchJob(ctx, t.ID, w.ID, strings.TrimSpace(opt.RequestID))
+	workerID := uint(0)
+	if w != nil {
+		workerID = w.ID
+	}
+	job, err := s.enqueuePMDispatchJob(ctx, t.ID, workerID, strings.TrimSpace(opt.RequestID), newDispatchTaskRequestPayload(t.ID, workerID, autoStart, strings.TrimSpace(opt.BaseBranch)))
 	if err != nil {
 		return DispatchSubmission{}, err
 	}
@@ -91,7 +97,7 @@ func (s *Service) RunDispatchJob(ctx context.Context, jobID uint, opt DispatchRu
 
 // DispatchTicketWithOptions 是带可选行为参数的 dispatch 入口。
 func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, opt DispatchOptions) (DispatchResult, error) {
-	p, db, err := s.require()
+	p, _, err := s.require()
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -99,7 +105,8 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 		ctx = context.Background()
 	}
 	submission, err := s.SubmitDispatchTicket(ctx, ticketID, DispatchSubmitOptions{
-		AutoStart: opt.AutoStart,
+		AutoStart:  opt.AutoStart,
+		BaseBranch: strings.TrimSpace(opt.BaseBranch),
 	})
 	if err != nil {
 		return DispatchResult{}, err
@@ -131,34 +138,6 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 	}
 
 	payload := finalJob.ResultJSON
-
-	// dispatch 成功意味着进入 active（仅 PM reducer 写 workflow）。
-	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var cur contracts.Ticket
-		if err := tx.WithContext(ctx).First(&cur, ticketID).Error; err != nil {
-			return err
-		}
-		from := contracts.CanonicalTicketWorkflowStatus(cur.WorkflowStatus)
-		if !fsm.ShouldPromoteOnDispatchClaim(from) {
-			return nil
-		}
-		now := time.Now()
-		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ?", ticketID).
-			Updates(map[string]any{
-				"workflow_status": contracts.TicketActive,
-				"updated_at":      now,
-			}).Error; err != nil {
-			return err
-		}
-		return s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketActive, "pm.dispatch", "dispatch 成功推进到 active", map[string]any{
-			"worker_id":   finalJob.WorkerID,
-			"request_id":  strings.TrimSpace(finalJob.RequestID),
-			"dispatch_id": finalJob.ID,
-		}, now)
-	}); err != nil {
-		return DispatchResult{}, fmt.Errorf("更新 ticket workflow 失败（t%d）：%w", ticketID, err)
-	}
 	cfg := p.Config.WithDefaults()
 
 	return DispatchResult{
@@ -170,7 +149,31 @@ func (s *Service) DispatchTicketWithOptions(ctx context.Context, ticketID uint, 
 	}, nil
 }
 
-func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, autoStart bool) (contracts.Ticket, *contracts.Worker, error) {
+func (s *Service) prepareDispatchSubmission(ctx context.Context, ticketID uint, autoStart bool) (contracts.Ticket, *contracts.Worker, error) {
+	t, w, err := s.inspectDispatchTarget(ctx, ticketID)
+	if err != nil {
+		return contracts.Ticket{}, nil, err
+	}
+	if autoStart {
+		return t, w, nil
+	}
+	if w == nil {
+		return contracts.Ticket{}, nil, s.workerMissingSessionError()
+	}
+	ready, rerr := s.workerDispatchReady(ctx, w)
+	if rerr != nil {
+		return contracts.Ticket{}, nil, rerr
+	}
+	if !ready {
+		return contracts.Ticket{}, nil, s.workerMissingSessionError()
+	}
+	if w.Status != contracts.WorkerRunning {
+		return contracts.Ticket{}, nil, s.workerNotRunningError(w)
+	}
+	return t, w, nil
+}
+
+func (s *Service) inspectDispatchTarget(ctx context.Context, ticketID uint) (contracts.Ticket, *contracts.Worker, error) {
 	_, db, err := s.require()
 	if err != nil {
 		return contracts.Ticket{}, nil, err
@@ -194,12 +197,20 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 	if err != nil {
 		return contracts.Ticket{}, nil, err
 	}
+	return t, w, nil
+}
+
+func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, autoStart bool, baseBranch string) (contracts.Ticket, *contracts.Worker, error) {
+	t, w, err := s.inspectDispatchTarget(ctx, ticketID)
+	if err != nil {
+		return contracts.Ticket{}, nil, err
+	}
 	ready, rerr := s.workerDispatchReady(ctx, w)
 	if rerr != nil {
 		return contracts.Ticket{}, nil, rerr
 	}
 	if autoStart && (w == nil || !ready) {
-		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
+		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, baseBranch)
 		if err != nil {
 			return contracts.Ticket{}, nil, err
 		}
@@ -215,7 +226,7 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 		w = ready
 	}
 	if autoStart && w.Status != contracts.WorkerRunning {
-		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
+		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, baseBranch)
 		if err != nil {
 			return contracts.Ticket{}, nil, err
 		}
@@ -233,7 +244,7 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 	}
 	if !ready {
 		if autoStart {
-			w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
+			w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, baseBranch)
 			if err != nil {
 				return contracts.Ticket{}, nil, err
 			}
@@ -261,8 +272,8 @@ func dispatchAutoStartEnabled(v *bool) bool {
 	return *v
 }
 
-func (s *Service) ensureDispatchWorkerStarted(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
-	w, err := s.StartTicketWithOptions(ctx, ticketID, StartOptions{})
+func (s *Service) ensureDispatchWorkerStarted(ctx context.Context, ticketID uint, baseBranch string) (*contracts.Worker, error) {
+	w, err := s.StartTicketWithOptions(ctx, ticketID, StartOptions{BaseBranch: strings.TrimSpace(baseBranch)})
 	if err != nil {
 		return nil, fmt.Errorf("auto-start 失败: %w", err)
 	}

@@ -68,7 +68,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		return DirectDispatchResult{}, rerr
 	}
 	if autoStart && (w == nil || !ready) {
-		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
+		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, "")
 		if err != nil {
 			return DirectDispatchResult{}, err
 		}
@@ -84,7 +84,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		w = ready
 	}
 	if autoStart && w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
-		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
+		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, "")
 		if err != nil {
 			return DirectDispatchResult{}, err
 		}
@@ -105,7 +105,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	}
 	if !ready && w.Status == contracts.WorkerRunning {
 		if autoStart {
-			w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
+			w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, "")
 			if err != nil {
 				return DirectDispatchResult{}, err
 			}
@@ -126,7 +126,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		}
 		if !live {
 			if autoStart {
-				w, err = s.ensureDispatchWorkerStarted(ctx, ticketID)
+				w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, "")
 				if err != nil {
 					return DirectDispatchResult{}, err
 				}

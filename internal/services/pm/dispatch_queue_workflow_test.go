@@ -7,14 +7,14 @@ import (
 	"time"
 )
 
-func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
+func TestClaimPMDispatchJob_KeepsTicketQueuedUntilTargetReady(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-claim-promote-active")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
-	job, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, "")
+	job, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, "", newDispatchTaskRequestPayload(tk.ID, w.ID, true, ""))
 	if err != nil {
 		t.Fatalf("enqueue dispatch job failed: %v", err)
 	}
@@ -35,8 +35,33 @@ func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("query ticket failed: %v", err)
 	}
+	if ticket.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected ticket remain queued after claim, got=%s", ticket.WorkflowStatus)
+	}
+}
+
+func TestPromoteTicketActiveForDispatch_PromotesQueuedTicket(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "dispatch-promote-active")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
+		t.Fatalf("set ticket queued failed: %v", err)
+	}
+	w := createDispatchWorker(t, p.DB, tk.ID)
+	job, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, "", newDispatchTaskRequestPayload(tk.ID, w.ID, true, ""))
+	if err != nil {
+		t.Fatalf("enqueue dispatch job failed: %v", err)
+	}
+
+	if err := svc.promoteTicketActiveForDispatch(context.Background(), job, "runner-promote-active"); err != nil {
+		t.Fatalf("promoteTicketActiveForDispatch failed: %v", err)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("query ticket failed: %v", err)
+	}
 	if ticket.WorkflowStatus != contracts.TicketActive {
-		t.Fatalf("expected ticket active after claim, got=%s", ticket.WorkflowStatus)
+		t.Fatalf("expected ticket active after dispatch promote, got=%s", ticket.WorkflowStatus)
 	}
 
 	var ev contracts.TicketWorkflowEvent
@@ -54,11 +79,11 @@ func TestClaimPMDispatchJob_PromotesTicketWorkflowToActive(t *testing.T) {
 func TestCompletePMDispatchJobFailed_DemotesTicketWorkflowToBlocked(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "dispatch-failed-demote-blocked")
-	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
-		t.Fatalf("set ticket active failed: %v", err)
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketQueued).Error; err != nil {
+		t.Fatalf("set ticket queued failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
-	job, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, "")
+	job, err := svc.enqueuePMDispatchJob(context.Background(), tk.ID, w.ID, "", newDispatchTaskRequestPayload(tk.ID, w.ID, true, ""))
 	if err != nil {
 		t.Fatalf("enqueue dispatch job failed: %v", err)
 	}
@@ -86,7 +111,7 @@ func TestCompletePMDispatchJobFailed_DemotesTicketWorkflowToBlocked(t *testing.T
 	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, contracts.TicketBlocked).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query workflow event failed: %v", err)
 	}
-	if ev.FromStatus != contracts.TicketActive || ev.ToStatus != contracts.TicketBlocked {
+	if ev.FromStatus != contracts.TicketQueued || ev.ToStatus != contracts.TicketBlocked {
 		t.Fatalf("unexpected workflow event transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 	if ev.Source != "pm.dispatch" {

@@ -258,6 +258,65 @@ func TestQueryService_ListTicketViews_NoActiveRunKeepsWorkflowBacklog(t *testing
 	}
 }
 
+func TestQueryService_ListTicketViews_ActiveDispatchMasksDeadWorkerRuntime(t *testing.T) {
+	svc, p := newQueryServiceForTest(t)
+
+	tk := createTicketForQueryTest(t, p.DB, "ticket-dispatch-runtime")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketActive).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
+	w := contracts.Worker{
+		TicketID:     tk.ID,
+		Status:       contracts.WorkerRunning,
+		WorktreePath: "/tmp/w5",
+		Branch:       "ts/demo-ticket-5",
+		LogPath:      "/tmp/w5.log",
+	}
+	if err := p.DB.Create(&w).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+	run := contracts.TaskRun{
+		OwnerType:          contracts.TaskOwnerPM,
+		TaskType:           contracts.TaskTypeDispatchTicket,
+		ProjectKey:         p.Key,
+		TicketID:           tk.ID,
+		WorkerID:           w.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", tk.ID),
+		RequestID:          "test-view-run-dispatch",
+		OrchestrationState: contracts.TaskRunning,
+	}
+	if err := p.DB.Create(&run).Error; err != nil {
+		t.Fatalf("create dispatch task run failed: %v", err)
+	}
+	job := contracts.PMDispatchJob{
+		RequestID:       "dsp_query_dispatch_active",
+		TicketID:        tk.ID,
+		WorkerID:        w.ID,
+		TaskRunID:       run.ID,
+		ActiveTicketKey: func(v uint) *uint { return &v }(tk.ID),
+		Status:          contracts.PMDispatchRunning,
+		RunnerID:        "runner-query-dispatch",
+	}
+	if err := p.DB.Create(&job).Error; err != nil {
+		t.Fatalf("create dispatch job failed: %v", err)
+	}
+
+	views, err := svc.ListTicketViews(context.Background())
+	if err != nil {
+		t.Fatalf("ListTicketViews failed: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("expected 1 view, got %d", len(views))
+	}
+	if views[0].RuntimeHealthState != contracts.TaskHealthBusy {
+		t.Fatalf("expected active dispatch to project runtime busy, got=%s", views[0].RuntimeHealthState)
+	}
+	if views[0].SessionAlive {
+		t.Fatalf("expected session still false before worker loop starts")
+	}
+}
+
 func TestQueryService_ListTicketViews_SortsByPriorityThenCreatedAtThenID(t *testing.T) {
 	svc, p := newQueryServiceForTest(t)
 

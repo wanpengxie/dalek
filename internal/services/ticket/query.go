@@ -308,9 +308,13 @@ func buildTicketView(t contracts.Ticket, data ticketViewData) TicketView {
 		lastEventAt = tv.LastEventAt
 	}
 
-	_, hasDispatch := data.activeDispatchByTicket[t.ID]
-	capability := ComputeTicketCapability(d, lw, alive, sessionProbeFailed, hasDispatch, rNeeds, rHealth)
-	rHealth = computeDerivedRuntimeHealth(lw, alive, sessionProbeFailed, runID, rHealth)
+	var activeDispatch *contracts.PMDispatchJob
+	if job, ok := data.activeDispatchByTicket[t.ID]; ok {
+		j := job
+		activeDispatch = &j
+	}
+	capability := ComputeTicketCapability(d, lw, alive, sessionProbeFailed, activeDispatch != nil, rNeeds, rHealth)
+	rHealth = computeDerivedRuntimeHealth(lw, alive, sessionProbeFailed, runID, rHealth, activeDispatch)
 
 	return TicketView{
 		Ticket:             t,

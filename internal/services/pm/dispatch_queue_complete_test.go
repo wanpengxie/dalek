@@ -111,7 +111,7 @@ func TestForceFailActiveDispatchesForTicket_FailsPendingJobAndTaskRun(t *testing
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
-	job, err := svc.enqueuePMDispatchJob(ctx, tk.ID, w.ID, "req_force_pending")
+	job, err := svc.enqueuePMDispatchJob(ctx, tk.ID, w.ID, "req_force_pending", newDispatchTaskRequestPayload(tk.ID, w.ID, true, ""))
 	if err != nil {
 		t.Fatalf("enqueue dispatch job failed: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestForceFailActiveDispatchesForTicket_FailsRunningJobAndTaskRun(t *testing
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
-	job, err := svc.enqueuePMDispatchJob(ctx, tk.ID, w.ID, "req_force_running")
+	job, err := svc.enqueuePMDispatchJob(ctx, tk.ID, w.ID, "req_force_running", newDispatchTaskRequestPayload(tk.ID, w.ID, true, ""))
 	if err != nil {
 		t.Fatalf("enqueue dispatch job failed: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestForceFailActiveDispatchesForTicket_SkipsTerminalTaskRun(t *testing.T) {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	w := createDispatchWorker(t, p.DB, tk.ID)
-	job, err := svc.enqueuePMDispatchJob(ctx, tk.ID, w.ID, "req_force_skip_terminal")
+	job, err := svc.enqueuePMDispatchJob(ctx, tk.ID, w.ID, "req_force_skip_terminal", newDispatchTaskRequestPayload(tk.ID, w.ID, true, ""))
 	if err != nil {
 		t.Fatalf("enqueue dispatch job failed: %v", err)
 	}

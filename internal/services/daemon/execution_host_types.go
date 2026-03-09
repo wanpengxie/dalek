@@ -120,11 +120,12 @@ type ListInboxOptions struct {
 }
 
 type DispatchSubmitRequest struct {
-	Project   string
-	TicketID  uint
-	RequestID string
-	Prompt    string
-	AutoStart *bool
+	Project    string
+	TicketID   uint
+	RequestID  string
+	Prompt     string
+	AutoStart  *bool
+	BaseBranch string
 }
 
 type DispatchSubmitReceipt struct {

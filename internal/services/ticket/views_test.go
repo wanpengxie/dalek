@@ -51,31 +51,36 @@ func TestComputeTicketCapability_ProbeFailureAllowsAttach(t *testing.T) {
 }
 
 func TestComputeDerivedRuntimeHealth(t *testing.T) {
-	if got := computeDerivedRuntimeHealth(nil, false, false, 0, contracts.TaskHealthBusy); got != contracts.TaskHealthUnknown {
+	if got := computeDerivedRuntimeHealth(nil, false, false, 0, contracts.TaskHealthBusy, nil); got != contracts.TaskHealthUnknown {
 		t.Fatalf("expected no worker+run => unknown, got=%s", got)
 	}
 
 	stopped := &contracts.Worker{Status: contracts.WorkerStopped, LogPath: "/tmp/stopped.log"}
-	if got := computeDerivedRuntimeHealth(stopped, false, false, 1, contracts.TaskHealthBusy); got != contracts.TaskHealthDead {
+	if got := computeDerivedRuntimeHealth(stopped, false, false, 1, contracts.TaskHealthBusy, nil); got != contracts.TaskHealthDead {
 		t.Fatalf("expected stopped worker without session => dead, got=%s", got)
 	}
 
 	failed := &contracts.Worker{Status: contracts.WorkerFailed, LogPath: "/tmp/failed.log"}
-	if got := computeDerivedRuntimeHealth(failed, false, false, 1, contracts.TaskHealthBusy); got != contracts.TaskHealthStalled {
+	if got := computeDerivedRuntimeHealth(failed, false, false, 1, contracts.TaskHealthBusy, nil); got != contracts.TaskHealthStalled {
 		t.Fatalf("expected failed worker without session => stalled, got=%s", got)
 	}
 
 	running := &contracts.Worker{Status: contracts.WorkerRunning, LogPath: "/tmp/running.log"}
-	if got := computeDerivedRuntimeHealth(running, false, true, 1, contracts.TaskHealthDead); got != contracts.TaskHealthUnknown {
+	if got := computeDerivedRuntimeHealth(running, false, true, 1, contracts.TaskHealthDead, nil); got != contracts.TaskHealthUnknown {
 		t.Fatalf("expected probe failure to downgrade dead => unknown, got=%s", got)
 	}
 
-	if got := computeDerivedRuntimeHealth(running, true, false, 1, contracts.TaskHealthBusy); got != contracts.TaskHealthBusy {
+	if got := computeDerivedRuntimeHealth(running, true, false, 1, contracts.TaskHealthBusy, nil); got != contracts.TaskHealthBusy {
 		t.Fatalf("expected alive session to keep runtime health, got=%s", got)
 	}
 
 	noHandle := &contracts.Worker{Status: contracts.WorkerRunning}
-	if got := computeDerivedRuntimeHealth(noHandle, false, false, 1, contracts.TaskHealthBusy); got != contracts.TaskHealthBusy {
+	if got := computeDerivedRuntimeHealth(noHandle, false, false, 1, contracts.TaskHealthBusy, nil); got != contracts.TaskHealthBusy {
 		t.Fatalf("expected worker without runtime handle keeps runtime health, got=%s", got)
+	}
+
+	activeDispatch := &contracts.PMDispatchJob{Status: contracts.PMDispatchRunning}
+	if got := computeDerivedRuntimeHealth(running, false, false, 0, contracts.TaskHealthDead, activeDispatch); got != contracts.TaskHealthBusy {
+		t.Fatalf("expected active dispatch to mask dead runtime as busy, got=%s", got)
 	}
 }

@@ -17,7 +17,7 @@ type StartOptions struct {
 	BaseBranch string
 }
 
-// StartTicket 是 PM 视角的 start：编排 worker 资源启动，并把 worker 置为可 dispatch 的 running。
+// StartTicket 是 PM 视角的 start：编排 worker 资源启动，并把 ticket 置为可 dispatch 的 queued。
 //
 // 约束：
 // - worker 只负责“资源启动”（worktree + runtime 进程）。
@@ -61,37 +61,6 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		return nil, fmt.Errorf("start 失败：未返回 worker")
 	}
 
-	// start 本身是“纳入系统执行”的动作：把 workflow 推进到 active（仅 PM reducer 写）。
-	// queued 仅保留兼容路径，遇到历史 queued 数据时同样推进到 active。
-	// 注意：不要覆盖 done/blocked/active/archived 等更高阶段。
-	now := time.Now()
-	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ? AND (workflow_status IN (?, ?) OR TRIM(COALESCE(workflow_status, '')) = '')", ticketID, contracts.TicketBacklog, contracts.TicketQueued).
-			Updates(map[string]any{
-				"workflow_status": contracts.TicketActive,
-				"updated_at":      now,
-			})
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected > 0 {
-			from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
-			if from == "" {
-				from = contracts.TicketBacklog
-			}
-			if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketActive, "pm.start", "start 推进到 active", map[string]any{
-				"ticket_id": ticketID,
-				"worker_id": w.ID,
-			}, now); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("更新 ticket workflow 失败（t%d w%d）：%w", ticketID, w.ID, err)
-	}
-
 	// 已经是 running 且执行资源可探测则直接返回。
 	if w.Status == contracts.WorkerRunning {
 		ready, rerr := s.workerDispatchReady(ctx, w)
@@ -99,6 +68,9 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 			return nil, rerr
 		}
 		if ready {
+			if err := s.promoteTicketQueuedOnStart(ctx, db, t, *w); err != nil {
+				return nil, err
+			}
 			return w, nil
 		}
 	}
@@ -110,7 +82,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 
 	// 3) 标记 worker 为 running。
 	// ticket 状态由 dispatch/report 流程推进，start 不做业务状态跳变。
-	now = time.Now()
+	now := time.Now()
 	if err := s.worker.MarkWorkerRunning(ctx, w.ID, now); err != nil {
 		return nil, fmt.Errorf("标记 worker 为 running 失败（w%d）：%w", w.ID, err)
 	}
@@ -133,5 +105,40 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 			return nil, fmt.Errorf("start 后 worker 未进入 running（w%d status=%s）", out.ID, out.Status)
 		}
 	}
+	if err := s.promoteTicketQueuedOnStart(ctx, db, t, *out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+func (s *Service) promoteTicketQueuedOnStart(ctx context.Context, db *gorm.DB, t contracts.Ticket, w contracts.Worker) error {
+	if db == nil {
+		return nil
+	}
+	now := time.Now()
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
+			Where("id = ? AND (workflow_status = ? OR TRIM(COALESCE(workflow_status, '')) = '')", t.ID, contracts.TicketBacklog).
+			Updates(map[string]any{
+				"workflow_status": contracts.TicketQueued,
+				"updated_at":      now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil
+		}
+		from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
+		if from == "" {
+			from = contracts.TicketBacklog
+		}
+		return s.appendTicketWorkflowEventTx(ctx, tx, t.ID, from, contracts.TicketQueued, "pm.start", "start 推进到 queued", map[string]any{
+			"ticket_id": t.ID,
+			"worker_id": w.ID,
+		}, now)
+	}); err != nil {
+		return fmt.Errorf("更新 ticket workflow 失败（t%d w%d）：%w", t.ID, w.ID, err)
+	}
+	return nil
 }

@@ -1,6 +1,6 @@
 ---
 name: dispatch-new-ticket
-description: 生成或修复一次 ticket dispatch 的 worker 执行上下文（.dalek/agent-kernel.md、PLAN.md、state.json）并执行三阶段校验。用于首次 dispatch、上下文漂移修复、或手动重建 worker handoff 的场景。
+description: 生成或修复一次 ticket start 所需的 worker 执行上下文（.dalek/agent-kernel.md、PLAN.md、state.json）并执行三阶段校验。用于首次 start、上下文漂移修复、或手动重建 worker handoff 的场景。
 ---
 
 # Dispatch New Ticket
