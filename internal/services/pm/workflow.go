@@ -286,7 +286,7 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 			return err
 
 		case string(contracts.NextDone):
-			return s.ensureMergeProposalForDoneTicketTx(ctx, tx, t.ID, r.WorkerID)
+			return s.freezeTicketIntegrationForDoneTx(ctx, tx, t.ID, r.WorkerID)
 		}
 		return nil
 	})
@@ -314,78 +314,4 @@ func buildNeedsUserInboxBodyFromReport(r contracts.WorkerReport) string {
 		return "worker 请求人工介入"
 	}
 	return strings.Join(lines, "\n")
-}
-
-func (s *Service) ensureMergeProposalForDoneTicketTx(ctx context.Context, tx *gorm.DB, ticketID, workerID uint) error {
-	if tx == nil || ticketID == 0 {
-		return nil
-	}
-
-	// 已有非终态 merge item 时复用并确保审批 inbox 存在。
-	var existing contracts.MergeItem
-	if err := tx.WithContext(ctx).
-		Where("ticket_id = ? AND status NOT IN ?", ticketID, mergeTerminalStatuses()).
-		Order("id desc").
-		First(&existing).Error; err == nil {
-		_, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
-			Key:         inboxKeyMergeApproval(existing.ID),
-			Status:      contracts.InboxOpen,
-			Severity:    contracts.InboxWarn,
-			Reason:      contracts.InboxApprovalRequired,
-			Title:       fmt.Sprintf("待合并审批：t%d", ticketID),
-			Body:        fmt.Sprintf("merge_item=%d  branch=%s\n\n请确认是否允许合并，以及合并策略（squash/merge）。", existing.ID, strings.TrimSpace(existing.Branch)),
-			TicketID:    ticketID,
-			WorkerID:    existing.WorkerID,
-			MergeItemID: existing.ID,
-		})
-		return err
-	} else if err != gorm.ErrRecordNotFound {
-		return err
-	}
-
-	var w contracts.Worker
-	foundWorker := false
-	if workerID > 0 {
-		if err := tx.WithContext(ctx).Select("id", "ticket_id", "branch").First(&w, workerID).Error; err == nil && w.TicketID == ticketID {
-			foundWorker = true
-		}
-	}
-	if !foundWorker {
-		if err := tx.WithContext(ctx).
-			Where("ticket_id = ?", ticketID).
-			Order("id desc").
-			Select("id", "ticket_id", "branch").
-			First(&w).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				return nil
-			}
-			return err
-		}
-	}
-
-	branch := strings.TrimSpace(w.Branch)
-	if branch == "" {
-		return nil
-	}
-	mi := contracts.MergeItem{
-		Status:   contracts.MergeProposed,
-		TicketID: ticketID,
-		WorkerID: w.ID,
-		Branch:   branch,
-	}
-	if err := tx.WithContext(ctx).Create(&mi).Error; err != nil {
-		return err
-	}
-	_, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
-		Key:         inboxKeyMergeApproval(mi.ID),
-		Status:      contracts.InboxOpen,
-		Severity:    contracts.InboxWarn,
-		Reason:      contracts.InboxApprovalRequired,
-		Title:       fmt.Sprintf("待合并审批：t%d", ticketID),
-		Body:        fmt.Sprintf("merge_item=%d  branch=%s\n\n请确认是否允许合并，以及合并策略（squash/merge）。", mi.ID, strings.TrimSpace(mi.Branch)),
-		TicketID:    ticketID,
-		WorkerID:    mi.WorkerID,
-		MergeItemID: mi.ID,
-	})
-	return err
 }

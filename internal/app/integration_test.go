@@ -713,8 +713,8 @@ func TestIntegration_StartStopArchiveFlow(t *testing.T) {
 			continue
 		}
 		found = true
-		if v.DerivedStatus != contracts.TicketQueued {
-			t.Fatalf("expected queued after start, got=%s", v.DerivedStatus)
+		if v.DerivedStatus != contracts.TicketActive {
+			t.Fatalf("expected active after start, got=%s", v.DerivedStatus)
 		}
 	}
 	if !found {
@@ -734,8 +734,8 @@ func TestIntegration_StartStopArchiveFlow(t *testing.T) {
 			continue
 		}
 		found = true
-		if v.DerivedStatus != contracts.TicketQueued {
-			t.Fatalf("expected queued after stop, got=%s", v.DerivedStatus)
+		if v.DerivedStatus != contracts.TicketActive {
+			t.Fatalf("expected active after stop, got=%s", v.DerivedStatus)
 		}
 	}
 	if !found {

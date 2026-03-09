@@ -202,6 +202,9 @@ func TestApplyWorkerReport_Changed_EmitsHook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
+	if err := svc.SetTicketWorkflowStatus(context.Background(), tk.ID, contracts.TicketQueued); err != nil {
+		t.Fatalf("SetTicketWorkflowStatus queued failed: %v", err)
+	}
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
 	svc.SetStatusChangeHook(hook)
 

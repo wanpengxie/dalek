@@ -158,6 +158,46 @@ func TestOpenAndMigrate_TicketLabelColumnPresent(t *testing.T) {
 	}
 }
 
+func TestOpenAndMigrate_TicketIntegrationColumnsPresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	for _, col := range []string{"integration_status", "merge_anchor_sha", "target_branch", "merged_at", "abandoned_reason"} {
+		ok, err := tableHasColumn(db, "tickets", col)
+		if err != nil {
+			t.Fatalf("tableHasColumn(tickets.%s) failed: %v", col, err)
+		}
+		if !ok {
+			t.Fatalf("tickets should contain integration column: %s", col)
+		}
+	}
+
+	if err := dropTableColumn(db, "tickets", "abandoned_reason"); err != nil {
+		t.Fatalf("drop tickets.abandoned_reason failed: %v", err)
+	}
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 16;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations for v16 failed: %v", err)
+	}
+	if _, err := OpenAndMigrate(dbPath); err != nil {
+		t.Fatalf("OpenAndMigrate (reapply v16) failed: %v", err)
+	}
+
+	db2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	ok, err := tableHasColumn(db2, "tickets", "abandoned_reason")
+	if err != nil {
+		t.Fatalf("tableHasColumn(tickets.abandoned_reason) after reapply failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("tickets should restore abandoned_reason after reapply")
+	}
+}
+
 func TestOpenAndMigrate_PMStatePlannerColumnsPresent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)

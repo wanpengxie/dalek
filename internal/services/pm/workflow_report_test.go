@@ -50,7 +50,7 @@ func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 	}
 }
 
-func TestApplyWorkerReport_DoneCreatesMergeProposalAndApprovalInboxSynchronously(t *testing.T) {
+func TestApplyWorkerReport_DoneFreezesTicketIntegrationSynchronously(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "workflow-report-done")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -77,23 +77,10 @@ func TestApplyWorkerReport_DoneCreatesMergeProposalAndApprovalInboxSynchronously
 	if ticket.WorkflowStatus != contracts.TicketDone {
 		t.Fatalf("expected ticket done, got=%s", ticket.WorkflowStatus)
 	}
-
-	var mi contracts.MergeItem
-	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&mi).Error; err != nil {
-		t.Fatalf("done report should create merge proposal immediately: %v", err)
+	if got := contracts.CanonicalIntegrationStatus(ticket.IntegrationStatus); got != contracts.IntegrationNeedsMerge {
+		t.Fatalf("expected integration_status needs_merge, got=%s", got)
 	}
-	if mi.Status != contracts.MergeProposed {
-		t.Fatalf("unexpected merge status: %s", mi.Status)
-	}
-	if strings.TrimSpace(mi.Branch) == "" {
-		t.Fatalf("merge proposal should carry worker branch")
-	}
-
-	var inbox contracts.InboxItem
-	if err := p.DB.Where("merge_item_id = ? AND status = ?", mi.ID, contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
-		t.Fatalf("done report should create approval inbox immediately: %v", err)
-	}
-	if inbox.Reason != contracts.InboxApprovalRequired {
-		t.Fatalf("unexpected inbox reason: %s", inbox.Reason)
+	if strings.TrimSpace(ticket.TargetBranch) == "" {
+		t.Fatalf("expected target_branch frozen on done report")
 	}
 }

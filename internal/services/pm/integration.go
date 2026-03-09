@@ -1,0 +1,202 @@
+package pm
+
+import (
+	"context"
+	"dalek/internal/contracts"
+	"dalek/internal/fsm"
+	"dalek/internal/infra"
+	"fmt"
+	"strings"
+	"time"
+
+	"gorm.io/gorm"
+)
+
+const integrationGitCheckTimeout = 3 * time.Second
+
+func (s *Service) AbandonTicketIntegration(ctx context.Context, ticketID uint, reason string) error {
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ticketID == 0 {
+		return fmt.Errorf("ticket_id 不能为空")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "manual abandon integration"
+	}
+
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var t contracts.Ticket
+		if err := tx.WithContext(ctx).First(&t, ticketID).Error; err != nil {
+			return err
+		}
+		if !fsm.CanAbandonTicketIntegration(t.WorkflowStatus, t.IntegrationStatus) {
+			return fmt.Errorf("ticket 当前 integration 状态不允许 abandon：t%d (%s/%s)", ticketID, contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus), contracts.CanonicalIntegrationStatus(t.IntegrationStatus))
+		}
+
+		now := time.Now()
+		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
+			Where("id = ?", ticketID).
+			Updates(map[string]any{
+				"integration_status": contracts.IntegrationAbandoned,
+				"abandoned_reason":   reason,
+				"merged_at":          nil,
+				"updated_at":         now,
+			}).Error; err != nil {
+			return err
+		}
+
+		return tx.WithContext(ctx).Model(&contracts.InboxItem{}).
+			Where("ticket_id = ? AND reason = ? AND status = ?", ticketID, contracts.InboxApprovalRequired, contracts.InboxOpen).
+			Updates(map[string]any{
+				"status":     contracts.InboxDone,
+				"closed_at":  &now,
+				"updated_at": now,
+			}).Error
+	})
+}
+
+func (s *Service) freezeTicketIntegrationForDoneTx(ctx context.Context, tx *gorm.DB, ticketID, workerID uint) error {
+	if tx == nil || ticketID == 0 {
+		return nil
+	}
+	var t contracts.Ticket
+	if err := tx.WithContext(ctx).First(&t, ticketID).Error; err != nil {
+		return err
+	}
+	if !fsm.CanFreezeIntegrationAnchor(t.WorkflowStatus, t.IntegrationStatus) {
+		return nil
+	}
+
+	var w contracts.Worker
+	foundWorker := false
+	if workerID > 0 {
+		if err := tx.WithContext(ctx).
+			Select("id", "ticket_id", "branch", "worktree_path").
+			First(&w, workerID).Error; err == nil && w.TicketID == ticketID {
+			foundWorker = true
+		}
+	}
+	if !foundWorker {
+		if err := tx.WithContext(ctx).
+			Where("ticket_id = ?", ticketID).
+			Order("id desc").
+			Select("id", "ticket_id", "branch", "worktree_path").
+			First(&w).Error; err != nil {
+			if err != gorm.ErrRecordNotFound {
+				return err
+			}
+			w = contracts.Worker{}
+		}
+	}
+
+	anchor := strings.TrimSpace(s.tryResolveMergeAnchorSHA(ctx, &w))
+	target := strings.TrimSpace(s.defaultIntegrationTargetBranch(ctx))
+	now := time.Now()
+	return tx.WithContext(ctx).Model(&contracts.Ticket{}).
+		Where("id = ? AND workflow_status = ? AND TRIM(COALESCE(integration_status, '')) = ''", ticketID, contracts.TicketDone).
+		Updates(map[string]any{
+			"integration_status": contracts.IntegrationNeedsMerge,
+			"merge_anchor_sha":   anchor,
+			"target_branch":      target,
+			"merged_at":          nil,
+			"abandoned_reason":   "",
+			"updated_at":         now,
+		}).Error
+}
+
+func (s *Service) defaultIntegrationTargetBranch(ctx context.Context) string {
+	p, _, err := s.require()
+	if err != nil {
+		return "main"
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	branch, err := p.Git.CurrentBranch(p.RepoRoot)
+	if err != nil {
+		return "main"
+	}
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return "main"
+	}
+	return branch
+}
+
+func (s *Service) tryResolveMergeAnchorSHA(ctx context.Context, w *contracts.Worker) string {
+	p, _, err := s.require()
+	if err != nil {
+		return ""
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, integrationGitCheckTimeout)
+	defer cancel()
+
+	if w != nil {
+		wt := strings.TrimSpace(w.WorktreePath)
+		if wt != "" {
+			if code, out, _, err := infra.RunExitCode(checkCtx, wt, "git", "rev-parse", "HEAD"); err == nil && code == 0 {
+				return strings.TrimSpace(out)
+			}
+		}
+	}
+	if code, out, _, err := infra.RunExitCode(checkCtx, p.RepoRoot, "git", "rev-parse", "HEAD"); err == nil && code == 0 {
+		return strings.TrimSpace(out)
+	}
+	return ""
+}
+
+func (s *Service) isAnchorMergedIntoTarget(ctx context.Context, anchorSHA, targetBranch string) (bool, error) {
+	p, _, err := s.require()
+	if err != nil {
+		return false, err
+	}
+	anchorSHA = strings.TrimSpace(anchorSHA)
+	targetBranch = strings.TrimSpace(targetBranch)
+	if !looksLikeGitCommit(anchorSHA) || targetBranch == "" {
+		return false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, integrationGitCheckTimeout)
+	defer cancel()
+	code, stdout, stderr, runErr := infra.RunExitCode(checkCtx, p.RepoRoot, "git", "merge-base", "--is-ancestor", anchorSHA, targetBranch)
+	if runErr != nil {
+		return false, runErr
+	}
+	switch code {
+	case 0:
+		return true, nil
+	case 1:
+		return false, nil
+	default:
+		msg := strings.ToLower(strings.TrimSpace(firstNonEmpty(stderr, stdout)))
+		if strings.Contains(msg, "not a git repository") || strings.Contains(msg, "unknown revision") || strings.Contains(msg, "invalid object") {
+			return false, nil
+		}
+		return false, fmt.Errorf("git merge-base --is-ancestor %s %s 失败(code=%d): %s", anchorSHA, targetBranch, code, strings.TrimSpace(firstNonEmpty(stderr, stdout)))
+	}
+}
+
+func looksLikeGitCommit(v string) bool {
+	v = strings.TrimSpace(strings.ToLower(v))
+	if len(v) < 7 || len(v) > 64 {
+		return false
+	}
+	for _, ch := range v {
+		if (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') {
+			continue
+		}
+		return false
+	}
+	return true
+}

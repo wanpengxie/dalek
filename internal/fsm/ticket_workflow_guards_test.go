@@ -191,3 +191,70 @@ func TestCanReportPromoteTo(t *testing.T) {
 		})
 	}
 }
+
+func TestCanFreezeIntegrationAnchor(t *testing.T) {
+	tests := []struct {
+		name        string
+		workflow    contracts.TicketWorkflowStatus
+		integration contracts.IntegrationStatus
+		want        bool
+	}{
+		{name: "done_and_empty", workflow: contracts.TicketDone, integration: contracts.IntegrationNone, want: true},
+		{name: "done_and_pending_alias", workflow: contracts.TicketDone, integration: "pending", want: true},
+		{name: "done_and_needs_merge", workflow: contracts.TicketDone, integration: contracts.IntegrationNeedsMerge, want: false},
+		{name: "active_and_empty", workflow: contracts.TicketActive, integration: contracts.IntegrationNone, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CanFreezeIntegrationAnchor(tc.workflow, tc.integration); got != tc.want {
+				t.Fatalf("CanFreezeIntegrationAnchor(%q,%q)=%v, want=%v", tc.workflow, tc.integration, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCanObserveTicketMerged(t *testing.T) {
+	tests := []struct {
+		name        string
+		workflow    contracts.TicketWorkflowStatus
+		integration contracts.IntegrationStatus
+		anchor      string
+		target      string
+		want        bool
+	}{
+		{name: "done_needs_merge_ready", workflow: contracts.TicketDone, integration: contracts.IntegrationNeedsMerge, anchor: "abc123", target: "main", want: true},
+		{name: "done_missing_anchor", workflow: contracts.TicketDone, integration: contracts.IntegrationNeedsMerge, target: "main", want: false},
+		{name: "done_missing_target", workflow: contracts.TicketDone, integration: contracts.IntegrationNeedsMerge, anchor: "abc123", want: false},
+		{name: "done_but_merged", workflow: contracts.TicketDone, integration: contracts.IntegrationMerged, anchor: "abc123", target: "main", want: false},
+		{name: "active_needs_merge", workflow: contracts.TicketActive, integration: contracts.IntegrationNeedsMerge, anchor: "abc123", target: "main", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CanObserveTicketMerged(tc.workflow, tc.integration, tc.anchor, tc.target); got != tc.want {
+				t.Fatalf("CanObserveTicketMerged(%q,%q,%q,%q)=%v, want=%v", tc.workflow, tc.integration, tc.anchor, tc.target, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCanAbandonTicketIntegration(t *testing.T) {
+	tests := []struct {
+		name        string
+		workflow    contracts.TicketWorkflowStatus
+		integration contracts.IntegrationStatus
+		want        bool
+	}{
+		{name: "done_needs_merge", workflow: contracts.TicketDone, integration: contracts.IntegrationNeedsMerge, want: true},
+		{name: "done_merged", workflow: contracts.TicketDone, integration: contracts.IntegrationMerged, want: true},
+		{name: "done_none", workflow: contracts.TicketDone, integration: contracts.IntegrationNone, want: false},
+		{name: "done_abandoned", workflow: contracts.TicketDone, integration: contracts.IntegrationAbandoned, want: false},
+		{name: "active_needs_merge", workflow: contracts.TicketActive, integration: contracts.IntegrationNeedsMerge, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CanAbandonTicketIntegration(tc.workflow, tc.integration); got != tc.want {
+				t.Fatalf("CanAbandonTicketIntegration(%q,%q)=%v, want=%v", tc.workflow, tc.integration, got, tc.want)
+			}
+		})
+	}
+}

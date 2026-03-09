@@ -65,14 +65,40 @@ func buildCLIBinary(t *testing.T) string {
 }
 
 func runCLI(t *testing.T, bin, dir string, args ...string) (string, string, error) {
+	return runCLIWithEnv(t, bin, dir, nil, args...)
+}
+
+func runCLIWithEnv(t *testing.T, bin, dir string, envOverrides map[string]string, args ...string) (string, string, error) {
 	t.Helper()
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
+	env := append([]string(nil), os.Environ()...)
+	env = upsertEnv(env, dispatchDepthEnvKey, "0")
+	for k, v := range envOverrides {
+		env = upsertEnv(env, k, v)
+	}
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	return stdout.String(), stderr.String(), err
+}
+
+func upsertEnv(env []string, key, value string) []string {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return env
+	}
+	prefix := key + "="
+	entry := prefix + value
+	for i, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			env[i] = entry
+			return env
+		}
+	}
+	return append(env, entry)
 }
 
 func runCLIOK(t *testing.T, bin, dir string, args ...string) (string, string) {

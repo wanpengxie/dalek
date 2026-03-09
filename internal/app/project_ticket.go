@@ -64,6 +64,13 @@ func (p *Project) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, st
 	return p.pm.SetTicketWorkflowStatus(ctx, ticketID, status)
 }
 
+func (p *Project) AbandonTicketIntegration(ctx context.Context, ticketID uint, reason string) error {
+	if p == nil || p.pm == nil {
+		return fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.AbandonTicketIntegration(ctx, ticketID, reason)
+}
+
 func (p *Project) BumpTicketPriority(ctx context.Context, ticketID uint, delta int) (int, error) {
 	if p == nil || p.ticket == nil {
 		return 0, fmt.Errorf("project ticket service 为空")

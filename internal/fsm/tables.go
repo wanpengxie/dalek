@@ -12,6 +12,7 @@ var TicketWorkflowTable = TransitionTable[contracts.TicketWorkflowStatus]{
 	},
 	Transitions: map[contracts.TicketWorkflowStatus][]contracts.TicketWorkflowStatus{
 		contracts.TicketBacklog: {
+			contracts.TicketActive,
 			contracts.TicketQueued,
 			contracts.TicketArchived,
 		},

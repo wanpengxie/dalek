@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
+	"dalek/internal/fsm"
 	"dalek/internal/services/core"
 	"dalek/internal/store"
 
@@ -589,69 +590,60 @@ func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, 
 	}
 
 	for _, t := range doneTickets {
-		w, werr := s.worker.LatestWorker(ctx, t.ID)
-		if werr != nil || w == nil {
-			continue
-		}
-		branch := strings.TrimSpace(w.Branch)
-		if branch == "" {
-			continue
-		}
-
-		var cnt int64
-		if err := db.WithContext(ctx).
-			Model(&contracts.MergeItem{}).
-			Where("ticket_id = ? AND status NOT IN ?", t.ID, mergeTerminalStatuses()).
-			Count(&cnt).Error; err != nil {
-			continue
-		}
-		if cnt > 0 {
-			s.markPlannerDirty(st)
-			continue
-		}
-		var latest contracts.MergeItem
-		if err := db.WithContext(ctx).
-			Where("ticket_id = ?", t.ID).
-			Order("id desc").
-			First(&latest).Error; err == nil {
-			if latest.Status == contracts.MergeDiscarded &&
-				latest.WorkerID == w.ID &&
-				strings.TrimSpace(latest.Branch) == branch &&
-				!t.UpdatedAt.After(latest.UpdatedAt) {
-				// A discarded merge for the current worker/branch should not be
-				// re-proposed until the ticket advances again.
+		status := contracts.CanonicalIntegrationStatus(t.IntegrationStatus)
+		switch status {
+		case contracts.IntegrationNone:
+			if dryRun {
+				out.MergeProposed = append(out.MergeProposed, t.ID)
+				s.markPlannerDirty(st)
 				continue
 			}
-		}
-
-		if dryRun {
+			if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				return s.freezeTicketIntegrationForDoneTx(ctx, tx, t.ID, 0)
+			}); err != nil {
+				out.Errors = append(out.Errors, err.Error())
+				continue
+			}
 			out.MergeProposed = append(out.MergeProposed, t.ID)
+			s.markPlannerDirty(st)
+			continue
+		case contracts.IntegrationNeedsMerge:
+			anchor := strings.TrimSpace(t.MergeAnchorSHA)
+			target := strings.TrimSpace(t.TargetBranch)
+			if target == "" {
+				target = s.defaultIntegrationTargetBranch(ctx)
+			}
+			if !fsm.CanObserveTicketMerged(t.WorkflowStatus, status, anchor, target) {
+				s.markPlannerDirty(st)
+				continue
+			}
+			merged, merr := s.isAnchorMergedIntoTarget(ctx, anchor, target)
+			if merr != nil {
+				out.Errors = append(out.Errors, merr.Error())
+				continue
+			}
+			if !merged {
+				s.markPlannerDirty(st)
+				continue
+			}
+			if dryRun {
+				continue
+			}
+			now := time.Now()
+			if err := db.WithContext(ctx).Model(&contracts.Ticket{}).
+				Where("id = ? AND workflow_status = ? AND integration_status = ?", t.ID, contracts.TicketDone, contracts.IntegrationNeedsMerge).
+				Updates(map[string]any{
+					"integration_status": contracts.IntegrationMerged,
+					"target_branch":      target,
+					"merged_at":          &now,
+					"updated_at":         now,
+				}).Error; err != nil {
+				out.Errors = append(out.Errors, err.Error())
+				continue
+			}
+		default:
 			continue
 		}
-
-		mi := contracts.MergeItem{
-			Status:   contracts.MergeProposed,
-			TicketID: t.ID,
-			WorkerID: w.ID,
-			Branch:   branch,
-		}
-		if err := db.WithContext(ctx).Create(&mi).Error; err != nil {
-			out.Errors = append(out.Errors, err.Error())
-			continue
-		}
-		out.MergeProposed = append(out.MergeProposed, t.ID)
-		s.markPlannerDirty(st)
-
-		_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-			Key:         inboxKeyMergeApproval(mi.ID),
-			Status:      contracts.InboxOpen,
-			Severity:    contracts.InboxWarn,
-			Reason:      contracts.InboxApprovalRequired,
-			Title:       fmt.Sprintf("待合并审批：t%d", t.ID),
-			Body:        fmt.Sprintf("merge_item=%d  branch=%s\n\n请确认是否允许合并，以及合并策略（squash/merge）。", mi.ID, strings.TrimSpace(mi.Branch)),
-			TicketID:    t.ID,
-			MergeItemID: mi.ID,
-		})
 	}
 
 	return out

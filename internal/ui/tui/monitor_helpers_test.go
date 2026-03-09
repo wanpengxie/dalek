@@ -40,15 +40,21 @@ func TestTableColumnsIncludeLabel(t *testing.T) {
 	if layout.label != 8 {
 		t.Fatalf("default label width mismatch: got=%d want=8", layout.label)
 	}
-	if layout.title != 34 {
-		t.Fatalf("default title width mismatch: got=%d want=34", layout.title)
+	if layout.integ != 8 {
+		t.Fatalf("default integration width mismatch: got=%d want=8", layout.integ)
+	}
+	if layout.title != 28 {
+		t.Fatalf("default title width mismatch: got=%d want=28", layout.title)
 	}
 	cols := tableColumns(layout)
-	if len(cols) != 8 {
-		t.Fatalf("columns count mismatch: got=%d want=8", len(cols))
+	if len(cols) != 9 {
+		t.Fatalf("columns count mismatch: got=%d want=9", len(cols))
 	}
 	if cols[3].Title != "标签" {
 		t.Fatalf("label column title mismatch: got=%q", cols[3].Title)
+	}
+	if cols[5].Title != "集成" {
+		t.Fatalf("integration column title mismatch: got=%q", cols[5].Title)
 	}
 }
 

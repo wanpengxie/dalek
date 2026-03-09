@@ -93,6 +93,11 @@ func storeMigrations() []Migration {
 			Name:    "add_pmops_journal_checkpoint_tables",
 			Up:      migrateAddPMOpsJournalCheckpointTables,
 		},
+		{
+			Version: 16,
+			Name:    "add_ticket_integration_columns",
+			Up:      migrateAddTicketIntegrationColumns,
+		},
 	}
 }
 
@@ -377,6 +382,48 @@ func migrateAddPMOpsJournalCheckpointTables(db *gorm.DB) error {
 		return fmt.Errorf("db 为空")
 	}
 	return db.AutoMigrate(&PMOpJournalEntry{}, &PMCheckpoint{})
+}
+
+func migrateAddTicketIntegrationColumns(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	addColumnIfMissing := func(col, ddl string) error {
+		has, err := tableHasColumn(db, "tickets", col)
+		if err != nil {
+			return err
+		}
+		if has {
+			return nil
+		}
+		if err := db.Exec(ddl).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if strings.Contains(msg, "duplicate column name") {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
+	if err := addColumnIfMissing("integration_status", `ALTER TABLE tickets ADD COLUMN integration_status TEXT NOT NULL DEFAULT '';`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing("merge_anchor_sha", `ALTER TABLE tickets ADD COLUMN merge_anchor_sha TEXT NOT NULL DEFAULT '';`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing("target_branch", `ALTER TABLE tickets ADD COLUMN target_branch TEXT NOT NULL DEFAULT '';`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing("merged_at", `ALTER TABLE tickets ADD COLUMN merged_at DATETIME;`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing("abandoned_reason", `ALTER TABLE tickets ADD COLUMN abandoned_reason TEXT NOT NULL DEFAULT '';`); err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_tickets_integration_status ON tickets(integration_status);`).Error; err != nil {
+		return err
+	}
+	return nil
 }
 
 func normalizeMigrations(migrations []Migration) ([]Migration, error) {
