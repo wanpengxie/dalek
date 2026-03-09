@@ -31,6 +31,7 @@ func TestTicketWorkflowTable(t *testing.T) {
 		to   contracts.TicketWorkflowStatus
 		want bool
 	}{
+		{name: "backlog_to_active", from: contracts.TicketBacklog, to: contracts.TicketActive, want: true},
 		{name: "backlog_to_queued", from: contracts.TicketBacklog, to: contracts.TicketQueued, want: true},
 		{name: "queued_to_active", from: contracts.TicketQueued, to: contracts.TicketActive, want: true},
 		{name: "active_to_done", from: contracts.TicketActive, to: contracts.TicketDone, want: true},

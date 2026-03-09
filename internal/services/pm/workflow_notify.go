@@ -212,7 +212,7 @@ func (n *GatewayStatusNotifier) loadMergeDetail(ctx context.Context, ticketID ui
 	if n == nil {
 		return "", nil
 	}
-	return loadMergeDetailForDB(ctx, n.projectDB, ticketID)
+	return loadTicketIntegrationDetailForDB(ctx, n.projectDB, ticketID)
 }
 
 func (n *GatewayStatusNotifier) buildNotifyText(ctx context.Context, event StatusChangeEvent) (string, error) {
@@ -243,15 +243,15 @@ func enrichDoneStatusDetail(ctx context.Context, projectDB *gorm.DB, event Statu
 	if contracts.CanonicalTicketWorkflowStatus(event.ToStatus) != contracts.TicketDone {
 		return event, nil
 	}
-	mergeDetail, err := loadMergeDetailForDB(ctx, projectDB, event.TicketID)
-	if err != nil || strings.TrimSpace(mergeDetail) == "" {
+	detail, err := loadTicketIntegrationDetailForDB(ctx, projectDB, event.TicketID)
+	if err != nil || strings.TrimSpace(detail) == "" {
 		return event, err
 	}
 	if cur := strings.TrimSpace(event.Detail); cur != "" {
-		event.Detail = strings.TrimSpace(mergeDetail) + "\n" + cur
+		event.Detail = strings.TrimSpace(detail) + "\n" + cur
 		return event, nil
 	}
-	event.Detail = strings.TrimSpace(mergeDetail)
+	event.Detail = strings.TrimSpace(detail)
 	return event, nil
 }
 
@@ -273,16 +273,46 @@ func loadTicketTitleForDB(ctx context.Context, projectDB *gorm.DB, ticketID uint
 	return title, nil
 }
 
-func loadMergeDetailForDB(ctx context.Context, projectDB *gorm.DB, ticketID uint) (string, error) {
+func loadTicketIntegrationDetailForDB(ctx context.Context, projectDB *gorm.DB, ticketID uint) (string, error) {
 	if projectDB == nil || ticketID == 0 {
 		return "", nil
 	}
+	var t contracts.Ticket
+	if err := projectDB.WithContext(ctx).
+		Select("id", "integration_status", "merge_anchor_sha", "target_branch", "merged_at", "abandoned_reason").
+		First(&t, ticketID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	status := contracts.CanonicalIntegrationStatus(t.IntegrationStatus)
+	if status == contracts.IntegrationNone {
+		return loadLegacyMergeDetailForDB(ctx, projectDB, ticketID)
+	}
+	parts := []string{fmt.Sprintf("integration=%s", status)}
+	if anchor := strings.TrimSpace(t.MergeAnchorSHA); anchor != "" {
+		parts = append(parts, fmt.Sprintf("anchor=%s", anchor))
+	}
+	if target := strings.TrimSpace(t.TargetBranch); target != "" {
+		parts = append(parts, fmt.Sprintf("target=%s", target))
+	}
+	if t.MergedAt != nil && !t.MergedAt.IsZero() {
+		parts = append(parts, fmt.Sprintf("merged_at=%s", t.MergedAt.Local().Format("2006-01-02 15:04:05")))
+	}
+	if reason := strings.TrimSpace(t.AbandonedReason); reason != "" {
+		parts = append(parts, fmt.Sprintf("reason=%s", reason))
+	}
+	return strings.Join(parts, "  "), nil
+}
+
+func loadLegacyMergeDetailForDB(ctx context.Context, projectDB *gorm.DB, ticketID uint) (string, error) {
 	var mi contracts.MergeItem
-	err := projectDB.WithContext(ctx).
+	if err := projectDB.WithContext(ctx).
 		Where("ticket_id = ? AND status != ?", ticketID, contracts.MergeMerged).
 		Order("id desc").
-		First(&mi).Error
-	if err != nil {
+		First(&mi).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return "", nil
 		}

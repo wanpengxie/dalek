@@ -152,7 +152,7 @@ func TestScanRunningWorkers_TracksBlockedAndProgressable(t *testing.T) {
 	}
 }
 
-func TestProposeMergesForDoneTickets_AvoidsDuplicateOpenItems(t *testing.T) {
+func TestProposeMergesForDoneTickets_FreezeIntegrationOnce(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	st, err := svc.getOrInitPMState(context.Background())
 	if err != nil {
@@ -188,15 +188,12 @@ func TestProposeMergesForDoneTickets_AvoidsDuplicateOpenItems(t *testing.T) {
 	if st.PlannerWakeVersion != initialWakeVersion+1 {
 		t.Fatalf("expected planner wake version +1 after merge proposal, got=%d", st.PlannerWakeVersion)
 	}
-
-	var mergeItem contracts.MergeItem
-	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&mergeItem).Error; err != nil {
-		t.Fatalf("query merge item failed: %v", err)
+	var afterFirst contracts.Ticket
+	if err := p.DB.First(&afterFirst, tk.ID).Error; err != nil {
+		t.Fatalf("reload ticket after first proposal failed: %v", err)
 	}
-	var inbox contracts.InboxItem
-	if err := p.DB.Where("key = ? AND status = ?", inboxKeyMergeApproval(mergeItem.ID), contracts.InboxOpen).
-		Order("id desc").First(&inbox).Error; err != nil {
-		t.Fatalf("expected merge approval inbox, err=%v", err)
+	if got := contracts.CanonicalIntegrationStatus(afterFirst.IntegrationStatus); got != contracts.IntegrationNeedsMerge {
+		t.Fatalf("expected integration_status needs_merge after first proposal, got=%s", got)
 	}
 
 	st.PlannerDirty = false
@@ -213,87 +210,41 @@ func TestProposeMergesForDoneTickets_AvoidsDuplicateOpenItems(t *testing.T) {
 	if st.PlannerWakeVersion != initialWakeVersion+2 {
 		t.Fatalf("expected planner wake version +2 after second call, got=%d", st.PlannerWakeVersion)
 	}
-
-	var cnt int64
-	if err := p.DB.Model(&contracts.MergeItem{}).
-		Where("ticket_id = ? AND status NOT IN ?", tk.ID, mergeTerminalStatuses()).
-		Count(&cnt).Error; err != nil {
-		t.Fatalf("count open merge items failed: %v", err)
-	}
-	if cnt != 1 {
-		t.Fatalf("expected exactly one open merge item, got=%d", cnt)
-	}
 }
 
-func TestProposeMergesForDoneTickets_ExistingOpenItemsMarkDirtyForNonTerminalStatuses(t *testing.T) {
-	nonTerminalStatuses := []contracts.MergeStatus{
-		contracts.MergeProposed,
-		contracts.MergeChecksRunning,
-		contracts.MergeReady,
-		contracts.MergeApproved,
-		contracts.MergeBlocked,
+func TestProposeMergesForDoneTickets_NeedsMergeKeepsPlannerDirty(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	st, err := svc.getOrInitPMState(context.Background())
+	if err != nil {
+		t.Fatalf("getOrInitPMState failed: %v", err)
+	}
+	initialWakeVersion := st.PlannerWakeVersion
+
+	tk := createTicket(t, p.DB, "manager-tick-needs-merge-dirty")
+	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket integration needs_merge failed: %v", err)
 	}
 
-	for _, status := range nonTerminalStatuses {
-		status := status
-		t.Run(string(status), func(t *testing.T) {
-			svc, p, _ := newServiceForTest(t)
-			st, err := svc.getOrInitPMState(context.Background())
-			if err != nil {
-				t.Fatalf("getOrInitPMState failed: %v", err)
-			}
-			initialWakeVersion := st.PlannerWakeVersion
-
-			tk := createTicket(t, p.DB, fmt.Sprintf("manager-tick-merge-existing-%s", status))
-			worker, err := svc.StartTicket(context.Background(), tk.ID)
-			if err != nil {
-				t.Fatalf("StartTicket failed: %v", err)
-			}
-			if worker == nil || worker.ID == 0 {
-				t.Fatalf("expected started worker")
-			}
-			if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-				"workflow_status": contracts.TicketDone,
-				"updated_at":      time.Now(),
-			}).Error; err != nil {
-				t.Fatalf("set ticket done failed: %v", err)
-			}
-
-			existing := contracts.MergeItem{
-				Status:   status,
-				TicketID: tk.ID,
-				WorkerID: worker.ID,
-				Branch:   worker.Branch,
-			}
-			if err := p.DB.Create(&existing).Error; err != nil {
-				t.Fatalf("create existing merge item failed: %v", err)
-			}
-
-			st.PlannerDirty = false
-			out := svc.proposeMergesForDoneTickets(context.Background(), p.DB, st, false)
-			if containsTicketID(out.MergeProposed, tk.ID) {
-				t.Fatalf("expected no new merge proposal for existing status=%s, got=%v", status, out.MergeProposed)
-			}
-			if len(out.Errors) != 0 {
-				t.Fatalf("expected no merge proposal errors, got=%v", out.Errors)
-			}
-			if !st.PlannerDirty {
-				t.Fatalf("expected planner dirty for existing status=%s", status)
-			}
-			if st.PlannerWakeVersion != initialWakeVersion+1 {
-				t.Fatalf("expected planner wake version +1 for existing status=%s, got=%d", status, st.PlannerWakeVersion)
-			}
-
-			var cnt int64
-			if err := p.DB.Model(&contracts.MergeItem{}).
-				Where("ticket_id = ? AND status NOT IN ?", tk.ID, mergeTerminalStatuses()).
-				Count(&cnt).Error; err != nil {
-				t.Fatalf("count open merge items failed: %v", err)
-			}
-			if cnt != 1 {
-				t.Fatalf("expected exactly one open merge item for status=%s, got=%d", status, cnt)
-			}
-		})
+	st.PlannerDirty = false
+	out := svc.proposeMergesForDoneTickets(context.Background(), p.DB, st, false)
+	if containsTicketID(out.MergeProposed, tk.ID) {
+		t.Fatalf("needs_merge ticket should not be re-proposed, got=%v", out.MergeProposed)
+	}
+	if len(out.Errors) != 0 {
+		t.Fatalf("expected no merge proposal errors, got=%v", out.Errors)
+	}
+	if !st.PlannerDirty {
+		t.Fatalf("expected planner dirty for needs_merge ticket")
+	}
+	if st.PlannerWakeVersion != initialWakeVersion+1 {
+		t.Fatalf("expected planner wake version +1, got=%d", st.PlannerWakeVersion)
 	}
 }
 

@@ -15,14 +15,19 @@ const (
 
 // Ticket 是跨层复用的工单领域模型。
 type Ticket struct {
-	ID             uint                 `gorm:"primaryKey"`
-	CreatedAt      time.Time            `gorm:"not null"`
-	UpdatedAt      time.Time            `gorm:"not null"`
-	Title          string               `gorm:"type:text;not null"`
-	Description    string               `gorm:"type:text;not null;default:''"`
-	Label          string               `gorm:"type:text;not null;default:''"`
-	WorkflowStatus TicketWorkflowStatus `gorm:"column:workflow_status;type:text;not null;default:'backlog';index"`
-	Priority       int                  `gorm:"not null;default:0"`
+	ID                uint                 `gorm:"primaryKey"`
+	CreatedAt         time.Time            `gorm:"not null"`
+	UpdatedAt         time.Time            `gorm:"not null"`
+	Title             string               `gorm:"type:text;not null"`
+	Description       string               `gorm:"type:text;not null;default:''"`
+	Label             string               `gorm:"type:text;not null;default:''"`
+	WorkflowStatus    TicketWorkflowStatus `gorm:"column:workflow_status;type:text;not null;default:'backlog';index"`
+	IntegrationStatus IntegrationStatus    `gorm:"column:integration_status;type:text;not null;default:'';index"`
+	MergeAnchorSHA    string               `gorm:"column:merge_anchor_sha;type:text;not null;default:''"`
+	TargetBranch      string               `gorm:"column:target_branch;type:text;not null;default:''"`
+	MergedAt          *time.Time           `gorm:"column:merged_at"`
+	AbandonedReason   string               `gorm:"column:abandoned_reason;type:text;not null;default:''"`
+	Priority          int                  `gorm:"not null;default:0"`
 }
 
 func (Ticket) TableName() string {

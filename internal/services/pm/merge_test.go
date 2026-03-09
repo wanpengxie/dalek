@@ -207,9 +207,9 @@ func TestProposeMerge_AllowsReproposeAfterDiscarded(t *testing.T) {
 	}
 }
 
-func TestApplyWorkerReport_DoneRecreatesMergeProposalAfterDiscarded(t *testing.T) {
+func TestApplyWorkerReport_DoneDoesNotCreateMergeProposal(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
-	tk := createTicket(t, p.DB, "report-done-after-discarded")
+	tk := createTicket(t, p.DB, "report-done-no-merge-item")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
@@ -224,38 +224,27 @@ func TestApplyWorkerReport_DoneRecreatesMergeProposalAfterDiscarded(t *testing.T
 		NextAction: string(contracts.NextDone),
 	}
 	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
-		t.Fatalf("first ApplyWorkerReport failed: %v", err)
+		t.Fatalf("ApplyWorkerReport failed: %v", err)
 	}
 
-	var first contracts.MergeItem
-	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&first).Error; err != nil {
-		t.Fatalf("query first merge item failed: %v", err)
+	var cnt int64
+	if err := p.DB.Model(&contracts.MergeItem{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
+		t.Fatalf("count merge items failed: %v", err)
 	}
-	if err := svc.DiscardMerge(context.Background(), first.ID, "驳回"); err != nil {
-		t.Fatalf("DiscardMerge failed: %v", err)
-	}
-
-	report.Summary = "二次 done"
-	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
-		t.Fatalf("second ApplyWorkerReport failed: %v", err)
+	if cnt != 0 {
+		t.Fatalf("done report should not create merge item, got=%d", cnt)
 	}
 
-	var items []contracts.MergeItem
-	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").Find(&items).Error; err != nil {
-		t.Fatalf("list merge items failed: %v", err)
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("reload ticket failed: %v", err)
 	}
-	if len(items) < 2 {
-		t.Fatalf("expected second merge proposal after discarded, got=%d", len(items))
-	}
-	if items[0].Status != contracts.MergeProposed {
-		t.Fatalf("latest merge item should be proposed, got=%s", items[0].Status)
-	}
-	if items[0].ID == first.ID {
-		t.Fatalf("latest merge item should be a new one")
+	if got := contracts.CanonicalIntegrationStatus(ticket.IntegrationStatus); got != contracts.IntegrationNeedsMerge {
+		t.Fatalf("expected integration_status needs_merge, got=%s", got)
 	}
 }
 
-func TestManagerTick_SkipsReproposeWhenLatestDiscardedMergeMatchesUnchangedTicket(t *testing.T) {
+func TestManagerTick_DoneTicketTransitionsToNeedsMergeWithoutCreatingMergeItem(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-discarded-only")
 	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
@@ -280,8 +269,8 @@ func TestManagerTick_SkipsReproposeWhenLatestDiscardedMergeMatchesUnchangedTicke
 	if err != nil {
 		t.Fatalf("ManagerTick failed: %v", err)
 	}
-	if containsTicketID(res.MergeProposed, tk.ID) {
-		t.Fatalf("manager tick should not re-propose unchanged discarded merge, merge_proposed=%v", res.MergeProposed)
+	if !containsTicketID(res.MergeProposed, tk.ID) {
+		t.Fatalf("manager tick should mark done ticket into integration tracking, merge_proposed=%v", res.MergeProposed)
 	}
 
 	var latest contracts.MergeItem
@@ -293,5 +282,13 @@ func TestManagerTick_SkipsReproposeWhenLatestDiscardedMergeMatchesUnchangedTicke
 	}
 	if latest.ID != mi.ID {
 		t.Fatalf("manager tick should not create a new merge item")
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("reload ticket failed: %v", err)
+	}
+	if got := contracts.CanonicalIntegrationStatus(ticket.IntegrationStatus); got != contracts.IntegrationNeedsMerge {
+		t.Fatalf("expected integration_status needs_merge, got=%s", got)
 	}
 }

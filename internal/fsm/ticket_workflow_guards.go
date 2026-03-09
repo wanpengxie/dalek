@@ -1,6 +1,9 @@
 package fsm
 
-import "dalek/internal/contracts"
+import (
+	"dalek/internal/contracts"
+	"strings"
+)
 
 // CanStartTicket 判断 ticket 是否允许执行 start 入口。
 // 兼容历史行为：仅 done/archived 禁止 start，其余状态允许进入 start 流程。
@@ -83,4 +86,37 @@ func CanReportPromoteTo(current, target contracts.TicketWorkflowStatus) bool {
 	}
 	// 兼容历史行为：除 done->active 外，report 允许越级推进。
 	return true
+}
+
+// CanFreezeIntegrationAnchor 判断是否允许冻结 ticket 集成锚点。
+func CanFreezeIntegrationAnchor(workflow contracts.TicketWorkflowStatus, integration contracts.IntegrationStatus) bool {
+	return contracts.CanonicalTicketWorkflowStatus(workflow) == contracts.TicketDone &&
+		contracts.CanonicalIntegrationStatus(integration) == contracts.IntegrationNone
+}
+
+// CanObserveTicketMerged 判断 manager tick 是否可观测 integration merged。
+func CanObserveTicketMerged(workflow contracts.TicketWorkflowStatus, integration contracts.IntegrationStatus, anchorSHA, targetBranch string) bool {
+	if contracts.CanonicalTicketWorkflowStatus(workflow) != contracts.TicketDone {
+		return false
+	}
+	if contracts.CanonicalIntegrationStatus(integration) != contracts.IntegrationNeedsMerge {
+		return false
+	}
+	if strings.TrimSpace(anchorSHA) == "" || strings.TrimSpace(targetBranch) == "" {
+		return false
+	}
+	return true
+}
+
+// CanAbandonTicketIntegration 判断 PM 是否可手动 abandon integration。
+func CanAbandonTicketIntegration(workflow contracts.TicketWorkflowStatus, integration contracts.IntegrationStatus) bool {
+	if contracts.CanonicalTicketWorkflowStatus(workflow) != contracts.TicketDone {
+		return false
+	}
+	switch contracts.CanonicalIntegrationStatus(integration) {
+	case contracts.IntegrationNeedsMerge, contracts.IntegrationMerged:
+		return true
+	default:
+		return false
+	}
 }
