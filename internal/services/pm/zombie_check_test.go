@@ -17,6 +17,12 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"log_path":   "",
 		"updated_at": time.Now(),
@@ -53,6 +59,17 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 	if strings.TrimSpace(got.LastErrorHash) == "" {
 		t.Fatalf("expected last_error_hash set")
 	}
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected ticket queued after recovery, got=%s", ticket.WorkflowStatus)
+	}
+	var lifecycle contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleRequeued).Order("sequence desc").First(&lifecycle).Error; err != nil {
+		t.Fatalf("expected requeued lifecycle event: %v", err)
+	}
 }
 
 func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
@@ -62,6 +79,12 @@ func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
 	}
 
 	rt, run := createWorkerRunForManagerTickTest(t, svc, p, tk.ID, w.ID, "zombie-stalled")
@@ -94,6 +117,13 @@ func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
 	if got.RetryCount != 1 {
 		t.Fatalf("expected retry_count=1, got=%d", got.RetryCount)
 	}
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected ticket queued after stalled recovery, got=%s", ticket.WorkflowStatus)
+	}
 }
 
 func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
@@ -103,6 +133,12 @@ func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"retry_count": defaultZombieMaxRetries,
@@ -132,16 +168,16 @@ func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
 	}
 
 	var inbox contracts.InboxItem
-	key := inboxKeyWorkerIncident(w.ID, "zombie_blocked")
+	key := inboxKeyWorkerIncident(w.ID, "execution_escalated")
 	if err := p.DB.Where("key = ? AND status = ?", key, contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
-		t.Fatalf("expected zombie blocked inbox, err=%v", err)
+		t.Fatalf("expected execution escalated inbox, err=%v", err)
 	}
 	if inbox.Severity != contracts.InboxBlocker {
 		t.Fatalf("expected blocker inbox, got=%s", inbox.Severity)
 	}
 }
 
-func TestCheckZombieWorkers_BackoffRespected(t *testing.T) {
+func TestManagerTick_SkipsQueuedRetryDuringBackoff(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-backoff")
@@ -149,7 +185,19 @@ func TestCheckZombieWorkers_BackoffRespected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	lastRetryAt := time.Now().Add(-time.Minute)
+	lastRetryAt := time.Now()
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerStopped,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("unexpected worker update failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketQueued,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket queued failed: %v", err)
+	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"retry_count":   1,
 		"last_retry_at": &lastRetryAt,
@@ -157,13 +205,13 @@ func TestCheckZombieWorkers_BackoffRespected(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("set backoff state failed: %v", err)
 	}
-	rt, err := svc.taskRuntimeForDB(p.DB)
+
+	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{})
 	if err != nil {
-		t.Fatalf("taskRuntimeForDB failed: %v", err)
+		t.Fatalf("ManagerTick failed: %v", err)
 	}
-	out := svc.checkZombieWorkers(context.Background(), p.DB, rt)
-	if out.Recovered != 0 || out.Blocked != 0 {
-		t.Fatalf("expected no recovery/block under backoff, got recovered=%d blocked=%d errors=%v", out.Recovered, out.Blocked, out.Errors)
+	if len(res.StartedTickets) != 0 || len(res.DispatchedTickets) != 0 {
+		t.Fatalf("expected queued retry deferred by backoff, started=%v dispatched=%v", res.StartedTickets, res.DispatchedTickets)
 	}
 
 	var got contracts.Worker
@@ -182,6 +230,12 @@ func TestManagerTick_ReportsZombieStats(t *testing.T) {
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 		"log_path":   "",
@@ -210,7 +264,7 @@ func TestManagerTick_ReportsZombieStats(t *testing.T) {
 	}
 }
 
-func TestCheckZombieWorkers_ActiveWithStoppedWorker_DemotesBlocked(t *testing.T) {
+func TestCheckZombieWorkers_ActiveWithStoppedWorker_Requeues(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "zombie-illegal-active-stopped")
@@ -241,22 +295,16 @@ func TestCheckZombieWorkers_ActiveWithStoppedWorker_DemotesBlocked(t *testing.T)
 	if out.Illegal != 1 {
 		t.Fatalf("expected illegal=1, got=%d errors=%v", out.Illegal, out.Errors)
 	}
-	if out.Blocked != 1 {
-		t.Fatalf("expected blocked=1, got=%d errors=%v", out.Blocked, out.Errors)
+	if out.Blocked != 0 {
+		t.Fatalf("expected blocked=0, got=%d errors=%v", out.Blocked, out.Errors)
 	}
 
 	var ticket contracts.Ticket
 	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != contracts.TicketBlocked {
-		t.Fatalf("expected ticket blocked, got=%s", ticket.WorkflowStatus)
-	}
-
-	var inbox contracts.InboxItem
-	key := inboxKeyWorkerIncident(w.ID, "active_worker_not_running")
-	if err := p.DB.Where("key = ? AND status = ?", key, contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
-		t.Fatalf("expected active_worker_not_running inbox, err=%v", err)
+	if ticket.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected ticket queued, got=%s", ticket.WorkflowStatus)
 	}
 }
 
@@ -290,8 +338,8 @@ func TestCheckZombieWorkers_ActiveWithStoppedWorker_EmitsStatusHook(t *testing.T
 		t.Fatalf("taskRuntimeForDB failed: %v", err)
 	}
 	out := svc.checkZombieWorkers(context.Background(), p.DB, rt)
-	if out.Illegal != 1 || out.Blocked != 1 {
-		t.Fatalf("expected illegal=1 blocked=1, got illegal=%d blocked=%d errors=%v", out.Illegal, out.Blocked, out.Errors)
+	if out.Illegal != 1 || out.Blocked != 0 {
+		t.Fatalf("expected illegal=1 blocked=0, got illegal=%d blocked=%d errors=%v", out.Illegal, out.Blocked, out.Errors)
 	}
 
 	ev := waitStatusEvent(t, hook.ch)
@@ -301,7 +349,7 @@ func TestCheckZombieWorkers_ActiveWithStoppedWorker_EmitsStatusHook(t *testing.T
 	if ev.WorkerID != w.ID {
 		t.Fatalf("unexpected worker_id: got=%d want=%d", ev.WorkerID, w.ID)
 	}
-	if ev.FromStatus != contracts.TicketActive || ev.ToStatus != contracts.TicketBlocked {
+	if ev.FromStatus != contracts.TicketActive || ev.ToStatus != contracts.TicketQueued {
 		t.Fatalf("unexpected transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 	if ev.Source != "pm.zombie" {
@@ -423,7 +471,7 @@ func TestManagerTick_ReportsZombieStateDriftStats(t *testing.T) {
 	if res.ZombieIllegal != 1 {
 		t.Fatalf("expected zombie_illegal=1, got=%d errors=%v", res.ZombieIllegal, res.Errors)
 	}
-	if res.ZombieBlocked != 1 {
-		t.Fatalf("expected zombie_blocked=1, got=%d errors=%v", res.ZombieBlocked, res.Errors)
+	if res.ZombieBlocked != 0 {
+		t.Fatalf("expected zombie_blocked=0, got=%d errors=%v", res.ZombieBlocked, res.Errors)
 	}
 }

@@ -2,8 +2,6 @@ package pm
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -220,13 +218,22 @@ func (s *Service) reconcileZombieStateDrift(ctx context.Context, db *gorm.DB, no
 		}
 		if w.Status != contracts.WorkerRunning {
 			reason := fmt.Sprintf("ticket active 但 worker 不在 running（status=%s）", strings.TrimSpace(string(w.Status)))
-			demoted, err := s.demoteTicketBlockedOnStateAnomaly(ctx, db, t.ID, w.ID, "active_worker_not_running", reason, now)
+			outcome, err := s.convergeExecutionLost(ctx, executionLossInput{
+				TicketID:    t.ID,
+				WorkerID:    w.ID,
+				Source:      "pm.zombie",
+				FailureCode: "active_worker_not_running",
+				Reason:      reason,
+				Now:         now,
+			})
 			if err != nil {
 				out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检处理非法状态失败：t%d w%d: %v", t.ID, w.ID, err))
 				continue
 			}
-			if demoted {
+			if outcome.Requeued || outcome.Escalated {
 				out.Illegal++
+			}
+			if outcome.Escalated {
 				out.Blocked++
 			}
 		}
@@ -400,60 +407,31 @@ func zombieRetryBackoff(retryCount int) time.Duration {
 	return wait
 }
 
-func shouldAttemptZombieRecovery(w contracts.Worker, now time.Time) (attempt bool, block bool) {
-	if w.RetryCount >= defaultZombieMaxRetries {
-		return false, true
-	}
-	if w.LastRetryAt == nil || w.LastRetryAt.IsZero() {
-		return true, false
-	}
-	wait := zombieRetryBackoff(w.RetryCount)
-	if wait <= 0 {
-		return true, false
-	}
-	return now.Sub(*w.LastRetryAt) >= wait, false
-}
-
 func (s *Service) handleDeadWorker(ctx context.Context, db *gorm.DB, w contracts.Worker, now time.Time, reason string) (bool, bool, error) {
-	hash := zombieErrorHash("dead", reason)
-	attempt, block := shouldAttemptZombieRecovery(w, now)
-	if block {
-		blocked, err := s.blockZombieWorker(ctx, db, w, now, reason, hash)
-		return false, blocked, err
+	if err := s.worker.MarkWorkerRuntimeNotAlive(ctx, w, now); err != nil {
+		return false, false, err
 	}
-	if !attempt {
-		return false, false, nil
+	outcome, err := s.convergeExecutionLost(ctx, executionLossInput{
+		TicketID:    w.TicketID,
+		WorkerID:    w.ID,
+		Source:      "pm.zombie",
+		FailureCode: "runtime_dead",
+		Reason:      reason,
+		Now:         now,
+	})
+	if err != nil {
+		return false, false, err
 	}
-
-	recoveryErr := s.recoverWorkerByRestartChain(ctx, w.TicketID)
-	nextRetry := w.RetryCount + 1
-	recordErr := s.recordZombieRetryAttempt(ctx, db, w.ID, nextRetry, now, hash)
-
-	if recoveryErr != nil || recordErr != nil {
-		err := joinZombieErrors(recoveryErr, recordErr)
-		blocked := false
-		if recoveryErr != nil && nextRetry >= defaultZombieMaxRetries {
-			w.RetryCount = nextRetry
-			b, berr := s.blockZombieWorker(ctx, db, w, now, reason, hash)
-			blocked = b
-			err = joinZombieErrors(err, berr)
-		}
-		return false, blocked, err
+	if outcome.Requeued {
+		return true, false, nil
 	}
-	return true, false, nil
+	if outcome.Escalated {
+		return false, true, nil
+	}
+	return false, false, nil
 }
 
 func (s *Service) handleStalledWorker(ctx context.Context, db *gorm.DB, taskRuntime core.TaskRuntime, w contracts.Worker, lastActiveAt, now time.Time, reason string) (bool, bool, error) {
-	hash := zombieErrorHash("stalled", reason)
-	attempt, block := shouldAttemptZombieRecovery(w, now)
-	if block {
-		blocked, err := s.blockZombieWorker(ctx, db, w, now, reason, hash)
-		return false, blocked, err
-	}
-	if !attempt {
-		return false, false, nil
-	}
-
 	interruptErr := error(nil)
 	interruptRecovered := false
 	if _, err := s.worker.InterruptWorker(ctx, w.ID); err != nil {
@@ -462,43 +440,42 @@ func (s *Service) handleStalledWorker(ctx context.Context, db *gorm.DB, taskRunt
 		if waitErr := sleepWithContext(ctx, 2*time.Second); waitErr != nil {
 			interruptErr = waitErr
 		} else {
-			latest, ok, checkErr := latestWorkerActivityAfter(ctx, taskRuntime, w.ID)
+			latest, ok, active, checkErr := latestWorkerActivityAfter(ctx, taskRuntime, w.ID)
 			if checkErr != nil {
 				interruptErr = joinZombieErrors(interruptErr, checkErr)
-			} else if ok && latest.After(lastActiveAt) {
+			} else if ok && active && latest.After(lastActiveAt) {
 				interruptRecovered = true
 			}
 		}
 	}
-
-	recoveryErr := error(nil)
-	if !interruptRecovered {
-		recoveryErr = s.recoverWorkerByRestartChain(ctx, w.TicketID)
-	}
-
-	nextRetry := w.RetryCount + 1
-	recordErr := s.recordZombieRetryAttempt(ctx, db, w.ID, nextRetry, now, hash)
-	if recoveryErr == nil && recordErr == nil {
+	if interruptRecovered {
 		return true, false, nil
 	}
-
-	err := joinZombieErrors(interruptErr, recoveryErr, recordErr)
-	blocked := false
-	if recoveryErr != nil && nextRetry >= defaultZombieMaxRetries {
-		w.RetryCount = nextRetry
-		b, berr := s.blockZombieWorker(ctx, db, w, now, reason, hash)
-		blocked = b
-		err = joinZombieErrors(err, berr)
+	failErr := s.worker.MarkWorkerFailed(ctx, w.ID, now, reason)
+	outcome, err := s.convergeExecutionLost(ctx, executionLossInput{
+		TicketID:    w.TicketID,
+		WorkerID:    w.ID,
+		Source:      "pm.zombie",
+		FailureCode: "runtime_stalled",
+		Reason:      reason,
+		Now:         now,
+	})
+	err = joinZombieErrors(interruptErr, failErr, err)
+	if outcome.Requeued {
+		return true, false, err
 	}
-	return false, blocked, err
+	if outcome.Escalated {
+		return false, true, err
+	}
+	return false, false, err
 }
 
-func latestWorkerActivityAfter(ctx context.Context, taskRuntime core.TaskRuntime, workerID uint) (time.Time, bool, error) {
+func latestWorkerActivityAfter(ctx context.Context, taskRuntime core.TaskRuntime, workerID uint) (time.Time, bool, bool, error) {
 	if workerID == 0 {
-		return time.Time{}, false, fmt.Errorf("worker_id 不能为空")
+		return time.Time{}, false, false, fmt.Errorf("worker_id 不能为空")
 	}
 	if taskRuntime == nil {
-		return time.Time{}, false, fmt.Errorf("task runtime 为空")
+		return time.Time{}, false, false, fmt.Errorf("task runtime 为空")
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -510,159 +487,13 @@ func latestWorkerActivityAfter(ctx context.Context, taskRuntime core.TaskRuntime
 		Limit:           1,
 	})
 	if err != nil {
-		return time.Time{}, false, err
+		return time.Time{}, false, false, err
 	}
 	if len(list) == 0 {
-		return time.Time{}, false, nil
+		return time.Time{}, false, false, nil
 	}
 	latest, ok := latestZombieActivityAt(list[0])
-	return latest, ok, nil
-}
-
-func (s *Service) recoverWorkerByRestartChain(ctx context.Context, ticketID uint) error {
-	stopErr := s.StopTicket(ctx, ticketID)
-	if _, err := s.StartTicket(ctx, ticketID); err != nil {
-		if stopErr != nil {
-			return fmt.Errorf("stop 失败: %v；start 失败: %w", stopErr, err)
-		}
-		return fmt.Errorf("start 失败: %w", err)
-	}
-	if _, err := s.DirectDispatchWorker(ctx, ticketID, DirectDispatchOptions{}); err != nil {
-		if stopErr != nil {
-			return fmt.Errorf("stop 失败: %v；worker run 失败: %w", stopErr, err)
-		}
-		return fmt.Errorf("worker run 失败: %w", err)
-	}
-	return nil
-}
-
-func (s *Service) recordZombieRetryAttempt(ctx context.Context, db *gorm.DB, workerID uint, retryCount int, now time.Time, errHash string) error {
-	if db == nil {
-		return fmt.Errorf("db 为空")
-	}
-	if workerID == 0 {
-		return fmt.Errorf("worker_id 不能为空")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return db.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
-		"retry_count":     retryCount,
-		"last_retry_at":   &now,
-		"last_error_hash": strings.TrimSpace(errHash),
-		"updated_at":      now,
-	}).Error
-}
-
-func (s *Service) blockZombieWorker(ctx context.Context, db *gorm.DB, w contracts.Worker, now time.Time, reason, errHash string) (bool, error) {
-	if db == nil {
-		return false, fmt.Errorf("db 为空")
-	}
-	if w.TicketID == 0 {
-		return false, fmt.Errorf("ticket_id 不能为空")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		reason = "zombie 恢复重试耗尽"
-	}
-	errHash = strings.TrimSpace(errHash)
-
-	blocked := false
-	var statusEvent *StatusChangeEvent
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var t contracts.Ticket
-		if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&t, w.TicketID).Error; err != nil {
-			return err
-		}
-		from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
-		if !fsm.ShouldDemoteOnDispatchFailed(from) {
-			return tx.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-				"last_error_hash": errHash,
-				"updated_at":      now,
-			}).Error
-		}
-
-		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ?", w.TicketID).
-			Updates(map[string]any{
-				"workflow_status": contracts.TicketBlocked,
-				"updated_at":      now,
-			}).Error; err != nil {
-			return err
-		}
-
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, w.TicketID, from, contracts.TicketBlocked, "pm.zombie", "zombie 恢复重试耗尽，自动降级 blocked", map[string]any{
-			"ticket_id":       w.TicketID,
-			"worker_id":       w.ID,
-			"retry_count":     w.RetryCount,
-			"max_retries":     defaultZombieMaxRetries,
-			"last_error_hash": errHash,
-			"reason":          reason,
-		}, now); err != nil {
-			return err
-		}
-		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
-			TicketID:       w.TicketID,
-			EventType:      contracts.TicketLifecycleRepaired,
-			Source:         "pm.zombie",
-			ActorType:      contracts.TicketLifecycleActorSystem,
-			WorkerID:       w.ID,
-			IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(w.TicketID, "pm.zombie.retry_exhausted", now),
-			Payload: lifecycleRepairPayload(contracts.TicketBlocked, contracts.IntegrationNone, map[string]any{
-				"ticket_id":       w.TicketID,
-				"worker_id":       w.ID,
-				"retry_count":     w.RetryCount,
-				"max_retries":     defaultZombieMaxRetries,
-				"last_error_hash": errHash,
-				"reason":          reason,
-			}),
-			CreatedAt: now,
-		}); err != nil {
-			return err
-		}
-		statusEvent = s.buildStatusChangeEvent(w.TicketID, from, contracts.TicketBlocked, "pm.zombie", now)
-		if statusEvent != nil {
-			statusEvent.WorkerID = w.ID
-			statusEvent.Detail = reason
-		}
-
-		if _, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
-			Key:      inboxKeyWorkerIncident(w.ID, "zombie_blocked"),
-			Status:   contracts.InboxOpen,
-			Severity: contracts.InboxBlocker,
-			Reason:   contracts.InboxIncident,
-			Title:    fmt.Sprintf("僵尸恢复失败：t%d w%d", w.TicketID, w.ID),
-			Body:     reason,
-			TicketID: w.TicketID,
-			WorkerID: w.ID,
-		}); err != nil {
-			return err
-		}
-
-		if err := tx.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-			"last_error_hash": errHash,
-			"updated_at":      now,
-		}).Error; err != nil {
-			return err
-		}
-
-		blocked = true
-		return nil
-	})
-	if err != nil {
-		return blocked, err
-	}
-	s.emitStatusChangeHookAsync(statusEvent)
-	return blocked, nil
-}
-
-func zombieErrorHash(parts ...string) string {
-	raw := strings.TrimSpace(strings.Join(parts, "|"))
-	sum := sha1.Sum([]byte(raw))
-	return hex.EncodeToString(sum[:])
+	return latest, ok, isWorkerTaskRunActive(list[0]), nil
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {

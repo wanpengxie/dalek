@@ -8,15 +8,18 @@ import (
 type TicketLifecycleEventType string
 
 const (
-	TicketLifecycleCreated          TicketLifecycleEventType = "ticket.created"
-	TicketLifecycleStartRequested   TicketLifecycleEventType = "ticket.start_requested"
-	TicketLifecycleActivated        TicketLifecycleEventType = "ticket.activated"
-	TicketLifecycleWaitUserReported TicketLifecycleEventType = "ticket.wait_user_reported"
-	TicketLifecycleDoneReported     TicketLifecycleEventType = "ticket.done_reported"
-	TicketLifecycleMergeObserved    TicketLifecycleEventType = "ticket.merge_observed"
-	TicketLifecycleMergeAbandoned   TicketLifecycleEventType = "ticket.merge_abandoned"
-	TicketLifecycleArchived         TicketLifecycleEventType = "ticket.archived"
-	TicketLifecycleRepaired         TicketLifecycleEventType = "ticket.repaired"
+	TicketLifecycleCreated            TicketLifecycleEventType = "ticket.created"
+	TicketLifecycleStartRequested     TicketLifecycleEventType = "ticket.start_requested"
+	TicketLifecycleActivated          TicketLifecycleEventType = "ticket.activated"
+	TicketLifecycleExecutionLost      TicketLifecycleEventType = "ticket.execution_lost"
+	TicketLifecycleRequeued           TicketLifecycleEventType = "ticket.requeued"
+	TicketLifecycleExecutionEscalated TicketLifecycleEventType = "ticket.execution_escalated"
+	TicketLifecycleWaitUserReported   TicketLifecycleEventType = "ticket.wait_user_reported"
+	TicketLifecycleDoneReported       TicketLifecycleEventType = "ticket.done_reported"
+	TicketLifecycleMergeObserved      TicketLifecycleEventType = "ticket.merge_observed"
+	TicketLifecycleMergeAbandoned     TicketLifecycleEventType = "ticket.merge_abandoned"
+	TicketLifecycleArchived           TicketLifecycleEventType = "ticket.archived"
+	TicketLifecycleRepaired           TicketLifecycleEventType = "ticket.repaired"
 )
 
 func CanonicalTicketLifecycleEventType(raw TicketLifecycleEventType) TicketLifecycleEventType {
@@ -24,6 +27,9 @@ func CanonicalTicketLifecycleEventType(raw TicketLifecycleEventType) TicketLifec
 	case TicketLifecycleCreated,
 		TicketLifecycleStartRequested,
 		TicketLifecycleActivated,
+		TicketLifecycleExecutionLost,
+		TicketLifecycleRequeued,
+		TicketLifecycleExecutionEscalated,
 		TicketLifecycleWaitUserReported,
 		TicketLifecycleDoneReported,
 		TicketLifecycleMergeObserved,

@@ -148,6 +148,13 @@ func RebuildSnapshot(events []contracts.TicketLifecycleEvent) SnapshotProjection
 			out.WorkflowStatus = contracts.TicketQueued
 		case contracts.TicketLifecycleActivated:
 			out.WorkflowStatus = contracts.TicketActive
+		case contracts.TicketLifecycleExecutionLost:
+			// execution_lost 是事实事件，本身不改变投影状态；
+			// 后续由 requeued / execution_escalated 完成正式收敛。
+		case contracts.TicketLifecycleRequeued:
+			out.WorkflowStatus = contracts.TicketQueued
+		case contracts.TicketLifecycleExecutionEscalated:
+			out.WorkflowStatus = contracts.TicketBlocked
 		case contracts.TicketLifecycleWaitUserReported:
 			out.WorkflowStatus = contracts.TicketBlocked
 		case contracts.TicketLifecycleDoneReported:
@@ -235,6 +242,27 @@ func ActivatedDirectIdempotencyKey(ticketID uint, at time.Time) string {
 
 func ActivatedRunIdempotencyKey(ticketID, taskRunID uint) string {
 	return fmt.Sprintf("ticket:%d:activated:run:%d", ticketID, taskRunID)
+}
+
+func ExecutionLostIdempotencyKey(ticketID, taskRunID, workerID uint) string {
+	if taskRunID != 0 {
+		return fmt.Sprintf("ticket:%d:execution_lost:run:%d", ticketID, taskRunID)
+	}
+	return fmt.Sprintf("ticket:%d:execution_lost:worker:%d", ticketID, workerID)
+}
+
+func RequeuedIdempotencyKey(ticketID, taskRunID, workerID uint, retryCount int) string {
+	if taskRunID != 0 {
+		return fmt.Sprintf("ticket:%d:requeued:run:%d:retry:%d", ticketID, taskRunID, retryCount)
+	}
+	return fmt.Sprintf("ticket:%d:requeued:worker:%d:retry:%d", ticketID, workerID, retryCount)
+}
+
+func ExecutionEscalatedIdempotencyKey(ticketID, taskRunID, workerID uint, retryCount int) string {
+	if taskRunID != 0 {
+		return fmt.Sprintf("ticket:%d:execution_escalated:run:%d:retry:%d", ticketID, taskRunID, retryCount)
+	}
+	return fmt.Sprintf("ticket:%d:execution_escalated:worker:%d:retry:%d", ticketID, workerID, retryCount)
 }
 
 func WaitUserReportedIdempotencyKey(ticketID, taskRunID, workerID uint) string {

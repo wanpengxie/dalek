@@ -817,6 +817,18 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 			}
 		}
 
+		if workerID, remaining, err := s.queuedRetryBackoffRemaining(ctx, t.ID, time.Now()); err != nil {
+			out.Errors = append(out.Errors, fmt.Sprintf("读取重试退避失败：t%d: %v", t.ID, err))
+			continue
+		} else if remaining > 0 {
+			s.slog().Debug("pm manager tick defer queued retry by backoff",
+				"ticket_id", t.ID,
+				"worker_id", workerID,
+				"retry_after", remaining.String(),
+			)
+			continue
+		}
+
 		startCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.managerStartTimeout())
 		w, serr := s.StartTicket(startCtx, t.ID)
 		cancel()

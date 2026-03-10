@@ -4,13 +4,10 @@ import (
 	"context"
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
-	"dalek/internal/services/ticketlifecycle"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	"gorm.io/gorm"
 )
 
 // DirectDispatchOptions 控制直接 worker 派发的行为。
@@ -160,10 +157,6 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	}
 
 	workflowPromoted := false
-	prevWorkflow := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
-	if prevWorkflow == "" {
-		prevWorkflow = contracts.TicketBacklog
-	}
 
 	// 记录直接派发事件
 	_ = s.worker.AppendWorkerTaskEvent(ctx, w.ID, "direct_dispatch_start",
@@ -177,14 +170,11 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		if stage != 1 || runID == 0 {
 			return nil
 		}
-		activated, fromStatus, actErr := s.promoteTicketActiveOnWorkerRunAccepted(ctx, ticketID, w.ID, runID, "pm.direct_dispatch", contracts.TicketLifecycleActorUser, map[string]any{
+		activated, _, actErr := s.promoteTicketActiveOnWorkerRunAccepted(ctx, ticketID, w.ID, runID, "pm.direct_dispatch", contracts.TicketLifecycleActorUser, map[string]any{
 			"ticket_id":    ticketID,
 			"worker_id":    w.ID,
 			"entry_prompt": entryPrompt,
 		}, time.Now())
-		if fromStatus != "" {
-			prevWorkflow = fromStatus
-		}
 		workflowPromoted = activated
 		if actErr != nil {
 			return fmt.Errorf("更新 ticket workflow 失败（t%d run=%d）：%w", ticketID, runID, actErr)
@@ -207,71 +197,18 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 			}
 		}
 		loopErrMsg := strings.TrimSpace(err.Error())
-		rollbackTarget := prevWorkflow
-		if !fsm.CanTicketWorkflowTransition(contracts.TicketActive, rollbackTarget) {
-			rollbackTarget = contracts.TicketBlocked
-		}
-		now := time.Now()
-		failErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			// best-effort：仅在 workflow 仍为 active 时回滚，避免覆盖并发 report 推进后的状态。
-			if workflowPromoted {
-				res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-					Where("id = ? AND workflow_status = ?", ticketID, contracts.TicketActive).
-					Updates(map[string]any{
-						"workflow_status": rollbackTarget,
-						"updated_at":      now,
-					})
-				if res.Error != nil {
-					return res.Error
-				}
-				if res.RowsAffected > 0 {
-					reason := "direct dispatch 失败回滚 workflow"
-					if rollbackTarget != prevWorkflow {
-						reason = "direct dispatch 失败回滚 workflow（回退目标非法，已降级到 blocked）"
-					}
-					if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, contracts.TicketActive, rollbackTarget, "pm.direct_dispatch", reason, map[string]any{
-						"ticket_id":         ticketID,
-						"worker_id":         w.ID,
-						"error":             loopErrMsg,
-						"previous_workflow": prevWorkflow,
-						"rollback_target":   rollbackTarget,
-					}, now); err != nil {
-						return err
-					}
-					if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
-						TicketID:       ticketID,
-						EventType:      contracts.TicketLifecycleRepaired,
-						Source:         "pm.direct_dispatch",
-						ActorType:      contracts.TicketLifecycleActorSystem,
-						WorkerID:       w.ID,
-						IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(ticketID, "pm.direct_dispatch.rollback", now),
-						Payload: lifecycleRepairPayload(rollbackTarget, contracts.IntegrationNone, map[string]any{
-							"ticket_id":         ticketID,
-							"worker_id":         w.ID,
-							"error":             loopErrMsg,
-							"previous_workflow": prevWorkflow,
-							"rollback_target":   rollbackTarget,
-						}),
-						CreatedAt: now,
-					}); err != nil {
-						return err
-					}
-				}
+		if workflowPromoted {
+			if _, cerr := s.convergeExecutionLost(ctx, executionLossInput{
+				TicketID:    ticketID,
+				WorkerID:    w.ID,
+				TaskRunID:   loopResult.LastRunID,
+				Source:      "pm.direct_dispatch",
+				FailureCode: "worker_loop_failed",
+				Reason:      loopErrMsg,
+				Now:         time.Now(),
+			}); cerr != nil {
+				return DirectDispatchResult{}, fmt.Errorf("%w（且 execution 收敛失败: %v）", err, cerr)
 			}
-			_, uerr := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
-				Key:      inboxKeyWorkerIncident(w.ID, "direct_dispatch_failed"),
-				Status:   contracts.InboxOpen,
-				Severity: contracts.InboxWarn,
-				Reason:   contracts.InboxIncident,
-				Title:    fmt.Sprintf("直接派发失败：t%d w%d", ticketID, w.ID),
-				Body:     loopErrMsg,
-				TicketID: ticketID,
-				WorkerID: w.ID,
-			})
-			return uerr
-		})
-		if failErr != nil {
-			return DirectDispatchResult{}, fmt.Errorf("%w（且写入失败 inbox 失败: %v）", err, failErr)
 		}
 		return DirectDispatchResult{}, err
 	}

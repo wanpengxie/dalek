@@ -153,3 +153,23 @@ func TestCheckTicketConsistency_RebuildsSnapshotAndDetectsMismatch(t *testing.T)
 		t.Fatalf("expected mismatch after snapshot drift")
 	}
 }
+
+func TestRebuildSnapshot_ExecutionConvergenceEvents(t *testing.T) {
+	events := []contracts.TicketLifecycleEvent{
+		{EventType: contracts.TicketLifecycleCreated},
+		{EventType: contracts.TicketLifecycleStartRequested},
+		{EventType: contracts.TicketLifecycleActivated},
+		{EventType: contracts.TicketLifecycleExecutionLost},
+		{EventType: contracts.TicketLifecycleRequeued},
+		{EventType: contracts.TicketLifecycleActivated},
+		{EventType: contracts.TicketLifecycleExecutionLost},
+		{EventType: contracts.TicketLifecycleExecutionEscalated},
+	}
+	got := RebuildSnapshot(events)
+	if got.WorkflowStatus != contracts.TicketBlocked {
+		t.Fatalf("expected blocked after execution_escalated, got=%s", got.WorkflowStatus)
+	}
+	if got.EventCount != len(events) {
+		t.Fatalf("expected event_count=%d, got=%d", len(events), got.EventCount)
+	}
+}

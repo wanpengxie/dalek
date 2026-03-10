@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,6 +178,104 @@ func TestDirectDispatchWorker_RollbackWorkflowFallsBackToBlockedWhenPrevInvalid(
 	}
 	if after.WorkflowStatus != contracts.TicketWorkflowStatus("old_unknown_state") {
 		t.Fatalf("workflow should remain unchanged before activation, got=%s", after.WorkflowStatus)
+	}
+}
+
+func TestDirectDispatchWorker_RequeuesAfterActiveRunFailure(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "direct-dispatch-requeue-on-run-failure")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	run := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "direct_dispatch_run_failure")
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return &fakeAgentRunHandle{
+			runID: run.ID,
+			err:   fmt.Errorf("worker loop failed"),
+		}, nil
+	}
+
+	if _, err := svc.DirectDispatchWorker(context.Background(), tk.ID, DirectDispatchOptions{
+		EntryPrompt: "继续执行",
+	}); err == nil {
+		t.Fatalf("expected direct dispatch failure")
+	}
+
+	var after contracts.Ticket
+	if err := p.DB.First(&after, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if after.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected ticket queued after convergence, got=%s", after.WorkflowStatus)
+	}
+
+	var workerAfter contracts.Worker
+	if err := p.DB.First(&workerAfter, w.ID).Error; err != nil {
+		t.Fatalf("load worker failed: %v", err)
+	}
+	if workerAfter.RetryCount != 1 {
+		t.Fatalf("expected retry_count=1, got=%d", workerAfter.RetryCount)
+	}
+
+	var lost contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionLost).Order("sequence desc").First(&lost).Error; err != nil {
+		t.Fatalf("expected execution_lost lifecycle event: %v", err)
+	}
+	if lost.TaskRunID == nil || *lost.TaskRunID != run.ID {
+		t.Fatalf("expected execution_lost task_run_id=%d, got=%+v", run.ID, lost)
+	}
+	var requeued contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleRequeued).Order("sequence desc").First(&requeued).Error; err != nil {
+		t.Fatalf("expected requeued lifecycle event: %v", err)
+	}
+}
+
+func TestDirectDispatchWorker_EscalatesAfterRetryBudgetExhausted(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "direct-dispatch-escalate-on-run-failure")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"retry_count": defaultZombieMaxRetries,
+		"updated_at":  time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set retry_count failed: %v", err)
+	}
+	run := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "direct_dispatch_escalate_failure")
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return &fakeAgentRunHandle{
+			runID: run.ID,
+			err:   fmt.Errorf("worker loop failed again"),
+		}, nil
+	}
+
+	if _, err := svc.DirectDispatchWorker(context.Background(), tk.ID, DirectDispatchOptions{
+		EntryPrompt: "继续执行",
+	}); err == nil {
+		t.Fatalf("expected direct dispatch failure")
+	}
+
+	var after contracts.Ticket
+	if err := p.DB.First(&after, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if after.WorkflowStatus != contracts.TicketBlocked {
+		t.Fatalf("expected ticket blocked after escalation, got=%s", after.WorkflowStatus)
+	}
+
+	var escalated contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionEscalated).Order("sequence desc").First(&escalated).Error; err != nil {
+		t.Fatalf("expected execution_escalated lifecycle event: %v", err)
+	}
+
+	var inbox contracts.InboxItem
+	if err := p.DB.Where("key = ? AND status = ?", inboxKeyWorkerIncident(w.ID, "execution_escalated"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+		t.Fatalf("expected execution_escalated inbox: %v", err)
 	}
 }
 
