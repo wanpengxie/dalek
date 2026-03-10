@@ -97,6 +97,125 @@ func TestFreezeMergesForDoneTickets_ObservesMergedByGitAncestor(t *testing.T) {
 	}
 }
 
+func TestSyncRef_MergesMatchingNeedsMergeTickets(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	branch, head := initGitRepoForIntegrationObserveTest(t, p.RepoRoot)
+	targetRef := "refs/heads/" + branch
+
+	okTicket := createTicket(t, p.DB, "sync-ref-ok")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", okTicket.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"merge_anchor_sha":   head,
+		"target_branch":      targetRef,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare ok ticket failed: %v", err)
+	}
+	badAnchorTicket := createTicket(t, p.DB, "sync-ref-bad-anchor")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", badAnchorTicket.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"merge_anchor_sha":   "not-a-commit",
+		"target_branch":      targetRef,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare bad anchor ticket failed: %v", err)
+	}
+
+	res, err := svc.SyncRef(context.Background(), targetRef, strings.Repeat("0", 40), head)
+	if err != nil {
+		t.Fatalf("SyncRef failed: %v", err)
+	}
+	if res.CandidateTickets != 2 {
+		t.Fatalf("expected 2 candidate tickets, got=%d", res.CandidateTickets)
+	}
+	if len(res.MergedTicketIDs) != 1 || res.MergedTicketIDs[0] != okTicket.ID {
+		t.Fatalf("unexpected merged tickets: %v", res.MergedTicketIDs)
+	}
+	if len(res.Errors) == 0 {
+		t.Fatalf("expected bad anchor error to be recorded")
+	}
+
+	var got contracts.Ticket
+	if err := p.DB.First(&got, okTicket.ID).Error; err != nil {
+		t.Fatalf("reload merged ticket failed: %v", err)
+	}
+	if contracts.CanonicalIntegrationStatus(got.IntegrationStatus) != contracts.IntegrationMerged {
+		t.Fatalf("expected merged ticket status, got=%s", got.IntegrationStatus)
+	}
+}
+
+func TestRetargetTicketIntegration_OnlyNeedsMergeAllowed(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "retarget-needs-merge")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"target_branch":      "refs/heads/main",
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare ticket failed: %v", err)
+	}
+
+	res, err := svc.RetargetTicketIntegration(context.Background(), tk.ID, "release/v1")
+	if err != nil {
+		t.Fatalf("RetargetTicketIntegration failed: %v", err)
+	}
+	if res.TargetRef != "refs/heads/release/v1" {
+		t.Fatalf("unexpected target ref: %q", res.TargetRef)
+	}
+
+	var got contracts.Ticket
+	if err := p.DB.First(&got, tk.ID).Error; err != nil {
+		t.Fatalf("reload retarget ticket failed: %v", err)
+	}
+	if strings.TrimSpace(got.TargetBranch) != "refs/heads/release/v1" {
+		t.Fatalf("expected target_branch updated, got=%q", got.TargetBranch)
+	}
+
+	mergedTicket := createTicket(t, p.DB, "retarget-merged")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", mergedTicket.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationMerged,
+		"target_branch":      "refs/heads/main",
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare merged ticket failed: %v", err)
+	}
+	if _, err := svc.RetargetTicketIntegration(context.Background(), mergedTicket.ID, "refs/heads/release/v2"); err == nil {
+		t.Fatalf("retarget on merged ticket should fail")
+	}
+}
+
+func TestRescanMergeStatus_ResolvesRefAndMerges(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	branch, head := initGitRepoForIntegrationObserveTest(t, p.RepoRoot)
+	targetRef := "refs/heads/" + branch
+
+	tk := createTicket(t, p.DB, "rescan-ticket")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"merge_anchor_sha":   head,
+		"target_branch":      targetRef,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare rescan ticket failed: %v", err)
+	}
+
+	out, err := svc.RescanMergeStatus(context.Background(), targetRef)
+	if err != nil {
+		t.Fatalf("RescanMergeStatus failed: %v", err)
+	}
+	if len(out.Results) != 1 {
+		t.Fatalf("expected one rescan result, got=%d", len(out.Results))
+	}
+	if len(out.Results[0].MergedTicketIDs) != 1 || out.Results[0].MergedTicketIDs[0] != tk.ID {
+		t.Fatalf("unexpected merged tickets from rescan: %+v", out.Results[0])
+	}
+}
+
 func initGitRepoForIntegrationObserveTest(t *testing.T, repoRoot string) (branch string, head string) {
 	t.Helper()
 	mustRunGit(t, repoRoot, "init")

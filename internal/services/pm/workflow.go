@@ -87,7 +87,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return err
 	}
-	if !fsm.CanArchiveTicket(t.WorkflowStatus) {
+	if !fsm.CanArchiveTicket(t.WorkflowStatus, t.IntegrationStatus) {
 		return nil
 	}
 
@@ -121,7 +121,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 			return err
 		}
 		from := contracts.CanonicalTicketWorkflowStatus(cur.WorkflowStatus)
-		if !fsm.CanArchiveTicket(from) {
+		if !fsm.CanArchiveTicket(from, cur.IntegrationStatus) {
 			return nil
 		}
 		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{

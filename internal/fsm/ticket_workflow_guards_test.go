@@ -53,23 +53,27 @@ func TestCanDispatchTicket(t *testing.T) {
 
 func TestCanArchiveTicket(t *testing.T) {
 	tests := []struct {
-		name   string
-		status contracts.TicketWorkflowStatus
-		want   bool
+		name        string
+		status      contracts.TicketWorkflowStatus
+		integration contracts.IntegrationStatus
+		want        bool
 	}{
-		{name: "backlog", status: contracts.TicketBacklog, want: true},
-		{name: "queued", status: contracts.TicketQueued, want: true},
-		{name: "active", status: contracts.TicketActive, want: true},
-		{name: "blocked", status: contracts.TicketBlocked, want: true},
-		{name: "done", status: contracts.TicketDone, want: true},
-		{name: "archived", status: contracts.TicketArchived, want: false},
-		{name: "alias_archive", status: "archive", want: false},
-		{name: "unknown", status: "old", want: true},
+		{name: "backlog", status: contracts.TicketBacklog, integration: contracts.IntegrationNone, want: true},
+		{name: "queued", status: contracts.TicketQueued, integration: contracts.IntegrationNone, want: true},
+		{name: "active", status: contracts.TicketActive, integration: contracts.IntegrationNone, want: true},
+		{name: "blocked", status: contracts.TicketBlocked, integration: contracts.IntegrationNone, want: true},
+		{name: "done_none", status: contracts.TicketDone, integration: contracts.IntegrationNone, want: true},
+		{name: "done_merged", status: contracts.TicketDone, integration: contracts.IntegrationMerged, want: true},
+		{name: "done_abandoned", status: contracts.TicketDone, integration: contracts.IntegrationAbandoned, want: true},
+		{name: "done_needs_merge", status: contracts.TicketDone, integration: contracts.IntegrationNeedsMerge, want: false},
+		{name: "archived", status: contracts.TicketArchived, integration: contracts.IntegrationNone, want: false},
+		{name: "alias_archive", status: "archive", integration: contracts.IntegrationNone, want: false},
+		{name: "unknown", status: "old", integration: contracts.IntegrationNone, want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := CanArchiveTicket(tc.status); got != tc.want {
-				t.Fatalf("CanArchiveTicket(%q)=%v, want=%v", tc.status, got, tc.want)
+			if got := CanArchiveTicket(tc.status, tc.integration); got != tc.want {
+				t.Fatalf("CanArchiveTicket(%q,%q)=%v, want=%v", tc.status, tc.integration, got, tc.want)
 			}
 		})
 	}

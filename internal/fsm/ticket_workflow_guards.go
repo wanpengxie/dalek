@@ -17,9 +17,12 @@ func CanDispatchTicket(status contracts.TicketWorkflowStatus) bool {
 	return CanStartTicket(status)
 }
 
-// CanArchiveTicket 判断 ticket 当前 workflow 状态是否允许归档（仅看 workflow 语义）。
-func CanArchiveTicket(status contracts.TicketWorkflowStatus) bool {
+// CanArchiveTicket 判断 ticket 当前 workflow/integration 组合是否允许归档。
+func CanArchiveTicket(status contracts.TicketWorkflowStatus, integration contracts.IntegrationStatus) bool {
 	st := contracts.CanonicalTicketWorkflowStatus(status)
+	if st == contracts.TicketDone && contracts.CanonicalIntegrationStatus(integration) == contracts.IntegrationNeedsMerge {
+		return false
+	}
 	if TicketWorkflowTable.IsTerminal(st) {
 		return false
 	}

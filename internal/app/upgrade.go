@@ -102,6 +102,15 @@ func (h *Home) UpgradeProject(ctx context.Context, opt UpgradeOptions) (UpgradeR
 	if !repo.ShouldUpgradeProject(res.PreviousVersion, res.TargetVersion, opt.Force) {
 		res.AlreadyLatest = true
 		res.AppliedVersion = strings.TrimSpace(res.PreviousVersion)
+		if !opt.DryRun {
+			hookRes, hookErr := repo.EnsureReferenceTransactionHook(projectRef.RepoRoot, h.Root, projectRef.Name)
+			if hookErr != nil {
+				return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("注入 reference-transaction hook 失败: %w", hookErr)}
+			}
+			if strings.TrimSpace(hookRes.Warning) != "" {
+				res.Warnings = append(res.Warnings, hookRes.Warning)
+			}
+		}
 		return res, nil
 	}
 
@@ -178,6 +187,13 @@ func (h *Home) UpgradeProject(ctx context.Context, opt UpgradeOptions) (UpgradeR
 	}
 	if err := repo.OverwriteRepoAgentEntryPoints(projectRef.RepoRoot); err != nil {
 		return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("覆写入口文件失败: %w", err)}
+	}
+	hookRes, err := repo.EnsureReferenceTransactionHook(projectRef.RepoRoot, h.Root, projectRef.Name)
+	if err != nil {
+		return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("注入 reference-transaction hook 失败: %w", err)}
+	}
+	if strings.TrimSpace(hookRes.Warning) != "" {
+		res.Warnings = append(res.Warnings, hookRes.Warning)
 	}
 
 	recorded, err := repo.RecordProjectDalekVersion(

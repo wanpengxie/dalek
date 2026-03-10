@@ -258,11 +258,17 @@ func (h *Home) AddOrUpdateProject(name, repoRoot string, cfg ProjectConfig) (*Pr
 			return nil, err
 		}
 		p.core.Config = merged
+		if err := h.ensureReferenceTransactionHookBestEffort(repoRoot, name); err != nil {
+			return nil, err
+		}
 		return p, nil
 	}
 	// 可能尚未创建目录；走 init
 	p, err = h.initProjectFiles(name, repoRoot, cfg)
 	if err != nil {
+		return nil, err
+	}
+	if err := h.ensureReferenceTransactionHookBestEffort(repoRoot, name); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -518,6 +524,19 @@ func assembleProject(cp *core.Project) *Project {
 		task:        taskSvc,
 		channel:     channelSvc,
 	}
+}
+
+func (h *Home) ensureReferenceTransactionHookBestEffort(repoRoot, projectName string) error {
+	repoRoot = strings.TrimSpace(repoRoot)
+	projectName = strings.TrimSpace(projectName)
+	if repoRoot == "" || projectName == "" {
+		return nil
+	}
+	if _, err := repo.FindRepoRoot(repoRoot); err != nil {
+		return nil
+	}
+	_, err := repo.EnsureReferenceTransactionHook(repoRoot, h.Root, projectName)
+	return err
 }
 
 func samePath(a, b string) bool {

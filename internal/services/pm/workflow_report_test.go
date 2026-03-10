@@ -80,7 +80,7 @@ func TestApplyWorkerReport_DoneFreezesTicketIntegrationSynchronously(t *testing.
 	if got := contracts.CanonicalIntegrationStatus(ticket.IntegrationStatus); got != contracts.IntegrationNeedsMerge {
 		t.Fatalf("expected integration_status needs_merge, got=%s", got)
 	}
-	if strings.TrimSpace(ticket.TargetBranch) == "" {
-		t.Fatalf("expected target_branch frozen on done report")
+	if strings.TrimSpace(ticket.TargetBranch) != "refs/heads/main" {
+		t.Fatalf("expected target_branch frozen before done report, got=%q", ticket.TargetBranch)
 	}
 }

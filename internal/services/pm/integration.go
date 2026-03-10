@@ -13,6 +13,7 @@ import (
 )
 
 const integrationGitCheckTimeout = 3 * time.Second
+const integrationDefaultTargetRef = "refs/heads/main"
 
 func (s *Service) AbandonTicketIntegration(ctx context.Context, ticketID uint, reason string) error {
 	_, db, err := s.require()
@@ -96,14 +97,12 @@ func (s *Service) freezeTicketIntegrationForDoneTx(ctx context.Context, tx *gorm
 	}
 
 	anchor := strings.TrimSpace(s.tryResolveMergeAnchorSHA(ctx, &w))
-	target := strings.TrimSpace(s.defaultIntegrationTargetBranch(ctx))
 	now := time.Now()
 	return tx.WithContext(ctx).Model(&contracts.Ticket{}).
 		Where("id = ? AND workflow_status = ? AND TRIM(COALESCE(integration_status, '')) = ''", ticketID, contracts.TicketDone).
 		Updates(map[string]any{
 			"integration_status": contracts.IntegrationNeedsMerge,
 			"merge_anchor_sha":   anchor,
-			"target_branch":      target,
 			"merged_at":          nil,
 			"abandoned_reason":   "",
 			"updated_at":         now,
@@ -111,22 +110,25 @@ func (s *Service) freezeTicketIntegrationForDoneTx(ctx context.Context, tx *gorm
 }
 
 func (s *Service) defaultIntegrationTargetBranch(ctx context.Context) string {
+	if ref := s.currentHeadTargetRef(ctx); ref != "" {
+		return ref
+	}
+	return integrationDefaultTargetRef
+}
+
+func (s *Service) currentHeadTargetRef(ctx context.Context) string {
 	p, _, err := s.require()
 	if err != nil {
-		return "main"
+		return ""
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	branch, err := p.Git.CurrentBranch(p.RepoRoot)
 	if err != nil {
-		return "main"
+		return ""
 	}
-	branch = strings.TrimSpace(branch)
-	if branch == "" {
-		return "main"
-	}
-	return branch
+	return normalizeIntegrationTargetRef(branch)
 }
 
 func (s *Service) tryResolveMergeAnchorSHA(ctx context.Context, w *contracts.Worker) string {
@@ -199,4 +201,60 @@ func looksLikeGitCommit(v string) bool {
 		return false
 	}
 	return true
+}
+
+func normalizeIntegrationTargetRef(raw string) string {
+	ref := strings.TrimSpace(raw)
+	if ref == "" {
+		return ""
+	}
+	if strings.HasPrefix(ref, "refs/heads/") {
+		if strings.TrimSpace(strings.TrimPrefix(ref, "refs/heads/")) == "" {
+			return ""
+		}
+		return ref
+	}
+	if strings.HasPrefix(ref, "refs/") {
+		return ""
+	}
+	short := strings.TrimSpace(strings.TrimPrefix(ref, "heads/"))
+	if short == "" {
+		return ""
+	}
+	return "refs/heads/" + short
+}
+
+func normalizeIntegrationTargetRefInput(raw string) (string, error) {
+	ref := strings.TrimSpace(raw)
+	if ref == "" {
+		return "", fmt.Errorf("target_ref 不能为空")
+	}
+	normalized := normalizeIntegrationTargetRef(ref)
+	if normalized == "" {
+		if strings.HasPrefix(ref, "refs/") {
+			return "", fmt.Errorf("target_ref 仅支持 refs/heads/*: %s", raw)
+		}
+		return "", fmt.Errorf("target_ref 非法: %s", raw)
+	}
+	return normalized, nil
+}
+
+func shortIntegrationTargetRef(ref string) string {
+	ref = strings.TrimSpace(ref)
+	if strings.HasPrefix(ref, "refs/heads/") {
+		return strings.TrimSpace(strings.TrimPrefix(ref, "refs/heads/"))
+	}
+	return ref
+}
+
+func integrationTargetRefAliases(ref string) []string {
+	normalized := normalizeIntegrationTargetRef(ref)
+	if normalized == "" {
+		return nil
+	}
+	short := shortIntegrationTargetRef(normalized)
+	if short == "" || short == normalized {
+		return []string{normalized}
+	}
+	return []string{normalized, short}
 }

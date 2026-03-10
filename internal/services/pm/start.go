@@ -68,6 +68,9 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 			return nil, rerr
 		}
 		if ready {
+			if err := s.ensureTicketTargetRefOnStart(ctx, t.ID, opt.BaseBranch); err != nil {
+				return nil, err
+			}
 			if err := s.promoteTicketQueuedOnStart(ctx, db, t, *w); err != nil {
 				return nil, err
 			}
@@ -108,6 +111,9 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	if err := s.promoteTicketQueuedOnStart(ctx, db, t, *out); err != nil {
 		return nil, err
 	}
+	if err := s.ensureTicketTargetRefOnStart(ctx, t.ID, opt.BaseBranch); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
@@ -141,4 +147,26 @@ func (s *Service) promoteTicketQueuedOnStart(ctx context.Context, db *gorm.DB, t
 		return fmt.Errorf("更新 ticket workflow 失败（t%d w%d）：%w", t.ID, w.ID, err)
 	}
 	return nil
+}
+
+func (s *Service) ensureTicketTargetRefOnStart(ctx context.Context, ticketID uint, baseBranch string) error {
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
+	target := normalizeIntegrationTargetRef(baseBranch)
+	if target == "" {
+		target = s.currentHeadTargetRef(ctx)
+	}
+	if strings.TrimSpace(target) == "" {
+		return nil
+	}
+	now := time.Now()
+	return db.WithContext(ctx).
+		Model(&contracts.Ticket{}).
+		Where("id = ? AND TRIM(COALESCE(target_branch, '')) = ''", ticketID).
+		Updates(map[string]any{
+			"target_branch": target,
+			"updated_at":    now,
+		}).Error
 }

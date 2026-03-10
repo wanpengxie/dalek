@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"dalek/internal/contracts"
 )
@@ -37,17 +38,25 @@ func (p *Project) CreateTicketWithDescription(ctx context.Context, title, descri
 }
 
 func (p *Project) CreateTicketWithDescriptionAndLabel(ctx context.Context, title, description, label string) (*contracts.Ticket, error) {
-	if p == nil || p.ticket == nil {
-		return nil, fmt.Errorf("project ticket service 为空")
-	}
-	return p.ticket.CreateWithDescriptionAndLabel(ctx, title, description, label)
+	return p.CreateTicketWithDescriptionAndLabelAndPriorityAndTarget(ctx, title, description, label, contracts.TicketPriorityNone, "")
 }
 
 func (p *Project) CreateTicketWithDescriptionAndLabelAndPriority(ctx context.Context, title, description, label string, priority int) (*contracts.Ticket, error) {
+	return p.CreateTicketWithDescriptionAndLabelAndPriorityAndTarget(ctx, title, description, label, priority, "")
+}
+
+func (p *Project) CreateTicketWithDescriptionAndLabelAndPriorityAndTarget(ctx context.Context, title, description, label string, priority int, targetRef string) (*contracts.Ticket, error) {
 	if p == nil || p.ticket == nil {
 		return nil, fmt.Errorf("project ticket service 为空")
 	}
-	return p.ticket.CreateWithDescriptionAndLabelAndPriority(ctx, title, description, label, priority)
+	normalized, err := normalizeTicketTargetRef(targetRef)
+	if err != nil {
+		return nil, err
+	}
+	if normalized == "" {
+		normalized = p.defaultTicketTargetRef()
+	}
+	return p.ticket.CreateWithDescriptionAndLabelAndPriorityAndTarget(ctx, title, description, label, priority, normalized)
 }
 
 func (p *Project) ArchiveTicket(ctx context.Context, ticketID uint) error {
@@ -69,6 +78,27 @@ func (p *Project) AbandonTicketIntegration(ctx context.Context, ticketID uint, r
 		return fmt.Errorf("project pm service 为空")
 	}
 	return p.pm.AbandonTicketIntegration(ctx, ticketID, reason)
+}
+
+func (p *Project) SyncMergeRef(ctx context.Context, ref, oldSHA, newSHA string) (MergeSyncRefResult, error) {
+	if p == nil || p.pm == nil {
+		return MergeSyncRefResult{}, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.SyncRef(ctx, ref, oldSHA, newSHA)
+}
+
+func (p *Project) RetargetTicketIntegration(ctx context.Context, ticketID uint, targetRef string) (MergeRetargetResult, error) {
+	if p == nil || p.pm == nil {
+		return MergeRetargetResult{}, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.RetargetTicketIntegration(ctx, ticketID, targetRef)
+}
+
+func (p *Project) RescanTicketMergeStatus(ctx context.Context, targetRef string) (MergeRescanResult, error) {
+	if p == nil || p.pm == nil {
+		return MergeRescanResult{}, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.RescanMergeStatus(ctx, targetRef)
 }
 
 func (p *Project) BumpTicketPriority(ctx context.Context, ticketID uint, delta int) (int, error) {
@@ -125,4 +155,36 @@ func (p *Project) WaitStatusChangeHooks(ctx context.Context) error {
 		return nil
 	}
 	return p.pm.WaitStatusChangeHooks(ctx)
+}
+
+func (p *Project) defaultTicketTargetRef() string {
+	if p == nil || p.core == nil || p.core.Git == nil {
+		return ""
+	}
+	branch, err := p.core.Git.CurrentBranch(p.core.RepoRoot)
+	if err != nil {
+		return ""
+	}
+	ref, _ := normalizeTicketTargetRef(branch)
+	return ref
+}
+
+func normalizeTicketTargetRef(raw string) (string, error) {
+	ref := strings.TrimSpace(raw)
+	if ref == "" {
+		return "", nil
+	}
+	if strings.HasPrefix(ref, "refs/heads/") {
+		if strings.TrimSpace(strings.TrimPrefix(ref, "refs/heads/")) == "" {
+			return "", fmt.Errorf("target_ref 非法: %s", raw)
+		}
+		return ref, nil
+	}
+	if strings.HasPrefix(ref, "refs/") {
+		return "", fmt.Errorf("target_ref 仅支持 refs/heads/*: %s", raw)
+	}
+	if strings.TrimSpace(strings.TrimPrefix(ref, "heads/")) == "" {
+		return "", fmt.Errorf("target_ref 非法: %s", raw)
+	}
+	return "refs/heads/" + strings.TrimPrefix(ref, "heads/"), nil
 }

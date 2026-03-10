@@ -38,6 +38,10 @@ func (s *Service) CreateWithDescriptionAndLabel(ctx context.Context, title, desc
 }
 
 func (s *Service) CreateWithDescriptionAndLabelAndPriority(ctx context.Context, title, description, label string, priority int) (*contracts.Ticket, error) {
+	return s.CreateWithDescriptionAndLabelAndPriorityAndTarget(ctx, title, description, label, priority, "")
+}
+
+func (s *Service) CreateWithDescriptionAndLabelAndPriorityAndTarget(ctx context.Context, title, description, label string, priority int, targetBranch string) (*contracts.Ticket, error) {
 	db, err := s.requireDB()
 	if err != nil {
 		return nil, err
@@ -54,6 +58,7 @@ func (s *Service) CreateWithDescriptionAndLabelAndPriority(ctx context.Context, 
 		Label:          label,
 		WorkflowStatus: contracts.TicketBacklog,
 		Priority:       priority,
+		TargetBranch:   strings.TrimSpace(targetBranch),
 	}
 	if err := db.WithContext(ctx).Create(&t).Error; err != nil {
 		return nil, err

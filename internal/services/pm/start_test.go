@@ -33,6 +33,9 @@ func TestStartTicket_PushesWorkflowQueuedAndMarksWorkerRunning(t *testing.T) {
 	if got.WorkflowStatus != contracts.TicketQueued {
 		t.Fatalf("start 应推进 workflow_status 到 queued，got=%s", got.WorkflowStatus)
 	}
+	if strings.TrimSpace(got.TargetBranch) != "refs/heads/main" {
+		t.Fatalf("start 应冻结 target_branch，got=%q", got.TargetBranch)
+	}
 
 	var ev contracts.TicketWorkflowEvent
 	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&ev).Error; err != nil {
@@ -54,6 +57,13 @@ func TestStartTicketWithOptions_PassesBaseBranch(t *testing.T) {
 	}
 	if got := strings.TrimSpace(fGit.LastBaseBranch); got != "release/v2" {
 		t.Fatalf("expected base branch override release/v2, got=%q", got)
+	}
+	var updated contracts.Ticket
+	if err := p.DB.First(&updated, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if strings.TrimSpace(updated.TargetBranch) != "refs/heads/release/v2" {
+		t.Fatalf("expected target_branch from base branch override, got=%q", updated.TargetBranch)
 	}
 }
 

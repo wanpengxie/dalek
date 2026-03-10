@@ -6,11 +6,15 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/repo"
+	pmsvc "dalek/internal/services/pm"
 )
 
 // ProjectConfig 是 app 层对外暴露的项目配置类型。
 // repo.Config 不属于 contracts 公共接口体系，保留 facade 别名避免上层直接依赖 repo 包。
 type ProjectConfig = repo.Config
+type MergeSyncRefResult = pmsvc.SyncRefResult
+type MergeRetargetResult = pmsvc.RetargetResult
+type MergeRescanResult = pmsvc.RescanResult
 
 // ParseTaskOwnerType 校验并转换 CLI 输入的 owner type 字符串。
 func ParseTaskOwnerType(raw string) (contracts.TaskOwnerType, error) {

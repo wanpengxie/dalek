@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -227,4 +228,150 @@ func TestCLI_MergeAbandon_E2E(t *testing.T) {
 	if cnt != 0 {
 		t.Fatalf("expected approval inbox closed after abandon, got=%d", cnt)
 	}
+}
+
+func TestCLI_MergeSyncRefAndRescanAndRetarget_E2E(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+	home := filepath.Join(t.TempDir(), "home")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "init", "-name", "demo")
+
+	branch := strings.TrimSpace(mustRunGitInRepo(t, repo, "branch", "--show-current"))
+	head := strings.TrimSpace(mustRunGitInRepo(t, repo, "rev-parse", "HEAD"))
+	targetRef := "refs/heads/" + branch
+
+	p := openDemoProjectForMergeE2E(t, home)
+	syncTicket := seedMergeTicketForE2E(t, p, "sync-ref ticket", contracts.IntegrationNeedsMerge, mergeTicketSeedOptions{
+		anchor: head,
+		target: targetRef,
+	})
+	retargetTicket := seedMergeTicketForE2E(t, p, "retarget ticket", contracts.IntegrationNeedsMerge, mergeTicketSeedOptions{
+		anchor: "retarget-anchor",
+		target: targetRef,
+	})
+
+	syncOut, _ := runCLIOK(
+		t,
+		bin,
+		repo,
+		"-home", home,
+		"-project", "demo",
+		"merge", "sync-ref",
+		"--ref", targetRef,
+		"--old", strings.Repeat("0", 40),
+		"--new", head,
+		"-o", "json",
+	)
+	var syncPayload struct {
+		Schema           string `json:"schema"`
+		Ref              string `json:"ref"`
+		CandidateTickets int    `json:"candidate_tickets"`
+		MergedTicketIDs  []uint `json:"merged_ticket_ids"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(syncOut)), &syncPayload); err != nil {
+		t.Fatalf("decode merge sync-ref json failed: %v\nraw=%s", err, syncOut)
+	}
+	if syncPayload.Schema != "dalek.merge.sync_ref.v1" {
+		t.Fatalf("unexpected sync-ref schema: %q", syncPayload.Schema)
+	}
+	if syncPayload.Ref != targetRef {
+		t.Fatalf("unexpected sync-ref ref: %q", syncPayload.Ref)
+	}
+	if syncPayload.CandidateTickets < 2 {
+		t.Fatalf("expected at least 2 candidate tickets, got=%d", syncPayload.CandidateTickets)
+	}
+	if !containsUint(syncPayload.MergedTicketIDs, syncTicket.ID) {
+		t.Fatalf("sync-ref should merge ticket t%d, got=%v", syncTicket.ID, syncPayload.MergedTicketIDs)
+	}
+
+	retargetOut, _ := runCLIOK(
+		t,
+		bin,
+		repo,
+		"-home", home,
+		"-project", "demo",
+		"merge", "retarget",
+		"--ticket", strconv.Itoa(int(retargetTicket.ID)),
+		"--ref", "release/v1",
+		"-o", "json",
+	)
+	var retargetPayload struct {
+		Schema      string `json:"schema"`
+		TicketID    uint   `json:"ticket_id"`
+		PreviousRef string `json:"previous_ref"`
+		TargetRef   string `json:"target_ref"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(retargetOut)), &retargetPayload); err != nil {
+		t.Fatalf("decode merge retarget json failed: %v\nraw=%s", err, retargetOut)
+	}
+	if retargetPayload.Schema != "dalek.merge.retarget.v1" {
+		t.Fatalf("unexpected retarget schema: %q", retargetPayload.Schema)
+	}
+	if retargetPayload.TicketID != retargetTicket.ID {
+		t.Fatalf("unexpected retarget ticket_id: %d", retargetPayload.TicketID)
+	}
+	if retargetPayload.TargetRef != "refs/heads/release/v1" {
+		t.Fatalf("unexpected retarget target_ref: %q", retargetPayload.TargetRef)
+	}
+
+	rescanTicket := seedMergeTicketForE2E(t, p, "rescan ticket", contracts.IntegrationNeedsMerge, mergeTicketSeedOptions{
+		anchor: head,
+		target: targetRef,
+	})
+
+	rescanOut, _ := runCLIOK(
+		t,
+		bin,
+		repo,
+		"-home", home,
+		"-project", "demo",
+		"merge", "rescan",
+		"--ref", targetRef,
+		"-o", "json",
+	)
+	var rescanPayload struct {
+		Schema  string `json:"schema"`
+		Results []struct {
+			Ref             string `json:"ref"`
+			MergedTicketIDs []uint `json:"merged_ticket_ids"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(rescanOut)), &rescanPayload); err != nil {
+		t.Fatalf("decode merge rescan json failed: %v\nraw=%s", err, rescanOut)
+	}
+	if rescanPayload.Schema != "dalek.merge.rescan.v1" {
+		t.Fatalf("unexpected rescan schema: %q", rescanPayload.Schema)
+	}
+	foundRescanMerged := false
+	for _, item := range rescanPayload.Results {
+		if item.Ref != targetRef {
+			continue
+		}
+		if containsUint(item.MergedTicketIDs, rescanTicket.ID) {
+			foundRescanMerged = true
+			break
+		}
+	}
+	if !foundRescanMerged {
+		t.Fatalf("rescan should merge ticket t%d, payload=%+v", rescanTicket.ID, rescanPayload.Results)
+	}
+}
+
+func mustRunGitInRepo(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, string(out))
+	}
+	return string(out)
+}
+
+func containsUint(items []uint, target uint) bool {
+	for _, it := range items {
+		if it == target {
+			return true
+		}
+	}
+	return false
 }
