@@ -184,6 +184,10 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	}
 	res.Capacity = capacity
 
+	// merge 观测不受 autopilot 门控：只是被动检测 git 事实，不产生 start/dispatch 副作用。
+	mergeResult := s.freezeMergesForDoneTickets(ctx, db, st, opt.DryRun)
+	res.applyMergeFrozenResult(mergeResult)
+
 	if !st.AutopilotEnabled {
 		finalizeCtx, finalizeCancel := managerTickFinalizeContext(ctx)
 		defer finalizeCancel()
@@ -192,9 +196,6 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		}
 		return res, nil
 	}
-
-	mergeResult := s.freezeMergesForDoneTickets(ctx, db, st, opt.DryRun)
-	res.applyMergeFrozenResult(mergeResult)
 
 	scheduleResult := s.scheduleQueuedTickets(ctx, db, scheduleOptions{
 		Capacity:         capacity,
