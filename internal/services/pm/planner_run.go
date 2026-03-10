@@ -394,7 +394,7 @@ func (s *Service) loadPMStateForUpdateTx(ctx context.Context, tx *gorm.DB) (*con
 		return nil, err
 	}
 	st = contracts.PMState{
-		AutopilotEnabled:       true,
+		AutopilotEnabled:       false,
 		MaxRunningWorkers:      3,
 		PlannerDirty:           false,
 		PlannerWakeVersion:     0,

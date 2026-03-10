@@ -8,7 +8,7 @@ type PMState struct {
 	CreatedAt time.Time `gorm:"not null"`
 	UpdatedAt time.Time `gorm:"not null"`
 
-	AutopilotEnabled  bool `gorm:"not null;default:true"`
+	AutopilotEnabled  bool `gorm:"not null;default:false"`
 	MaxRunningWorkers int  `gorm:"not null;default:3"`
 
 	LastTickAt  *time.Time `gorm:""`

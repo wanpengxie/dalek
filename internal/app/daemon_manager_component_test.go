@@ -184,6 +184,9 @@ func (s *stubWarmupDispatchHost) snapshotWarmup(project string) []uint {
 func TestDaemonManagerComponent_RunTickProject_UsesWorkerRunHostSubmitter(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
+	if _, err := p.SetAutopilotEnabled(ctx, true); err != nil {
+		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
+	}
 
 	tk, err := p.CreateTicketWithDescription(ctx, "manager submitter wiring", "dispatch should go through execution host submitter")
 	if err != nil {
@@ -220,6 +223,9 @@ func TestDaemonManagerComponent_RunTickProject_UsesWorkerRunHostSubmitter(t *tes
 func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
+	if _, err := p.SetAutopilotEnabled(ctx, true); err != nil {
+		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
+	}
 	planPath := filepath.Join(p.RepoRoot(), ".dalek", "pm", "plan.md")
 	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
 		t.Fatalf("mkdir planner plan dir failed: %v", err)

@@ -79,12 +79,12 @@ func TestPM_StateAndSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetState failed: %v", err)
 	}
-	if !st.AutopilotEnabled || st.MaxRunningWorkers != 3 {
+	if st.AutopilotEnabled || st.MaxRunningWorkers != 3 {
 		t.Fatalf("unexpected default state: %+v", st)
 	}
 
-	if _, err := pmSvc.SetAutopilotEnabled(ctx, false); err != nil {
-		t.Fatalf("SetAutopilotEnabled(false) failed: %v", err)
+	if _, err := pmSvc.SetAutopilotEnabled(ctx, true); err != nil {
+		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
 	}
 	if _, err := pmSvc.SetMaxRunningWorkers(ctx, 5); err != nil {
 		t.Fatalf("SetMaxRunningWorkers(5) failed: %v", err)
@@ -94,8 +94,8 @@ func TestPM_StateAndSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetState failed: %v", err)
 	}
-	if st.AutopilotEnabled {
-		t.Fatalf("expected autopilot disabled")
+	if !st.AutopilotEnabled {
+		t.Fatalf("expected autopilot enabled")
 	}
 	if st.MaxRunningWorkers != 5 {
 		t.Fatalf("expected max_running=5, got %d", st.MaxRunningWorkers)

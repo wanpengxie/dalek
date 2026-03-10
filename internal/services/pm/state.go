@@ -37,7 +37,7 @@ func (s *Service) getOrInitPMState(ctx context.Context) (*contracts.PMState, err
 		return nil, err
 	}
 	st = contracts.PMState{
-		AutopilotEnabled:  true,
+		AutopilotEnabled:  false,
 		MaxRunningWorkers: 3,
 		LastTickAt:        nil,
 		LastEventID:       0,

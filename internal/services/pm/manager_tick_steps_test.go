@@ -312,6 +312,7 @@ func TestMaybeSchedulePlannerRun_SchedulesAndPreventsDuplicateInSameState(t *tes
 	if err != nil {
 		t.Fatalf("getOrInitPMState failed: %v", err)
 	}
+	st.AutopilotEnabled = true
 	st.PlannerDirty = true
 	st.PlannerWakeVersion = 11
 
@@ -444,6 +445,7 @@ func TestMaybeSchedulePlannerRun_SkipsWhenConditionsNotMet(t *testing.T) {
 
 func TestManagerTick_SchedulesPlannerRunOnceAfterDirtyEvent(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
+	svc.SetAutopilotEnabled(context.Background(), true)
 
 	tk := createTicket(t, p.DB, "manager-tick-planner-schedule-once")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -523,6 +525,7 @@ func (s *cancelingDispatchSubmitter) SubmitTicketDispatch(_ context.Context, _ u
 
 func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
+	svc.SetAutopilotEnabled(context.Background(), true)
 
 	doneTicket := createTicket(t, p.DB, "manager-tick-merge-dirty-context-canceled")
 	doneWorker, err := svc.StartTicket(context.Background(), doneTicket.ID)
@@ -589,6 +592,7 @@ func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled
 func TestManagerTick_ReconcilesStaleFailedPlannerRunAndReschedules(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
+	svc.SetAutopilotEnabled(ctx, true)
 
 	pmState, err := svc.getOrInitPMState(ctx)
 	if err != nil {

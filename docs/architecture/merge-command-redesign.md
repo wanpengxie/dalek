@@ -1,265 +1,480 @@
-# Merge 命令重设计：从 merge_queue 到 ticket merge
+# Merge Design Redesign
 
 ## Context
 
-ticket lifecycle redesign（`6e95b60`）将 merge 从独立状态机（merge_queue）降级为 ticket 自有的 integration_status 字段。但 CLI 层产生了两个问题：
+当前 merge 相关设计仍然有三层混乱：
 
-1. **命名割裂**：新命令叫 `dalek ticket integration status/abandon`，但 merge 是 git 原生概念，AI agent 天然理解。`integration` 是自造抽象，增加学习成本。
-2. **大量熔岩**：merge_queue 的写路径（Propose/Approve/Discard/MarkMerged）已在 CLI 层被拦截不可达，但底层服务代码、PMOps executor、channel action executor、测试代码全部残留。
+1. merge 虽然已经从独立 queue 退化成了 ticket 上的 `integration_status`，但主路径仍然依赖 manager tick / autopilot 语义，收口不够直接。
+2. 命令面已经切到了 `dalek merge`，但缺少一个真正融入现有命令体系的 hook 回收入口。
+3. `target_branch` 的语义仍然和“当前 checkout branch”纠缠，无法稳定表达 ticket 的交付契约。
 
-## Goals
+本设计的目标是把 merge 完整收敛成：
 
-- **统一 merge 语义**：`dalek merge` 顶层命令组，底层查 ticket.integration_status。agent 零学习成本。
-- **清除全部死代码**：merge_queue 写路径相关的服务方法、PMOps、channel action、app facade、测试——全部删除。
-- **kernel 对齐**：agent-kernel.md 中 merge 概念描述与新命令一致。
+- hook 驱动
+- ticket owned
+- git fact based
+- 与现有 CLI 命令组一致
 
-## Non-goals
+## Core Decisions
 
-- 不删除 MergeItem DB 模型和表结构（历史数据保留）。
-- 不删除 ListMergeItems（dashboard / daemon planner prompt 仍在调用，作为历史数据查询保留）。
-- 不重命名 Go 内部字段 `integration_status`（DB 字段重命名风险过高）。
+### 1. merge 不是独立对象
 
-## Target CLI
+merge 不是 merge_queue，也不是 merge_item。
 
-```
-dalek merge <command> [flags]
+merge 是 ticket 的交付收口状态，只存在于 ticket 上。
 
-Commands:
-  ls         按 merge 状态列出 tickets
-  status     查看单个 ticket 的 merge 状态
-  abandon    放弃 ticket merge
-```
+ticket 只保留：
 
-### `merge ls`
+- `workflow_status`
+- `integration_status`
+- `target_ref`
+- `anchor_sha`
+- `merged_at`
+- `abandoned_reason`
 
-查询 ticket 表，按 integration_status 过滤。
+### 2. 主路径不是 tick，是 repo hook
 
-```
-dalek merge ls [--status needs_merge|merged|abandoned] [-n 50] [--output text|json]
-```
+merge 状态推进的主路径不是：
 
-默认只显示 `workflow_status=done` 且 `integration_status` 非空的 tickets。
+- autopilot
+- planner
+- manager tick
+- daemon 常驻循环
 
-输出字段：ticket_id / workflow_status / integration_status / merge_anchor_sha / target_branch / merged_at
+而是：
 
-JSON schema: `dalek.merge.list.v1`
+- repo root 的 git ref update hook
+- hook 直接执行 `dalek merge sync-ref`
+- dalek 二进制本地读取当前 repo 的 ticket DB 并回收状态
 
-### `merge status`
+tick 只保留为 repair path，不再是主路径。
 
-查询单个 ticket 的 merge 详情。
+### 3. 判定 merged 只看 git 事实
 
-```
-dalek merge status --ticket <id> [--timeout 5s] [--output text|json]
-```
+一张 ticket 被判为 `merged`，必须满足：
 
-等价于原 `ticket integration status`，逻辑直接迁移。
+- `workflow_status = done`
+- `integration_status = needs_merge`
+- 本次更新的 `ref == ticket.target_ref`
+- `git merge-base --is-ancestor ticket.anchor_sha new_sha` 返回成功
 
-JSON schema: `dalek.merge.status.v1`
+不依赖：
 
-### `merge abandon`
+- approve
+- mark merged
+- planner 推理
+- 当前 checkout branch
 
-放弃 ticket merge。
+### 4. 默认不依赖 marker
 
-```
-dalek merge abandon --ticket <id> --reason "..." [--timeout 5s] [--output text|json]
-```
+默认可靠主路径只支持“不改写提交身份”的合入方式：
 
-等价于原 `ticket integration abandon`，调用 `AbandonTicketIntegration`。
+- merge commit
+- fast-forward
 
-JSON schema: `dalek.merge.abandon.v1`
+因此默认设计不依赖 marker。
 
-## `ticket integration` 处理
+`squash / rebase / cherry-pick` 不再被视为默认自动可判定路径。
+如果未来要支持，必须走受控 merge 入口，由系统自动补充额外识别机制。这不属于当前设计范围。
 
-`ticket integration` 子命令删除，替换为兼容提示：
+## Terminology
 
-```go
-case "integration":
-    exitUsageError(globalOutput,
-        "ticket integration 已迁移到 merge 命令",
-        "请改用 dalek merge status / dalek merge abandon",
-        "例如: dalek merge status --ticket 1",
-    )
-```
+### target_ref
 
-同时从 `printTicketUsage()` 中删除 integration 行。
+ticket 最终要并入的目标 ref。
 
-## 死代码清除清单
+例子：
 
-### 1. `internal/services/pm/merge.go`
+- `refs/heads/main`
+- `refs/heads/dev`
+- `refs/heads/feature/auto-dev-mode`
 
-**删除**以下方法（保留 ListMergeItems + ListMergeOptions）：
+注意：
 
-| 方法 | 行号 | 原因 |
-|------|------|------|
-| mergeTerminalStatuses() | ~18 | 仅被 ProposeMerge 调用 |
-| ProposeMerge() | ~49 | CLI 已拦截 |
-| ApproveMerge() | ~103 | CLI 已拦截 |
-| DiscardMerge() | ~131 | CLI 已拦截 |
-| MarkMergeMerged() | ~171 | CLI 已拦截 |
+- 语义上是 ref，不是“当前 branch”
+- 不能在 `done` 时再去读 repo 当前 branch
+- 必须在 ticket 执行契约建立时冻结
 
-### 2. `internal/services/pm/merge_test.go`
+### anchor_sha
 
-**整个文件删除**。所有测试都是测试上述死方法。
+ticket 完成时冻结的最终交付 commit。
 
-ListMergeItems 的测试（如果有）应迁移到其他测试文件，但检查后发现没有——ListMergeItems 无独立单元测试。
+这是后续判定 merged 的锚点。
 
-### 3. `internal/app/project_inbox_merge.go`
+### integration_status
 
-**删除**以下 facade 方法（保留 inbox facade 和 ListMergeItems facade）：
+merge 状态只保留：
 
-| 方法 | 行号 |
-|------|------|
-| ProposeMerge() | ~71 |
-| ApproveMerge() | ~78 |
-| DiscardMerge() | ~85 |
-| MarkMergeMerged() | ~92 |
+- `none`
+- `needs_merge`
+- `merged`
+- `abandoned`
 
-### 4. `internal/contracts/pm_ops.go`
+## State Model
 
-**删除**以下常量：
+### workflow_status
 
-```go
-PMOpApproveMerge  PMOpKind = "approve_merge"
-PMOpDiscardMerge  PMOpKind = "discard_merge"
-```
+`workflow_status` 只表达 ticket 的业务执行阶段：
 
-### 5. `internal/services/pm/pmops_executor.go`
+- `backlog`
+- `active`
+- `blocked`
+- `done`
+- `archived`
 
-**删除**以下内容：
+`queued` 不应再是 PM-visible 生命周期的一部分。
 
-| 内容 | 行号 |
-|------|------|
-| `case contracts.PMOpApproveMerge:` 分支 | ~28 |
-| `case contracts.PMOpDiscardMerge:` 分支 | ~30 |
-| `approveMergePMOpExecutor` 结构体 + Reconcile + Execute | ~250-291 |
-| `discardMergePMOpExecutor` 结构体 + Reconcile + Execute | ~293-342 |
+### integration_status
 
-### 6. `internal/services/pm/pmops_parser.go`
+`integration_status` 表达 ticket 的交付收口阶段：
 
-**删除** PMOpApproveMerge / PMOpDiscardMerge 在 kind 校验 case 中的引用（~line 233）。
+- `none`
+  - ticket 还未进入交付收口
+  - 通常对应 `workflow_status != done`
+- `needs_merge`
+  - ticket 已 done，但目标 ref 还没包含它
+- `merged`
+  - 目标 ref 已包含它
+- `abandoned`
+  - 这张票不再从本票交付
 
-### 7. `internal/services/channel/action_executor.go`
+## Freeze Timing
 
-**删除**以下内容：
+### target_ref 何时冻结
 
-| 内容 | 行号 |
-|------|------|
-| PMActionService 接口中 ApproveMerge / DiscardMerge 声明 | ~49-50 |
-| `case contracts.ActionApproveMerge:` 分支 | ~107-108 |
-| `executeApproveMerge()` 方法 | ~372 |
-| discard 逻辑（紧跟 approve 之后） | ~390+ |
+`target_ref` 必须在 ticket 的执行契约建立时冻结。
 
-### 8. `internal/contracts/channel_gateway.go`
+推荐时机：
 
-**删除**：
+- `ticket create`
 
-```go
-ActionApproveMerge = "approve_merge"
-```
+或兜底时机：
 
-保留 `ActionListMergeItems`（仍被 channel 使用）。
+- 第一次 `ticket start`
 
-### 9. `internal/app/channel_action_adapter.go`
+规则：
 
-**删除** ApproveMerge / DiscardMerge 适配方法（~line 60-66）。
+- 如果 create 时 repo 当前有明确 branch，则冻结为该 branch 对应的 ref
+- 如果是 detached HEAD，则必须显式指定
+- 一旦冻结，后续切 branch 不影响这张票
 
-### 10. `internal/services/channel/service_test.go`
+### anchor_sha 何时冻结
 
-**删除** testPMActionAdapter 中 ApproveMerge / DiscardMerge 方法（~line 1408-1413）。
+`anchor_sha` 必须在 ticket 从 `active -> done` 时冻结。
 
-### 11. `internal/services/pm/acceptance_engine_test.go`
+规则：
 
-**审查** `TestApproveMergePMOpExecutor_OptionalAcceptanceGate`（~line 242）。如果测试仅覆盖被删的 PMOp executor，整个测试函数删除。
+- `worker report done` 与 `anchor_sha` 冻结必须同事务完成
+- 冻结失败则不能进入 `done`
+- 进入 `done` 后必须立即进入 `integration_status = needs_merge`
 
-### 12. `cmd/dalek/cmd_merge.go`
+所以最终是：
 
-**删除**以下函数（被新命令替代）：
+- `target_ref` 早冻结
+- `anchor_sha` 晚冻结
 
-| 函数 |
-|------|
-| cmdMergePropose() |
-| cmdMergeApprove() |
-| cmdMergeDiscard() |
-| cmdMergeMarked() |
-| exitMergeDeprecated() |
-| printMergeDeprecatedSubUsage() |
-| isHelpArgs() |
+## Merge State Machine
 
-## manager_tick 输出字段重命名
+### Allowed transitions
 
-`ManagerTickResult.MergeProposed` 和 `mergeProposalResult.MergeProposed` 的语义已变为"冻结了 integration anchor 的 tickets"。
+- `none -> needs_merge`
+  - 触发：ticket 完成并冻结 `anchor_sha`
+- `needs_merge -> merged`
+  - 触发：hook 驱动的 `dalek merge sync-ref`
+- `needs_merge -> abandoned`
+  - 触发：显式 `dalek merge abandon`
 
-**重命名**：
+### Forbidden transitions
 
-| 位置 | 旧名 | 新名 |
-|------|------|------|
-| manager_tick.go:45 | MergeProposed | MergeFrozen |
-| manager_tick.go:68 | MergeProposed | MergeFrozen |
-| manager_tick.go:341, 597, 607 | MergeProposed | MergeFrozen |
-| cmd_manager.go JSON key | "merge_proposed" | "merge_frozen" |
-| cmd_manager.go text output | merge_proposed | merge_frozen |
+- `merged -> needs_merge`
+- `merged -> abandoned`
+- `abandoned -> needs_merge`
+- `abandoned -> merged`
 
-## Kernel Template 更新
+`merged` 和 `abandoned` 都视为 integration terminal state。
 
-文件：`internal/repo/templates/project/agent-kernel.md`
+如果未来出现 force-push 抹掉已 merged 提交，不做正常状态回退，而是记 `merge_drift` incident，交给 repair 流程处理。
 
-### 概念映射
+## Command System
 
-```
-merge     ≈ 将 worker 分支合入主线的 git 集成动作（结果通过 ticket.integration_status 自动观测）
-```
+### Current command surface
 
-### operations
+当前 merge 命令面已经在 `dalek merge` 下：
 
-```
-Merge：ls|status|abandon（ID: --ticket N）
-```
+- `dalek merge ls`
+- `dalek merge status`
+- `dalek merge abandon`
 
-替代原来的：
-```
-Merge：ls（只读审计，已废弃）
-```
+这条方向是对的，应当保留。
 
-以及删除 `Ticket` operations 中的 `integration status|integration abandon`。
+### Target command surface
 
-### entity_map
+#### PM-visible commands
 
-保持 ticket 下的 integration_status / merge_anchor_sha / target_branch 字段，无变化。
+保留或新增：
 
-### capability_index
+- `dalek merge ls`
+  - 列出 `done` tickets 的 merge 状态
+- `dalek merge status --ticket <id>`
+  - 查看单票 merge 状态
+- `dalek merge abandon --ticket <id> --reason "..."`
+  - 显式放弃本票交付
+- `dalek merge retarget --ticket <id> --ref <ref>`
+  - 显式修改 `target_ref`
+  - 仅允许在 `integration_status = needs_merge` 时执行
 
-```
-待办与 merge 决策    → dalek inbox ls / inbox show --id N / dalek merge status --ticket N / dalek merge ls
-```
+删除或保持迁移提示：
 
-替代原来的 `ticket integration status` 引用。
+- `ticket integration ...`
+- 所有 merge queue 写命令
+- 所有 `approve/mark merged` 语义
 
-### ticket_integration section
+#### Hook/internal command
 
-section 名和内容保留（描述 integration_status 的状态空间），不重命名 section tag——内部标签不影响 agent 理解。
+新增一个内部命令：
 
-### merge_queue section
+- `dalek merge sync-ref`
 
-当前已写为"已废弃"。改为：
+用途：
 
-```
-<merge_queue>
-  merge_queue 仅保留历史数据查询（ListMergeItems）。
-  PM 交付判断和操作统一使用 dalek merge ls|status|abandon。
-</merge_queue>
+- 由 git hook 直接调用
+- 不依赖 daemon
+- 不作为 PM 常用操作宣传，但必须属于现有 `dalek merge` 命令体系
+
+建议参数：
+
+```text
+dalek merge sync-ref --repo-root <path> --ref <ref> --old <old_sha> --new <new_sha>
 ```
 
-### invariants / SOP
+语义：
 
-扫描所有 "integration" 字样，确认是内部字段引用（保留）还是 PM 可见命令引用（改为 merge）。
+- 根据一次 ref 更新事件，回收本 repo 自己的 merge 状态
 
-## 验收标准
+命名理由：
 
-1. `dalek merge ls` 输出 done tickets 的 merge 状态
-2. `dalek merge status --ticket N` 输出单 ticket merge 详情
-3. `dalek merge abandon --ticket N --reason "test"` 成功执行
-4. `dalek ticket integration` 输出兼容迁移提示
-5. `go test ./...` 全部通过
-6. `go build ./cmd/dalek` 编译通过
-7. 搜索 `ProposeMerge|ApproveMerge|DiscardMerge|MarkMergeMerged` 仅出现在保留的历史查询代码中（不应出现可调用路径）
-8. kernel template 中 merge 概念、operations、capability_index 与新 CLI 一致
+- `sync-ref` 明确表达“把 ticket merge 状态同步到 ref 事实”
+- 比 `update` 更精确
+- 比 `reconcile-ref` 更贴近当前 CLI 风格
+
+#### Manual repair command
+
+建议再补一个 repair 入口：
+
+- `dalek merge rescan [--ref <ref>]`
+
+用途：
+
+- hook 丢失后的手工修复
+- init/upgrade 后首轮对账
+
+这不是主路径，但应存在。
+
+## Hook Design
+
+### Installation
+
+hook 由 dalek 管理，不由 repo 自己维护。
+
+在以下场景执行注入：
+
+- `dalek init`
+- `dalek upgrade`
+
+安装位置：
+
+- repo root 下的 [`.git/hooks`](/home/xiewanpeng/tardis/dalek/.git/hooks)
+
+不使用：
+
+- `core.hooksPath`
+- daemon 常驻订阅
+
+### Hook type
+
+首选 hook：
+
+- `reference-transaction`
+
+原因：
+
+- 能拿到完整的 ref 变更
+- 能覆盖 branch ref 更新
+- 比 `post-merge` 更贴近“ref 事实变化”
+
+hook 只在 `committed` 阶段处理。
+
+### Hook behavior
+
+hook 本身必须很薄，只负责：
+
+1. 读取 ref 更新事件
+2. 过滤出 `refs/heads/*`
+3. 调用 `dalek merge sync-ref`
+
+hook 不负责：
+
+- 打开数据库做复杂逻辑
+- 自己计算 merge 状态
+- 依赖 daemon RPC
+
+### Example hook behavior
+
+伪代码：
+
+```bash
+phase="$1"
+[ "$phase" = "committed" ] || exit 0
+
+while read -r old new ref; do
+  case "$ref" in
+    refs/heads/*)
+      dalek merge sync-ref \
+        --repo-root "$PWD" \
+        --ref "$ref" \
+        --old "$old" \
+        --new "$new" || true
+      ;;
+  esac
+done
+```
+
+## `merge sync-ref` Behavior
+
+`dalek merge sync-ref` 的逻辑应该固定为：
+
+1. 打开 `--repo-root` 对应项目
+2. 只查询本 repo 自己数据库里的 tickets
+3. 过滤条件：
+   - `workflow_status = done`
+   - `integration_status = needs_merge`
+   - `target_ref = 传入 ref`
+4. 对每张票做：
+   - `is-ancestor(anchor_sha, new_sha)`
+5. 成功命中则更新：
+   - `integration_status = merged`
+   - `merged_at = now`
+6. 未命中则保持不变
+7. 如果 `anchor_sha` 缺失或非法，记录 error/incident
+
+这条路径不依赖：
+
+- manager tick
+- planner
+- daemon
+- autopilot
+
+## Retarget Semantics
+
+`retarget` 是显式 PM 决策，不是系统猜测。
+
+规则：
+
+- 只允许在 `integration_status = needs_merge`
+- 修改内容：
+  - `target_ref`
+- 必须写审计事件
+- 不修改 `anchor_sha`
+
+典型场景：
+
+- ticket 从 `main` 开出
+- 做完后决定改投 `dev`
+- 执行：
+  - `dalek merge retarget --ticket N --ref refs/heads/dev`
+
+之后只由 `dev` 的 ref 更新去回收它。
+
+## Branch Switch Example
+
+场景：
+
+1. 你当前在 `main`
+2. 创建 ticket
+3. 系统冻结：
+   - `target_ref = refs/heads/main`
+4. 开发过程中你切到 `dev`
+5. ticket done，冻结：
+   - `anchor_sha = abc123`
+6. 如果代码只合进 `dev`
+   - ticket 仍然是 `needs_merge`
+7. 只有 `refs/heads/main` 更新并包含 `abc123`
+   - ticket 才进入 `merged`
+
+结论：
+
+- 当前 checkout branch 只是工作上下文
+- 不是 ticket 交付契约
+
+## Archive Rules
+
+归档必须受 merge 状态约束。
+
+只允许：
+
+- `done + merged -> archived`
+- `done + abandoned -> archived`
+
+不允许：
+
+- `done + needs_merge -> archived`
+
+否则会把尚未交付的票从工作面直接清掉。
+
+## Why This Is Complete Enough
+
+这套设计已经完整覆盖：
+
+- repo 当前 branch 切换
+- 不依赖 autopilot / daemon
+- repo 自己发出去的 ticket 自己回收
+- merge 命令体系内存在 hook/internal 子命令
+- ticket 归档与 merge 状态的一致性
+
+这套设计刻意不覆盖：
+
+- squash/rebase/cherry-pick 的自动可靠判定
+- 已 merged 后 force-push 的自动回退
+
+这两类场景需要更强的受控 merge 入口，不属于当前默认主路径。
+
+## Migration Notes
+
+### 命名层
+
+对外命名统一用：
+
+- `merge`
+- `target_ref`
+- `anchor_sha`
+
+不再继续扩张：
+
+- `ticket integration`
+- merge queue
+- approve / mark merged
+
+### 数据层
+
+如果短期内 DB 字段仍保留 `target_branch` 命名，可以先做语义兼容：
+
+- `target_branch` 实际保存完整 ref
+
+但长期建议迁移为：
+
+- `target_ref`
+
+避免继续误导成“当前 branch 名”。
+
+## Summary
+
+最终 merge 设计应收敛为：
+
+- ticket create 时冻结 `target_ref`
+- ticket done 时冻结 `anchor_sha` 并进入 `needs_merge`
+- `dalek init/upgrade` 向 repo 的 [`.git/hooks`](/home/xiewanpeng/tardis/dalek/.git/hooks) 注入 ref update hook
+- hook 直接执行 `dalek merge sync-ref`
+- `merge sync-ref` 只回收本 repo 自己的 `done + needs_merge` tickets
+- 命中 `target_ref + anchor_sha` 后推进为 `merged`
+- `abandon` 和 `retarget` 是唯一显式管理动作
+- 只有 `merged` 或 `abandoned` 才允许 `archive`
