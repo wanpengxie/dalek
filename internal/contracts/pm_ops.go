@@ -9,8 +9,6 @@ const (
 	PMOpWriteDesignDoc       PMOpKind = "write_design_doc"
 	PMOpCreateTicket         PMOpKind = "create_ticket"
 	PMOpDispatchTicket       PMOpKind = "dispatch_ticket"
-	PMOpApproveMerge         PMOpKind = "approve_merge"
-	PMOpDiscardMerge         PMOpKind = "discard_merge"
 	PMOpCreateIntegration    PMOpKind = "create_integration_ticket"
 	PMOpCloseInbox           PMOpKind = "close_inbox"
 	PMOpRunAcceptance        PMOpKind = "run_acceptance"

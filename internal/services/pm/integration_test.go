@@ -61,7 +61,7 @@ func TestAbandonTicketIntegration_UpdatesStatusAndClosesApprovalInbox(t *testing
 	}
 }
 
-func TestProposeMergesForDoneTickets_ObservesMergedByGitAncestor(t *testing.T) {
+func TestFreezeMergesForDoneTickets_ObservesMergedByGitAncestor(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	branch, head := initGitRepoForIntegrationObserveTest(t, p.RepoRoot)
 
@@ -80,7 +80,7 @@ func TestProposeMergesForDoneTickets_ObservesMergedByGitAncestor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("getOrInitPMState failed: %v", err)
 	}
-	out := svc.proposeMergesForDoneTickets(context.Background(), p.DB, st, false)
+	out := svc.freezeMergesForDoneTickets(context.Background(), p.DB, st, false)
 	if len(out.Errors) != 0 {
 		t.Fatalf("expected no observe errors, got=%v", out.Errors)
 	}

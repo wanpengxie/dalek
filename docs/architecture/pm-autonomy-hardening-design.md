@@ -139,8 +139,6 @@ planner 不直接自由执行整个编排流程，而是输出结构化操作：
 - `write_design_doc`
 - `create_ticket`
 - `dispatch_ticket`
-- `approve_merge`
-- `discard_merge`
 - `create_integration_ticket`
 - `close_inbox`
 - `run_acceptance`

@@ -36,7 +36,7 @@ func cmdTicket(args []string) {
 	case "dispatch":
 		cmdTicketDispatchRemoved()
 	case "integration":
-		cmdTicketIntegration(args[1:])
+		exitTicketIntegrationMigrated()
 	case "interrupt":
 		cmdTicketInterrupt(args[1:])
 	case "stop":
@@ -73,7 +73,6 @@ func printTicketUsage() {
 	fmt.Fprintln(out, "  set-priority 设置 ticket 优先级（high/medium/low/none）")
 	fmt.Fprintln(out, "  show        查看 ticket 详情")
 	fmt.Fprintln(out, "  start       启动 ticket 并提交执行")
-	fmt.Fprintln(out, "  integration 查看/标记 ticket integration 状态")
 	fmt.Fprintln(out, "  interrupt   软中断 worker（发送进程 SIGINT）")
 	fmt.Fprintln(out, "  stop        停止 worker")
 	fmt.Fprintln(out, "  cleanup     清理 ticket worktree")
@@ -895,217 +894,12 @@ func cmdTicketDispatchRemoved() {
 	)
 }
 
-func cmdTicketIntegration(args []string) {
-	if len(args) == 0 {
-		printTicketIntegrationUsage()
-		os.Exit(2)
-	}
-	switch strings.TrimSpace(args[0]) {
-	case "status":
-		cmdTicketIntegrationStatus(args[1:])
-	case "abandon":
-		cmdTicketIntegrationAbandon(args[1:])
-	case "help", "-h", "--help":
-		printTicketIntegrationUsage()
-		os.Exit(0)
-	default:
-		exitUsageError(globalOutput,
-			fmt.Sprintf("未知 ticket integration 子命令: %s", strings.TrimSpace(args[0])),
-			"ticket integration 仅支持 status|abandon",
-			"运行 dalek ticket integration --help 查看可用子命令",
-		)
-	}
-}
-
-func printTicketIntegrationUsage() {
-	out := os.Stderr
-	fmt.Fprintln(out, "Ticket integration 状态管理")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Usage:")
-	fmt.Fprintln(out, "  dalek ticket integration <command> [flags]")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Commands:")
-	fmt.Fprintln(out, "  status     查看 ticket integration 状态")
-	fmt.Fprintln(out, "  abandon    手动放弃 ticket integration")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Use \"dalek ticket integration <command> --help\" for more information.")
-}
-
-func cmdTicketIntegrationStatus(args []string) {
-	fs := flag.NewFlagSet("ticket integration status", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.Usage = func() {
-		printSubcommandUsage(
-			fs,
-			"查看 ticket integration 状态",
-			"dalek ticket integration status --ticket <id> [--timeout 5s] [--output text|json]",
-			"dalek ticket integration status --ticket 1",
-			"dalek ticket integration status --ticket 1 -o json",
-		)
-	}
-	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
-	proj := fs.String("project", globalProject, "项目名（可选）")
-	projShort := fs.String("p", globalProject, "项目名（可选）")
-	ticketID := fs.Uint("ticket", 0, "ticket ID (required)")
-	fs.UintVar(ticketID, "t", 0, "ticket ID (required)")
-	timeout := fs.Duration("timeout", 5*time.Second, "超时（默认 5s）")
-	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
-	parseFlagSetOrExit(fs, args, globalOutput, "ticket integration status 参数解析失败", "运行 dalek ticket integration status --help 查看参数")
-	if strings.TrimSpace(*projShort) != "" {
-		*proj = strings.TrimSpace(*projShort)
-	}
-	out := parseOutputOrExit(*output, true)
-	if *ticketID == 0 {
-		exitUsageError(out,
-			"缺少必填参数 --ticket",
-			"ticket integration status 需要 ticket ID",
-			"dalek ticket integration status --ticket 1",
-		)
-	}
-	if *timeout <= 0 {
-		exitUsageError(out,
-			"非法参数 --timeout",
-			"--timeout 必须大于 0",
-			"例如: dalek ticket integration status --ticket 1 --timeout 5s",
-		)
-	}
-
-	p := mustOpenProjectWithOutput(out, *home, *proj)
-	ctx, cancel := projectCtx(*timeout)
-	defer cancel()
-	view, err := p.GetTicketViewByID(ctx, uint(*ticketID))
-	if err != nil {
-		exitRuntimeError(out,
-			"读取 ticket integration 状态失败",
-			err.Error(),
-			"确认 ticket 存在后重试",
-		)
-	}
-	if view == nil {
-		exitRuntimeError(out,
-			"读取 ticket integration 状态失败",
-			"ticket 不存在",
-			"确认 ticket ID 后重试",
-		)
-	}
-	tk := view.Ticket
-	status := contracts.CanonicalIntegrationStatus(tk.IntegrationStatus)
-	statusText := string(status)
-	if statusText == "" {
-		statusText = "-"
-	}
-	anchor := strings.TrimSpace(tk.MergeAnchorSHA)
-	if anchor == "" {
-		anchor = "-"
-	}
-	target := strings.TrimSpace(tk.TargetBranch)
-	if target == "" {
-		target = "-"
-	}
-	mergedAt := ""
-	if tk.MergedAt != nil && !tk.MergedAt.IsZero() {
-		mergedAt = tk.MergedAt.Local().Format("2006-01-02 15:04:05")
-	}
-	reason := strings.TrimSpace(tk.AbandonedReason)
-
-	if out == outputJSON {
-		printJSONOrExit(map[string]any{
-			"schema":             "dalek.ticket.integration.status.v1",
-			"ticket_id":          tk.ID,
-			"workflow_status":    string(contracts.CanonicalTicketWorkflowStatus(tk.WorkflowStatus)),
-			"integration_status": string(status),
-			"merge_anchor_sha":   strings.TrimSpace(tk.MergeAnchorSHA),
-			"target_branch":      strings.TrimSpace(tk.TargetBranch),
-			"merged_at":          mergedAt,
-			"abandoned_reason":   reason,
-		})
-		return
-	}
-	fmt.Printf("ticket:\tt%d\n", tk.ID)
-	fmt.Printf("workflow:\t%s\n", contracts.CanonicalTicketWorkflowStatus(tk.WorkflowStatus))
-	fmt.Printf("integration:\t%s\n", statusText)
-	fmt.Printf("anchor:\t%s\n", anchor)
-	fmt.Printf("target:\t%s\n", target)
-	if mergedAt == "" {
-		fmt.Println("merged_at:\t-")
-	} else {
-		fmt.Printf("merged_at:\t%s\n", mergedAt)
-	}
-	if reason == "" {
-		fmt.Println("reason:\t-")
-	} else {
-		fmt.Printf("reason:\t%s\n", reason)
-	}
-}
-
-func cmdTicketIntegrationAbandon(args []string) {
-	fs := flag.NewFlagSet("ticket integration abandon", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	fs.Usage = func() {
-		printSubcommandUsage(
-			fs,
-			"手动放弃 ticket integration",
-			"dalek ticket integration abandon --ticket <id> --reason \"...\" [--timeout 5s] [--output text|json]",
-			"dalek ticket integration abandon --ticket 1 --reason \"不再需要合并\"",
-			"dalek ticket integration abandon --ticket 1 --reason \"需求已变更\" -o json",
-		)
-	}
-	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
-	proj := fs.String("project", globalProject, "项目名（可选）")
-	projShort := fs.String("p", globalProject, "项目名（可选）")
-	ticketID := fs.Uint("ticket", 0, "ticket ID (required)")
-	fs.UintVar(ticketID, "t", 0, "ticket ID (required)")
-	reason := fs.String("reason", "", "abandon 理由 (required)")
-	timeout := fs.Duration("timeout", 5*time.Second, "超时（默认 5s）")
-	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
-	parseFlagSetOrExit(fs, args, globalOutput, "ticket integration abandon 参数解析失败", "运行 dalek ticket integration abandon --help 查看参数")
-	if strings.TrimSpace(*projShort) != "" {
-		*proj = strings.TrimSpace(*projShort)
-	}
-	out := parseOutputOrExit(*output, true)
-	if *ticketID == 0 {
-		exitUsageError(out,
-			"缺少必填参数 --ticket",
-			"ticket integration abandon 需要 ticket ID",
-			"dalek ticket integration abandon --ticket 1 --reason \"需求变更\"",
-		)
-	}
-	if strings.TrimSpace(*reason) == "" {
-		exitUsageError(out,
-			"缺少必填参数 --reason",
-			"ticket integration abandon 需要说明原因",
-			"dalek ticket integration abandon --ticket 1 --reason \"需求变更\"",
-		)
-	}
-	if *timeout <= 0 {
-		exitUsageError(out,
-			"非法参数 --timeout",
-			"--timeout 必须大于 0",
-			"例如: dalek ticket integration abandon --ticket 1 --reason \"需求变更\" --timeout 5s",
-		)
-	}
-
-	p := mustOpenProjectWithOutput(out, *home, *proj)
-	ctx, cancel := projectCtx(*timeout)
-	defer cancel()
-	if err := p.AbandonTicketIntegration(ctx, uint(*ticketID), strings.TrimSpace(*reason)); err != nil {
-		exitRuntimeError(out,
-			"abandon ticket integration 失败",
-			err.Error(),
-			"确认 ticket 已 done 且 integration_status 为 needs_merge/merged 后重试",
-		)
-	}
-
-	if out == outputJSON {
-		printJSONOrExit(map[string]any{
-			"schema":             "dalek.ticket.integration.abandon.v1",
-			"ticket_id":          uint(*ticketID),
-			"integration_status": string(contracts.IntegrationAbandoned),
-			"abandoned_reason":   strings.TrimSpace(*reason),
-		})
-		return
-	}
-	fmt.Printf("ticket t%d integration abandoned: %s\n", *ticketID, strings.TrimSpace(*reason))
+func exitTicketIntegrationMigrated() {
+	exitUsageError(globalOutput,
+		"ticket integration 已迁移到 merge 命令组",
+		"请改用 dalek merge status|abandon 查看或变更 ticket merge 状态",
+		"例如: dalek merge status --ticket 1；dalek merge abandon --ticket 1 --reason \"需求变更\"",
+	)
 }
 
 func cmdTicketInterrupt(args []string) {

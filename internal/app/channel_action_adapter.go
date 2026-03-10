@@ -57,14 +57,6 @@ func (a channelPMActionAdapter) ListMergeItems(ctx context.Context, status contr
 	})
 }
 
-func (a channelPMActionAdapter) ApproveMerge(ctx context.Context, mergeItemID uint, approvedBy string) error {
-	return a.svc.ApproveMerge(ctx, mergeItemID, approvedBy)
-}
-
-func (a channelPMActionAdapter) DiscardMerge(ctx context.Context, mergeItemID uint, note string) error {
-	return a.svc.DiscardMerge(ctx, mergeItemID, note)
-}
-
 type channelWorkerActionAdapter struct {
 	svc *workersvc.Service
 }

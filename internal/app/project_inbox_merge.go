@@ -67,31 +67,3 @@ func (p *Project) ListMergeItems(ctx context.Context, opt ListMergeOptions) ([]c
 		Limit:  opt.Limit,
 	})
 }
-
-func (p *Project) ProposeMerge(ctx context.Context, ticketID uint) (*contracts.MergeItem, error) {
-	if p == nil || p.pm == nil {
-		return nil, fmt.Errorf("project pm service 为空")
-	}
-	return p.pm.ProposeMerge(ctx, ticketID)
-}
-
-func (p *Project) ApproveMerge(ctx context.Context, mergeItemID uint, approvedBy string) error {
-	if p == nil || p.pm == nil {
-		return fmt.Errorf("project pm service 为空")
-	}
-	return p.pm.ApproveMerge(ctx, mergeItemID, approvedBy)
-}
-
-func (p *Project) DiscardMerge(ctx context.Context, mergeItemID uint, reason string) error {
-	if p == nil || p.pm == nil {
-		return fmt.Errorf("project pm service 为空")
-	}
-	return p.pm.DiscardMerge(ctx, mergeItemID, reason)
-}
-
-func (p *Project) MarkMergeMerged(ctx context.Context, mergeItemID uint) error {
-	if p == nil || p.pm == nil {
-		return fmt.Errorf("project pm service 为空")
-	}
-	return p.pm.MarkMergeMerged(ctx, mergeItemID)
-}

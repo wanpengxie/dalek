@@ -34,11 +34,11 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 	if out.Recovered != 1 {
 		t.Fatalf("expected recovered=1, got=%d errors=%v", out.Recovered, out.Errors)
 	}
-	if out.Blocked != 1 {
-		t.Fatalf("expected blocked=1, got=%d", out.Blocked)
+	if out.Blocked != 0 {
+		t.Fatalf("expected blocked=0, got=%d", out.Blocked)
 	}
-	if out.Illegal != 1 {
-		t.Fatalf("expected illegal=1, got=%d", out.Illegal)
+	if out.Illegal != 0 {
+		t.Fatalf("expected illegal=0, got=%d", out.Illegal)
 	}
 	var got contracts.Worker
 	if err := p.DB.First(&got, w.ID).Error; err != nil {
@@ -199,11 +199,11 @@ func TestManagerTick_ReportsZombieStats(t *testing.T) {
 	if res.ZombieRecovered != 1 {
 		t.Fatalf("expected zombie_recovered=1, got=%d errors=%v", res.ZombieRecovered, res.Errors)
 	}
-	if res.ZombieBlocked != 1 {
-		t.Fatalf("expected zombie_blocked=1, got=%d", res.ZombieBlocked)
+	if res.ZombieBlocked != 0 {
+		t.Fatalf("expected zombie_blocked=0, got=%d", res.ZombieBlocked)
 	}
-	if res.ZombieIllegal != 1 {
-		t.Fatalf("expected zombie_illegal=1, got=%d", res.ZombieIllegal)
+	if res.ZombieIllegal != 0 {
+		t.Fatalf("expected zombie_illegal=0, got=%d", res.ZombieIllegal)
 	}
 	if res.ZombieUndefined != 0 {
 		t.Fatalf("expected zombie_undefined=0, got=%d", res.ZombieUndefined)

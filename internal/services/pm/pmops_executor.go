@@ -25,10 +25,6 @@ func (s *Service) plannerPMOpExecutor(kind contracts.PMOpKind) plannerPMOpExecut
 		return createIntegrationTicketPMOpExecutor{s: s}
 	case contracts.PMOpDispatchTicket:
 		return dispatchTicketPMOpExecutor{s: s}
-	case contracts.PMOpApproveMerge:
-		return approveMergePMOpExecutor{s: s}
-	case contracts.PMOpDiscardMerge:
-		return discardMergePMOpExecutor{s: s}
 	case contracts.PMOpCloseInbox:
 		return closeInboxPMOpExecutor{s: s}
 	case contracts.PMOpRunAcceptance:
@@ -225,119 +221,6 @@ func (e dispatchTicketPMOpExecutor) Execute(ctx context.Context, op contracts.PM
 		"injected_cmd":    strings.TrimSpace(res.InjectedCmd),
 		"worker_command":  strings.TrimSpace(res.WorkerCommand),
 		"workflow_status": string(contracts.TicketActive),
-	}, nil
-}
-
-type approveMergePMOpExecutor struct {
-	s *Service
-}
-
-func (e approveMergePMOpExecutor) Reconcile(ctx context.Context, op contracts.PMOp) (bool, contracts.JSONMap, error) {
-	if e.s == nil {
-		return false, contracts.JSONMap{}, fmt.Errorf("pm service 为空")
-	}
-	_, db, err := e.s.require()
-	if err != nil {
-		return false, contracts.JSONMap{}, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	mergeID := jsonMapUint(op.Arguments, "merge_item_id")
-	if mergeID == 0 {
-		return false, contracts.JSONMap{}, fmt.Errorf("approve_merge 缺少 merge_item_id")
-	}
-	var mi contracts.MergeItem
-	if err := db.WithContext(ctx).Select("id", "status").First(&mi, mergeID).Error; err != nil {
-		return false, contracts.JSONMap{}, err
-	}
-	switch mi.Status {
-	case contracts.MergeApproved, contracts.MergeMerged:
-		return true, contracts.JSONMap{
-			"merge_item_id":    mi.ID,
-			"status":           strings.TrimSpace(string(mi.Status)),
-			"reconcile_source": "merge_status",
-		}, nil
-	default:
-		return false, contracts.JSONMap{}, nil
-	}
-}
-
-func (e approveMergePMOpExecutor) Execute(ctx context.Context, op contracts.PMOp) (contracts.JSONMap, error) {
-	if e.s == nil {
-		return contracts.JSONMap{}, fmt.Errorf("pm service 为空")
-	}
-	if jsonMapBool(op.Arguments, "enforce_acceptance_gate") || jsonMapBool(op.Arguments, "feature_complete") {
-		gate, err := e.s.acceptanceGateState(ctx)
-		if err != nil {
-			return contracts.JSONMap{}, err
-		}
-		if !gate.Passed {
-			return contracts.JSONMap{}, fmt.Errorf("acceptance gate 未通过：done=%d total=%d", gate.Done, gate.Total)
-		}
-	}
-	mergeID := jsonMapUint(op.Arguments, "merge_item_id")
-	if mergeID == 0 {
-		return contracts.JSONMap{}, fmt.Errorf("approve_merge 缺少 merge_item_id")
-	}
-	approvedBy := strings.TrimSpace(jsonMapString(op.Arguments, "approved_by"))
-	if err := e.s.ApproveMerge(ctx, mergeID, approvedBy); err != nil {
-		return contracts.JSONMap{}, err
-	}
-	return contracts.JSONMap{
-		"merge_item_id": mergeID,
-		"status":        string(contracts.MergeApproved),
-	}, nil
-}
-
-type discardMergePMOpExecutor struct {
-	s *Service
-}
-
-func (e discardMergePMOpExecutor) Reconcile(ctx context.Context, op contracts.PMOp) (bool, contracts.JSONMap, error) {
-	if e.s == nil {
-		return false, contracts.JSONMap{}, fmt.Errorf("pm service 为空")
-	}
-	_, db, err := e.s.require()
-	if err != nil {
-		return false, contracts.JSONMap{}, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	mergeID := jsonMapUint(op.Arguments, "merge_item_id")
-	if mergeID == 0 {
-		return false, contracts.JSONMap{}, fmt.Errorf("discard_merge 缺少 merge_item_id")
-	}
-	var mi contracts.MergeItem
-	if err := db.WithContext(ctx).Select("id", "status").First(&mi, mergeID).Error; err != nil {
-		return false, contracts.JSONMap{}, err
-	}
-	if mi.Status == contracts.MergeDiscarded {
-		return true, contracts.JSONMap{
-			"merge_item_id":    mi.ID,
-			"status":           strings.TrimSpace(string(mi.Status)),
-			"reconcile_source": "merge_status",
-		}, nil
-	}
-	return false, contracts.JSONMap{}, nil
-}
-
-func (e discardMergePMOpExecutor) Execute(ctx context.Context, op contracts.PMOp) (contracts.JSONMap, error) {
-	if e.s == nil {
-		return contracts.JSONMap{}, fmt.Errorf("pm service 为空")
-	}
-	mergeID := jsonMapUint(op.Arguments, "merge_item_id")
-	if mergeID == 0 {
-		return contracts.JSONMap{}, fmt.Errorf("discard_merge 缺少 merge_item_id")
-	}
-	reason := strings.TrimSpace(jsonMapString(op.Arguments, "reason"))
-	if err := e.s.DiscardMerge(ctx, mergeID, reason); err != nil {
-		return contracts.JSONMap{}, err
-	}
-	return contracts.JSONMap{
-		"merge_item_id": mergeID,
-		"status":        string(contracts.MergeDiscarded),
 	}, nil
 }
 

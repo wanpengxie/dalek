@@ -564,7 +564,7 @@ func (m *daemonManagerComponent) buildPlannerPrompt(ctx context.Context, p *Proj
 		5. 避免重复动作，优先收敛阻塞项与高优先级事项；结合 planner_recovery 上下文避免重复执行已完成 op。
 		6. 对 approval_required / needs_user / incident 先自行判断并吸收，只有确实缺少用户独有信息时才允许请求人工介入。
 		7. 如果 git merge 在产品文件上产生冲突，先执行 git merge --abort，再改为 create_integration_ticket；禁止手工解决产品文件冲突。
-		8. 可用 kind：write_requirement_doc, write_design_doc, create_ticket, dispatch_ticket, approve_merge, discard_merge, create_integration_ticket, close_inbox, run_acceptance, set_feature_status。
+		8. 可用 kind：write_requirement_doc, write_design_doc, create_ticket, dispatch_ticket, create_integration_ticket, close_inbox, run_acceptance, set_feature_status。
 
 		输出格式示例（严格遵守）：
 		<pmops>

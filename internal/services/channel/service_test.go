@@ -1405,14 +1405,6 @@ func (a testPMActionAdapter) ListMergeItems(ctx context.Context, status contract
 	return a.svc.ListMergeItems(ctx, pmsvc.ListMergeOptions{Status: status, Limit: limit})
 }
 
-func (a testPMActionAdapter) ApproveMerge(ctx context.Context, mergeItemID uint, approvedBy string) error {
-	return a.svc.ApproveMerge(ctx, mergeItemID, approvedBy)
-}
-
-func (a testPMActionAdapter) DiscardMerge(ctx context.Context, mergeItemID uint, note string) error {
-	return a.svc.DiscardMerge(ctx, mergeItemID, note)
-}
-
 type testWorkerActionAdapter struct {
 	svc *workersvc.Service
 }

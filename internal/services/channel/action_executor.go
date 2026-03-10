@@ -46,8 +46,6 @@ type PMActionService interface {
 	DispatchTicket(ctx context.Context, ticketID uint, entryPrompt string) (DispatchTicketResult, error)
 	ArchiveTicket(ctx context.Context, ticketID uint) error
 	ListMergeItems(ctx context.Context, status contracts.MergeStatus, limit int) ([]contracts.MergeItem, error)
-	ApproveMerge(ctx context.Context, mergeItemID uint, approvedBy string) error
-	DiscardMerge(ctx context.Context, mergeItemID uint, note string) error
 }
 
 type InterruptTicketResult struct {
@@ -104,10 +102,6 @@ func (e *ActionExecutor) Execute(ctx context.Context, action contracts.TurnActio
 		return e.executeArchiveTicket(ctx, action)
 	case contracts.ActionListMergeItems:
 		return e.executeListMergeItems(ctx, action)
-	case contracts.ActionApproveMerge:
-		return e.executeApproveMerge(ctx, action)
-	case contracts.ActionRejectMerge:
-		return e.executeRejectMerge(ctx, action)
 	default:
 		return ActionResult{}, fmt.Errorf("不支持的 action: %s", name)
 	}
@@ -366,38 +360,6 @@ func (e *ActionExecutor) executeListMergeItems(ctx context.Context, action contr
 		Data: map[string]any{
 			"merge_items": views,
 		},
-	}, nil
-}
-
-func (e *ActionExecutor) executeApproveMerge(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
-	mergeItemID, err := actionArgUintRequired(action.Args, "merge_item_id", "mergeItemId", "id")
-	if err != nil {
-		return ActionResult{}, err
-	}
-	approvedBy := actionArgString(action.Args, "approved_by", "approvedBy", "decider")
-	if err := e.pmSvc.ApproveMerge(ctx, mergeItemID, approvedBy); err != nil {
-		return ActionResult{}, err
-	}
-	return ActionResult{
-		ActionName: contracts.ActionApproveMerge,
-		Success:    true,
-		Message:    fmt.Sprintf("已批准 merge#%d。", mergeItemID),
-	}, nil
-}
-
-func (e *ActionExecutor) executeRejectMerge(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
-	mergeItemID, err := actionArgUintRequired(action.Args, "merge_item_id", "mergeItemId", "id")
-	if err != nil {
-		return ActionResult{}, err
-	}
-	note := actionArgString(action.Args, "note", "reason")
-	if err := e.pmSvc.DiscardMerge(ctx, mergeItemID, note); err != nil {
-		return ActionResult{}, err
-	}
-	return ActionResult{
-		ActionName: contracts.ActionRejectMerge,
-		Success:    true,
-		Message:    fmt.Sprintf("已拒绝 merge#%d。", mergeItemID),
 	}, nil
 }
 

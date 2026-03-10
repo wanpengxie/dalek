@@ -93,8 +93,6 @@ const (
 	ActionStopTicket      = "stop_ticket"
 	ActionArchiveTicket   = "archive_ticket"
 	ActionListMergeItems  = "list_merge_items"
-	ActionApproveMerge    = "approve_merge"
-	ActionRejectMerge     = "reject_merge"
 )
 
 type TurnAction struct {

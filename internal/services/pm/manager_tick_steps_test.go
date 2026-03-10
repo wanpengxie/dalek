@@ -152,7 +152,7 @@ func TestScanRunningWorkers_TracksBlockedAndProgressable(t *testing.T) {
 	}
 }
 
-func TestProposeMergesForDoneTickets_FreezeIntegrationOnce(t *testing.T) {
+func TestFreezeMergesForDoneTickets_FreezeIntegrationOnce(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	st, err := svc.getOrInitPMState(context.Background())
 	if err != nil {
@@ -175,18 +175,18 @@ func TestProposeMergesForDoneTickets_FreezeIntegrationOnce(t *testing.T) {
 		t.Fatalf("set ticket done failed: %v", err)
 	}
 
-	first := svc.proposeMergesForDoneTickets(context.Background(), p.DB, st, false)
-	if !containsTicketID(first.MergeProposed, tk.ID) {
-		t.Fatalf("expected first proposal includes ticket t%d, got=%v", tk.ID, first.MergeProposed)
+	first := svc.freezeMergesForDoneTickets(context.Background(), p.DB, st, false)
+	if !containsTicketID(first.MergeFrozen, tk.ID) {
+		t.Fatalf("expected first freeze includes ticket t%d, got=%v", tk.ID, first.MergeFrozen)
 	}
 	if len(first.Errors) != 0 {
-		t.Fatalf("expected no merge proposal errors, got=%v", first.Errors)
+		t.Fatalf("expected no merge freeze errors, got=%v", first.Errors)
 	}
 	if !st.PlannerDirty {
-		t.Fatalf("expected planner dirty after merge proposal")
+		t.Fatalf("expected planner dirty after merge freeze")
 	}
 	if st.PlannerWakeVersion != initialWakeVersion+1 {
-		t.Fatalf("expected planner wake version +1 after merge proposal, got=%d", st.PlannerWakeVersion)
+		t.Fatalf("expected planner wake version +1 after merge freeze, got=%d", st.PlannerWakeVersion)
 	}
 	var afterFirst contracts.Ticket
 	if err := p.DB.First(&afterFirst, tk.ID).Error; err != nil {
@@ -197,12 +197,12 @@ func TestProposeMergesForDoneTickets_FreezeIntegrationOnce(t *testing.T) {
 	}
 
 	st.PlannerDirty = false
-	second := svc.proposeMergesForDoneTickets(context.Background(), p.DB, st, false)
-	if containsTicketID(second.MergeProposed, tk.ID) {
-		t.Fatalf("expected second proposal skips duplicate open merge item, got=%v", second.MergeProposed)
+	second := svc.freezeMergesForDoneTickets(context.Background(), p.DB, st, false)
+	if containsTicketID(second.MergeFrozen, tk.ID) {
+		t.Fatalf("expected second freeze skips duplicate open merge item, got=%v", second.MergeFrozen)
 	}
 	if len(second.Errors) != 0 {
-		t.Fatalf("expected no merge proposal errors on second call, got=%v", second.Errors)
+		t.Fatalf("expected no merge freeze errors on second call, got=%v", second.Errors)
 	}
 	if !st.PlannerDirty {
 		t.Fatalf("expected planner dirty after second call with existing open merge item")
@@ -212,7 +212,7 @@ func TestProposeMergesForDoneTickets_FreezeIntegrationOnce(t *testing.T) {
 	}
 }
 
-func TestProposeMergesForDoneTickets_NeedsMergeKeepsPlannerDirty(t *testing.T) {
+func TestFreezeMergesForDoneTickets_NeedsMergeKeepsPlannerDirty(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	st, err := svc.getOrInitPMState(context.Background())
 	if err != nil {
@@ -233,12 +233,12 @@ func TestProposeMergesForDoneTickets_NeedsMergeKeepsPlannerDirty(t *testing.T) {
 	}
 
 	st.PlannerDirty = false
-	out := svc.proposeMergesForDoneTickets(context.Background(), p.DB, st, false)
-	if containsTicketID(out.MergeProposed, tk.ID) {
-		t.Fatalf("needs_merge ticket should not be re-proposed, got=%v", out.MergeProposed)
+	out := svc.freezeMergesForDoneTickets(context.Background(), p.DB, st, false)
+	if containsTicketID(out.MergeFrozen, tk.ID) {
+		t.Fatalf("needs_merge ticket should not be re-frozen, got=%v", out.MergeFrozen)
 	}
 	if len(out.Errors) != 0 {
-		t.Fatalf("expected no merge proposal errors, got=%v", out.Errors)
+		t.Fatalf("expected no merge freeze errors, got=%v", out.Errors)
 	}
 	if !st.PlannerDirty {
 		t.Fatalf("expected planner dirty for needs_merge ticket")
@@ -559,8 +559,8 @@ func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled
 	if !submitter.called {
 		t.Fatalf("expected dispatch submitter called and parent context canceled")
 	}
-	if !containsTicketID(res.MergeProposed, doneTicket.ID) {
-		t.Fatalf("expected merge proposal for done ticket t%d, got=%v", doneTicket.ID, res.MergeProposed)
+	if !containsTicketID(res.MergeFrozen, doneTicket.ID) {
+		t.Fatalf("expected merge freeze for done ticket t%d, got=%v", doneTicket.ID, res.MergeFrozen)
 	}
 	if !res.PlannerRunScheduled {
 		t.Fatalf("expected planner run scheduled after merge dirty even with parent context canceled, errors=%v", res.Errors)

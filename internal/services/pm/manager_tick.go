@@ -42,7 +42,7 @@ type ManagerTickResult struct {
 	StartedTickets    []uint
 	DispatchedTickets []uint
 	SerialDeferred    []uint
-	MergeProposed     []uint
+	MergeFrozen       []uint
 	SurfaceConflicts  []SurfaceConflict
 
 	Errors []string
@@ -64,9 +64,9 @@ type scanWorkersResult struct {
 	Errors           []string
 }
 
-type mergeProposalResult struct {
-	MergeProposed []uint
-	Errors        []string
+type mergeFrozenResult struct {
+	MergeFrozen []uint
+	Errors      []string
 }
 
 type scheduleOptions struct {
@@ -193,8 +193,8 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		return res, nil
 	}
 
-	mergeResult := s.proposeMergesForDoneTickets(ctx, db, st, opt.DryRun)
-	res.applyMergeProposalResult(mergeResult)
+	mergeResult := s.freezeMergesForDoneTickets(ctx, db, st, opt.DryRun)
+	res.applyMergeFrozenResult(mergeResult)
 
 	scheduleResult := s.scheduleQueuedTickets(ctx, db, scheduleOptions{
 		Capacity:         capacity,
@@ -337,8 +337,8 @@ func (res *ManagerTickResult) applyScanWorkersResult(step scanWorkersResult) {
 	res.Errors = append(res.Errors, step.Errors...)
 }
 
-func (res *ManagerTickResult) applyMergeProposalResult(step mergeProposalResult) {
-	res.MergeProposed = append(res.MergeProposed, step.MergeProposed...)
+func (res *ManagerTickResult) applyMergeFrozenResult(step mergeFrozenResult) {
+	res.MergeFrozen = append(res.MergeFrozen, step.MergeFrozen...)
 	res.Errors = append(res.Errors, step.Errors...)
 }
 
@@ -575,11 +575,11 @@ func (s *Service) scanRunningWorkers(ctx context.Context, db *gorm.DB, taskRunti
 	return out, nil
 }
 
-func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, st *contracts.PMState, dryRun bool) mergeProposalResult {
+func (s *Service) freezeMergesForDoneTickets(ctx context.Context, db *gorm.DB, st *contracts.PMState, dryRun bool) mergeFrozenResult {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	out := mergeProposalResult{}
+	out := mergeFrozenResult{}
 
 	var doneTickets []contracts.Ticket
 	if err := db.WithContext(ctx).
@@ -594,7 +594,7 @@ func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, 
 		switch status {
 		case contracts.IntegrationNone:
 			if dryRun {
-				out.MergeProposed = append(out.MergeProposed, t.ID)
+				out.MergeFrozen = append(out.MergeFrozen, t.ID)
 				s.markPlannerDirty(st)
 				continue
 			}
@@ -604,7 +604,7 @@ func (s *Service) proposeMergesForDoneTickets(ctx context.Context, db *gorm.DB, 
 				out.Errors = append(out.Errors, err.Error())
 				continue
 			}
-			out.MergeProposed = append(out.MergeProposed, t.ID)
+			out.MergeFrozen = append(out.MergeFrozen, t.ID)
 			s.markPlannerDirty(st)
 			continue
 		case contracts.IntegrationNeedsMerge:

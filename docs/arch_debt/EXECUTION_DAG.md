@@ -56,7 +56,7 @@
     - `project_dispatch.go`：dispatch & start（Start*, Dispatch*, DirectDispatch*, FindLatestWorkerRun）
     - `project_task.go`：task 执行观测与 subagent（ListTaskStatus, Get*, Create/Finish/CancelTaskRun, etc.）
     - `project_manager.go`：PM manager 管理（ManagerSessionName, GetPMState, ManagerTick, etc.）
-    - `project_inbox_merge.go`：inbox 与 merge queue（ListInbox, ProposeMerge, ApproveMerge, etc.）
+    - `project_inbox_merge.go`：inbox 与 merge queue（ListInbox 与历史 merge 审计查询）
   - **ChannelService 暴露约束**：新增 `TestCmdChannelServiceImportAllowlist` 架构守卫测试，限制 `internal/services/channel` import 仅允许在 4 个 gateway cmd 文件中。
   - **外部调用方更新**：cmd/dalek 4 文件、internal/ui/tui 4 文件统一从 `app.X` 改为 `contracts.X`。
 - 回归验证：

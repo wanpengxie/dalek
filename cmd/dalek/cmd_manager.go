@@ -306,14 +306,14 @@ func cmdManagerTick(args []string) {
 			"started_tickets":    res.StartedTickets,
 			"dispatched_tickets": res.DispatchedTickets,
 			"serial_deferred":    res.SerialDeferred,
-			"merge_proposed":     res.MergeProposed,
+			"merge_frozen":       res.MergeFrozen,
 			"surface_conflicts":  res.SurfaceConflicts,
 			"errors":             res.Errors,
 		})
 		return
 	}
 
-	fmt.Printf("%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  serial_deferred=%d  inbox=%d  merge_proposed=%d  surface_conflicts=%d\n",
+	fmt.Printf("%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  serial_deferred=%d  inbox=%d  merge_frozen=%d  surface_conflicts=%d\n",
 		res.At.Local().Format("01-02 15:04:05"),
 		res.AutopilotEnabled,
 		res.Running, res.RunningBlocked,
@@ -323,7 +323,7 @@ func cmdManagerTick(args []string) {
 		len(res.DispatchedTickets),
 		len(res.SerialDeferred),
 		res.InboxUpserts,
-		len(res.MergeProposed),
+		len(res.MergeFrozen),
 		len(res.SurfaceConflicts),
 	)
 	if len(res.Errors) > 0 {
@@ -419,7 +419,7 @@ func cmdManagerRun(args []string) {
 			"started_tickets":    res.StartedTickets,
 			"dispatched_tickets": res.DispatchedTickets,
 			"serial_deferred":    res.SerialDeferred,
-			"merge_proposed":     res.MergeProposed,
+			"merge_frozen":       res.MergeFrozen,
 			"surface_conflicts":  res.SurfaceConflicts,
 			"errors":             res.Errors,
 		})
@@ -430,7 +430,7 @@ func cmdManagerRun(args []string) {
 	if *dispatchTimeout > 0 {
 		timeoutText = dispatchTimeout.String()
 	}
-	fmt.Printf("%s  mode=sync_dispatch  dispatch_timeout=%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  serial_deferred=%d  inbox=%d  merge_proposed=%d  surface_conflicts=%d\n",
+	fmt.Printf("%s  mode=sync_dispatch  dispatch_timeout=%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  serial_deferred=%d  inbox=%d  merge_frozen=%d  surface_conflicts=%d\n",
 		res.At.Local().Format("01-02 15:04:05"),
 		timeoutText,
 		res.AutopilotEnabled,
@@ -441,7 +441,7 @@ func cmdManagerRun(args []string) {
 		len(res.DispatchedTickets),
 		len(res.SerialDeferred),
 		res.InboxUpserts,
-		len(res.MergeProposed),
+		len(res.MergeFrozen),
 		len(res.SurfaceConflicts),
 	)
 	if len(res.Errors) > 0 {
