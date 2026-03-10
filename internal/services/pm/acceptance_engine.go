@@ -469,8 +469,9 @@ func (s *Service) executeRunAcceptance(ctx context.Context, op contracts.PMOp) (
 		"acceptance_gate_done":      gate.Done,
 		"failure_ticket_id":         failureTicketID,
 		"failure_ticket_worker_id":  failureTicketWorkerID,
+		"failure_ticket_started":    failureTicketWorkerID != 0,
 		"feature_status":            featureStatus,
-		"failure_ticket_dispatched": failureTicketWorkerID != 0,
+		"failure_ticket_dispatched": false,
 	}, nil
 }
 
@@ -1176,11 +1177,14 @@ func (s *Service) createAcceptanceFailureTicket(ctx context.Context, graph contr
 	if !spec.AutoDispatchFailureTicket {
 		return ticket, 0, nil
 	}
-	dispatch, derr := s.DispatchTicket(ctx, ticket.ID)
-	if derr != nil {
-		return ticket, 0, derr
+	worker, serr := s.StartTicket(ctx, ticket.ID)
+	if serr != nil {
+		return ticket, 0, serr
 	}
-	return ticket, dispatch.WorkerID, nil
+	if worker == nil {
+		return ticket, 0, nil
+	}
+	return ticket, worker.ID, nil
 }
 
 func buildAcceptanceObservations(results []acceptanceNodeRunResult) []string {

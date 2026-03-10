@@ -35,3 +35,32 @@ func TestStartTicketPMOpExecutor_ExecutesQueuedProjection(t *testing.T) {
 		t.Fatalf("expected queued workflow after start op, got=%s", after.WorkflowStatus)
 	}
 }
+
+func TestDispatchTicketPMOpExecutor_AliasesStartProjection(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "pmop-dispatch-ticket")
+
+	res, err := dispatchTicketPMOpExecutor{s: svc}.Execute(context.Background(), contracts.PMOp{
+		Kind: contracts.PMOpDispatchTicket,
+		Arguments: contracts.JSONMap{
+			"ticket_id": tk.ID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+	if got := jsonMapUint(res, "ticket_id"); got != tk.ID {
+		t.Fatalf("unexpected ticket_id in result: got=%d want=%d", got, tk.ID)
+	}
+	if got := jsonMapString(res, "workflow_status"); got != string(contracts.TicketQueued) {
+		t.Fatalf("unexpected workflow_status in result: got=%q want=%q", got, contracts.TicketQueued)
+	}
+
+	var after contracts.Ticket
+	if err := p.DB.First(&after, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if after.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected queued workflow after legacy dispatch op, got=%s", after.WorkflowStatus)
+	}
+}

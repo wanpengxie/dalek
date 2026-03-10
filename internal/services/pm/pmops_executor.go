@@ -238,56 +238,12 @@ func (e startTicketPMOpExecutor) Execute(ctx context.Context, op contracts.PMOp)
 }
 
 func (e dispatchTicketPMOpExecutor) Reconcile(ctx context.Context, op contracts.PMOp) (bool, contracts.JSONMap, error) {
-	if e.s == nil {
-		return false, contracts.JSONMap{}, fmt.Errorf("pm service 为空")
-	}
-	_, db, err := e.s.require()
-	if err != nil {
-		return false, contracts.JSONMap{}, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ticketID := jsonMapUint(op.Arguments, "ticket_id")
-	if ticketID == 0 {
-		return false, contracts.JSONMap{}, fmt.Errorf("dispatch_ticket 缺少 ticket_id")
-	}
-	var t contracts.Ticket
-	if err := db.WithContext(ctx).Select("id", "workflow_status").First(&t, ticketID).Error; err != nil {
-		return false, contracts.JSONMap{}, err
-	}
-	switch contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) {
-	case contracts.TicketActive, contracts.TicketDone, contracts.TicketArchived:
-		return true, contracts.JSONMap{
-			"ticket_id":        ticketID,
-			"workflow_status":  strings.TrimSpace(string(t.WorkflowStatus)),
-			"reconcile_source": "ticket_workflow_status",
-		}, nil
-	default:
-		return false, contracts.JSONMap{}, nil
-	}
+	// legacy alias: dispatch_ticket should converge through start semantics instead of PM dispatch.
+	return startTicketPMOpExecutor{s: e.s}.Reconcile(ctx, op)
 }
 
 func (e dispatchTicketPMOpExecutor) Execute(ctx context.Context, op contracts.PMOp) (contracts.JSONMap, error) {
-	if e.s == nil {
-		return contracts.JSONMap{}, fmt.Errorf("pm service 为空")
-	}
-	ticketID := jsonMapUint(op.Arguments, "ticket_id")
-	if ticketID == 0 {
-		return contracts.JSONMap{}, fmt.Errorf("dispatch_ticket 缺少 ticket_id")
-	}
-	res, err := e.s.DispatchTicket(ctx, ticketID)
-	if err != nil {
-		return contracts.JSONMap{}, err
-	}
-	return contracts.JSONMap{
-		"ticket_id":       res.TicketID,
-		"worker_id":       res.WorkerID,
-		"task_run_id":     res.TaskRunID,
-		"injected_cmd":    strings.TrimSpace(res.InjectedCmd),
-		"worker_command":  strings.TrimSpace(res.WorkerCommand),
-		"workflow_status": string(contracts.TicketActive),
-	}, nil
+	return startTicketPMOpExecutor{s: e.s}.Execute(ctx, op)
 }
 
 type closeInboxPMOpExecutor struct {

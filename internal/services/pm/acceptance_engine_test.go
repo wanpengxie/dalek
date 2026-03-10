@@ -185,6 +185,62 @@ func TestRunAcceptancePMOpExecutor_FailureCreatesGapTicketAndRollsBackFeatureSta
 	}
 }
 
+func TestRunAcceptancePMOpExecutor_FailureAutoDispatchStartsFailureTicketQueued(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	writeTestPlanGraph(t, p.RepoRoot, contracts.FeatureGraph{
+		Schema:    contracts.PMFeatureGraphSchemaV1,
+		FeatureID: "feature-acceptance-auto-start",
+		Goal:      "acceptance failure auto start flow",
+		Nodes: []contracts.FeatureNode{
+			{ID: "ticket-main", Type: contracts.FeatureNodeTicket, Status: contracts.FeatureNodeDone},
+			{ID: "acceptance-01", Type: contracts.FeatureNodeAcceptance, Status: contracts.FeatureNodePending, DependsOn: []string{"ticket-main"}, DoneWhen: "must pass"},
+		},
+		UpdatedAt: time.Now().UTC(),
+	})
+
+	res, err := runAcceptancePMOpExecutor{s: svc}.Execute(ctx, contracts.PMOp{
+		Kind: contracts.PMOpRunAcceptance,
+		Arguments: contracts.JSONMap{
+			"auto_dispatch_failure_ticket": true,
+			"cases": []any{
+				map[string]any{
+					"node_id": "acceptance-01",
+					"type":    "cli",
+					"command": "echo fail >&2; exit 1",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("execute run_acceptance failed: %v", err)
+	}
+
+	result := contracts.JSONMapFromAny(res)
+	failureTicketID := uint(jsonMapInt(result, "failure_ticket_id"))
+	if failureTicketID == 0 {
+		t.Fatalf("expected failure_ticket_id > 0")
+	}
+	if got := jsonMapUint(result, "failure_ticket_worker_id"); got == 0 {
+		t.Fatalf("expected failure_ticket_worker_id > 0")
+	}
+	if !coerceBool(result["failure_ticket_started"], false) {
+		t.Fatalf("expected failure_ticket_started=true")
+	}
+	if coerceBool(result["failure_ticket_dispatched"], false) {
+		t.Fatalf("expected failure_ticket_dispatched=false after start alias")
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.WithContext(ctx).First(&ticket, failureTicketID).Error; err != nil {
+		t.Fatalf("load failure ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected failure ticket queued after auto dispatch alias, got=%s", ticket.WorkflowStatus)
+	}
+}
+
 func TestSetFeatureStatusPMOpExecutor_RequiresAcceptanceGateForDone(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
