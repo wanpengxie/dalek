@@ -133,6 +133,22 @@ func TestCLI_ManagerRunRemoved(t *testing.T) {
 	}
 }
 
+func TestCLI_TicketIntegrationMigrated(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+
+	_, stderr, err := runCLI(t, bin, repo, "ticket", "integration")
+	if err == nil {
+		t.Fatalf("ticket integration should fail with migration hint")
+	}
+	if !strings.Contains(stderr, "ticket integration 已迁移到 merge 命令组") {
+		t.Fatalf("ticket integration migration hint missing:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "dalek merge status --ticket 1") || !strings.Contains(stderr, "dalek merge abandon --ticket 1 --reason") {
+		t.Fatalf("ticket integration should mention merge replacements:\n%s", stderr)
+	}
+}
+
 func TestCLI_ManagerRunSyncDispatchRequiresOnce(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
