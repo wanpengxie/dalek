@@ -155,6 +155,12 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	if entryPrompt == "" {
 		entryPrompt = defaultContinuePrompt
 	}
+	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
+		return DirectDispatchResult{}, err
+	}
+	if _, err := s.ensureWorkerBootstrap(ctx, t, *w, entryPrompt); err != nil {
+		return DirectDispatchResult{}, err
+	}
 
 	workflowPromoted := false
 

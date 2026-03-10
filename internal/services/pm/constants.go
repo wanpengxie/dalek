@@ -15,12 +15,7 @@ const (
 	envTicketDescription = "DALEK_TICKET_DESCRIPTION"
 
 	// Dispatch env keys.
-	envDispatchRequestID     = "DALEK_DISPATCH_REQUEST_ID"
-	envDispatchEntryPrompt   = "DALEK_DISPATCH_ENTRY_PROMPT"
-	envDispatchPromptTpl     = "DALEK_DISPATCH_PROMPT_TEMPLATE"
-	dispatchDepthEnvKey      = "DALEK_DISPATCH_DEPTH"
-	dispatchPromptTemplateID = "builtin://pm_dispatch_prompt_v1"
-	dispatchPromptTemplate   = "templates/pm/dispatch_prompt_v1.tmpl"
+	dispatchDepthEnvKey = "DALEK_DISPATCH_DEPTH"
 
 	// Planner env keys.
 	envPlannerRunID     = "DALEK_PLANNER_RUN_ID"

@@ -365,6 +365,75 @@ func TestDirectDispatchWorker_DefaultAutoStartWhenNotStarted(t *testing.T) {
 	}
 }
 
+func TestDirectDispatchWorker_GeneratesWorkerBootstrapFiles(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "direct-dispatch-bootstrap-files")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, "direct_dispatch_bootstrap_files")
+		makeSemanticReport(t, svc, run.ID, "done")
+		return &fakeAgentRunHandle{runID: run.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+	}
+
+	if _, err := svc.DirectDispatchWorker(context.Background(), tk.ID, DirectDispatchOptions{
+		EntryPrompt: "先检查 bootstrap 文件",
+	}); err != nil {
+		t.Fatalf("DirectDispatchWorker failed: %v", err)
+	}
+
+	for _, path := range []string{
+		filepath.Join(w.WorktreePath, ".dalek", "agent-kernel.md"),
+		filepath.Join(w.WorktreePath, ".dalek", "PLAN.md"),
+		filepath.Join(w.WorktreePath, ".dalek", "state.json"),
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("expected bootstrap file %s: %v", path, err)
+		}
+		if strings.Contains(string(raw), "{{") {
+			t.Fatalf("bootstrap file should not keep placeholders: %s", path)
+		}
+	}
+}
+
+func TestDirectDispatchWorker_PreservesExistingPlan(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "direct-dispatch-preserve-plan")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	planPath := filepath.Join(w.WorktreePath, ".dalek", "PLAN.md")
+	customPlan := "custom plan from previous worker run\n"
+	if err := os.WriteFile(planPath, []byte(customPlan), 0o644); err != nil {
+		t.Fatalf("write custom plan failed: %v", err)
+	}
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, "direct_dispatch_preserve_plan")
+		makeSemanticReport(t, svc, run.ID, "done")
+		return &fakeAgentRunHandle{runID: run.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+	}
+
+	if _, err := svc.DirectDispatchWorker(context.Background(), tk.ID, DirectDispatchOptions{
+		EntryPrompt: "继续执行任务",
+	}); err != nil {
+		t.Fatalf("DirectDispatchWorker failed: %v", err)
+	}
+
+	got, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read preserved plan failed: %v", err)
+	}
+	if string(got) != customPlan {
+		t.Fatalf("expected existing plan preserved, got=%q", string(got))
+	}
+}
+
 func TestDirectDispatchWorker_EmptyNextActionRetryExhaustedBlocksTicket(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 

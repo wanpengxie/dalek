@@ -245,13 +245,6 @@ func TestExecutePMDispatchJob_EmptyNextActionRetryExhaustedBlocksTicket(t *testi
 	run1 := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "dispatch_runner_empty_1")
 	run2 := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "dispatch_runner_empty_2")
 
-	svc.dispatchAgentExecutor = func(ctx context.Context, requestID string, ticket contracts.Ticket, worker contracts.Worker, entryPromptOverride string) (dispatchPromptBuildResult, error) {
-		return dispatchPromptBuildResult{
-			TemplatePath: "test://dispatch",
-			EntryPrompt:  "dispatch entry prompt",
-		}, nil
-	}
-
 	var prompts []string
 	var callCount atomic.Int32
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {

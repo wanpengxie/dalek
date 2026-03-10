@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,12 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
 	"dalek/internal/repo"
 	"dalek/internal/services/agentexec"
 )
 
-func TestDispatchTicket_SingleModeRunsPMAgent(t *testing.T) {
+func TestDispatchTicket_CompatibilityPathRunsWorkerLoop(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "dispatch-single-mode")
@@ -42,7 +44,7 @@ func TestDispatchTicket_SingleModeRunsPMAgent(t *testing.T) {
 	}
 }
 
-func TestDispatchTicket_InvalidPMAgentConfigFails(t *testing.T) {
+func TestDispatchTicket_InvalidPMAgentConfigDoesNotBlockWorkerBootstrap(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "dispatch-invalid-pm-agent-config")
@@ -50,22 +52,19 @@ func TestDispatchTicket_InvalidPMAgentConfigFails(t *testing.T) {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, "dispatch_invalid_pm_agent")
+		makeSemanticReport(t, svc, run.ID, "done")
+		return &fakeAgentRunHandle{runID: run.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+	}
 	p.Config.PMAgent.Provider = "invalid-provider"
-	if _, err := svc.DispatchTicket(context.Background(), tk.ID); err == nil {
-		t.Fatalf("expected dispatch fail when pm_agent config is invalid")
-	} else if !strings.Contains(err.Error(), "pm_agent 配置非法") {
-		t.Fatalf("unexpected dispatch error: %v", err)
+	if _, err := svc.DispatchTicket(context.Background(), tk.ID); err != nil {
+		t.Fatalf("dispatch should ignore pm_agent config after self-driven bootstrap: %v", err)
 	}
 }
 
-func TestDispatchTicket_PromptContainsStructuredContext(t *testing.T) {
+func TestDispatchTicket_GeneratesWorkerBootstrapFiles(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
-
-	dumpPath := filepath.Join(t.TempDir(), "prompt.txt")
-	if err := os.Setenv("DALEK_TEST_PROMPT_PATH", dumpPath); err != nil {
-		t.Fatalf("set env failed: %v", err)
-	}
-	defer os.Unsetenv("DALEK_TEST_PROMPT_PATH")
 
 	tk := createTicket(t, p.DB, "dispatch-structured-context")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -73,34 +72,72 @@ func TestDispatchTicket_PromptContainsStructuredContext(t *testing.T) {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
 	override := "请先读取目录结构并拆分这次任务"
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, "dispatch_bootstrap_files")
+		makeSemanticReport(t, svc, run.ID, "done")
+		return &fakeAgentRunHandle{runID: run.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+	}
 	if _, err := svc.DispatchTicketWithOptions(context.Background(), tk.ID, DispatchOptions{
 		EntryPrompt: override,
 	}); err != nil {
 		t.Fatalf("DispatchTicketWithOptions failed: %v", err)
 	}
 
-	raw, err := os.ReadFile(dumpPath)
+	kernelPath := filepath.Join(w.WorktreePath, ".dalek", "agent-kernel.md")
+	planPath := filepath.Join(w.WorktreePath, ".dalek", "PLAN.md")
+	statePath := filepath.Join(w.WorktreePath, ".dalek", "state.json")
+
+	kernelRaw, err := os.ReadFile(kernelPath)
 	if err != nil {
-		t.Fatalf("read prompt dump failed: %v", err)
+		t.Fatalf("read kernel failed: %v", err)
 	}
-	prompt := string(raw)
-	if !strings.Contains(prompt, "<pm_dispatch_single_mode>") {
-		t.Fatalf("prompt missing builtin dispatch section: %s", prompt)
+	planRaw, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read plan failed: %v", err)
 	}
-	if !strings.Contains(prompt, fmt.Sprintf("\"id\": %d", tk.ID)) {
-		t.Fatalf("prompt missing ticket id")
+	stateRaw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read state failed: %v", err)
 	}
-	if !strings.Contains(prompt, strings.TrimSpace(tk.Title)) {
-		t.Fatalf("prompt missing ticket title")
+
+	kernel := string(kernelRaw)
+	plan := string(planRaw)
+	if strings.Contains(kernel, "{{") {
+		t.Fatalf("kernel should not contain unresolved placeholders: %s", kernel)
 	}
-	if !strings.Contains(prompt, strings.TrimSpace(tk.Description)) {
-		t.Fatalf("prompt missing ticket description")
+	if strings.Contains(plan, "{{") {
+		t.Fatalf("plan should not contain unresolved placeholders: %s", plan)
 	}
-	if !strings.Contains(prompt, strings.TrimSpace(w.WorktreePath)) {
-		t.Fatalf("prompt missing worktree path")
+	if !strings.Contains(kernel, strings.TrimSpace(tk.Title)) {
+		t.Fatalf("kernel missing ticket title")
 	}
-	if !strings.Contains(prompt, override) {
-		t.Fatalf("prompt missing entry prompt override")
+	if !strings.Contains(kernel, strings.TrimSpace(w.WorktreePath)) {
+		t.Fatalf("kernel missing worktree path")
+	}
+	if !strings.Contains(plan, override) {
+		t.Fatalf("plan missing entry prompt override")
+	}
+	var state struct {
+		Ticket struct {
+			ID       string `json:"id"`
+			WorkerID string `json:"worker_id"`
+		} `json:"ticket"`
+		Phases struct {
+			CurrentID  string `json:"current_id"`
+			NextAction string `json:"next_action"`
+		} `json:"phases"`
+	}
+	if err := json.Unmarshal(stateRaw, &state); err != nil {
+		t.Fatalf("state should be valid json: %v", err)
+	}
+	if state.Ticket.ID != fmt.Sprintf("%d", tk.ID) || state.Ticket.WorkerID != fmt.Sprintf("%d", w.ID) {
+		t.Fatalf("unexpected ticket identity in state: %+v", state.Ticket)
+	}
+	if state.Phases.CurrentID != "phase-understanding" {
+		t.Fatalf("unexpected current phase: %q", state.Phases.CurrentID)
+	}
+	if state.Phases.NextAction != string(contracts.NextContinue) {
+		t.Fatalf("unexpected next action: %q", state.Phases.NextAction)
 	}
 }
 
@@ -124,61 +161,55 @@ func TestDispatchTicket_AllowsTicketWithoutDescription(t *testing.T) {
 	}
 }
 
-func TestDispatchTicket_SDKModeRunsPMAgent(t *testing.T) {
+func TestDispatchTicket_UsesWorkerSelfDrivenPrompt(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
-
-	fakeCodex := filepath.Join(t.TempDir(), "codex")
-	script := `#!/usr/bin/env bash
-set -euo pipefail
-cat >/dev/null
-echo '{"type":"thread.started","thread_id":"thread-sdk-1"}'
-echo '{"type":"turn.started"}'
-echo '{"type":"item.completed","item":{"id":"msg-1","type":"agent_message","text":"sdk dispatch ok"}}'
-echo '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
-`
-	if err := os.WriteFile(fakeCodex, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake codex failed: %v", err)
-	}
-	if err := os.Chmod(fakeCodex, 0o755); err != nil {
-		t.Fatalf("chmod fake codex failed: %v", err)
-	}
-	p.Config.PMAgent = repo.AgentExecConfig{
-		Provider: "codex",
-		Mode:     "sdk",
-		Command:  fakeCodex,
-		Model:    "gpt-5.3-codex",
-	}
-
 	tk := createTicket(t, p.DB, "dispatch-sdk-mode")
-	if _, err := svc.StartTicket(context.Background(), tk.ID); err != nil {
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if _, err := svc.DispatchTicket(context.Background(), tk.ID); err != nil {
-		t.Fatalf("DispatchTicket(sdk) failed: %v", err)
+	var seenPrompt string
+	svc.SetTaskRunner(fakePlannerTaskRunner{
+		runFn: func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+			seenPrompt = strings.TrimSpace(req.Prompt)
+			var run contracts.TaskRun
+			if err := p.DB.Where("ticket_id = ? AND worker_id = ? AND owner_type = ? AND task_type = ?", tk.ID, w.ID, contracts.TaskOwnerWorker, "deliver_ticket").
+				Order("id desc").
+				First(&run).Error; err != nil {
+				t.Fatalf("load worker run failed: %v", err)
+			}
+			makeSemanticReport(t, svc, run.ID, "done")
+			if onEvent != nil {
+				onEvent(sdkrunner.Event{Type: "agent_message", Text: "worker self-driven prompt ok"})
+			}
+			return sdkrunner.Result{
+				Provider:   "codex",
+				OutputMode: "jsonl",
+				SessionID:  "sess_worker_prompt",
+				Text:       "worker self-driven prompt ok",
+			}, nil
+		},
+	})
+	override := "先核对 bootstrap 再继续编码"
+	if _, err := svc.DispatchTicketWithOptions(context.Background(), tk.ID, DispatchOptions{
+		EntryPrompt: override,
+	}); err != nil {
+		t.Fatalf("DispatchTicketWithOptions failed: %v", err)
 	}
-	w, err := svc.worker.LatestWorker(context.Background(), tk.ID)
-	if err != nil {
-		t.Fatalf("latest worker failed: %v", err)
+	if !strings.Contains(seenPrompt, ".dalek/agent-kernel.md") {
+		t.Fatalf("worker prompt should mention kernel path, got=%q", seenPrompt)
 	}
-	if w == nil {
-		t.Fatalf("expected latest worker")
+	if !strings.Contains(seenPrompt, ".dalek/state.json") {
+		t.Fatalf("worker prompt should mention state.json, got=%q", seenPrompt)
 	}
-	logPath := repo.WorkerSDKStreamLogPath(p.WorkersDir, w.ID)
-	b, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read sdk stream log failed: %v", err)
+	if !strings.Contains(seenPrompt, ".dalek/PLAN.md") {
+		t.Fatalf("worker prompt should mention PLAN.md, got=%q", seenPrompt)
 	}
-	content := strings.TrimSpace(string(b))
-	if !strings.Contains(content, "sdk dispatch ok") {
-		t.Fatalf("expected sdk stream log contains agent message, got=%q", content)
+	if !strings.Contains(seenPrompt, override) {
+		t.Fatalf("worker prompt should include entry override, got=%q", seenPrompt)
 	}
-
-	var streamEvents int64
-	if err := p.DB.Model(&contracts.TaskEvent{}).Where("event_type = ?", "task_stream").Count(&streamEvents).Error; err != nil {
-		t.Fatalf("count task_stream events failed: %v", err)
-	}
-	if streamEvents == 0 {
-		t.Fatalf("expected sdk stream events > 0")
+	if !strings.Contains(seenPrompt, "dalek worker report --next") {
+		t.Fatalf("worker prompt should mention report contract, got=%q", seenPrompt)
 	}
 }
 
@@ -236,12 +267,6 @@ echo "ran" > "` + workerMarker + `"
 func TestDispatchTicket_DefaultAutoStartWhenNotStarted(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 
-	svc.dispatchAgentExecutor = func(ctx context.Context, requestID string, ticket contracts.Ticket, worker contracts.Worker, entryPromptOverride string) (dispatchPromptBuildResult, error) {
-		return dispatchPromptBuildResult{
-			TemplatePath: "test://dispatch",
-			EntryPrompt:  "dispatch auto-start prompt",
-		}, nil
-	}
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
 		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, "dispatch_default_auto_start")
 		makeSemanticReport(t, svc, run.ID, "done")

@@ -54,6 +54,7 @@ func (s *Service) launchWorkerSDKHandle(
 
 	executor := agentexec.NewSDKExecutor(agentexec.SDKConfig{
 		AgentConfig: agentCfg,
+		Runner:      s.taskRunner(),
 		BaseConfig: agentexec.BaseConfig{
 			Runtime:     rt,
 			OwnerType:   contracts.TaskOwnerWorker,
@@ -75,7 +76,7 @@ func (s *Service) launchWorkerSDKHandle(
 		},
 	})
 
-	handle, err := executor.Execute(ctx, strings.TrimSpace(entryPrompt))
+	handle, err := executor.Execute(ctx, buildWorkerEntrypointPrompt(entryPrompt))
 	if err != nil {
 		return nil, err
 	}

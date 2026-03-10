@@ -105,7 +105,7 @@ func (s *Service) runPMDispatchJob(ctx context.Context, jobID uint, runnerID str
 		return err
 	}
 
-	s.recordPMTaskSemantic(ctx, job.TaskRunID, contracts.TaskPhaseImplementing, "dispatch_pm_agent", "continue", "开始执行 PM dispatch agent", map[string]any{
+	s.recordPMTaskSemantic(ctx, job.TaskRunID, contracts.TaskPhaseImplementing, "dispatch_bootstrap", "continue", "开始生成 worker bootstrap 并执行 worker loop", map[string]any{
 		"request_id": strings.TrimSpace(job.RequestID),
 		"worker_id":  w.ID,
 	})
@@ -168,13 +168,16 @@ func (s *Service) executePMDispatchJob(ctx context.Context, job contracts.PMDisp
 		s.recordDispatchErrorEvent(ctx, now, w, fmt.Sprintf("dispatch_precheck_failed: %v", err))
 		return empty, err
 	}
-	promptMeta, err := s.runPMDispatchAgent(ctx, job.RequestID, t, w, strings.TrimSpace(opt.EntryPromptOverride))
+	entryPrompt := strings.TrimSpace(opt.EntryPromptOverride)
+	if entryPrompt == "" {
+		entryPrompt = defaultContinuePrompt
+	}
+	paths, err := s.ensureWorkerBootstrap(ctx, t, w, entryPrompt)
 	if err != nil {
-		s.recordDispatchErrorEvent(ctx, now, w, fmt.Sprintf("pm_agent_failed: %v", err))
+		s.recordDispatchErrorEvent(ctx, now, w, fmt.Sprintf("bootstrap_failed: %v", err))
 		return empty, err
 	}
-	entryPrompt := strings.TrimSpace(promptMeta.EntryPrompt)
-	s.recordDispatchEvent(ctx, now, w, "dispatch_requested", fmt.Sprintf("template=%s request_id=%s", strings.TrimSpace(promptMeta.TemplatePath), strings.TrimSpace(job.RequestID)))
+	s.recordDispatchEvent(ctx, now, w, "dispatch_bootstrap_ready", fmt.Sprintf("request_id=%s contract_dir=%s", strings.TrimSpace(job.RequestID), strings.TrimSpace(paths.Dir)))
 
 	out := contracts.PMDispatchJobResult{
 		Schema: contracts.PMDispatchJobResultSchemaV1,
