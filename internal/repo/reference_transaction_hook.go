@@ -115,6 +115,12 @@ func renderReferenceTransactionHookBlock(homeDir, projectName string) string {
 		syncCmd += " --project " + shellSingleQuote(projectName)
 	}
 	syncCmd += ` --ref "$ref_name" --old "$old_sha" --new "$new_sha"`
+	logDir := `"$HOME/.dalek/logs"`
+	logFile := `"$HOME/.dalek/logs/hook-sync-ref.log"`
+	if strings.TrimSpace(homeDir) != "" {
+		logDir = shellSingleQuote(filepath.Join(homeDir, "logs"))
+		logFile = shellSingleQuote(filepath.Join(homeDir, "logs", "hook-sync-ref.log"))
+	}
 
 	var b strings.Builder
 	b.WriteString(referenceTransactionHookMarkerHead + "\n")
@@ -124,7 +130,8 @@ func renderReferenceTransactionHookBlock(homeDir, projectName string) string {
 	b.WriteString("  fi\n")
 	b.WriteString("  case \"$ref_name\" in\n")
 	b.WriteString("    refs/heads/*)\n")
-	b.WriteString("      " + syncCmd + " >/dev/null 2>&1 || true\n")
+	b.WriteString("      mkdir -p " + logDir + "\n")
+	b.WriteString("      " + syncCmd + " >>" + logFile + " 2>&1 || true\n")
 	b.WriteString("      ;;\n")
 	b.WriteString("  esac\n")
 	b.WriteString("done\n")

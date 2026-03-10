@@ -8,6 +8,19 @@ import (
 	"testing"
 )
 
+func TestRenderReferenceTransactionHookBlock_DefaultLogPathUsesHome(t *testing.T) {
+	block := renderReferenceTransactionHookBlock("", "")
+	if !strings.Contains(block, "mkdir -p \"$HOME/.dalek/logs\"") {
+		t.Fatalf("expected default hook log dir, got:\n%s", block)
+	}
+	if !strings.Contains(block, ">>\"$HOME/.dalek/logs/hook-sync-ref.log\" 2>&1 || true") {
+		t.Fatalf("expected default hook log file, got:\n%s", block)
+	}
+	if strings.Contains(block, ">/dev/null 2>&1") {
+		t.Fatalf("hook block should not discard sync-ref output anymore, got:\n%s", block)
+	}
+}
+
 func TestEnsureReferenceTransactionHook_Create(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git 不可用，跳过测试: %v", err)
@@ -34,6 +47,15 @@ func TestEnsureReferenceTransactionHook_Create(t *testing.T) {
 	}
 	if !strings.Contains(text, "dalek merge sync-ref --home '/tmp/dalek home' --project 'demo' --ref \"$ref_name\" --old \"$old_sha\" --new \"$new_sha\"") {
 		t.Fatalf("hook should include sync-ref command with home/project, got:\n%s", text)
+	}
+	if !strings.Contains(text, "mkdir -p '/tmp/dalek home/logs'") {
+		t.Fatalf("hook should create hook log dir, got:\n%s", text)
+	}
+	if !strings.Contains(text, ">>'/tmp/dalek home/logs/hook-sync-ref.log' 2>&1 || true") {
+		t.Fatalf("hook should log sync-ref output, got:\n%s", text)
+	}
+	if strings.Contains(text, ">/dev/null 2>&1") {
+		t.Fatalf("hook should not discard sync-ref output anymore, got:\n%s", text)
 	}
 	if st, err := os.Stat(res.Path); err != nil {
 		t.Fatalf("stat hook failed: %v", err)
@@ -81,6 +103,15 @@ func TestEnsureReferenceTransactionHook_UpdateManagedBlock(t *testing.T) {
 	}
 	if !strings.Contains(text, "dalek merge sync-ref --home '/tmp/new-home' --project 'demo2' --ref \"$ref_name\" --old \"$old_sha\" --new \"$new_sha\"") {
 		t.Fatalf("managed block should be refreshed:\n%s", text)
+	}
+	if !strings.Contains(text, "mkdir -p '/tmp/new-home/logs'") {
+		t.Fatalf("managed block should create hook log dir:\n%s", text)
+	}
+	if !strings.Contains(text, ">>'/tmp/new-home/logs/hook-sync-ref.log' 2>&1 || true") {
+		t.Fatalf("managed block should keep sync-ref logs observable:\n%s", text)
+	}
+	if strings.Contains(text, ">/dev/null 2>&1") {
+		t.Fatalf("managed block should not discard sync-ref output:\n%s", text)
 	}
 }
 

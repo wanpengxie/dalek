@@ -16,6 +16,15 @@ func validTicketWorkflowStatus(st contracts.TicketWorkflowStatus) bool {
 	return fsm.TicketWorkflowTable.IsKnownState(st)
 }
 
+func archiveTicketGuardError(ticketID uint, workflow contracts.TicketWorkflowStatus, integration contracts.IntegrationStatus) error {
+	return fmt.Errorf(
+		"ticket t%d 当前状态不允许归档（workflow=%s, integration=%s）",
+		ticketID,
+		contracts.CanonicalTicketWorkflowStatus(workflow),
+		contracts.CanonicalIntegrationStatus(integration),
+	)
+}
+
 // SetTicketWorkflowStatus 是“唯一写者（PM reducer）”对 ticket.workflow_status 的手动入口。
 func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, status contracts.TicketWorkflowStatus) error {
 	_, db, err := s.require()
@@ -88,7 +97,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 		return err
 	}
 	if !fsm.CanArchiveTicket(t.WorkflowStatus, t.IntegrationStatus) {
-		return nil
+		return archiveTicketGuardError(ticketID, t.WorkflowStatus, t.IntegrationStatus)
 	}
 
 	// 禁止在 dispatch 进行中归档（否则会出现 archived 票仍在跑任务的脏状态）。
@@ -122,7 +131,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 		}
 		from := contracts.CanonicalTicketWorkflowStatus(cur.WorkflowStatus)
 		if !fsm.CanArchiveTicket(from, cur.IntegrationStatus) {
-			return nil
+			return archiveTicketGuardError(ticketID, from, cur.IntegrationStatus)
 		}
 		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
 			"workflow_status": contracts.TicketArchived,
