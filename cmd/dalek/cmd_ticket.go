@@ -1098,16 +1098,16 @@ func cmdTicketStop(args []string) {
 		})
 	} else {
 		ctx1, cancel1 := projectCtx(*timeout)
-		running, err := p.ListRunningWorkers(ctx1)
+		stoppable, err := p.ListStoppableWorkers(ctx1)
 		cancel1()
 		if err != nil {
 			exitRuntimeError(out,
-				"读取运行中 workers 失败",
+				"读取可停止 workers 失败",
 				err.Error(),
 				"稍后重试，或检查数据库状态",
 			)
 		}
-		for _, w := range running {
+		for _, w := range stoppable {
 			ctx2, cancel2 := projectCtx(*timeout)
 			err := p.StopWorker(ctx2, w.ID)
 			cancel2()

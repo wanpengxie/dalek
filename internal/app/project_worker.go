@@ -84,3 +84,10 @@ func (p *Project) ListRunningWorkers(ctx context.Context) ([]contracts.Worker, e
 	}
 	return p.worker.ListRunningWorkers(ctx)
 }
+
+func (p *Project) ListStoppableWorkers(ctx context.Context) ([]contracts.Worker, error) {
+	if p == nil || p.worker == nil {
+		return nil, fmt.Errorf("project worker service 为空")
+	}
+	return p.worker.ListStoppableWorkers(ctx)
+}

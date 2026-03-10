@@ -13,7 +13,7 @@ import (
 	tasksvc "dalek/internal/services/task"
 )
 
-func TestStartTicket_CreatesWorkerAndRuntime(t *testing.T) {
+func TestStartTicket_CreatesWorkerAndRuntimeAnchor(t *testing.T) {
 	svc, p, fGit := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "ticket-start")
@@ -24,7 +24,7 @@ func TestStartTicket_CreatesWorkerAndRuntime(t *testing.T) {
 	if w.ID == 0 {
 		t.Fatalf("expected worker ID")
 	}
-	if w.Status != contracts.WorkerCreating {
+	if w.Status != contracts.WorkerStopped {
 		t.Fatalf("unexpected worker status: %s", w.Status)
 	}
 	if strings.TrimSpace(w.LogPath) == "" {
@@ -53,7 +53,7 @@ func TestStartTicket_CreatesWorkerAndRuntime(t *testing.T) {
 	if err := p.DB.Where("worker_id = ?", w.ID).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("query worker status event failed: %v", err)
 	}
-	if ev.FromStatus != contracts.WorkerStopped || ev.ToStatus != contracts.WorkerCreating {
+	if ev.FromStatus != contracts.WorkerCreating || ev.ToStatus != contracts.WorkerStopped {
 		t.Fatalf("unexpected worker status event transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
 }

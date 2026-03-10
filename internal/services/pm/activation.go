@@ -13,6 +13,35 @@ import (
 	"gorm.io/gorm"
 )
 
+func (s *Service) acceptWorkerRun(
+	ctx context.Context,
+	ticketID uint,
+	w *contracts.Worker,
+	taskRunID uint,
+	source string,
+	actorType contracts.TicketLifecycleActorType,
+	payload map[string]any,
+) (bool, error) {
+	if taskRunID == 0 {
+		return false, fmt.Errorf("accept worker run: task_run_id 不能为空")
+	}
+	if w == nil || w.ID == 0 {
+		return false, fmt.Errorf("accept worker run: worker 不能为空")
+	}
+	now := time.Now()
+	if w.Status != contracts.WorkerRunning {
+		if err := s.worker.MarkWorkerRunning(ctx, w.ID, now); err != nil {
+			return false, fmt.Errorf("mark worker running on accepted run: %w", err)
+		}
+		w.Status = contracts.WorkerRunning
+	}
+	activated, _, err := s.promoteTicketActiveOnWorkerRunAccepted(ctx, ticketID, w.ID, taskRunID, source, actorType, payload, now)
+	if err != nil {
+		return false, err
+	}
+	return activated, nil
+}
+
 func (s *Service) promoteTicketActiveOnWorkerRunAccepted(
 	ctx context.Context,
 	ticketID, workerID, taskRunID uint,

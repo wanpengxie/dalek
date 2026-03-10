@@ -62,3 +62,25 @@ func (s *Service) ListRunningWorkers(ctx context.Context) ([]contracts.Worker, e
 	}
 	return workers, nil
 }
+
+func (s *Service) ListStoppableWorkers(ctx context.Context) ([]contracts.Worker, error) {
+	db, err := s.db()
+	if err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var workers []contracts.Worker
+	if err := db.WithContext(ctx).
+		Where("status IN ? AND TRIM(COALESCE(log_path, '')) <> ''", []contracts.WorkerStatus{
+			contracts.WorkerCreating,
+			contracts.WorkerRunning,
+			contracts.WorkerStopped,
+		}).
+		Order("id asc").
+		Find(&workers).Error; err != nil {
+		return nil, err
+	}
+	return workers, nil
+}

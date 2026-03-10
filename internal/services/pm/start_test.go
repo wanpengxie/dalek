@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestStartTicket_PushesWorkflowQueuedAndMarksWorkerRunning(t *testing.T) {
+func TestStartTicket_PushesWorkflowQueuedAndLeavesWorkerStopped(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "bootstrap-run")
@@ -18,8 +18,8 @@ func TestStartTicket_PushesWorkflowQueuedAndMarksWorkerRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if w.Status != contracts.WorkerRunning {
-		t.Fatalf("expected worker status running, got=%s", w.Status)
+	if w.Status != contracts.WorkerStopped {
+		t.Fatalf("expected worker status stopped, got=%s", w.Status)
 	}
 	if strings.TrimSpace(w.LogPath) == "" {
 		t.Fatalf("expected runtime log path")
@@ -120,8 +120,8 @@ func TestStartTicket_BlockedPromotesWorkflowQueued(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if w.Status != contracts.WorkerRunning {
-		t.Fatalf("expected worker running, got=%s", w.Status)
+	if w.Status != contracts.WorkerStopped {
+		t.Fatalf("expected worker stopped, got=%s", w.Status)
 	}
 
 	var got contracts.Ticket

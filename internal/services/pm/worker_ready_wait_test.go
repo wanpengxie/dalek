@@ -56,7 +56,7 @@ func TestWaitWorkerReady_NoRuntimeHandle(t *testing.T) {
 	}
 }
 
-func TestWaitWorkerReady_StoppedWorkerRejects(t *testing.T) {
+func TestWaitWorkerReady_StoppedWorkerWithoutRuntimeHandleRejects(t *testing.T) {
 	svc, _, _ := newServiceForTest(t)
 	w := &contracts.Worker{
 		ID:     99,
@@ -67,8 +67,8 @@ func TestWaitWorkerReady_StoppedWorkerRejects(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for stopped worker")
 	}
-	if !strings.Contains(err.Error(), "不在 running") {
-		t.Fatalf("expected not running error, got=%v", err)
+	if !strings.Contains(err.Error(), "尚未启动") {
+		t.Fatalf("expected missing worker/runtime error, got=%v", err)
 	}
 }
 
@@ -83,8 +83,8 @@ func TestWaitWorkerReady_FailedWorkerRejects(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for failed worker")
 	}
-	if !strings.Contains(err.Error(), "不在 running") {
-		t.Fatalf("expected not running error, got=%v", err)
+	if !strings.Contains(err.Error(), "不在可调度状态") {
+		t.Fatalf("expected not ready error, got=%v", err)
 	}
 }
 
@@ -194,7 +194,7 @@ func TestWaitWorkerReady_ParentContextCancel(t *testing.T) {
 	}
 }
 
-func TestWaitWorkerReady_TransitionToStopped(t *testing.T) {
+func TestWaitWorkerReady_TransitionToStoppedWithRuntimeHandle(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	svc.workerReadyTimeout = 500 * time.Millisecond
 	svc.workerReadyPollInterval = 10 * time.Millisecond
@@ -215,6 +215,7 @@ func TestWaitWorkerReady_TransitionToStopped(t *testing.T) {
 		time.Sleep(30 * time.Millisecond)
 		_ = p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 			"status":     contracts.WorkerStopped,
+			"log_path":   repo.WorkerStreamLogPath(p.WorkersDir, w.ID),
 			"updated_at": time.Now(),
 		}).Error
 	}()
@@ -224,11 +225,11 @@ func TestWaitWorkerReady_TransitionToStopped(t *testing.T) {
 		Status: contracts.WorkerCreating,
 	}
 
-	_, err := svc.waitWorkerReadyForDispatch(context.Background(), tk.ID, initial)
-	if err == nil {
-		t.Fatalf("expected error when worker transitions to stopped")
+	got, err := svc.waitWorkerReadyForDispatch(context.Background(), tk.ID, initial)
+	if err != nil {
+		t.Fatalf("expected stopped worker with runtime handle to be ready, got=%v", err)
 	}
-	if !strings.Contains(err.Error(), "不在 running") {
-		t.Fatalf("expected not running error, got=%v", err)
+	if got == nil || got.Status != contracts.WorkerStopped {
+		t.Fatalf("expected stopped worker after transition, got=%v", got)
 	}
 }

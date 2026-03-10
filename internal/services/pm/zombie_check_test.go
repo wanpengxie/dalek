@@ -24,6 +24,7 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
 		"log_path":   "",
 		"updated_at": time.Now(),
 	}).Error; err != nil {
@@ -86,6 +87,12 @@ func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("mark worker running failed: %v", err)
+	}
 
 	rt, run := createWorkerRunForManagerTickTest(t, svc, p, tk.ID, w.ID, "zombie-stalled")
 	stalledAt := time.Now().Add(-(defaultZombieStallThreshold + time.Minute))
@@ -141,6 +148,7 @@ func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":      contracts.WorkerRunning,
 		"retry_count": defaultZombieMaxRetries,
 		"log_path":    "",
 		"updated_at":  time.Now(),
@@ -238,11 +246,13 @@ func TestManagerTick_ReportsZombieStats(t *testing.T) {
 		t.Fatalf("set ticket active failed: %v", err)
 	}
 	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
 		"log_path":   "",
 		"updated_at": time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("clear runtime log path failed: %v", err)
 	}
+	createWorkerRunForManagerTickTest(t, svc, p, tk.ID, w.ID, "zombie-stats")
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{
 		DryRun:            true,
 		MaxRunningWorkers: 1,

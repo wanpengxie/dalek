@@ -101,11 +101,18 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	if rerr != nil {
 		return DirectDispatchResult{}, rerr
 	}
-	if !ready && w.Status == contracts.WorkerRunning {
+	if !ready {
 		if autoStart {
 			w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, "")
 			if err != nil {
 				return DirectDispatchResult{}, err
+			}
+			if w != nil && w.Status == contracts.WorkerCreating {
+				readyWorker, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
+				if waitErr != nil {
+					return DirectDispatchResult{}, waitErr
+				}
+				w = readyWorker
 			}
 			ready, rerr = s.workerDispatchReady(ctx, w)
 			if rerr != nil {
@@ -114,40 +121,6 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		}
 		if !ready {
 			return DirectDispatchResult{}, fmt.Errorf("worker runtime/session 不在线（w%d），请先 start", w.ID)
-		}
-	}
-
-	if w.Status == contracts.WorkerStopped {
-		live, lerr := s.workerDispatchLive(ctx, w)
-		if lerr != nil {
-			return DirectDispatchResult{}, lerr
-		}
-		if !live {
-			if autoStart {
-				w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, "")
-				if err != nil {
-					return DirectDispatchResult{}, err
-				}
-				if w != nil && w.Status == contracts.WorkerCreating {
-					readyWorker, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
-					if waitErr != nil {
-						return DirectDispatchResult{}, waitErr
-					}
-					w = readyWorker
-				}
-				live, lerr = s.workerDispatchLive(ctx, w)
-				if lerr != nil {
-					return DirectDispatchResult{}, lerr
-				}
-			}
-			if !live {
-				return DirectDispatchResult{}, fmt.Errorf("worker runtime/session 不在线（w%d），请先 start", w.ID)
-			}
-		}
-		if w.Status == contracts.WorkerStopped {
-			if err := s.worker.MarkWorkerRunning(ctx, w.ID, time.Now()); err != nil {
-				return DirectDispatchResult{}, fmt.Errorf("恢复 worker 运行态失败（w%d）：%w", w.ID, err)
-			}
 		}
 	}
 
@@ -176,12 +149,12 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		if stage != 1 || runID == 0 {
 			return nil
 		}
-		activated, _, actErr := s.promoteTicketActiveOnWorkerRunAccepted(ctx, ticketID, w.ID, runID, "pm.direct_dispatch", contracts.TicketLifecycleActorUser, map[string]any{
+		activated, actErr := s.acceptWorkerRun(ctx, ticketID, w, runID, "pm.direct_dispatch", contracts.TicketLifecycleActorUser, map[string]any{
 			"ticket_id":    ticketID,
 			"worker_id":    w.ID,
 			"entry_prompt": entryPrompt,
-		}, time.Now())
-		workflowPromoted = activated
+		})
+		workflowPromoted = workflowPromoted || activated
 		if actErr != nil {
 			return fmt.Errorf("更新 ticket workflow 失败（t%d run=%d）：%w", ticketID, runID, actErr)
 		}

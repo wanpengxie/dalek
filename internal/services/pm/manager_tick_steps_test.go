@@ -97,6 +97,13 @@ func TestScanRunningWorkers_TracksBlockedAndProgressable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start clean worker failed: %v", err)
 	}
+	now := time.Now()
+	if err := p.DB.Model(&contracts.Worker{}).Where("id IN ?", []uint{blockedWorker.ID, cleanWorker.ID}).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": now,
+	}).Error; err != nil {
+		t.Fatalf("mark workers running failed: %v", err)
+	}
 
 	rt, run := createWorkerRunForManagerTickTest(t, svc, p, blockedTicket.ID, blockedWorker.ID, "scan-running")
 	if err := rt.AppendRuntimeSample(context.Background(), contracts.TaskRuntimeSampleInput{

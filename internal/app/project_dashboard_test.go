@@ -101,6 +101,12 @@ func TestIntegration_Dashboard_AggregatesServiceData(t *testing.T) {
 	if err := p.SetTicketWorkflowStatus(ctx, activeTicket.ID, contracts.TicketActive); err != nil {
 		t.Fatalf("Set active status failed: %v", err)
 	}
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", activeWorker.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set active worker running failed: %v", err)
+	}
 	blockedTicket, err := p.CreateTicketWithDescription(ctx, "dashboard blocked", "")
 	if err != nil {
 		t.Fatalf("Create blocked ticket failed: %v", err)

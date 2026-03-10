@@ -109,7 +109,7 @@ type StartOptions struct {
 //
 // 注意：
 // - worker 只负责“资源启动”，不做额外初始化脚本。
-// - 这里返回的 worker 通常处于 creating，后续由 PM 的 start 流程标记为 running。
+// - 这里返回的 worker 处于 stopped：资源已准备好，但尚未进入真实 deliver_ticket run。
 func (s *Service) StartTicketResources(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
 	return s.StartTicketResourcesWithOptions(ctx, ticketID, StartOptions{})
 }
@@ -309,6 +309,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	startedAt := time.Now()
 	if uerr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+			"status":     contracts.WorkerStopped,
 			"log_path":   strings.TrimSpace(logPath),
 			"started_at": &startedAt,
 			"stopped_at": nil,
@@ -316,13 +317,14 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		}).Error; err != nil {
 			return err
 		}
-		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, contracts.WorkerCreating, contracts.WorkerCreating, "worker.start", "runtime 锚点已准备（无壳进程）", map[string]any{
+		return s.appendWorkerStatusEventTx(ctx, tx, w.ID, w.TicketID, contracts.WorkerCreating, contracts.WorkerStopped, "worker.start", "runtime 锚点已准备，等待 worker run", map[string]any{
 			"ticket_id": w.TicketID,
 			"log_path":  strings.TrimSpace(logPath),
 		}, startedAt)
 	}); uerr != nil {
 		return nil, uerr
 	}
+	w.Status = contracts.WorkerStopped
 	w.WorktreePath = worktreePath
 	w.Branch = branch
 	w.LogPath = strings.TrimSpace(logPath)

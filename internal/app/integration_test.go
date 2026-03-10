@@ -113,8 +113,8 @@ func TestIntegration_StartAndStopTicket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if w.Status != contracts.WorkerRunning {
-		t.Fatalf("expected running worker, got %s", w.Status)
+	if w.Status != contracts.WorkerStopped {
+		t.Fatalf("expected stopped worker after start, got %s", w.Status)
 	}
 	if strings.TrimSpace(w.LogPath) == "" {
 		t.Fatalf("expected runtime log path for started worker")
@@ -154,6 +154,12 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerRuntime(t *testing.T) {
 	w, err := p.StartTicket(ctx, tk.ID)
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set worker running failed: %v", err)
 	}
 
 	views, err := p.ListTicketViews(ctx)
@@ -226,6 +232,12 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerRuntime_ArchivedTicket(t 
 	w, err := p.StartTicket(ctx, tk.ID)
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set worker running failed: %v", err)
 	}
 
 	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Update("workflow_status", contracts.TicketArchived).Error; err != nil {

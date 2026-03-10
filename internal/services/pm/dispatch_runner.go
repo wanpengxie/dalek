@@ -184,7 +184,20 @@ func (s *Service) executePMDispatchJob(ctx context.Context, job contracts.PMDisp
 	}
 
 	s.recordDispatchEvent(ctx, now, w, "worker_loop_start", "开始同步 worker loop")
-	loopResult, lerr := s.executeWorkerLoop(ctx, t, w, entryPrompt)
+	loopResult, lerr := s.executeWorkerLoopWithHook(ctx, t, w, entryPrompt, func(stage int, runID uint) error {
+		if stage != 1 || runID == 0 {
+			return nil
+		}
+		_, actErr := s.acceptWorkerRun(ctx, t.ID, &w, runID, "pm.dispatch_runner", contracts.TicketLifecycleActorPM, map[string]any{
+			"ticket_id":  t.ID,
+			"worker_id":  w.ID,
+			"request_id": strings.TrimSpace(job.RequestID),
+		})
+		if actErr != nil {
+			return fmt.Errorf("accept worker run failed（t%d run=%d）: %w", t.ID, runID, actErr)
+		}
+		return nil
+	})
 	out.InjectedCmd = strings.TrimSpace(loopResult.InjectedCmd)
 	out.WorkerLoopStages = loopResult.Stages
 	if lerr != nil {

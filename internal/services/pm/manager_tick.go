@@ -844,14 +844,14 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 			})
 			continue
 		}
-		if w == nil || w.Status != contracts.WorkerRunning {
+		if w == nil || (w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped) {
 			workerID := uint(0)
 			workerStatus := contracts.WorkerStatus("")
 			if w != nil {
 				workerID = w.ID
 				workerStatus = w.Status
 			}
-			msg := fmt.Sprintf("start 返回后 worker 未处于 running（t%d w%d status=%s）", t.ID, workerID, workerStatus)
+			msg := fmt.Sprintf("start 返回后 worker 未处于可调度状态（t%d w%d status=%s）", t.ID, workerID, workerStatus)
 			_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
 				Key:      inboxKeyTicketIncident(t.ID, "start_not_running"),
 				Status:   contracts.InboxOpen,

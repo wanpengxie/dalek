@@ -51,6 +51,19 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		}
 	}
 
+	preStartWorker, err := s.worker.LatestWorker(ctx, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	preStartReady := false
+	if preStartWorker != nil && (preStartWorker.Status == contracts.WorkerRunning || preStartWorker.Status == contracts.WorkerStopped) {
+		ready, rerr := s.workerDispatchReady(ctx, preStartWorker)
+		if rerr != nil {
+			return nil, rerr
+		}
+		preStartReady = ready
+	}
+
 	// 1) 启动 worker 资源（worktree + runtime 进程），不做 PM bootstrap。
 	w, err := s.worker.StartTicketResourcesWithOptions(ctx, ticketID, workersvc.StartOptions{
 		BaseBranch: strings.TrimSpace(opt.BaseBranch),
@@ -62,8 +75,8 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		return nil, fmt.Errorf("start 失败：未返回 worker")
 	}
 
-	// 已经是 running 且执行资源可探测则直接返回。
-	if w.Status == contracts.WorkerRunning {
+	// 已经具备运行锚点则直接返回，start 只负责准备资源而非进入执行。
+	if preStartReady && (w.Status == contracts.WorkerRunning || w.Status == contracts.WorkerStopped) {
 		ready, rerr := s.workerDispatchReady(ctx, w)
 		if rerr != nil {
 			return nil, rerr
@@ -84,29 +97,13 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		return nil, err
 	}
 
-	// 3) 标记 worker 为 running。
-	now := time.Now()
-	if err := s.worker.MarkWorkerRunning(ctx, w.ID, now); err != nil {
-		return nil, fmt.Errorf("标记 worker 为 running 失败（w%d）：%w", w.ID, err)
-	}
-
-	// 4) 返回最新 worker，并确保 contract：Start 返回时 worker 必须为 running。
+	// 3) 返回最新 worker；start 结束时 worker 应保持 stopped（资源已准备，等待 run accepted）。
 	out, err := s.worker.WorkerByID(ctx, w.ID)
 	if err != nil {
 		return nil, fmt.Errorf("读取 worker 失败（w%d）：%w", w.ID, err)
 	}
-	if out.Status != contracts.WorkerRunning {
-		retryAt := time.Now()
-		if err := s.worker.MarkWorkerRunning(ctx, w.ID, retryAt); err != nil {
-			return nil, fmt.Errorf("start 后 worker 未进入 running（w%d status=%s），重试失败：%w", out.ID, out.Status, err)
-		}
-		out, err = s.worker.WorkerByID(ctx, w.ID)
-		if err != nil {
-			return nil, fmt.Errorf("读取 worker 失败（w%d）：%w", w.ID, err)
-		}
-		if out.Status != contracts.WorkerRunning {
-			return nil, fmt.Errorf("start 后 worker 未进入 running（w%d status=%s）", out.ID, out.Status)
-		}
+	if out.Status != contracts.WorkerStopped && out.Status != contracts.WorkerRunning {
+		return nil, fmt.Errorf("start 后 worker 未进入可调度状态（w%d status=%s）", out.ID, out.Status)
 	}
 	if err := s.promoteTicketQueuedOnStart(ctx, db, t, *out); err != nil {
 		return nil, err

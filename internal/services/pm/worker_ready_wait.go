@@ -52,9 +52,9 @@ func (s *Service) dispatchWorkerReadyPollInterval() time.Duration {
 
 func (s *Service) workerNotRunningError(w *contracts.Worker) error {
 	if w == nil {
-		return fmt.Errorf("该 ticket 的最新 worker 不在 running（status=unknown），请重新启动")
+		return fmt.Errorf("该 ticket 的最新 worker 不在可调度状态（status=unknown），请重新启动")
 	}
-	return fmt.Errorf("该 ticket 的最新 worker 不在 running（w%d status=%s），请重新启动", w.ID, w.Status)
+	return fmt.Errorf("该 ticket 的最新 worker 不在可调度状态（w%d status=%s），请重新启动", w.ID, w.Status)
 }
 
 func (s *Service) workerMissingSessionError() error {
@@ -68,7 +68,7 @@ func (s *Service) waitWorkerReadyForDispatch(ctx context.Context, ticketID uint,
 	if initial == nil {
 		return nil, s.workerMissingSessionError()
 	}
-	if initial.Status == contracts.WorkerRunning {
+	if initial.Status == contracts.WorkerRunning || initial.Status == contracts.WorkerStopped {
 		ready, err := s.workerDispatchReady(ctx, initial)
 		if err != nil {
 			return nil, err
@@ -129,7 +129,7 @@ func (s *Service) waitWorkerReadyForDispatch(ctx context.Context, ticketID uint,
 			return nil, s.workerMissingSessionError()
 		}
 		current = w
-		if current.Status == contracts.WorkerRunning {
+		if current.Status == contracts.WorkerRunning || current.Status == contracts.WorkerStopped {
 			ready, err := s.workerDispatchReady(waitCtx, current)
 			if err != nil {
 				return nil, err

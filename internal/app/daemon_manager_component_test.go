@@ -258,6 +258,18 @@ func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t 
 	if err != nil {
 		t.Fatalf("create worker task run failed: %v", err)
 	}
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      now,
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": now,
+	}).Error; err != nil {
+		t.Fatalf("set worker running failed: %v", err)
+	}
 	if err := p.task.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: workerRun.ID,
 		EventType: "watch_error",

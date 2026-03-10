@@ -225,7 +225,7 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 		}
 		w = ready
 	}
-	if autoStart && w.Status != contracts.WorkerRunning {
+	if autoStart && w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
 		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, baseBranch)
 		if err != nil {
 			return contracts.Ticket{}, nil, err
@@ -248,6 +248,13 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 			if err != nil {
 				return contracts.Ticket{}, nil, err
 			}
+			if w != nil && w.Status == contracts.WorkerCreating {
+				readyWorker, waitErr := s.waitWorkerReadyForDispatch(ctx, ticketID, w)
+				if waitErr != nil {
+					return contracts.Ticket{}, nil, waitErr
+				}
+				w = readyWorker
+			}
 			ready, rerr = s.workerDispatchReady(ctx, w)
 			if rerr != nil {
 				return contracts.Ticket{}, nil, rerr
@@ -259,7 +266,7 @@ func (s *Service) resolveDispatchTarget(ctx context.Context, ticketID uint, auto
 			return contracts.Ticket{}, nil, s.workerMissingSessionError()
 		}
 	}
-	if w.Status != contracts.WorkerRunning {
+	if w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
 		return contracts.Ticket{}, nil, s.workerNotRunningError(w)
 	}
 	return t, w, nil
