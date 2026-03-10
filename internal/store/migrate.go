@@ -98,6 +98,11 @@ func storeMigrations() []Migration {
 			Name:    "add_ticket_integration_columns",
 			Up:      migrateAddTicketIntegrationColumns,
 		},
+		{
+			Version: 17,
+			Name:    "add_ticket_lifecycle_events",
+			Up:      migrateAddTicketLifecycleEvents,
+		},
 	}
 }
 
@@ -172,6 +177,7 @@ func migrateBaselineSchema(db *gorm.DB) error {
 		&TaskSemanticReport{},
 		&TaskEvent{},
 		&TicketWorkflowEvent{},
+		&TicketLifecycleEvent{},
 		&WorkerStatusEvent{},
 		&NoteItem{},
 		&ShapedItem{},
@@ -421,6 +427,31 @@ func migrateAddTicketIntegrationColumns(db *gorm.DB) error {
 		return err
 	}
 	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_tickets_integration_status ON tickets(integration_status);`).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func migrateAddTicketLifecycleEvents(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	if err := db.AutoMigrate(&TicketLifecycleEvent{}); err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_lifecycle_ticket_sequence ON ticket_lifecycle_events(ticket_id, sequence);`).Error; err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_lifecycle_idempotency_key ON ticket_lifecycle_events(idempotency_key);`).Error; err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_ticket_lifecycle_event_type ON ticket_lifecycle_events(event_type);`).Error; err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_ticket_lifecycle_worker_id ON ticket_lifecycle_events(worker_id);`).Error; err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_ticket_lifecycle_task_run_id ON ticket_lifecycle_events(task_run_id);`).Error; err != nil {
 		return err
 	}
 	return nil

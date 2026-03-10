@@ -198,6 +198,46 @@ func TestOpenAndMigrate_TicketIntegrationColumnsPresent(t *testing.T) {
 	}
 }
 
+func TestOpenAndMigrate_TicketLifecycleTablePresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	for _, col := range []string{"ticket_id", "sequence", "event_type", "actor_type", "idempotency_key", "payload_json"} {
+		ok, err := tableHasColumn(db, "ticket_lifecycle_events", col)
+		if err != nil {
+			t.Fatalf("tableHasColumn(ticket_lifecycle_events.%s) failed: %v", col, err)
+		}
+		if !ok {
+			t.Fatalf("ticket_lifecycle_events should contain column: %s", col)
+		}
+	}
+
+	if err := db.Exec(`DROP TABLE IF EXISTS ticket_lifecycle_events;`).Error; err != nil {
+		t.Fatalf("drop ticket_lifecycle_events failed: %v", err)
+	}
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 17;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations for v17 failed: %v", err)
+	}
+	if _, err := OpenAndMigrate(dbPath); err != nil {
+		t.Fatalf("OpenAndMigrate (reapply v17) failed: %v", err)
+	}
+
+	db2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	ok, err := tableHasColumn(db2, "ticket_lifecycle_events", "idempotency_key")
+	if err != nil {
+		t.Fatalf("tableHasColumn(ticket_lifecycle_events.idempotency_key) after reapply failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("ticket_lifecycle_events should be restored after reapply")
+	}
+}
+
 func TestOpenAndMigrate_PMStatePlannerColumnsPresent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)

@@ -8,6 +8,7 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
+	"dalek/internal/services/ticketlifecycle"
 
 	"gorm.io/gorm"
 )
@@ -67,6 +68,19 @@ func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, st
 		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, status, "pm.set_workflow", "手动设置 workflow_status", map[string]any{
 			"ticket_id": ticketID,
 		}, now); err != nil {
+			return err
+		}
+		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			TicketID:       ticketID,
+			EventType:      contracts.TicketLifecycleRepaired,
+			Source:         "pm.set_workflow",
+			ActorType:      contracts.TicketLifecycleActorUser,
+			IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(ticketID, "pm.set_workflow", now),
+			Payload: lifecycleRepairPayload(status, contracts.IntegrationNone, map[string]any{
+				"ticket_id": ticketID,
+			}),
+			CreatedAt: now,
+		}); err != nil {
 			return err
 		}
 		statusEvent = s.buildStatusChangeEvent(ticketID, from, status, "pm.set_workflow", now)
@@ -169,6 +183,24 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 		}, now); err != nil {
 			return err
 		}
+		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			TicketID:       ticketID,
+			EventType:      contracts.TicketLifecycleArchived,
+			Source:         "pm.archive",
+			ActorType:      contracts.TicketLifecycleActorUser,
+			WorkerID:       cleanupWorkerID,
+			IdempotencyKey: ticketlifecycle.ArchivedIdempotencyKey(ticketID),
+			Payload: map[string]any{
+				"ticket_id":            ticketID,
+				"cleanup_requested":    cleanupRequested,
+				"cleanup_worker_id":    cleanupWorkerID,
+				"cleanup_worktree":     cleanupWorktree,
+				"cleanup_requested_at": now,
+			},
+			CreatedAt: now,
+		}); err != nil {
+			return err
+		}
 		statusEvent = s.buildStatusChangeEvent(ticketID, from, contracts.TicketArchived, "pm.archive", now)
 		return nil
 	})
@@ -250,6 +282,10 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 			return nil
 		}
 		from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
+		taskRunID, err := latestWorkerTaskRunIDTx(ctx, tx, r.WorkerID)
+		if err != nil {
+			return err
+		}
 		if from != promoteTo {
 			if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", t.ID).Updates(map[string]any{
 				"workflow_status": promoteTo,
@@ -292,10 +328,53 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 				TicketID: t.ID,
 				WorkerID: r.WorkerID,
 			})
-			return err
+			if err != nil {
+				return err
+			}
+			return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+				TicketID:       t.ID,
+				EventType:      contracts.TicketLifecycleWaitUserReported,
+				Source:         fmt.Sprintf("pm.apply_worker_report(%s)", source),
+				ActorType:      contracts.TicketLifecycleActorWorker,
+				WorkerID:       r.WorkerID,
+				TaskRunID:      taskRunID,
+				IdempotencyKey: ticketlifecycle.WaitUserReportedIdempotencyKey(t.ID, taskRunID, r.WorkerID),
+				Payload: map[string]any{
+					"ticket_id":   t.ID,
+					"worker_id":   r.WorkerID,
+					"task_run_id": taskRunID,
+					"next_action": next,
+					"source":      source,
+					"summary":     strings.TrimSpace(r.Summary),
+					"blockers":    r.Blockers,
+				},
+				CreatedAt: now,
+			})
 
 		case string(contracts.NextDone):
-			return s.freezeTicketIntegrationForDoneTx(ctx, tx, t.ID, r.WorkerID)
+			if err := s.freezeTicketIntegrationForDoneTx(ctx, tx, t.ID, r.WorkerID); err != nil {
+				return err
+			}
+			return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+				TicketID:       t.ID,
+				EventType:      contracts.TicketLifecycleDoneReported,
+				Source:         fmt.Sprintf("pm.apply_worker_report(%s)", source),
+				ActorType:      contracts.TicketLifecycleActorWorker,
+				WorkerID:       r.WorkerID,
+				TaskRunID:      taskRunID,
+				IdempotencyKey: ticketlifecycle.DoneReportedIdempotencyKey(t.ID, taskRunID, r.WorkerID),
+				Payload: map[string]any{
+					"ticket_id":          t.ID,
+					"worker_id":          r.WorkerID,
+					"task_run_id":        taskRunID,
+					"next_action":        next,
+					"source":             source,
+					"summary":            strings.TrimSpace(r.Summary),
+					"integration_status": string(contracts.IntegrationNeedsMerge),
+					"workflow_status":    string(contracts.TicketDone),
+				},
+				CreatedAt: now,
+			})
 		}
 		return nil
 	})

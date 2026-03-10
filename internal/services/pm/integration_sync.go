@@ -8,6 +8,7 @@ import (
 
 	"dalek/internal/contracts"
 	"dalek/internal/infra"
+	"dalek/internal/services/ticketlifecycle"
 
 	"gorm.io/gorm"
 )
@@ -88,14 +89,33 @@ func (s *Service) SyncRef(ctx context.Context, ref, oldSHA, newSHA string) (Sync
 			continue
 		}
 		now := time.Now()
-		if err := db.WithContext(ctx).
-			Model(&contracts.Ticket{}).
-			Where("id = ? AND workflow_status = ? AND integration_status = ?", tk.ID, contracts.TicketDone, contracts.IntegrationNeedsMerge).
-			Updates(map[string]any{
-				"integration_status": contracts.IntegrationMerged,
-				"merged_at":          &now,
-				"updated_at":         now,
-			}).Error; err != nil {
+		if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.WithContext(ctx).
+				Model(&contracts.Ticket{}).
+				Where("id = ? AND workflow_status = ? AND integration_status = ?", tk.ID, contracts.TicketDone, contracts.IntegrationNeedsMerge).
+				Updates(map[string]any{
+					"integration_status": contracts.IntegrationMerged,
+					"merged_at":          &now,
+					"updated_at":         now,
+				}).Error; err != nil {
+				return err
+			}
+			return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+				TicketID:       tk.ID,
+				EventType:      contracts.TicketLifecycleMergeObserved,
+				Source:         "pm.integration_sync",
+				ActorType:      contracts.TicketLifecycleActorSystem,
+				IdempotencyKey: ticketlifecycle.MergeObservedIdempotencyKey(tk.ID, anchor),
+				Payload: map[string]any{
+					"ticket_id":          tk.ID,
+					"target_ref":         targetRef,
+					"anchor_sha":         anchor,
+					"new_sha":            res.NewSHA,
+					"integration_status": string(contracts.IntegrationMerged),
+				},
+				CreatedAt: now,
+			})
+		}); err != nil {
 			res.Errors = append(res.Errors, fmt.Sprintf("t%d 标记 merged 失败: %v", tk.ID, err))
 			continue
 		}

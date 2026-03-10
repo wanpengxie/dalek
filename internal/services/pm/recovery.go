@@ -3,6 +3,7 @@ package pm
 import (
 	"context"
 	"dalek/internal/contracts"
+	"dalek/internal/services/ticketlifecycle"
 	"fmt"
 	"sort"
 	"strings"
@@ -325,6 +326,25 @@ func (s *Service) applyTicketStatusForRecoveryTx(ctx context.Context, tx *gorm.D
 		"request_id":      strings.TrimSpace(job.RequestID),
 		"target_workflow": string(target),
 	}, now); err != nil {
+		return false, err
+	}
+	if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+		TicketID:       ticket.ID,
+		EventType:      contracts.TicketLifecycleRepaired,
+		Source:         strings.TrimSpace(source),
+		ActorType:      contracts.TicketLifecycleActorSystem,
+		WorkerID:       job.WorkerID,
+		TaskRunID:      job.TaskRunID,
+		IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(ticket.ID, strings.TrimSpace(source), now),
+		Payload: lifecycleRepairPayload(target, contracts.IntegrationNone, map[string]any{
+			"ticket_id":   ticket.ID,
+			"worker_id":   job.WorkerID,
+			"dispatch_id": job.ID,
+			"request_id":  strings.TrimSpace(job.RequestID),
+			"reason":      strings.TrimSpace(reason),
+		}),
+		CreatedAt: now,
+	}); err != nil {
 		return false, err
 	}
 	return true, nil

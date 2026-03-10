@@ -37,6 +37,14 @@ func TestService_CreateAndList(t *testing.T) {
 	if items[0].Label != "" {
 		t.Fatalf("expected empty label by default, got=%q", items[0].Label)
 	}
+
+	var ev contracts.TicketLifecycleEvent
+	if err := db.Where("ticket_id = ?", items[0].ID).Order("sequence asc").First(&ev).Error; err != nil {
+		t.Fatalf("query lifecycle event failed: %v", err)
+	}
+	if ev.Sequence != 1 || ev.EventType != contracts.TicketLifecycleCreated {
+		t.Fatalf("unexpected lifecycle event: sequence=%d type=%s", ev.Sequence, ev.EventType)
+	}
 }
 
 func TestService_Create_AllowsEmptyDescription(t *testing.T) {

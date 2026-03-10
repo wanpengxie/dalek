@@ -4,6 +4,7 @@ import (
 	"context"
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
+	"dalek/internal/services/ticketlifecycle"
 	"fmt"
 	"strings"
 	"time"
@@ -139,10 +140,25 @@ func (s *Service) promoteTicketQueuedOnStart(ctx context.Context, db *gorm.DB, t
 		if from == "" {
 			from = contracts.TicketBacklog
 		}
-		return s.appendTicketWorkflowEventTx(ctx, tx, t.ID, from, contracts.TicketQueued, "pm.start", "start 推进到 queued", map[string]any{
+		if err := s.appendTicketWorkflowEventTx(ctx, tx, t.ID, from, contracts.TicketQueued, "pm.start", "start 推进到 queued", map[string]any{
 			"ticket_id": t.ID,
 			"worker_id": w.ID,
-		}, now)
+		}, now); err != nil {
+			return err
+		}
+		return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			TicketID:       t.ID,
+			EventType:      contracts.TicketLifecycleStartRequested,
+			Source:         "pm.start",
+			ActorType:      contracts.TicketLifecycleActorUser,
+			WorkerID:       w.ID,
+			IdempotencyKey: ticketlifecycle.StartRequestedIdempotencyKey(t.ID, now),
+			Payload: map[string]any{
+				"ticket_id": t.ID,
+				"worker_id": w.ID,
+			},
+			CreatedAt: now,
+		})
 	}); err != nil {
 		return fmt.Errorf("更新 ticket workflow 失败（t%d w%d）：%w", t.ID, w.ID, err)
 	}

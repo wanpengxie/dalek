@@ -4,6 +4,7 @@ import (
 	"context"
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
+	"dalek/internal/services/ticketlifecycle"
 	"fmt"
 	"strings"
 	"time"
@@ -53,6 +54,22 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 			"worker_id": workerID,
 			"error":     reason,
 		}, now); err != nil {
+			return err
+		}
+		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			TicketID:       ticketID,
+			EventType:      contracts.TicketLifecycleRepaired,
+			Source:         "pm.manager_tick",
+			ActorType:      contracts.TicketLifecycleActorSystem,
+			WorkerID:       workerID,
+			IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(ticketID, "pm.manager_tick.worker_not_ready", now),
+			Payload: lifecycleRepairPayload(contracts.TicketBlocked, contracts.IntegrationNone, map[string]any{
+				"ticket_id": ticketID,
+				"worker_id": workerID,
+				"error":     reason,
+			}),
+			CreatedAt: now,
+		}); err != nil {
 			return err
 		}
 		statusEvent = s.buildStatusChangeEvent(ticketID, from, contracts.TicketBlocked, "pm.manager_tick", now)

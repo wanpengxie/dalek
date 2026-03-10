@@ -48,6 +48,14 @@ func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 	if !strings.Contains(inbox.Body, "缺少生产环境 API token") || !strings.Contains(inbox.Body, "FEISHU_APP_ID") {
 		t.Fatalf("unexpected inbox body: %q", inbox.Body)
 	}
+
+	var lifecycle contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleWaitUserReported).Order("sequence desc").First(&lifecycle).Error; err != nil {
+		t.Fatalf("wait_user should append lifecycle event: %v", err)
+	}
+	if lifecycle.TaskRunID == nil || *lifecycle.TaskRunID == 0 {
+		t.Fatalf("wait_user lifecycle event should record task_run_id, got=%+v", lifecycle)
+	}
 }
 
 func TestApplyWorkerReport_DoneFreezesTicketIntegrationSynchronously(t *testing.T) {
@@ -82,5 +90,13 @@ func TestApplyWorkerReport_DoneFreezesTicketIntegrationSynchronously(t *testing.
 	}
 	if strings.TrimSpace(ticket.TargetBranch) != "refs/heads/main" {
 		t.Fatalf("expected target_branch frozen before done report, got=%q", ticket.TargetBranch)
+	}
+
+	var lifecycle contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleDoneReported).Order("sequence desc").First(&lifecycle).Error; err != nil {
+		t.Fatalf("done should append lifecycle event: %v", err)
+	}
+	if lifecycle.TaskRunID == nil || *lifecycle.TaskRunID == 0 {
+		t.Fatalf("done lifecycle event should record task_run_id, got=%+v", lifecycle)
 	}
 }

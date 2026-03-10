@@ -9,6 +9,7 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
 	"dalek/internal/services/core"
+	"dalek/internal/services/ticketlifecycle"
 	"dalek/internal/store"
 
 	"gorm.io/gorm"
@@ -600,7 +601,21 @@ func (s *Service) freezeMergesForDoneTickets(ctx context.Context, db *gorm.DB, s
 				continue
 			}
 			if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-				return s.freezeTicketIntegrationForDoneTx(ctx, tx, t.ID, 0)
+				if err := s.freezeTicketIntegrationForDoneTx(ctx, tx, t.ID, 0); err != nil {
+					return err
+				}
+				return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+					TicketID:       t.ID,
+					EventType:      contracts.TicketLifecycleRepaired,
+					Source:         "pm.manager_tick",
+					ActorType:      contracts.TicketLifecycleActorSystem,
+					IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(t.ID, "pm.manager_tick.freeze_done", time.Now()),
+					Payload: lifecycleRepairPayload(contracts.TicketDone, contracts.IntegrationNeedsMerge, map[string]any{
+						"ticket_id": t.ID,
+						"reason":    "manager tick backfilled missing integration freeze for done ticket",
+					}),
+					CreatedAt: time.Now(),
+				})
 			}); err != nil {
 				out.Errors = append(out.Errors, err.Error())
 				continue
@@ -631,14 +646,32 @@ func (s *Service) freezeMergesForDoneTickets(ctx context.Context, db *gorm.DB, s
 				continue
 			}
 			now := time.Now()
-			if err := db.WithContext(ctx).Model(&contracts.Ticket{}).
-				Where("id = ? AND workflow_status = ? AND integration_status = ?", t.ID, contracts.TicketDone, contracts.IntegrationNeedsMerge).
-				Updates(map[string]any{
-					"integration_status": contracts.IntegrationMerged,
-					"target_branch":      target,
-					"merged_at":          &now,
-					"updated_at":         now,
-				}).Error; err != nil {
+			if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
+					Where("id = ? AND workflow_status = ? AND integration_status = ?", t.ID, contracts.TicketDone, contracts.IntegrationNeedsMerge).
+					Updates(map[string]any{
+						"integration_status": contracts.IntegrationMerged,
+						"target_branch":      target,
+						"merged_at":          &now,
+						"updated_at":         now,
+					}).Error; err != nil {
+					return err
+				}
+				return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+					TicketID:       t.ID,
+					EventType:      contracts.TicketLifecycleMergeObserved,
+					Source:         "pm.manager_tick",
+					ActorType:      contracts.TicketLifecycleActorSystem,
+					IdempotencyKey: ticketlifecycle.MergeObservedIdempotencyKey(t.ID, anchor),
+					Payload: map[string]any{
+						"ticket_id":          t.ID,
+						"target_ref":         target,
+						"anchor_sha":         anchor,
+						"integration_status": string(contracts.IntegrationMerged),
+					},
+					CreatedAt: now,
+				})
+			}); err != nil {
 				out.Errors = append(out.Errors, err.Error())
 				continue
 			}

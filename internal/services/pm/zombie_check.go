@@ -11,6 +11,7 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
 	"dalek/internal/services/core"
+	"dalek/internal/services/ticketlifecycle"
 
 	"gorm.io/gorm"
 )
@@ -280,6 +281,23 @@ func (s *Service) demoteTicketBlockedOnStateAnomaly(ctx context.Context, db *gor
 			"anomaly_code":   anomalyCode,
 			"anomaly_reason": reason,
 		}, now); err != nil {
+			return err
+		}
+		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			TicketID:       ticketID,
+			EventType:      contracts.TicketLifecycleRepaired,
+			Source:         "pm.zombie",
+			ActorType:      contracts.TicketLifecycleActorSystem,
+			WorkerID:       workerID,
+			IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(ticketID, "pm.zombie.state_anomaly", now),
+			Payload: lifecycleRepairPayload(contracts.TicketBlocked, contracts.IntegrationNone, map[string]any{
+				"ticket_id":      ticketID,
+				"worker_id":      workerID,
+				"anomaly_code":   anomalyCode,
+				"anomaly_reason": reason,
+			}),
+			CreatedAt: now,
+		}); err != nil {
 			return err
 		}
 		statusEvent = s.buildStatusChangeEvent(ticketID, from, contracts.TicketBlocked, "pm.zombie", now)
@@ -584,6 +602,25 @@ func (s *Service) blockZombieWorker(ctx context.Context, db *gorm.DB, w contract
 			"last_error_hash": errHash,
 			"reason":          reason,
 		}, now); err != nil {
+			return err
+		}
+		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			TicketID:       w.TicketID,
+			EventType:      contracts.TicketLifecycleRepaired,
+			Source:         "pm.zombie",
+			ActorType:      contracts.TicketLifecycleActorSystem,
+			WorkerID:       w.ID,
+			IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(w.TicketID, "pm.zombie.retry_exhausted", now),
+			Payload: lifecycleRepairPayload(contracts.TicketBlocked, contracts.IntegrationNone, map[string]any{
+				"ticket_id":       w.TicketID,
+				"worker_id":       w.ID,
+				"retry_count":     w.RetryCount,
+				"max_retries":     defaultZombieMaxRetries,
+				"last_error_hash": errHash,
+				"reason":          reason,
+			}),
+			CreatedAt: now,
+		}); err != nil {
 			return err
 		}
 		statusEvent = s.buildStatusChangeEvent(w.TicketID, from, contracts.TicketBlocked, "pm.zombie", now)

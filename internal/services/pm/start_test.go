@@ -44,6 +44,14 @@ func TestStartTicket_PushesWorkflowQueuedAndMarksWorkerRunning(t *testing.T) {
 	if ev.FromStatus != contracts.TicketBacklog || ev.ToStatus != contracts.TicketQueued {
 		t.Fatalf("unexpected workflow event transition: %s -> %s", ev.FromStatus, ev.ToStatus)
 	}
+
+	var lifecycle contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleStartRequested).Order("sequence desc").First(&lifecycle).Error; err != nil {
+		t.Fatalf("query ticket lifecycle event failed: %v", err)
+	}
+	if lifecycle.Sequence == 0 {
+		t.Fatalf("expected lifecycle sequence > 0")
+	}
 }
 
 func TestStartTicketWithOptions_PassesBaseBranch(t *testing.T) {

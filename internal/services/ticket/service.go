@@ -3,6 +3,7 @@ package ticket
 import (
 	"context"
 	"dalek/internal/contracts"
+	"dalek/internal/services/ticketlifecycle"
 	"fmt"
 	"strings"
 	"time"
@@ -60,7 +61,29 @@ func (s *Service) CreateWithDescriptionAndLabelAndPriorityAndTarget(ctx context.
 		Priority:       priority,
 		TargetBranch:   strings.TrimSpace(targetBranch),
 	}
-	if err := db.WithContext(ctx).Create(&t).Error; err != nil {
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Create(&t).Error; err != nil {
+			return err
+		}
+		_, _, err := ticketlifecycle.AppendEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			TicketID:       t.ID,
+			EventType:      contracts.TicketLifecycleCreated,
+			Source:         "ticket.create",
+			ActorType:      contracts.TicketLifecycleActorUser,
+			IdempotencyKey: ticketlifecycle.CreatedIdempotencyKey(t.ID),
+			Payload: map[string]any{
+				"ticket_id":       t.ID,
+				"title":           t.Title,
+				"label":           t.Label,
+				"priority":        t.Priority,
+				"target_branch":   t.TargetBranch,
+				"workflow_status": string(contracts.TicketBacklog),
+			},
+			CreatedAt: t.CreatedAt,
+		})
+		return err
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &t, nil

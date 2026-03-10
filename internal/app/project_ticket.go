@@ -101,6 +101,20 @@ func (p *Project) RescanTicketMergeStatus(ctx context.Context, targetRef string)
 	return p.pm.RescanMergeStatus(ctx, targetRef)
 }
 
+func (p *Project) RebuildTicketLifecycleSnapshot(ctx context.Context, ticketID uint) (TicketLifecycleSnapshot, error) {
+	if p == nil || p.pm == nil {
+		return TicketLifecycleSnapshot{}, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.RebuildTicketLifecycleSnapshot(ctx, ticketID)
+}
+
+func (p *Project) CheckTicketLifecycleConsistency(ctx context.Context, ticketID uint) (TicketLifecycleConsistency, error) {
+	if p == nil || p.pm == nil {
+		return TicketLifecycleConsistency{}, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.CheckTicketLifecycleConsistency(ctx, ticketID)
+}
+
 func (p *Project) BumpTicketPriority(ctx context.Context, ticketID uint, delta int) (int, error) {
 	if p == nil || p.ticket == nil {
 		return 0, fmt.Errorf("project ticket service 为空")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
+	"dalek/internal/services/ticketlifecycle"
 	"errors"
 	"fmt"
 	"strings"
@@ -176,11 +177,27 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 			if res.RowsAffected == 0 {
 				return nil
 			}
-			return s.appendTicketWorkflowEventTx(ctx, tx, ticketID, prevWorkflow, contracts.TicketActive, "pm.direct_dispatch", "direct dispatch 开始", map[string]any{
+			if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, prevWorkflow, contracts.TicketActive, "pm.direct_dispatch", "direct dispatch 开始", map[string]any{
 				"ticket_id":    ticketID,
 				"worker_id":    w.ID,
 				"entry_prompt": entryPrompt,
-			}, now)
+			}, now); err != nil {
+				return err
+			}
+			return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+				TicketID:       ticketID,
+				EventType:      contracts.TicketLifecycleActivated,
+				Source:         "pm.direct_dispatch",
+				ActorType:      contracts.TicketLifecycleActorUser,
+				WorkerID:       w.ID,
+				IdempotencyKey: ticketlifecycle.ActivatedDirectIdempotencyKey(ticketID, now),
+				Payload: map[string]any{
+					"ticket_id":    ticketID,
+					"worker_id":    w.ID,
+					"entry_prompt": entryPrompt,
+				},
+				CreatedAt: now,
+			})
 		}); err != nil {
 			return DirectDispatchResult{}, fmt.Errorf("更新 ticket workflow 失败（t%d）：%w", ticketID, err)
 		}
@@ -244,6 +261,24 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 						"previous_workflow": prevWorkflow,
 						"rollback_target":   rollbackTarget,
 					}, now); err != nil {
+						return err
+					}
+					if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+						TicketID:       ticketID,
+						EventType:      contracts.TicketLifecycleRepaired,
+						Source:         "pm.direct_dispatch",
+						ActorType:      contracts.TicketLifecycleActorSystem,
+						WorkerID:       w.ID,
+						IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(ticketID, "pm.direct_dispatch.rollback", now),
+						Payload: lifecycleRepairPayload(rollbackTarget, contracts.IntegrationNone, map[string]any{
+							"ticket_id":         ticketID,
+							"worker_id":         w.ID,
+							"error":             loopErrMsg,
+							"previous_workflow": prevWorkflow,
+							"rollback_target":   rollbackTarget,
+						}),
+						CreatedAt: now,
+					}); err != nil {
 						return err
 					}
 				}

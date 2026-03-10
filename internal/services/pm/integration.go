@@ -5,6 +5,7 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
 	"dalek/internal/infra"
+	"dalek/internal/services/ticketlifecycle"
 	"fmt"
 	"strings"
 	"time"
@@ -49,6 +50,21 @@ func (s *Service) AbandonTicketIntegration(ctx context.Context, ticketID uint, r
 				"merged_at":          nil,
 				"updated_at":         now,
 			}).Error; err != nil {
+			return err
+		}
+		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			TicketID:       ticketID,
+			EventType:      contracts.TicketLifecycleMergeAbandoned,
+			Source:         "pm.integration",
+			ActorType:      contracts.TicketLifecycleActorUser,
+			IdempotencyKey: ticketlifecycle.MergeAbandonedIdempotencyKey(ticketID, now),
+			Payload: map[string]any{
+				"ticket_id":          ticketID,
+				"reason":             reason,
+				"integration_status": string(contracts.IntegrationAbandoned),
+			},
+			CreatedAt: now,
+		}); err != nil {
 			return err
 		}
 

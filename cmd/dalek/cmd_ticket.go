@@ -45,6 +45,8 @@ func cmdTicket(args []string) {
 		cmdTicketCleanup(args[1:])
 	case "archive":
 		cmdTicketArchive(args[1:])
+	case "check":
+		cmdTicketCheck(args[1:])
 	case "events":
 		cmdTicketEvents(args[1:])
 	case "help", "-h", "--help":
@@ -77,6 +79,7 @@ func printTicketUsage() {
 	fmt.Fprintln(out, "  stop        停止 worker")
 	fmt.Fprintln(out, "  cleanup     清理 ticket worktree")
 	fmt.Fprintln(out, "  archive     归档 ticket")
+	fmt.Fprintln(out, "  check       校验 lifecycle snapshot 与 rebuilt 投影")
 	fmt.Fprintln(out, "  events      查看事件时间线")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Use \"dalek ticket <command> --help\" for more information.")
@@ -1213,6 +1216,92 @@ func cmdTicketArchive(args []string) {
 		return
 	}
 	fmt.Printf("t%d archived\n", *ticketID)
+}
+
+func cmdTicketCheck(args []string) {
+	fs := flag.NewFlagSet("ticket check", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() {
+		printSubcommandUsage(
+			fs,
+			"校验 ticket lifecycle snapshot 与 rebuilt 投影",
+			"dalek ticket check --ticket <id> [--timeout 3s] [--output text|json]",
+			"dalek ticket check --ticket 1",
+			"dalek ticket check --ticket 1 -o json",
+		)
+	}
+	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
+	proj := fs.String("project", globalProject, "项目名（可选）")
+	projShort := fs.String("p", globalProject, "项目名（可选）")
+	ticketID := fs.Uint("ticket", 0, "ticket ID")
+	fs.UintVar(ticketID, "t", 0, "ticket ID")
+	timeout := fs.Duration("timeout", 3*time.Second, "超时（默认 3s）")
+	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
+	parseFlagSetOrExit(fs, args, globalOutput, "ticket check 参数解析失败", "运行 dalek ticket check --help 查看参数")
+	if strings.TrimSpace(*projShort) != "" {
+		*proj = strings.TrimSpace(*projShort)
+	}
+	out := parseOutputOrExit(*output, true)
+	if *ticketID == 0 {
+		exitUsageError(out,
+			"ticket check 需要 ticket ID",
+			"请使用 --ticket 指定要校验的 ticket",
+			"dalek ticket check --ticket 1",
+		)
+	}
+	if *timeout <= 0 {
+		exitUsageError(out,
+			"非法参数 --timeout",
+			"--timeout 必须大于 0",
+			"例如: dalek ticket check --ticket 1 --timeout 3s",
+		)
+	}
+
+	p := mustOpenProjectWithOutput(out, *home, *proj)
+	ctx, cancel := projectCtx(*timeout)
+	defer cancel()
+
+	res, err := p.CheckTicketLifecycleConsistency(ctx, uint(*ticketID))
+	if err != nil {
+		exitRuntimeError(out,
+			"校验 ticket lifecycle 失败",
+			err.Error(),
+			"稍后重试，或检查 ticket 是否存在",
+		)
+	}
+
+	if out == outputJSON {
+		printJSONOrExit(map[string]any{
+			"schema":        "dalek.ticket.lifecycle_check.v1",
+			"ticket_id":     res.TicketID,
+			"consistent":    !res.Mismatch,
+			"snapshot":      res.Snapshot,
+			"rebuilt":       res.Rebuilt,
+			"event_count":   res.EventCount,
+			"last_sequence": res.LastSequence,
+			"mismatches":    res.Mismatches,
+		})
+		return
+	}
+
+	status := "ok"
+	if res.Mismatch {
+		status = "mismatch"
+	}
+	fmt.Printf("ticket: t%d\n", res.TicketID)
+	fmt.Printf("status: %s\n", status)
+	fmt.Printf("snapshot: workflow=%s integration=%s\n", res.Snapshot.WorkflowStatus, res.Snapshot.IntegrationStatus)
+	fmt.Printf("rebuilt: workflow=%s integration=%s\n", res.Rebuilt.WorkflowStatus, res.Rebuilt.IntegrationStatus)
+	fmt.Printf("events: %d\n", res.EventCount)
+	fmt.Printf("last_sequence: %d\n", res.LastSequence)
+	if len(res.Mismatches) == 0 {
+		fmt.Println("mismatches: -")
+		return
+	}
+	fmt.Println("mismatches:")
+	for _, item := range res.Mismatches {
+		fmt.Printf("- %s\n", trimOneLine(item))
+	}
 }
 
 func cmdTicketCleanup(args []string) {

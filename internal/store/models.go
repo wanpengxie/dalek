@@ -7,6 +7,7 @@ type Worker = contracts.Worker
 type InboxItem = contracts.InboxItem
 type MergeItem = contracts.MergeItem
 type TicketWorkflowEvent = contracts.TicketWorkflowEvent
+type TicketLifecycleEvent = contracts.TicketLifecycleEvent
 type WorkerStatusEvent = contracts.WorkerStatusEvent
 
 type PMState = contracts.PMState
