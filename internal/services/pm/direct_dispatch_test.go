@@ -175,8 +175,8 @@ func TestDirectDispatchWorker_RollbackWorkflowFallsBackToBlockedWhenPrevInvalid(
 	if err := p.DB.First(&after, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if after.WorkflowStatus != contracts.TicketBlocked {
-		t.Fatalf("workflow should fallback rollback to blocked, got=%s", after.WorkflowStatus)
+	if after.WorkflowStatus != contracts.TicketWorkflowStatus("old_unknown_state") {
+		t.Fatalf("workflow should remain unchanged before activation, got=%s", after.WorkflowStatus)
 	}
 }
 

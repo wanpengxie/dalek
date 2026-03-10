@@ -112,6 +112,7 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 		DefaultSender: "ws.user",
 	}, s.logger)
 	mux.HandleFunc("/health", s.withInternalAccess(s.handleHealth))
+	mux.HandleFunc("/api/tickets/start", s.withInternalAccess(s.handleTicketStart))
 	mux.HandleFunc("/api/dispatch/submit", s.withInternalAccess(s.handleDispatchSubmit))
 	mux.HandleFunc("/api/worker-run/submit", s.withInternalAccess(s.handleWorkerRunSubmit))
 	mux.HandleFunc("/api/subagent/submit", s.withInternalAccess(s.handleSubagentSubmit))
@@ -323,6 +324,12 @@ type dispatchSubmitPayload struct {
 	TimeoutMS  int64  `json:"timeout_ms"`
 }
 
+type startTicketPayload struct {
+	Project    string `json:"project"`
+	TicketID   uint   `json:"ticket_id"`
+	BaseBranch string `json:"base_branch"`
+}
+
 type workerRunSubmitPayload struct {
 	RequestID string `json:"request_id"`
 	Project   string `json:"project"`
@@ -386,6 +393,37 @@ func (s *InternalAPI) handleDispatchSubmit(w http.ResponseWriter, r *http.Reques
 			"events": fmt.Sprintf("dalek task events --id %d", runID),
 			"cancel": fmt.Sprintf("dalek task cancel --id %d", runID),
 		},
+	})
+}
+
+func (s *InternalAPI) handleTicketStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	var payload startTicketPayload
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	receipt, err := s.host.StartTicket(r.Context(), StartTicketRequest{
+		Project:    strings.TrimSpace(payload.Project),
+		TicketID:   payload.TicketID,
+		BaseBranch: strings.TrimSpace(payload.BaseBranch),
+	})
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "start_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"started":         receipt.Started,
+		"project":         receipt.Project,
+		"ticket_id":       receipt.TicketID,
+		"worker_id":       receipt.WorkerID,
+		"workflow_status": strings.TrimSpace(string(receipt.WorkflowStatus)),
+		"worktree":        receipt.WorktreePath,
+		"branch":          receipt.Branch,
+		"log_path":        receipt.LogPath,
 	})
 }
 

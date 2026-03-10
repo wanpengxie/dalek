@@ -27,6 +27,7 @@ var TicketWorkflowTable = TransitionTable[contracts.TicketWorkflowStatus]{
 			contracts.TicketArchived,
 		},
 		contracts.TicketBlocked: {
+			contracts.TicketQueued,
 			contracts.TicketActive,
 			contracts.TicketArchived,
 		},

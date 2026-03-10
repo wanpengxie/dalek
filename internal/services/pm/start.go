@@ -18,7 +18,7 @@ type StartOptions struct {
 	BaseBranch string
 }
 
-// StartTicket 是 PM 视角的 start：编排 worker 资源启动，并把 ticket 置为可 dispatch 的 queued。
+// StartTicket 是 PM 视角的 start：编排 worker 资源启动，并把 ticket 投影到 queued。
 //
 // 约束：
 // - worker 只负责“资源启动”（worktree + runtime 进程）。
@@ -85,7 +85,6 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	}
 
 	// 3) 标记 worker 为 running。
-	// ticket 状态由 dispatch/report 流程推进，start 不做业务状态跳变。
 	now := time.Now()
 	if err := s.worker.MarkWorkerRunning(ctx, w.ID, now); err != nil {
 		return nil, fmt.Errorf("标记 worker 为 running 失败（w%d）：%w", w.ID, err)
@@ -125,7 +124,7 @@ func (s *Service) promoteTicketQueuedOnStart(ctx context.Context, db *gorm.DB, t
 	now := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ? AND (workflow_status = ? OR TRIM(COALESCE(workflow_status, '')) = '')", t.ID, contracts.TicketBacklog).
+			Where("id = ? AND (workflow_status IN ? OR TRIM(COALESCE(workflow_status, '')) = '')", t.ID, []contracts.TicketWorkflowStatus{contracts.TicketBacklog, contracts.TicketBlocked}).
 			Updates(map[string]any{
 				"workflow_status": contracts.TicketQueued,
 				"updated_at":      now,

@@ -91,18 +91,19 @@ func TestDaemonManagerComponent_NotifyProject_TriggersTick(t *testing.T) {
 
 type stubManagerDispatchHost struct {
 	mu           sync.Mutex
-	calls        []daemonsvc.DispatchSubmitRequest
+	calls        []daemonsvc.WorkerRunSubmitRequest
 	plannerCalls []daemonsvc.PlannerSubmitRequest
 }
 
-func (s *stubManagerDispatchHost) SubmitDispatch(_ context.Context, req daemonsvc.DispatchSubmitRequest) (daemonsvc.DispatchSubmitReceipt, error) {
+func (s *stubManagerDispatchHost) SubmitWorkerRun(_ context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, req)
-	return daemonsvc.DispatchSubmitReceipt{
-		Accepted: true,
-		Project:  req.Project,
-		TicketID: req.TicketID,
+	return daemonsvc.WorkerRunSubmitReceipt{
+		Accepted:  true,
+		Project:   req.Project,
+		RequestID: req.RequestID,
+		TicketID:  req.TicketID,
 	}, nil
 }
 
@@ -118,10 +119,10 @@ func (s *stubManagerDispatchHost) SubmitPlannerRun(_ context.Context, req daemon
 	}, nil
 }
 
-func (s *stubManagerDispatchHost) snapshot() []daemonsvc.DispatchSubmitRequest {
+func (s *stubManagerDispatchHost) snapshot() []daemonsvc.WorkerRunSubmitRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]daemonsvc.DispatchSubmitRequest, len(s.calls))
+	out := make([]daemonsvc.WorkerRunSubmitRequest, len(s.calls))
 	copy(out, s.calls)
 	return out
 }
@@ -139,11 +140,12 @@ type stubWarmupDispatchHost struct {
 	warmupCalls map[string][]uint
 }
 
-func (s *stubWarmupDispatchHost) SubmitDispatch(_ context.Context, req daemonsvc.DispatchSubmitRequest) (daemonsvc.DispatchSubmitReceipt, error) {
-	return daemonsvc.DispatchSubmitReceipt{
-		Accepted: true,
-		Project:  req.Project,
-		TicketID: req.TicketID,
+func (s *stubWarmupDispatchHost) SubmitWorkerRun(_ context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error) {
+	return daemonsvc.WorkerRunSubmitReceipt{
+		Accepted:  true,
+		Project:   req.Project,
+		RequestID: req.RequestID,
+		TicketID:  req.TicketID,
 	}, nil
 }
 
@@ -179,7 +181,7 @@ func (s *stubWarmupDispatchHost) snapshotWarmup(project string) []uint {
 	return out
 }
 
-func TestDaemonManagerComponent_RunTickProject_UsesDispatchHostSubmitter(t *testing.T) {
+func TestDaemonManagerComponent_RunTickProject_UsesWorkerRunHostSubmitter(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
 
@@ -201,7 +203,7 @@ func TestDaemonManagerComponent_RunTickProject_UsesDispatchHostSubmitter(t *test
 
 	calls := host.snapshot()
 	if len(calls) != 1 {
-		t.Fatalf("expected one SubmitDispatch call, got=%d", len(calls))
+		t.Fatalf("expected one SubmitWorkerRun call, got=%d", len(calls))
 	}
 	if calls[0].TicketID != tk.ID {
 		t.Fatalf("unexpected ticket id: got=%d want=%d", calls[0].TicketID, tk.ID)

@@ -96,7 +96,7 @@ func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 		t.Fatalf("dispatch should be rejected without submitter, dispatched=%v", res.DispatchedTickets)
 	}
 	joined := strings.Join(res.Errors, "\n")
-	if !strings.Contains(joined, "dispatch submitter 未配置") {
+	if !strings.Contains(joined, "worker run submitter 未配置") {
 		t.Fatalf("expected submitter missing error, got=%v", res.Errors)
 	}
 
@@ -109,8 +109,8 @@ func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 	}
 
 	var inbox contracts.InboxItem
-	if err := p.DB.Where("key = ? AND status = ?", inboxKeyTicketIncident(tk.ID, "dispatch_no_submitter"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
-		t.Fatalf("expected dispatch_no_submitter inbox, err=%v", err)
+	if err := p.DB.Where("key = ? AND status = ?", inboxKeyTicketIncident(tk.ID, "worker_run_no_submitter"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+		t.Fatalf("expected worker_run_no_submitter inbox, err=%v", err)
 	}
 	if inbox.Severity != contracts.InboxBlocker {
 		t.Fatalf("expected blocker severity, got=%s", inbox.Severity)
@@ -172,12 +172,12 @@ func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 		t.Fatalf("sync dispatch should bypass dispatch submitter, got=%v", submitter.CallIDs())
 	}
 
-	var job contracts.PMDispatchJob
-	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&job).Error; err != nil {
-		t.Fatalf("query pm dispatch job failed: %v", err)
+	var cnt int64
+	if err := p.DB.Model(&contracts.PMDispatchJob{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
+		t.Fatalf("count pm dispatch jobs failed: %v", err)
 	}
-	if job.Status != contracts.PMDispatchSucceeded {
-		t.Fatalf("expected sync dispatch job succeeded, got=%s", job.Status)
+	if cnt != 0 {
+		t.Fatalf("expected sync activation path skips pm dispatch jobs, got=%d", cnt)
 	}
 }
 
@@ -205,7 +205,7 @@ func TestManagerTick_SyncDispatchHonorsDispatchTimeout(t *testing.T) {
 		t.Fatalf("expected sync dispatch timeout errors")
 	}
 	joined := strings.Join(res.Errors, "\n")
-	if !strings.Contains(joined, "sync dispatch 失败") {
+	if !strings.Contains(joined, "sync activation 失败") {
 		t.Fatalf("expected sync dispatch failure message, got=%v", res.Errors)
 	}
 }
@@ -237,7 +237,7 @@ func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *test
 		t.Fatalf("worker ready timeout should not mark dispatched, dispatched=%v", res.DispatchedTickets)
 	}
 	joined := strings.Join(res.Errors, "\n")
-	if !strings.Contains(joined, "submit dispatch 失败") {
+	if !strings.Contains(joined, "submit worker run 失败") {
 		t.Fatalf("expected submit dispatch failure in errors, got=%v", res.Errors)
 	}
 

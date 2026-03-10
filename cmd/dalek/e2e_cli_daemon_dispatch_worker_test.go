@@ -22,6 +22,12 @@ type daemonDispatchSubmitPayload struct {
 	BaseBranch string `json:"base_branch"`
 }
 
+type daemonTicketStartPayload struct {
+	Project    string `json:"project"`
+	TicketID   uint   `json:"ticket_id"`
+	BaseBranch string `json:"base_branch"`
+}
+
 type daemonWorkerRunSubmitPayload struct {
 	Project   string `json:"project"`
 	TicketID  uint   `json:"ticket_id"`
@@ -64,7 +70,7 @@ func configureDaemonInternalListenForE2E(t *testing.T, homeDir, daemonURL string
 	}
 }
 
-func TestCLI_TicketStart_AsyncAccepted(t *testing.T) {
+func TestCLI_TicketStart_StartsQueued(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 	home := filepath.Join(t.TempDir(), "home")
@@ -72,39 +78,32 @@ func TestCLI_TicketStart_AsyncAccepted(t *testing.T) {
 
 	var called atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/dispatch/submit" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tickets/start" {
 			http.NotFound(w, r)
 			return
 		}
-		var payload daemonDispatchSubmitPayload
+		var payload daemonTicketStartPayload
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode payload failed: %v", err)
 		}
 		if strings.TrimSpace(payload.Project) != "demo" || payload.TicketID != 1 {
-			t.Fatalf("unexpected dispatch payload: %+v", payload)
-		}
-		if strings.TrimSpace(payload.RequestID) != "dispatch-e2e-req" {
-			t.Fatalf("unexpected request_id: %q", payload.RequestID)
-		}
-		if strings.TrimSpace(payload.Prompt) != "继续执行任务" {
-			t.Fatalf("unexpected prompt: %q", payload.Prompt)
-		}
-		if payload.AutoStart == nil || !*payload.AutoStart {
-			t.Fatalf("expected auto_start=true by default, got=%v", payload.AutoStart)
+			t.Fatalf("unexpected ticket-start payload: %+v", payload)
 		}
 		if strings.TrimSpace(payload.BaseBranch) != "main" {
 			t.Fatalf("expected base_branch=main, got=%q", payload.BaseBranch)
 		}
 		called.Store(true)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusAccepted)
+		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"accepted":    true,
-			"project":     "demo",
-			"request_id":  "dispatch-e2e-req",
-			"task_run_id": 7001,
-			"ticket_id":   1,
-			"worker_id":   9,
+			"started":         true,
+			"project":         "demo",
+			"ticket_id":       1,
+			"worker_id":       9,
+			"workflow_status": "queued",
+			"worktree":        "/tmp/worktree/t1",
+			"branch":          "ticket/1",
+			"log_path":        "/tmp/workers/9.log",
 		})
 	}))
 	t.Cleanup(server.Close)
@@ -120,34 +119,30 @@ func TestCLI_TicketStart_AsyncAccepted(t *testing.T) {
 		"ticket", "start",
 		"--ticket", "1",
 		"--base", "main",
-		"--request-id", "dispatch-e2e-req",
-		"--prompt", "继续执行任务",
 		"-o", "json",
 	)
 
 	var resp struct {
-		Schema    string `json:"schema"`
-		Mode      string `json:"mode"`
-		Accepted  bool   `json:"accepted"`
-		RequestID string `json:"request_id"`
-		TaskRunID uint   `json:"task_run_id"`
-		TicketID  uint   `json:"ticket_id"`
-		WorkerID  uint   `json:"worker_id"`
+		Schema         string `json:"schema"`
+		Started        bool   `json:"started"`
+		TicketID       uint   `json:"ticket_id"`
+		WorkerID       uint   `json:"worker_id"`
+		WorkflowStatus string `json:"workflow_status"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &resp); err != nil {
 		t.Fatalf("decode response failed: %v\nraw=%s", err, stdout)
 	}
-	if resp.Schema != "dalek.ticket.start.accepted.v1" {
+	if resp.Schema != "dalek.ticket.start.v1" {
 		t.Fatalf("unexpected schema: %q", resp.Schema)
 	}
-	if resp.Mode != "async" || !resp.Accepted {
-		t.Fatalf("unexpected mode/accepted: mode=%q accepted=%v", resp.Mode, resp.Accepted)
+	if !resp.Started {
+		t.Fatalf("expected started=true, got=%+v", resp)
 	}
-	if resp.RequestID != "dispatch-e2e-req" || resp.TaskRunID != 7001 || resp.TicketID != 1 || resp.WorkerID != 9 {
+	if resp.TicketID != 1 || resp.WorkerID != 9 || resp.WorkflowStatus != "queued" {
 		t.Fatalf("unexpected response payload: %+v", resp)
 	}
 	if !called.Load() {
-		t.Fatalf("expected daemon submit endpoint called")
+		t.Fatalf("expected daemon start endpoint called")
 	}
 }
 
@@ -197,7 +192,7 @@ func TestCLI_TicketStart_DaemonUnavailable_ShowsSyncFallback(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected ticket start fail when daemon unavailable\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
-	if !strings.Contains(stderr, "daemon 不在线，无法启动并派发 ticket") {
+	if !strings.Contains(stderr, "daemon 不在线，无法启动 ticket") {
 		t.Fatalf("stderr should contain daemon unavailable hint:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, "Fix: `dalek daemon start`") {

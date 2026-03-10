@@ -42,6 +42,23 @@ type DaemonDispatchSubmitReceipt struct {
 	WorkerID  uint
 }
 
+type DaemonTicketStartRequest struct {
+	Project    string
+	TicketID   uint
+	BaseBranch string
+}
+
+type DaemonTicketStartReceipt struct {
+	Started        bool
+	Project        string
+	TicketID       uint
+	WorkerID       uint
+	WorkflowStatus string
+	WorktreePath   string
+	Branch         string
+	LogPath        string
+}
+
 type DaemonWorkerRunSubmitRequest struct {
 	Project   string
 	TicketID  uint
@@ -217,6 +234,46 @@ func (c *DaemonAPIClient) SubmitDispatch(ctx context.Context, req DaemonDispatch
 		TaskRunID: out.TaskRunID,
 		TicketID:  out.TicketID,
 		WorkerID:  out.WorkerID,
+	}, nil
+}
+
+func (c *DaemonAPIClient) StartTicket(ctx context.Context, req DaemonTicketStartRequest) (DaemonTicketStartReceipt, error) {
+	if c == nil {
+		return DaemonTicketStartReceipt{}, fmt.Errorf("daemon client 为空")
+	}
+	payload := map[string]any{
+		"project":   strings.TrimSpace(req.Project),
+		"ticket_id": req.TicketID,
+	}
+	if strings.TrimSpace(req.BaseBranch) != "" {
+		payload["base_branch"] = strings.TrimSpace(req.BaseBranch)
+	}
+	var out struct {
+		Started        bool   `json:"started"`
+		Project        string `json:"project"`
+		TicketID       uint   `json:"ticket_id"`
+		WorkerID       uint   `json:"worker_id"`
+		WorkflowStatus string `json:"workflow_status"`
+		WorktreePath   string `json:"worktree"`
+		Branch         string `json:"branch"`
+		LogPath        string `json:"log_path"`
+	}
+	code, err := c.doJSON(ctx, http.MethodPost, "/api/tickets/start", payload, &out)
+	if err != nil {
+		return DaemonTicketStartReceipt{}, err
+	}
+	if code != http.StatusOK {
+		return DaemonTicketStartReceipt{}, fmt.Errorf("ticket start 响应码异常: %d", code)
+	}
+	return DaemonTicketStartReceipt{
+		Started:        out.Started,
+		Project:        strings.TrimSpace(out.Project),
+		TicketID:       out.TicketID,
+		WorkerID:       out.WorkerID,
+		WorkflowStatus: strings.TrimSpace(out.WorkflowStatus),
+		WorktreePath:   strings.TrimSpace(out.WorktreePath),
+		Branch:         strings.TrimSpace(out.Branch),
+		LogPath:        strings.TrimSpace(out.LogPath),
 	}, nil
 }
 

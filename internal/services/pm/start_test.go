@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStartTicket_PushesWorkflowQueuedAndMarksWorkerRunning(t *testing.T) {
@@ -101,5 +102,46 @@ echo "bootstrap" > "${DALEK_WORKTREE_PATH}/.dalek/bootstrap-ran.txt"
 	}
 	if strings.TrimSpace(string(b)) != "bootstrap" {
 		t.Fatalf("unexpected bootstrap marker content: %q", string(b))
+	}
+}
+
+func TestStartTicket_BlockedPromotesWorkflowQueued(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "start-blocked-ticket")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketBlocked,
+		"updated_at":      tk.UpdatedAt.Add(time.Second),
+	}).Error; err != nil {
+		t.Fatalf("set ticket blocked failed: %v", err)
+	}
+
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if w.Status != contracts.WorkerRunning {
+		t.Fatalf("expected worker running, got=%s", w.Status)
+	}
+
+	var got contracts.Ticket
+	if err := p.DB.First(&got, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if got.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("start should promote blocked ticket to queued, got=%s", got.WorkflowStatus)
+	}
+
+	var ev contracts.TicketWorkflowEvent
+	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&ev).Error; err != nil {
+		t.Fatalf("query workflow event failed: %v", err)
+	}
+	if ev.FromStatus != contracts.TicketBlocked || ev.ToStatus != contracts.TicketQueued {
+		t.Fatalf("unexpected workflow event transition: %s -> %s", ev.FromStatus, ev.ToStatus)
+	}
+
+	var lifecycle contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleStartRequested).Order("sequence desc").First(&lifecycle).Error; err != nil {
+		t.Fatalf("query lifecycle event failed: %v", err)
 	}
 }

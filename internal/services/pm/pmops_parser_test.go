@@ -52,3 +52,9 @@ func TestParsePlannerPMOps_PlainTextWithoutJSONReturnsEmpty(t *testing.T) {
 		t.Fatalf("expected no ops parsed, got=%d", len(ops))
 	}
 }
+
+func TestPlannerPMOpIsCritical_StartTicket(t *testing.T) {
+	if !plannerPMOpIsCritical(contracts.PMOp{Kind: contracts.PMOpStartTicket}) {
+		t.Fatalf("expected start_ticket marked as critical")
+	}
+}

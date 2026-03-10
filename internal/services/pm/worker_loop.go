@@ -28,6 +28,8 @@ type WorkerLoopResult struct {
 	LastRunID      uint   // 最后一轮 stage 对应的 task run id
 }
 
+type workerLoopStageStartedFunc func(stage int, runID uint) error
+
 // executeWorkerLoop 是 worker SDK 同步执行的核心循环。
 //
 // 流程：
@@ -42,6 +44,10 @@ type WorkerLoopResult struct {
 // 无超时限制：agent 可能运行数小时。内部使用 cancel-only context：
 // 只透传主动 cancel，不继承调用方 deadline。
 func (s *Service) executeWorkerLoop(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (WorkerLoopResult, error) {
+	return s.executeWorkerLoopWithHook(ctx, t, w, entryPrompt, nil)
+}
+
+func (s *Service) executeWorkerLoopWithHook(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string, onStageStarted workerLoopStageStartedFunc) (WorkerLoopResult, error) {
 	if strings.TrimSpace(entryPrompt) == "" {
 		entryPrompt = defaultContinuePrompt
 	}
@@ -73,6 +79,12 @@ func (s *Service) executeWorkerLoop(ctx context.Context, t contracts.Ticket, w c
 
 		// 记录 stage 启动事件
 		result.LastRunID = handle.RunID()
+		if onStageStarted != nil {
+			if err := onStageStarted(result.Stages, handle.RunID()); err != nil {
+				s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop stage start hook failed stage=%d: %v", result.Stages, err))
+				return result, fmt.Errorf("worker_loop stage %d start hook 失败: %w", result.Stages, err)
+			}
+		}
 		_ = s.worker.AppendWorkerTaskEvent(loopCtx, w.ID, "worker_loop_stage_start",
 			fmt.Sprintf("stage=%d run_id=%d", result.Stages, handle.RunID()),
 			map[string]any{

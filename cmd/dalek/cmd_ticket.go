@@ -783,10 +783,10 @@ func cmdTicketStart(args []string) {
 	fs.Usage = func() {
 		printSubcommandUsage(
 			fs,
-			"启动 ticket 并提交执行",
-			"dalek ticket start --ticket <id> [--base BRANCH] [--prompt \"...\"] [--request-id ID] [--timeout 60s] [--output text|json]",
+			"启动 ticket 并将其置为 queued",
+			"dalek ticket start --ticket <id> [--base BRANCH] [--timeout 60s] [--output text|json]",
 			"dalek ticket start --ticket 1",
-			"dalek ticket start --ticket 1 --base main --prompt \"补充说明\" -o json",
+			"dalek ticket start --ticket 1 --base main -o json",
 		)
 	}
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
@@ -796,8 +796,6 @@ func cmdTicketStart(args []string) {
 	fs.UintVar(ticketID, "t", 0, "ticket ID (required)")
 	base := fs.String("base", "", "基准分支（可选，默认当前 HEAD）")
 	fs.StringVar(base, "b", "", "基准分支（可选，默认当前 HEAD）")
-	entryPrompt := fs.String("prompt", "", "补充本轮指令（可选）")
-	requestID := fs.String("request-id", "", "幂等请求 ID（可选）")
 	timeout := fs.Duration("timeout", 60*time.Second, "超时（默认 60s）")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
 	parseFlagSetOrExit(fs, args, globalOutput, "ticket start 参数解析失败", "运行 dalek ticket start --help 查看参数")
@@ -825,19 +823,15 @@ func cmdTicketStart(args []string) {
 	_, daemonClient := mustOpenDaemonClient(out, *home)
 	ctx, cancel := projectCtx(*timeout)
 	defer cancel()
-	autoStart := true
-	receipt, err := daemonClient.SubmitDispatch(ctx, app.DaemonDispatchSubmitRequest{
+	receipt, err := daemonClient.StartTicket(ctx, app.DaemonTicketStartRequest{
 		Project:    strings.TrimSpace(p.Name()),
 		TicketID:   uint(*ticketID),
-		RequestID:  strings.TrimSpace(*requestID),
-		Prompt:     strings.TrimSpace(*entryPrompt),
-		AutoStart:  &autoStart,
 		BaseBranch: strings.TrimSpace(*base),
 	})
 	if err != nil {
 		if app.IsDaemonUnavailable(err) {
 			exitFixFirstError(out, 1,
-				"daemon 不在线，无法启动并派发 ticket",
+				"daemon 不在线，无法启动 ticket",
 				daemonUnavailableDispatchFix(uint(*ticketID)),
 				daemonRuntimeErrorCause(err),
 			)
@@ -864,31 +858,21 @@ func cmdTicketStart(args []string) {
 
 	if out == outputJSON {
 		payload := map[string]any{
-			"schema":      "dalek.ticket.start.accepted.v1",
-			"mode":        "async",
-			"accepted":    receipt.Accepted,
-			"ticket_id":   receipt.TicketID,
-			"worker_id":   workerID,
-			"task_run_id": receipt.TaskRunID,
-			"request_id":  strings.TrimSpace(receipt.RequestID),
-			"output_ref":  outputRef,
-			"log_path":    logPath,
-			"worktree":    worktree,
-			"branch":      branch,
-			"query": map[string]string{
-				"show":   fmt.Sprintf("dalek task show --id %d", receipt.TaskRunID),
-				"events": fmt.Sprintf("dalek task events --id %d", receipt.TaskRunID),
-				"cancel": fmt.Sprintf("dalek task cancel --id %d", receipt.TaskRunID),
-			},
+			"schema":          "dalek.ticket.start.v1",
+			"started":         receipt.Started,
+			"ticket_id":       receipt.TicketID,
+			"worker_id":       workerID,
+			"workflow_status": strings.TrimSpace(receipt.WorkflowStatus),
+			"output_ref":      outputRef,
+			"log_path":        logPath,
+			"worktree":        worktree,
+			"branch":          branch,
 		}
 		printJSONOrExit(payload)
 		return
 	}
-	fmt.Printf("start accepted: ticket=%d worker=%d request=%s run=%d output=%s worktree=%s branch=%s\n",
-		receipt.TicketID, workerID, strings.TrimSpace(receipt.RequestID), receipt.TaskRunID, outputRef, worktree, branch)
-	fmt.Printf("query: dalek task show --id %d\n", receipt.TaskRunID)
-	fmt.Printf("events: dalek task events --id %d\n", receipt.TaskRunID)
-	fmt.Printf("cancel: dalek task cancel --id %d\n", receipt.TaskRunID)
+	fmt.Printf("ticket started: ticket=%d worker=%d status=%s output=%s worktree=%s branch=%s\n",
+		receipt.TicketID, workerID, strings.TrimSpace(receipt.WorkflowStatus), outputRef, worktree, branch)
 }
 
 func cmdTicketDispatchRemoved() {

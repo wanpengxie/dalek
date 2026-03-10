@@ -66,6 +66,15 @@ type daemonProjectAdapter struct {
 	project *Project
 }
 
+func (p *daemonProjectAdapter) StartTicket(ctx context.Context, ticketID uint, opt daemonsvc.StartTicketOptions) (*contracts.Worker, error) {
+	if p == nil || p.project == nil {
+		return nil, fmt.Errorf("daemon project 为空")
+	}
+	return p.project.StartTicketWithOptions(ctx, ticketID, StartOptions{
+		BaseBranch: strings.TrimSpace(opt.BaseBranch),
+	})
+}
+
 func (p *daemonProjectAdapter) SubmitDispatchTicket(ctx context.Context, ticketID uint, opt daemonsvc.DispatchSubmitOptions) (daemonsvc.DispatchSubmission, error) {
 	if p == nil || p.project == nil {
 		return daemonsvc.DispatchSubmission{}, fmt.Errorf("daemon project 为空")

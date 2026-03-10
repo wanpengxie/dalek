@@ -53,6 +53,7 @@ type ExecutionHostResolver interface {
 }
 
 type ExecutionHostProject interface {
+	StartTicket(ctx context.Context, ticketID uint, opt StartTicketOptions) (*contracts.Worker, error)
 	SubmitDispatchTicket(ctx context.Context, ticketID uint, opt DispatchSubmitOptions) (DispatchSubmission, error)
 	RunDispatchJob(ctx context.Context, jobID uint, opt DispatchRunOptions) error
 	DirectDispatchWorker(ctx context.Context, ticketID uint, opt WorkerRunOptions) (WorkerRunResult, error)
@@ -79,6 +80,7 @@ type DashboardProject interface {
 type DispatchSubmitOptions = pmsvc.DispatchSubmitOptions
 type DispatchSubmission = pmsvc.DispatchSubmission
 type DispatchRunOptions = pmsvc.DispatchRunOptions
+type StartTicketOptions = pmsvc.StartOptions
 
 type DashboardResult struct {
 	TicketCounts map[string]int       `json:"ticket_counts"`
@@ -126,6 +128,23 @@ type DispatchSubmitRequest struct {
 	Prompt     string
 	AutoStart  *bool
 	BaseBranch string
+}
+
+type StartTicketRequest struct {
+	Project    string
+	TicketID   uint
+	BaseBranch string
+}
+
+type StartTicketReceipt struct {
+	Started        bool
+	Project        string
+	TicketID       uint
+	WorkerID       uint
+	WorkflowStatus contracts.TicketWorkflowStatus
+	WorktreePath   string
+	Branch         string
+	LogPath        string
 }
 
 type DispatchSubmitReceipt struct {

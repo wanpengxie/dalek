@@ -230,7 +230,7 @@ func plannerPMOpIsCritical(op contracts.PMOp) bool {
 		return true
 	}
 	switch op.Kind {
-	case contracts.PMOpCreateTicket, contracts.PMOpDispatchTicket, contracts.PMOpCreateIntegration:
+	case contracts.PMOpCreateTicket, contracts.PMOpStartTicket, contracts.PMOpDispatchTicket, contracts.PMOpCreateIntegration:
 		return true
 	default:
 		return false

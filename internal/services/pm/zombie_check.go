@@ -527,11 +527,11 @@ func (s *Service) recoverWorkerByRestartChain(ctx context.Context, ticketID uint
 		}
 		return fmt.Errorf("start 失败: %w", err)
 	}
-	if _, err := s.DispatchTicket(ctx, ticketID); err != nil {
+	if _, err := s.DirectDispatchWorker(ctx, ticketID, DirectDispatchOptions{}); err != nil {
 		if stopErr != nil {
-			return fmt.Errorf("stop 失败: %v；dispatch 失败: %w", stopErr, err)
+			return fmt.Errorf("stop 失败: %v；worker run 失败: %w", stopErr, err)
 		}
-		return fmt.Errorf("dispatch 失败: %w", err)
+		return fmt.Errorf("worker run 失败: %w", err)
 	}
 	return nil
 }

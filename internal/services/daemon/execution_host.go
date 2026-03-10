@@ -220,6 +220,47 @@ func (h *ExecutionHost) SubmitDispatch(ctx context.Context, req DispatchSubmitRe
 	}, nil
 }
 
+func (h *ExecutionHost) StartTicket(ctx context.Context, req StartTicketRequest) (StartTicketReceipt, error) {
+	if h == nil || h.resolver == nil {
+		return StartTicketReceipt{}, fmt.Errorf("execution host 未初始化")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	projectName := strings.TrimSpace(req.Project)
+	if projectName == "" {
+		return StartTicketReceipt{}, fmt.Errorf("project 不能为空")
+	}
+	if req.TicketID == 0 {
+		return StartTicketReceipt{}, fmt.Errorf("ticket_id 不能为空")
+	}
+	project, err := h.resolver.OpenProject(projectName)
+	if err != nil {
+		return StartTicketReceipt{}, err
+	}
+	worker, err := project.StartTicket(ctx, req.TicketID, StartTicketOptions{
+		BaseBranch: strings.TrimSpace(req.BaseBranch),
+	})
+	if err != nil {
+		return StartTicketReceipt{}, err
+	}
+	receipt := StartTicketReceipt{
+		Started:  true,
+		Project:  projectName,
+		TicketID: req.TicketID,
+	}
+	if worker != nil {
+		receipt.WorkerID = worker.ID
+		receipt.WorktreePath = strings.TrimSpace(worker.WorktreePath)
+		receipt.Branch = strings.TrimSpace(worker.Branch)
+		receipt.LogPath = strings.TrimSpace(worker.LogPath)
+	}
+	if view, verr := project.GetTicketViewByID(ctx, req.TicketID); verr == nil && view != nil {
+		receipt.WorkflowStatus = view.Ticket.WorkflowStatus
+	}
+	return receipt, nil
+}
+
 func (h *ExecutionHost) SubmitWorkerRun(ctx context.Context, req WorkerRunSubmitRequest) (WorkerRunSubmitReceipt, error) {
 	if h == nil || h.resolver == nil {
 		return WorkerRunSubmitReceipt{}, fmt.Errorf("execution host 未初始化")

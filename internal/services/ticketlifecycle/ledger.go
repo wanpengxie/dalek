@@ -233,6 +233,10 @@ func ActivatedDirectIdempotencyKey(ticketID uint, at time.Time) string {
 	return fmt.Sprintf("ticket:%d:activated:direct:%d", ticketID, at.UnixNano())
 }
 
+func ActivatedRunIdempotencyKey(ticketID, taskRunID uint) string {
+	return fmt.Sprintf("ticket:%d:activated:run:%d", ticketID, taskRunID)
+}
+
 func WaitUserReportedIdempotencyKey(ticketID, taskRunID, workerID uint) string {
 	if taskRunID != 0 {
 		return fmt.Sprintf("ticket:%d:wait_user:run:%d", ticketID, taskRunID)

@@ -23,6 +23,8 @@ func (s *Service) plannerPMOpExecutor(kind contracts.PMOpKind) plannerPMOpExecut
 		return createTicketPMOpExecutor{s: s}
 	case contracts.PMOpCreateIntegration:
 		return createIntegrationTicketPMOpExecutor{s: s}
+	case contracts.PMOpStartTicket:
+		return startTicketPMOpExecutor{s: s}
 	case contracts.PMOpDispatchTicket:
 		return dispatchTicketPMOpExecutor{s: s}
 	case contracts.PMOpCloseInbox:
@@ -169,6 +171,70 @@ func (e createIntegrationTicketPMOpExecutor) Execute(ctx context.Context, op con
 
 type dispatchTicketPMOpExecutor struct {
 	s *Service
+}
+
+type startTicketPMOpExecutor struct {
+	s *Service
+}
+
+func (e startTicketPMOpExecutor) Reconcile(ctx context.Context, op contracts.PMOp) (bool, contracts.JSONMap, error) {
+	if e.s == nil {
+		return false, contracts.JSONMap{}, fmt.Errorf("pm service 为空")
+	}
+	_, db, err := e.s.require()
+	if err != nil {
+		return false, contracts.JSONMap{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ticketID := jsonMapUint(op.Arguments, "ticket_id")
+	if ticketID == 0 {
+		return false, contracts.JSONMap{}, fmt.Errorf("start_ticket 缺少 ticket_id")
+	}
+	var t contracts.Ticket
+	if err := db.WithContext(ctx).Select("id", "workflow_status").First(&t, ticketID).Error; err != nil {
+		return false, contracts.JSONMap{}, err
+	}
+	switch contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) {
+	case contracts.TicketQueued, contracts.TicketActive, contracts.TicketDone, contracts.TicketArchived:
+		return true, contracts.JSONMap{
+			"ticket_id":        ticketID,
+			"workflow_status":  strings.TrimSpace(string(t.WorkflowStatus)),
+			"reconcile_source": "ticket_workflow_status",
+		}, nil
+	default:
+		return false, contracts.JSONMap{}, nil
+	}
+}
+
+func (e startTicketPMOpExecutor) Execute(ctx context.Context, op contracts.PMOp) (contracts.JSONMap, error) {
+	if e.s == nil {
+		return contracts.JSONMap{}, fmt.Errorf("pm service 为空")
+	}
+	ticketID := jsonMapUint(op.Arguments, "ticket_id")
+	if ticketID == 0 {
+		return contracts.JSONMap{}, fmt.Errorf("start_ticket 缺少 ticket_id")
+	}
+	baseBranch := strings.TrimSpace(jsonMapString(op.Arguments, "base_branch"))
+	worker, err := e.s.StartTicketWithOptions(ctx, ticketID, StartOptions{
+		BaseBranch: baseBranch,
+	})
+	if err != nil {
+		return contracts.JSONMap{}, err
+	}
+	workflowStatus := string(contracts.TicketQueued)
+	if worker != nil && worker.ID != 0 {
+		return contracts.JSONMap{
+			"ticket_id":       ticketID,
+			"worker_id":       worker.ID,
+			"workflow_status": workflowStatus,
+		}, nil
+	}
+	return contracts.JSONMap{
+		"ticket_id":       ticketID,
+		"workflow_status": workflowStatus,
+	}, nil
 }
 
 func (e dispatchTicketPMOpExecutor) Reconcile(ctx context.Context, op contracts.PMOp) (bool, contracts.JSONMap, error) {

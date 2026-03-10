@@ -51,6 +51,28 @@ func TestCanDispatchTicket(t *testing.T) {
 	}
 }
 
+func TestCanActivateTicket(t *testing.T) {
+	tests := []struct {
+		name   string
+		status contracts.TicketWorkflowStatus
+		want   bool
+	}{
+		{name: "queued", status: contracts.TicketQueued, want: true},
+		{name: "backlog", status: contracts.TicketBacklog, want: true},
+		{name: "blocked", status: contracts.TicketBlocked, want: true},
+		{name: "active", status: contracts.TicketActive, want: false},
+		{name: "done", status: contracts.TicketDone, want: false},
+		{name: "archived", status: contracts.TicketArchived, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := CanActivateTicket(tc.status); got != tc.want {
+				t.Fatalf("CanActivateTicket(%q)=%v, want=%v", tc.status, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCanArchiveTicket(t *testing.T) {
 	tests := []struct {
 		name        string

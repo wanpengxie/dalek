@@ -17,6 +17,11 @@ func CanDispatchTicket(status contracts.TicketWorkflowStatus) bool {
 	return CanStartTicket(status)
 }
 
+// CanActivateTicket 判断 ticket 当前 workflow 是否允许推进到 active。
+func CanActivateTicket(status contracts.TicketWorkflowStatus) bool {
+	return CanTicketWorkflowTransition(contracts.CanonicalTicketWorkflowStatus(status), contracts.TicketActive)
+}
+
 // CanArchiveTicket 判断 ticket 当前 workflow/integration 组合是否允许归档。
 func CanArchiveTicket(status contracts.TicketWorkflowStatus, integration contracts.IntegrationStatus) bool {
 	st := contracts.CanonicalTicketWorkflowStatus(status)

@@ -860,7 +860,7 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 		out.StartedTickets = append(out.StartedTickets, t.ID)
 		runningTicketIDs[t.ID] = true
 
-		dispatched, errs := s.dispatchScheduledTicket(ctx, t.ID, w.ID, opt)
+		dispatched, errs := s.activateScheduledTicket(ctx, t.ID, w.ID, opt)
 		out.Errors = append(out.Errors, errs...)
 		if dispatched {
 			out.DispatchedTickets = append(out.DispatchedTickets, t.ID)
@@ -871,17 +871,17 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 	return out
 }
 
-func (s *Service) dispatchScheduledTicket(ctx context.Context, ticketID, workerID uint, opt scheduleOptions) (bool, []string) {
+func (s *Service) activateScheduledTicket(ctx context.Context, ticketID, workerID uint, opt scheduleOptions) (bool, []string) {
 	if opt.SyncDispatch {
 		dispatchCtx := ctx
 		cancelDispatch := func() {}
 		if opt.DispatchTimeout > 0 {
 			dispatchCtx, cancelDispatch = context.WithTimeout(ctx, opt.DispatchTimeout)
 		}
-		_, derr := s.DispatchTicket(dispatchCtx, ticketID)
+		_, derr := s.DirectDispatchWorker(dispatchCtx, ticketID, DirectDispatchOptions{})
 		cancelDispatch()
 		if derr != nil {
-			return false, s.handleDispatchFailure(ctx, ticketID, workerID, derr, "sync dispatch 失败")
+			return false, s.handleDispatchFailure(ctx, ticketID, workerID, derr, "sync activation 失败")
 		}
 		return true, nil
 	}
@@ -889,18 +889,18 @@ func (s *Service) dispatchScheduledTicket(ctx context.Context, ticketID, workerI
 	if submitter := s.getDispatchSubmitter(); submitter != nil {
 		derr := submitter.SubmitTicketDispatch(context.WithoutCancel(ctx), ticketID)
 		if derr != nil {
-			return false, s.handleDispatchFailure(ctx, ticketID, workerID, derr, "submit dispatch 失败")
+			return false, s.handleDispatchFailure(ctx, ticketID, workerID, derr, "submit worker run 失败")
 		}
 		return true, nil
 	}
 
-	errMsg := fmt.Sprintf("dispatch submitter 未配置：t%d w%d", ticketID, workerID)
+	errMsg := fmt.Sprintf("worker run submitter 未配置：t%d w%d", ticketID, workerID)
 	_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-		Key:      inboxKeyTicketIncident(ticketID, "dispatch_no_submitter"),
+		Key:      inboxKeyTicketIncident(ticketID, "worker_run_no_submitter"),
 		Status:   contracts.InboxOpen,
 		Severity: contracts.InboxBlocker,
 		Reason:   contracts.InboxIncident,
-		Title:    fmt.Sprintf("派发失败：t%d w%d", ticketID, workerID),
+		Title:    fmt.Sprintf("激活失败：t%d w%d", ticketID, workerID),
 		Body:     errMsg,
 		TicketID: ticketID,
 		WorkerID: workerID,

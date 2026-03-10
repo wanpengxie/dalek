@@ -33,6 +33,7 @@ func TestDaemonPublicGatewayComponent_NonWebhookRoutesNotExposed(t *testing.T) {
 	baseURL := "http://" + comp.listener.Addr().String()
 	paths := []string{
 		"/api/send",
+		"/api/tickets/start",
 		"/api/dispatch/submit",
 		"/api/worker-run/submit",
 		"/api/notes",

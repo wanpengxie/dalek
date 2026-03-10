@@ -77,12 +77,14 @@ func (r *testExecutionHostResolver) ListProjectsCount() int64 {
 type testExecutionHostProject struct {
 	mu sync.Mutex
 
+	startCalls            int
 	dispatchCalls         int
 	runDispatchCalls      int
 	directDispatchCalls   int
 	subagentCalls         int
 	runSubagentCalls      int
 	runPlannerCalls       int
+	lastStartBaseBranch   string
 	lastDispatchAutoStart *bool
 	lastPlannerPrompt     string
 
@@ -128,6 +130,21 @@ type testExecutionHostProject struct {
 	runPlannerStarted      chan struct{}
 	runPlannerRelease      chan struct{}
 	runPlannerIgnoreCancel bool
+}
+
+func (p *testExecutionHostProject) StartTicket(ctx context.Context, ticketID uint, opt StartTicketOptions) (*contracts.Worker, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.startCalls++
+	p.lastStartBaseBranch = strings.TrimSpace(opt.BaseBranch)
+	return &contracts.Worker{
+		ID:           301,
+		TicketID:     ticketID,
+		Status:       contracts.WorkerRunning,
+		WorktreePath: "/tmp/worktree/301",
+		Branch:       "ticket/301",
+		LogPath:      "/tmp/workers/301.log",
+	}, nil
 }
 
 func (p *testExecutionHostProject) SubmitDispatchTicket(ctx context.Context, ticketID uint, opt DispatchSubmitOptions) (DispatchSubmission, error) {
@@ -480,6 +497,18 @@ func (p *testExecutionHostProject) DispatchSubmitCount() int {
 	return p.dispatchCalls
 }
 
+func (p *testExecutionHostProject) StartTicketCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.startCalls
+}
+
+func (p *testExecutionHostProject) LastStartBaseBranch() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return strings.TrimSpace(p.lastStartBaseBranch)
+}
+
 func (p *testExecutionHostProject) LastDispatchAutoStart() *bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -575,6 +604,44 @@ func TestExecutionHost_OnRunSettled_Dispatch(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("expected OnRunSettled callback for dispatch")
+	}
+}
+
+func TestExecutionHost_StartTicket_ForwardsBaseBranch(t *testing.T) {
+	project := &testExecutionHostProject{
+		ticketViews: []TicketView{
+			{
+				Ticket: contracts.Ticket{
+					ID:             7,
+					WorkflowStatus: contracts.TicketQueued,
+				},
+			},
+		},
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	receipt, err := host.StartTicket(context.Background(), StartTicketRequest{
+		Project:    "demo",
+		TicketID:   7,
+		BaseBranch: "release/v2",
+	})
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if !receipt.Started || receipt.TicketID != 7 || receipt.WorkerID != 301 {
+		t.Fatalf("unexpected receipt: %+v", receipt)
+	}
+	if receipt.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected queued workflow, got=%s", receipt.WorkflowStatus)
+	}
+	if got := project.StartTicketCount(); got != 1 {
+		t.Fatalf("expected one start call, got=%d", got)
+	}
+	if got := project.LastStartBaseBranch(); got != "release/v2" {
+		t.Fatalf("expected forwarded base branch release/v2, got=%q", got)
 	}
 }
 

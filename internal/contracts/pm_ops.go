@@ -8,6 +8,7 @@ const (
 	PMOpWriteRequirementDoc  PMOpKind = "write_requirement_doc"
 	PMOpWriteDesignDoc       PMOpKind = "write_design_doc"
 	PMOpCreateTicket         PMOpKind = "create_ticket"
+	PMOpStartTicket          PMOpKind = "start_ticket"
 	PMOpDispatchTicket       PMOpKind = "dispatch_ticket"
 	PMOpCreateIntegration    PMOpKind = "create_integration_ticket"
 	PMOpCloseInbox           PMOpKind = "close_inbox"

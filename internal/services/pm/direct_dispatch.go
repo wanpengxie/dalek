@@ -159,52 +159,10 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		entryPrompt = defaultContinuePrompt
 	}
 
-	// 先推进到 active，失败时回滚，避免残留 active 悬挂态。
 	workflowPromoted := false
 	prevWorkflow := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
-	if prevWorkflow != contracts.TicketActive {
-		now := time.Now()
-		if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-				Where("id = ? AND workflow_status != ? AND workflow_status != ?", ticketID, contracts.TicketDone, contracts.TicketArchived).
-				Updates(map[string]any{
-					"workflow_status": contracts.TicketActive,
-					"updated_at":      now,
-				})
-			if res.Error != nil {
-				return res.Error
-			}
-			if res.RowsAffected == 0 {
-				return nil
-			}
-			if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, prevWorkflow, contracts.TicketActive, "pm.direct_dispatch", "direct dispatch 开始", map[string]any{
-				"ticket_id":    ticketID,
-				"worker_id":    w.ID,
-				"entry_prompt": entryPrompt,
-			}, now); err != nil {
-				return err
-			}
-			return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
-				TicketID:       ticketID,
-				EventType:      contracts.TicketLifecycleActivated,
-				Source:         "pm.direct_dispatch",
-				ActorType:      contracts.TicketLifecycleActorUser,
-				WorkerID:       w.ID,
-				IdempotencyKey: ticketlifecycle.ActivatedDirectIdempotencyKey(ticketID, now),
-				Payload: map[string]any{
-					"ticket_id":    ticketID,
-					"worker_id":    w.ID,
-					"entry_prompt": entryPrompt,
-				},
-				CreatedAt: now,
-			})
-		}); err != nil {
-			return DirectDispatchResult{}, fmt.Errorf("更新 ticket workflow 失败（t%d）：%w", ticketID, err)
-		}
-		var refreshed contracts.Ticket
-		if rerr := db.WithContext(ctx).Select("workflow_status").First(&refreshed, ticketID).Error; rerr == nil {
-			workflowPromoted = contracts.CanonicalTicketWorkflowStatus(refreshed.WorkflowStatus) == contracts.TicketActive && prevWorkflow != contracts.TicketActive
-		}
+	if prevWorkflow == "" {
+		prevWorkflow = contracts.TicketBacklog
 	}
 
 	// 记录直接派发事件
@@ -215,7 +173,24 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 			"entry_prompt": entryPrompt,
 		}, time.Now())
 
-	loopResult, err := s.executeWorkerLoop(ctx, t, *w, entryPrompt)
+	loopResult, err := s.executeWorkerLoopWithHook(ctx, t, *w, entryPrompt, func(stage int, runID uint) error {
+		if stage != 1 || runID == 0 {
+			return nil
+		}
+		activated, fromStatus, actErr := s.promoteTicketActiveOnWorkerRunAccepted(ctx, ticketID, w.ID, runID, "pm.direct_dispatch", contracts.TicketLifecycleActorUser, map[string]any{
+			"ticket_id":    ticketID,
+			"worker_id":    w.ID,
+			"entry_prompt": entryPrompt,
+		}, time.Now())
+		if fromStatus != "" {
+			prevWorkflow = fromStatus
+		}
+		workflowPromoted = activated
+		if actErr != nil {
+			return fmt.Errorf("更新 ticket workflow 失败（t%d run=%d）：%w", ticketID, runID, actErr)
+		}
+		return nil
+	})
 	if err != nil {
 		var missingErr *workerLoopMissingReportError
 		if errors.As(err, &missingErr) {

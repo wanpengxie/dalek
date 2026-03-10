@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"dalek/internal/contracts"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -234,6 +235,79 @@ func postSubmitRaw(t *testing.T, svc *InternalAPI, route string, body io.Reader)
 		t.Fatalf("decode response failed: %v raw=%s", err, string(raw))
 	}
 	return resp.StatusCode, got
+}
+
+func postTicketStart(t *testing.T, svc *InternalAPI, baseBranch string) (int, map[string]any) {
+	t.Helper()
+	payload := map[string]any{
+		"project":     "demo",
+		"ticket_id":   7,
+		"base_branch": baseBranch,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal request failed: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, "http://"+svc.listener.Addr().String()+"/api/tickets/start", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("new request failed: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("http do failed: %v", err)
+	}
+	defer resp.Body.Close()
+	bodyRaw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body failed: %v", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(bodyRaw, &body); err != nil {
+		t.Fatalf("decode response failed: %v raw=%s", err, string(bodyRaw))
+	}
+	return resp.StatusCode, body
+}
+
+func TestHandleTicketStart_ForwardsBaseBranch(t *testing.T) {
+	project := &testExecutionHostProject{
+		ticketViews: []TicketView{
+			{
+				Ticket: contracts.Ticket{
+					ID:             7,
+					WorkflowStatus: contracts.TicketQueued,
+				},
+			},
+		},
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+	svc, err := NewInternalAPI(host, InternalAPIConfig{ListenAddr: "127.0.0.1:0"}, InternalAPIOptions{})
+	if err != nil {
+		t.Fatalf("NewInternalAPI failed: %v", err)
+	}
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("InternalAPI Start failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = svc.Stop(context.Background())
+	})
+
+	status, body := postTicketStart(t, svc, "release/v2")
+	if status != http.StatusOK {
+		t.Fatalf("unexpected status=%d body=%+v", status, body)
+	}
+	if body["workflow_status"] != string(contracts.TicketQueued) {
+		t.Fatalf("unexpected workflow status body=%+v", body)
+	}
+	if got := project.StartTicketCount(); got != 1 {
+		t.Fatalf("expected one start call, got=%d", got)
+	}
+	if got := project.LastStartBaseBranch(); got != "release/v2" {
+		t.Fatalf("expected forwarded base branch release/v2, got=%q", got)
+	}
 }
 
 func TestHandleDispatchSubmit_QueryUsesIDFlag(t *testing.T) {
