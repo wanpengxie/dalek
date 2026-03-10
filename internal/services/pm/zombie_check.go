@@ -274,23 +274,7 @@ func (s *Service) demoteTicketBlockedOnStateAnomaly(ctx context.Context, db *gor
 		if !fsm.ShouldDemoteOnDispatchFailed(from) {
 			return nil
 		}
-		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ?", ticketID).
-			Updates(map[string]any{
-				"workflow_status": contracts.TicketBlocked,
-				"updated_at":      now,
-			}).Error; err != nil {
-			return err
-		}
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketBlocked, "pm.zombie", "检测到非法/未定义状态，自动降级 blocked", map[string]any{
-			"ticket_id":      ticketID,
-			"worker_id":      workerID,
-			"anomaly_code":   anomalyCode,
-			"anomaly_reason": reason,
-		}, now); err != nil {
-			return err
-		}
-		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+		lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 			TicketID:       ticketID,
 			EventType:      contracts.TicketLifecycleRepaired,
 			Source:         "pm.zombie",
@@ -304,10 +288,22 @@ func (s *Service) demoteTicketBlockedOnStateAnomaly(ctx context.Context, db *gor
 				"anomaly_reason": reason,
 			}),
 			CreatedAt: now,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
-		statusEvent = s.buildStatusChangeEvent(ticketID, from, contracts.TicketBlocked, "pm.zombie", now)
+		if !lifecycleResult.WorkflowChanged() {
+			return nil
+		}
+		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.zombie", "检测到非法/未定义状态，自动降级 blocked", map[string]any{
+			"ticket_id":      ticketID,
+			"worker_id":      workerID,
+			"anomaly_code":   anomalyCode,
+			"anomaly_reason": reason,
+		}, now); err != nil {
+			return err
+		}
+		statusEvent = s.buildStatusChangeEvent(ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.zombie", now)
 		if statusEvent != nil {
 			statusEvent.WorkerID = workerID
 			statusEvent.Detail = reason

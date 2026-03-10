@@ -91,23 +91,7 @@ func (s *Service) promoteTicketActiveOnWorkerRunAccepted(
 		if !fsm.ShouldPromoteOnDispatchClaim(fromStatus) {
 			return nil
 		}
-		res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ? AND workflow_status <> ?", ticketID, contracts.TicketActive).
-			Updates(map[string]any{
-				"workflow_status": contracts.TicketActive,
-				"updated_at":      now,
-			})
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected == 0 {
-			return nil
-		}
-		activated = true
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, fromStatus, contracts.TicketActive, source, "worker run 已被系统接受，ticket 进入 active", payloadCopy, now); err != nil {
-			return err
-		}
-		return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+		lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 			TicketID:       ticketID,
 			EventType:      contracts.TicketLifecycleActivated,
 			Source:         source,
@@ -118,6 +102,14 @@ func (s *Service) promoteTicketActiveOnWorkerRunAccepted(
 			Payload:        payloadCopy,
 			CreatedAt:      now,
 		})
+		if err != nil {
+			return err
+		}
+		if !lifecycleResult.WorkflowChanged() {
+			return nil
+		}
+		activated = true
+		return s.appendTicketWorkflowEventTx(ctx, tx, ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, source, "worker run 已被系统接受，ticket 进入 active", payloadCopy, now)
 	})
 	if err != nil {
 		return false, fromStatus, fmt.Errorf("promote ticket active on worker run accepted: %w", err)

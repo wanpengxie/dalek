@@ -26,7 +26,7 @@ func archiveTicketGuardError(ticketID uint, workflow contracts.TicketWorkflowSta
 	)
 }
 
-// SetTicketWorkflowStatus 是“唯一写者（PM reducer）”对 ticket.workflow_status 的手动入口。
+// SetTicketWorkflowStatus 是 repair-only 入口；正常生命周期推进必须走 lifecycle event。
 func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, status contracts.TicketWorkflowStatus) error {
 	_, db, err := s.require()
 	if err != nil {
@@ -59,18 +59,7 @@ func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, st
 			return nil
 		}
 		now := time.Now()
-		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
-			"workflow_status": status,
-			"updated_at":      now,
-		}).Error; err != nil {
-			return err
-		}
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, status, "pm.set_workflow", "手动设置 workflow_status", map[string]any{
-			"ticket_id": ticketID,
-		}, now); err != nil {
-			return err
-		}
-		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+		lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 			TicketID:       ticketID,
 			EventType:      contracts.TicketLifecycleRepaired,
 			Source:         "pm.set_workflow",
@@ -80,10 +69,19 @@ func (s *Service) SetTicketWorkflowStatus(ctx context.Context, ticketID uint, st
 				"ticket_id": ticketID,
 			}),
 			CreatedAt: now,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
-		statusEvent = s.buildStatusChangeEvent(ticketID, from, status, "pm.set_workflow", now)
+		if !lifecycleResult.WorkflowChanged() {
+			return nil
+		}
+		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.set_workflow", "手动设置 workflow_status", map[string]any{
+			"ticket_id": ticketID,
+		}, now); err != nil {
+			return err
+		}
+		statusEvent = s.buildStatusChangeEvent(ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.set_workflow", now)
 		return nil
 	})
 	if err != nil {
@@ -147,12 +145,6 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 		if !fsm.CanArchiveTicket(from, cur.IntegrationStatus) {
 			return archiveTicketGuardError(ticketID, from, cur.IntegrationStatus)
 		}
-		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
-			"workflow_status": contracts.TicketArchived,
-			"updated_at":      now,
-		}).Error; err != nil {
-			return err
-		}
 		cleanupRequested := false
 		cleanupWorkerID := uint(0)
 		cleanupWorktree := ""
@@ -174,16 +166,7 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 			cleanupWorkerID = w.ID
 			cleanupWorktree = strings.TrimSpace(w.WorktreePath)
 		}
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketArchived, "pm.archive", "手动归档 ticket", map[string]any{
-			"ticket_id":            ticketID,
-			"cleanup_requested":    cleanupRequested,
-			"cleanup_worker_id":    cleanupWorkerID,
-			"cleanup_worktree":     cleanupWorktree,
-			"cleanup_requested_at": now,
-		}, now); err != nil {
-			return err
-		}
-		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+		lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 			TicketID:       ticketID,
 			EventType:      contracts.TicketLifecycleArchived,
 			Source:         "pm.archive",
@@ -198,10 +181,23 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 				"cleanup_requested_at": now,
 			},
 			CreatedAt: now,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
-		statusEvent = s.buildStatusChangeEvent(ticketID, from, contracts.TicketArchived, "pm.archive", now)
+		if !lifecycleResult.WorkflowChanged() {
+			return nil
+		}
+		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.archive", "手动归档 ticket", map[string]any{
+			"ticket_id":            ticketID,
+			"cleanup_requested":    cleanupRequested,
+			"cleanup_worker_id":    cleanupWorkerID,
+			"cleanup_worktree":     cleanupWorktree,
+			"cleanup_requested_at": now,
+		}, now); err != nil {
+			return err
+		}
+		statusEvent = s.buildStatusChangeEvent(ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.archive", now)
 		return nil
 	})
 	if err != nil {
@@ -286,55 +282,14 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 		if err != nil {
 			return err
 		}
-		if from != promoteTo {
-			if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", t.ID).Updates(map[string]any{
-				"workflow_status": promoteTo,
-				"updated_at":      now,
-			}).Error; err != nil {
-				return err
-			}
-			if err := s.appendTicketWorkflowEventTx(ctx, tx, t.ID, from, promoteTo, "pm.apply_worker_report", "worker report 推进 workflow", map[string]any{
-				"worker_id":   r.WorkerID,
-				"ticket_id":   t.ID,
-				"next_action": next,
-				"source":      source,
-			}, now); err != nil {
-				return err
-			}
-			statusEvent = s.buildStatusChangeEvent(t.ID, from, promoteTo, fmt.Sprintf("pm.apply_worker_report(%s)", source), now)
-			if statusEvent != nil {
-				statusEvent.WorkerID = r.WorkerID
-				switch next {
-				case string(contracts.NextWaitUser):
-					statusEvent.Detail = buildNeedsUserInboxBodyFromReport(r)
-				case string(contracts.NextDone):
-					summary := strings.TrimSpace(r.Summary)
-					if summary != "" && summary != "-" {
-						statusEvent.Detail = summary
-					}
-				}
-			}
-		}
+		lifecycleSource := fmt.Sprintf("pm.apply_worker_report(%s)", source)
 
 		switch next {
 		case string(contracts.NextWaitUser):
-			_, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
-				Key:      inboxKeyNeedsUser(r.WorkerID),
-				Status:   contracts.InboxOpen,
-				Severity: contracts.InboxBlocker,
-				Reason:   contracts.InboxNeedsUser,
-				Title:    fmt.Sprintf("需要你输入：t%d w%d", t.ID, r.WorkerID),
-				Body:     buildNeedsUserInboxBodyFromReport(r),
-				TicketID: t.ID,
-				WorkerID: r.WorkerID,
-			})
-			if err != nil {
-				return err
-			}
-			return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 				TicketID:       t.ID,
 				EventType:      contracts.TicketLifecycleWaitUserReported,
-				Source:         fmt.Sprintf("pm.apply_worker_report(%s)", source),
+				Source:         lifecycleSource,
 				ActorType:      contracts.TicketLifecycleActorWorker,
 				WorkerID:       r.WorkerID,
 				TaskRunID:      taskRunID,
@@ -350,15 +305,48 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 				},
 				CreatedAt: now,
 			})
-
-		case string(contracts.NextDone):
-			if err := s.freezeTicketIntegrationForDoneTx(ctx, tx, t.ID, r.WorkerID); err != nil {
+			if err != nil {
 				return err
 			}
-			return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			if !lifecycleResult.Inserted {
+				return nil
+			}
+			if lifecycleResult.WorkflowChanged() {
+				if err := s.appendTicketWorkflowEventTx(ctx, tx, t.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.apply_worker_report", "worker report 推进 workflow", map[string]any{
+					"worker_id":   r.WorkerID,
+					"ticket_id":   t.ID,
+					"next_action": next,
+					"source":      source,
+				}, now); err != nil {
+					return err
+				}
+				statusEvent = s.buildStatusChangeEvent(t.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, lifecycleSource, now)
+				if statusEvent != nil {
+					statusEvent.WorkerID = r.WorkerID
+					statusEvent.Detail = buildNeedsUserInboxBodyFromReport(r)
+				}
+			}
+			_, err = s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
+				Key:      inboxKeyNeedsUser(r.WorkerID),
+				Status:   contracts.InboxOpen,
+				Severity: contracts.InboxBlocker,
+				Reason:   contracts.InboxNeedsUser,
+				Title:    fmt.Sprintf("需要你输入：t%d w%d", t.ID, r.WorkerID),
+				Body:     buildNeedsUserInboxBodyFromReport(r),
+				TicketID: t.ID,
+				WorkerID: r.WorkerID,
+			})
+			return err
+
+		case string(contracts.NextDone):
+			freeze, err := s.resolveDoneIntegrationFreezeTx(ctx, tx, t.ID, r.WorkerID)
+			if err != nil {
+				return err
+			}
+			lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 				TicketID:       t.ID,
 				EventType:      contracts.TicketLifecycleDoneReported,
-				Source:         fmt.Sprintf("pm.apply_worker_report(%s)", source),
+				Source:         lifecycleSource,
 				ActorType:      contracts.TicketLifecycleActorWorker,
 				WorkerID:       r.WorkerID,
 				TaskRunID:      taskRunID,
@@ -370,11 +358,88 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 					"next_action":        next,
 					"source":             source,
 					"summary":            strings.TrimSpace(r.Summary),
+					"head_sha":           freeze.AnchorSHA,
+					"anchor_sha":         freeze.AnchorSHA,
+					"target_ref":         freeze.TargetRef,
 					"integration_status": string(contracts.IntegrationNeedsMerge),
 					"workflow_status":    string(contracts.TicketDone),
 				},
 				CreatedAt: now,
 			})
+			if err != nil {
+				return err
+			}
+			if !lifecycleResult.Inserted {
+				return nil
+			}
+			if err := s.applyDoneIntegrationFreezeTx(ctx, tx, t.ID, freeze, now); err != nil {
+				return err
+			}
+			if !lifecycleResult.WorkflowChanged() {
+				return nil
+			}
+			if err := s.appendTicketWorkflowEventTx(ctx, tx, t.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.apply_worker_report", "worker report 推进 workflow", map[string]any{
+				"worker_id":   r.WorkerID,
+				"ticket_id":   t.ID,
+				"next_action": next,
+				"source":      source,
+			}, now); err != nil {
+				return err
+			}
+			statusEvent = s.buildStatusChangeEvent(t.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, lifecycleSource, now)
+			if statusEvent != nil {
+				statusEvent.WorkerID = r.WorkerID
+				summary := strings.TrimSpace(r.Summary)
+				if summary != "" && summary != "-" {
+					statusEvent.Detail = summary
+				}
+			}
+			return nil
+
+		case string(contracts.NextContinue):
+			if from == contracts.TicketActive {
+				return nil
+			}
+			idempotencyKey := ticketlifecycle.ActivatedRunIdempotencyKey(t.ID, taskRunID)
+			if taskRunID == 0 {
+				idempotencyKey = fmt.Sprintf("ticket:%d:activated:worker_report:%d", t.ID, r.WorkerID)
+			}
+			lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
+				TicketID:       t.ID,
+				EventType:      contracts.TicketLifecycleActivated,
+				Source:         lifecycleSource,
+				ActorType:      contracts.TicketLifecycleActorWorker,
+				WorkerID:       r.WorkerID,
+				TaskRunID:      taskRunID,
+				IdempotencyKey: idempotencyKey,
+				Payload: map[string]any{
+					"ticket_id":   t.ID,
+					"worker_id":   r.WorkerID,
+					"task_run_id": taskRunID,
+					"next_action": next,
+					"source":      source,
+				},
+				CreatedAt: now,
+			})
+			if err != nil {
+				return err
+			}
+			if !lifecycleResult.WorkflowChanged() {
+				return nil
+			}
+			if err := s.appendTicketWorkflowEventTx(ctx, tx, t.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.apply_worker_report", "worker report 补齐 active 投影", map[string]any{
+				"worker_id":   r.WorkerID,
+				"ticket_id":   t.ID,
+				"next_action": next,
+				"source":      source,
+			}, now); err != nil {
+				return err
+			}
+			statusEvent = s.buildStatusChangeEvent(t.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, lifecycleSource, now)
+			if statusEvent != nil {
+				statusEvent.WorkerID = r.WorkerID
+			}
+			return nil
 		}
 		return nil
 	})

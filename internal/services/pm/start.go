@@ -120,29 +120,18 @@ func (s *Service) promoteTicketQueuedOnStart(ctx context.Context, db *gorm.DB, t
 	}
 	now := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		res := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ? AND (workflow_status IN ? OR TRIM(COALESCE(workflow_status, '')) = '')", t.ID, []contracts.TicketWorkflowStatus{contracts.TicketBacklog, contracts.TicketBlocked}).
-			Updates(map[string]any{
-				"workflow_status": contracts.TicketQueued,
-				"updated_at":      now,
-			})
-		if res.Error != nil {
-			return res.Error
+		var current contracts.Ticket
+		if err := tx.WithContext(ctx).Select("id", "workflow_status").First(&current, t.ID).Error; err != nil {
+			return err
 		}
-		if res.RowsAffected == 0 {
-			return nil
-		}
-		from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
+		from := contracts.CanonicalTicketWorkflowStatus(current.WorkflowStatus)
 		if from == "" {
 			from = contracts.TicketBacklog
 		}
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, t.ID, from, contracts.TicketQueued, "pm.start", "start 推进到 queued", map[string]any{
-			"ticket_id": t.ID,
-			"worker_id": w.ID,
-		}, now); err != nil {
-			return err
+		if from != contracts.TicketBacklog && from != contracts.TicketBlocked {
+			return nil
 		}
-		return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+		lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 			TicketID:       t.ID,
 			EventType:      contracts.TicketLifecycleStartRequested,
 			Source:         "pm.start",
@@ -155,6 +144,16 @@ func (s *Service) promoteTicketQueuedOnStart(ctx context.Context, db *gorm.DB, t
 			},
 			CreatedAt: now,
 		})
+		if err != nil {
+			return err
+		}
+		if !lifecycleResult.WorkflowChanged() {
+			return nil
+		}
+		return s.appendTicketWorkflowEventTx(ctx, tx, t.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.start", "start 推进到 queued", map[string]any{
+			"ticket_id": t.ID,
+			"worker_id": w.ID,
+		}, now)
 	}); err != nil {
 		return fmt.Errorf("更新 ticket workflow 失败（t%d w%d）：%w", t.ID, w.ID, err)
 	}

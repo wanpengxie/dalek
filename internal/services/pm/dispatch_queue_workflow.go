@@ -24,23 +24,7 @@ func (s *Service) promoteTicketActiveOnDispatchClaimTx(ctx context.Context, tx *
 	if !fsm.ShouldPromoteOnDispatchClaim(from) {
 		return nil, nil
 	}
-	if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-		Where("id = ?", ticket.ID).
-		Updates(map[string]any{
-			"workflow_status": contracts.TicketActive,
-			"updated_at":      now,
-		}).Error; err != nil {
-		return nil, err
-	}
-	if err := s.appendTicketWorkflowEventTx(ctx, tx, ticket.ID, from, contracts.TicketActive, "pm.dispatch", "dispatch 开始推进到 active", map[string]any{
-		"ticket_id":   ticket.ID,
-		"worker_id":   job.WorkerID,
-		"dispatch_id": job.ID,
-		"request_id":  strings.TrimSpace(job.RequestID),
-	}, now); err != nil {
-		return nil, err
-	}
-	if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+	lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 		TicketID:       ticket.ID,
 		EventType:      contracts.TicketLifecycleActivated,
 		Source:         "pm.dispatch",
@@ -55,10 +39,22 @@ func (s *Service) promoteTicketActiveOnDispatchClaimTx(ctx context.Context, tx *
 			"request_id":  strings.TrimSpace(job.RequestID),
 		},
 		CreatedAt: now,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
-	return s.buildStatusChangeEvent(ticket.ID, from, contracts.TicketActive, "pm.dispatch.claim", now), nil
+	if !lifecycleResult.WorkflowChanged() {
+		return nil, nil
+	}
+	if err := s.appendTicketWorkflowEventTx(ctx, tx, ticket.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.dispatch", "dispatch 开始推进到 active", map[string]any{
+		"ticket_id":   ticket.ID,
+		"worker_id":   job.WorkerID,
+		"dispatch_id": job.ID,
+		"request_id":  strings.TrimSpace(job.RequestID),
+	}, now); err != nil {
+		return nil, err
+	}
+	return s.buildStatusChangeEvent(ticket.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.dispatch.claim", now), nil
 }
 
 func (s *Service) demoteTicketBlockedOnDispatchFailedTx(ctx context.Context, tx *gorm.DB, job contracts.PMDispatchJob, errMsg string, now time.Time) (*StatusChangeEvent, error) {
@@ -73,24 +69,7 @@ func (s *Service) demoteTicketBlockedOnDispatchFailedTx(ctx context.Context, tx 
 	if !fsm.ShouldDemoteOnDispatchFailed(from) {
 		return nil, nil
 	}
-	if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-		Where("id = ?", ticket.ID).
-		Updates(map[string]any{
-			"workflow_status": contracts.TicketBlocked,
-			"updated_at":      now,
-		}).Error; err != nil {
-		return nil, err
-	}
-	if err := s.appendTicketWorkflowEventTx(ctx, tx, ticket.ID, from, contracts.TicketBlocked, "pm.dispatch", "dispatch 失败推进到 blocked", map[string]any{
-		"ticket_id":   ticket.ID,
-		"worker_id":   job.WorkerID,
-		"dispatch_id": job.ID,
-		"request_id":  strings.TrimSpace(job.RequestID),
-		"error":       strings.TrimSpace(errMsg),
-	}, now); err != nil {
-		return nil, err
-	}
-	if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+	lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 		TicketID:       ticket.ID,
 		EventType:      contracts.TicketLifecycleRepaired,
 		Source:         "pm.dispatch",
@@ -106,10 +85,23 @@ func (s *Service) demoteTicketBlockedOnDispatchFailedTx(ctx context.Context, tx 
 			"error":       strings.TrimSpace(errMsg),
 		}),
 		CreatedAt: now,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
 	}
-	ev := s.buildStatusChangeEvent(ticket.ID, from, contracts.TicketBlocked, "pm.dispatch.fail", now)
+	if !lifecycleResult.WorkflowChanged() {
+		return nil, nil
+	}
+	if err := s.appendTicketWorkflowEventTx(ctx, tx, ticket.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.dispatch", "dispatch 失败推进到 blocked", map[string]any{
+		"ticket_id":   ticket.ID,
+		"worker_id":   job.WorkerID,
+		"dispatch_id": job.ID,
+		"request_id":  strings.TrimSpace(job.RequestID),
+		"error":       strings.TrimSpace(errMsg),
+	}, now); err != nil {
+		return nil, err
+	}
+	ev := s.buildStatusChangeEvent(ticket.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.dispatch.fail", now)
 	if ev != nil {
 		ev.WorkerID = job.WorkerID
 		ev.Detail = strings.TrimSpace(errMsg)

@@ -311,24 +311,7 @@ func (s *Service) applyTicketStatusForRecoveryTx(ctx context.Context, tx *gorm.D
 	if from == contracts.TicketDone || from == contracts.TicketArchived || from == target {
 		return false, nil
 	}
-	if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-		Where("id = ?", ticket.ID).
-		Updates(map[string]any{
-			"workflow_status": target,
-			"updated_at":      now,
-		}).Error; err != nil {
-		return false, err
-	}
-	if err := s.appendTicketWorkflowEventTx(ctx, tx, ticket.ID, from, target, strings.TrimSpace(source), strings.TrimSpace(reason), map[string]any{
-		"ticket_id":       ticket.ID,
-		"worker_id":       job.WorkerID,
-		"dispatch_id":     job.ID,
-		"request_id":      strings.TrimSpace(job.RequestID),
-		"target_workflow": string(target),
-	}, now); err != nil {
-		return false, err
-	}
-	if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+	lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 		TicketID:       ticket.ID,
 		EventType:      contracts.TicketLifecycleRepaired,
 		Source:         strings.TrimSpace(source),
@@ -344,7 +327,20 @@ func (s *Service) applyTicketStatusForRecoveryTx(ctx context.Context, tx *gorm.D
 			"reason":      strings.TrimSpace(reason),
 		}),
 		CreatedAt: now,
-	}); err != nil {
+	})
+	if err != nil {
+		return false, err
+	}
+	if !lifecycleResult.WorkflowChanged() {
+		return false, nil
+	}
+	if err := s.appendTicketWorkflowEventTx(ctx, tx, ticket.ID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, strings.TrimSpace(source), strings.TrimSpace(reason), map[string]any{
+		"ticket_id":       ticket.ID,
+		"worker_id":       job.WorkerID,
+		"dispatch_id":     job.ID,
+		"request_id":      strings.TrimSpace(job.RequestID),
+		"target_workflow": string(target),
+	}, now); err != nil {
 		return false, err
 	}
 	return true, nil

@@ -41,6 +41,55 @@ type ConsistencyCheck struct {
 	Events       []contracts.TicketLifecycleEvent `json:"events,omitempty"`
 }
 
+func defaultSnapshotProjection() SnapshotProjection {
+	return SnapshotProjection{
+		WorkflowStatus:    contracts.TicketBacklog,
+		IntegrationStatus: contracts.IntegrationNone,
+	}
+}
+
+func projectSnapshotEvent(out *SnapshotProjection, ev contracts.TicketLifecycleEvent) {
+	if out == nil {
+		return
+	}
+	out.LastSequence = ev.Sequence
+	switch contracts.CanonicalTicketLifecycleEventType(ev.EventType) {
+	case contracts.TicketLifecycleCreated:
+		out.WorkflowStatus = contracts.TicketBacklog
+		out.IntegrationStatus = contracts.IntegrationNone
+	case contracts.TicketLifecycleStartRequested:
+		out.WorkflowStatus = contracts.TicketQueued
+	case contracts.TicketLifecycleActivated:
+		out.WorkflowStatus = contracts.TicketActive
+	case contracts.TicketLifecycleExecutionLost:
+		// execution_lost 是事实事件，本身不改变投影状态；
+		// 后续由 requeued / execution_escalated 完成正式收敛。
+	case contracts.TicketLifecycleRequeued:
+		out.WorkflowStatus = contracts.TicketQueued
+	case contracts.TicketLifecycleExecutionEscalated:
+		out.WorkflowStatus = contracts.TicketBlocked
+	case contracts.TicketLifecycleWaitUserReported:
+		out.WorkflowStatus = contracts.TicketBlocked
+	case contracts.TicketLifecycleDoneReported:
+		out.WorkflowStatus = contracts.TicketDone
+		out.IntegrationStatus = contracts.IntegrationNeedsMerge
+	case contracts.TicketLifecycleMergeObserved:
+		out.IntegrationStatus = contracts.IntegrationMerged
+	case contracts.TicketLifecycleMergeAbandoned:
+		out.IntegrationStatus = contracts.IntegrationAbandoned
+	case contracts.TicketLifecycleArchived:
+		out.WorkflowStatus = contracts.TicketArchived
+	case contracts.TicketLifecycleRepaired:
+		payload := ev.PayloadJSON
+		if targetWorkflow := strings.TrimSpace(fmt.Sprint(payload["target_workflow"])); targetWorkflow != "" && targetWorkflow != "<nil>" {
+			out.WorkflowStatus = contracts.CanonicalTicketWorkflowStatus(contracts.TicketWorkflowStatus(targetWorkflow))
+		}
+		if targetIntegration := strings.TrimSpace(fmt.Sprint(payload["target_integration"])); targetIntegration != "" && targetIntegration != "<nil>" {
+			out.IntegrationStatus = contracts.CanonicalIntegrationStatus(contracts.IntegrationStatus(targetIntegration))
+		}
+	}
+}
+
 func AppendEventTx(ctx context.Context, tx *gorm.DB, input AppendInput) (*contracts.TicketLifecycleEvent, bool, error) {
 	if tx == nil {
 		return nil, false, nil
@@ -111,6 +160,16 @@ func AppendEventTx(ctx context.Context, tx *gorm.DB, input AppendInput) (*contra
 	return &ev, true, nil
 }
 
+func ProjectFromLastEvent(current SnapshotProjection, ev contracts.TicketLifecycleEvent) SnapshotProjection {
+	out := current
+	if strings.TrimSpace(string(out.WorkflowStatus)) == "" {
+		out = defaultSnapshotProjection()
+	}
+	out.EventCount++
+	projectSnapshotEvent(&out, ev)
+	return out
+}
+
 func ListEventsByTicket(ctx context.Context, db *gorm.DB, ticketID uint) ([]contracts.TicketLifecycleEvent, error) {
 	if db == nil {
 		return nil, fmt.Errorf("db 为空")
@@ -133,48 +192,10 @@ func ListEventsByTicket(ctx context.Context, db *gorm.DB, ticketID uint) ([]cont
 }
 
 func RebuildSnapshot(events []contracts.TicketLifecycleEvent) SnapshotProjection {
-	out := SnapshotProjection{
-		WorkflowStatus:    contracts.TicketBacklog,
-		IntegrationStatus: contracts.IntegrationNone,
-		EventCount:        len(events),
-	}
+	out := defaultSnapshotProjection()
+	out.EventCount = len(events)
 	for _, ev := range events {
-		out.LastSequence = ev.Sequence
-		switch contracts.CanonicalTicketLifecycleEventType(ev.EventType) {
-		case contracts.TicketLifecycleCreated:
-			out.WorkflowStatus = contracts.TicketBacklog
-			out.IntegrationStatus = contracts.IntegrationNone
-		case contracts.TicketLifecycleStartRequested:
-			out.WorkflowStatus = contracts.TicketQueued
-		case contracts.TicketLifecycleActivated:
-			out.WorkflowStatus = contracts.TicketActive
-		case contracts.TicketLifecycleExecutionLost:
-			// execution_lost 是事实事件，本身不改变投影状态；
-			// 后续由 requeued / execution_escalated 完成正式收敛。
-		case contracts.TicketLifecycleRequeued:
-			out.WorkflowStatus = contracts.TicketQueued
-		case contracts.TicketLifecycleExecutionEscalated:
-			out.WorkflowStatus = contracts.TicketBlocked
-		case contracts.TicketLifecycleWaitUserReported:
-			out.WorkflowStatus = contracts.TicketBlocked
-		case contracts.TicketLifecycleDoneReported:
-			out.WorkflowStatus = contracts.TicketDone
-			out.IntegrationStatus = contracts.IntegrationNeedsMerge
-		case contracts.TicketLifecycleMergeObserved:
-			out.IntegrationStatus = contracts.IntegrationMerged
-		case contracts.TicketLifecycleMergeAbandoned:
-			out.IntegrationStatus = contracts.IntegrationAbandoned
-		case contracts.TicketLifecycleArchived:
-			out.WorkflowStatus = contracts.TicketArchived
-		case contracts.TicketLifecycleRepaired:
-			payload := ev.PayloadJSON
-			if targetWorkflow := strings.TrimSpace(fmt.Sprint(payload["target_workflow"])); targetWorkflow != "" && targetWorkflow != "<nil>" {
-				out.WorkflowStatus = contracts.CanonicalTicketWorkflowStatus(contracts.TicketWorkflowStatus(targetWorkflow))
-			}
-			if targetIntegration := strings.TrimSpace(fmt.Sprint(payload["target_integration"])); targetIntegration != "" && targetIntegration != "<nil>" {
-				out.IntegrationStatus = contracts.CanonicalIntegrationStatus(contracts.IntegrationStatus(targetIntegration))
-			}
-		}
+		projectSnapshotEvent(&out, ev)
 	}
 	return out
 }

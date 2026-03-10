@@ -41,22 +41,7 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 		if !fsm.ShouldDemoteOnDispatchFailed(from) {
 			return nil
 		}
-		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ?", ticketID).
-			Updates(map[string]any{
-				"workflow_status": contracts.TicketBlocked,
-				"updated_at":      now,
-			}).Error; err != nil {
-			return err
-		}
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, from, contracts.TicketBlocked, "pm.manager_tick", "worker 未就绪自动降级 blocked", map[string]any{
-			"ticket_id": ticketID,
-			"worker_id": workerID,
-			"error":     reason,
-		}, now); err != nil {
-			return err
-		}
-		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+		lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 			TicketID:       ticketID,
 			EventType:      contracts.TicketLifecycleRepaired,
 			Source:         "pm.manager_tick",
@@ -69,10 +54,21 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 				"error":     reason,
 			}),
 			CreatedAt: now,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
-		statusEvent = s.buildStatusChangeEvent(ticketID, from, contracts.TicketBlocked, "pm.manager_tick", now)
+		if !lifecycleResult.WorkflowChanged() {
+			return nil
+		}
+		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.manager_tick", "worker 未就绪自动降级 blocked", map[string]any{
+			"ticket_id": ticketID,
+			"worker_id": workerID,
+			"error":     reason,
+		}, now); err != nil {
+			return err
+		}
+		statusEvent = s.buildStatusChangeEvent(ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.manager_tick", now)
 		if statusEvent != nil {
 			statusEvent.WorkerID = workerID
 			statusEvent.Detail = reason
@@ -84,7 +80,7 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 			key = inboxKeyWorkerIncident(workerID, "worker_not_ready")
 			title = fmt.Sprintf("worker 未就绪：t%d w%d", ticketID, workerID)
 		}
-		_, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
+		_, err = s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
 			Key:      key,
 			Status:   contracts.InboxOpen,
 			Severity: contracts.InboxBlocker,

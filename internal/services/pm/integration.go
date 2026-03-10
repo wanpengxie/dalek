@@ -16,6 +16,11 @@ import (
 const integrationGitCheckTimeout = 3 * time.Second
 const integrationDefaultTargetRef = "refs/heads/main"
 
+type doneIntegrationFreeze struct {
+	AnchorSHA string
+	TargetRef string
+}
+
 func (s *Service) AbandonTicketIntegration(ctx context.Context, ticketID uint, reason string) error {
 	_, db, err := s.require()
 	if err != nil {
@@ -42,17 +47,7 @@ func (s *Service) AbandonTicketIntegration(ctx context.Context, ticketID uint, r
 		}
 
 		now := time.Now()
-		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ?", ticketID).
-			Updates(map[string]any{
-				"integration_status": contracts.IntegrationAbandoned,
-				"abandoned_reason":   reason,
-				"merged_at":          nil,
-				"updated_at":         now,
-			}).Error; err != nil {
-			return err
-		}
-		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+		lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 			TicketID:       ticketID,
 			EventType:      contracts.TicketLifecycleMergeAbandoned,
 			Source:         "pm.integration",
@@ -64,8 +59,14 @@ func (s *Service) AbandonTicketIntegration(ctx context.Context, ticketID uint, r
 				"integration_status": string(contracts.IntegrationAbandoned),
 			},
 			CreatedAt: now,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
+		}
+		if lifecycleResult.IntegrationChanged() {
+			if err := s.applyAbandonedIntegrationSnapshotTx(ctx, tx, ticketID, reason, now); err != nil {
+				return err
+			}
 		}
 
 		return tx.WithContext(ctx).Model(&contracts.InboxItem{}).
@@ -78,16 +79,19 @@ func (s *Service) AbandonTicketIntegration(ctx context.Context, ticketID uint, r
 	})
 }
 
-func (s *Service) freezeTicketIntegrationForDoneTx(ctx context.Context, tx *gorm.DB, ticketID, workerID uint) error {
+func (s *Service) resolveDoneIntegrationFreezeTx(ctx context.Context, tx *gorm.DB, ticketID, workerID uint) (doneIntegrationFreeze, error) {
 	if tx == nil || ticketID == 0 {
-		return nil
+		return doneIntegrationFreeze{}, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var t contracts.Ticket
-	if err := tx.WithContext(ctx).First(&t, ticketID).Error; err != nil {
-		return err
-	}
-	if !fsm.CanFreezeIntegrationAnchor(t.WorkflowStatus, t.IntegrationStatus) {
-		return nil
+	if err := tx.WithContext(ctx).
+		Select("id", "target_branch").
+		First(&t, ticketID).Error; err != nil {
+		return doneIntegrationFreeze{}, err
 	}
 
 	var w contracts.Worker
@@ -106,23 +110,77 @@ func (s *Service) freezeTicketIntegrationForDoneTx(ctx context.Context, tx *gorm
 			Select("id", "ticket_id", "branch", "worktree_path").
 			First(&w).Error; err != nil {
 			if err != gorm.ErrRecordNotFound {
-				return err
+				return doneIntegrationFreeze{}, err
 			}
 			w = contracts.Worker{}
 		}
 	}
 
-	anchor := strings.TrimSpace(s.tryResolveMergeAnchorSHA(ctx, &w))
-	now := time.Now()
+	targetRef := normalizeIntegrationTargetRef(t.TargetBranch)
+	if targetRef == "" {
+		targetRef = s.defaultIntegrationTargetBranch(ctx)
+	}
+	return doneIntegrationFreeze{
+		AnchorSHA: strings.TrimSpace(s.tryResolveMergeAnchorSHA(ctx, &w)),
+		TargetRef: targetRef,
+	}, nil
+}
+
+func (s *Service) applyDoneIntegrationFreezeTx(ctx context.Context, tx *gorm.DB, ticketID uint, freeze doneIntegrationFreeze, now time.Time) error {
+	if tx == nil || ticketID == 0 {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	updates := map[string]any{
+		"merge_anchor_sha": strings.TrimSpace(freeze.AnchorSHA),
+		"merged_at":        nil,
+		"abandoned_reason": "",
+		"updated_at":       now,
+	}
+	if strings.TrimSpace(freeze.TargetRef) != "" {
+		updates["target_branch"] = strings.TrimSpace(freeze.TargetRef)
+	}
 	return tx.WithContext(ctx).Model(&contracts.Ticket{}).
-		Where("id = ? AND workflow_status = ? AND TRIM(COALESCE(integration_status, '')) = ''", ticketID, contracts.TicketDone).
+		Where("id = ?", ticketID).
+		Updates(updates).Error
+}
+
+func (s *Service) applyAbandonedIntegrationSnapshotTx(ctx context.Context, tx *gorm.DB, ticketID uint, reason string, now time.Time) error {
+	if tx == nil || ticketID == 0 {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return tx.WithContext(ctx).Model(&contracts.Ticket{}).
+		Where("id = ?", ticketID).
 		Updates(map[string]any{
-			"integration_status": contracts.IntegrationNeedsMerge,
-			"merge_anchor_sha":   anchor,
-			"merged_at":          nil,
-			"abandoned_reason":   "",
-			"updated_at":         now,
+			"abandoned_reason": strings.TrimSpace(reason),
+			"merged_at":        nil,
+			"updated_at":       now,
 		}).Error
+}
+
+func (s *Service) applyMergedIntegrationSnapshotTx(ctx context.Context, tx *gorm.DB, ticketID uint, targetRef string, now time.Time) error {
+	if tx == nil || ticketID == 0 {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	updates := map[string]any{
+		"merged_at":        &now,
+		"abandoned_reason": "",
+		"updated_at":       now,
+	}
+	if strings.TrimSpace(targetRef) != "" {
+		updates["target_branch"] = strings.TrimSpace(targetRef)
+	}
+	return tx.WithContext(ctx).Model(&contracts.Ticket{}).
+		Where("id = ?", ticketID).
+		Updates(updates).Error
 }
 
 func (s *Service) defaultIntegrationTargetBranch(ctx context.Context) string {

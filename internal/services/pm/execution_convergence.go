@@ -148,7 +148,7 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 			input.FailureCode,
 			input.Reason,
 		)
-		if err := s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+		_, inserted, err := ticketlifecycle.AppendEventTx(ctx, tx, ticketlifecycle.AppendInput{
 			TicketID:       input.TicketID,
 			EventType:      contracts.TicketLifecycleExecutionLost,
 			Source:         input.Source,
@@ -164,8 +164,12 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 				"reason":       input.Reason,
 			},
 			CreatedAt: input.Now,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
+		}
+		if !inserted {
+			return nil
 		}
 
 		target := contracts.TicketQueued
@@ -199,33 +203,8 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 			}
 		}
 
-		if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
-			Where("id = ? AND workflow_status = ?", input.TicketID, contracts.TicketActive).
-			Updates(map[string]any{
-				"workflow_status": target,
-				"updated_at":      input.Now,
-			}).Error; err != nil {
-			return err
-		}
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, input.TicketID, contracts.TicketActive, target, input.Source, executionConvergenceReason(target, exhausted), map[string]any{
-			"ticket_id":    input.TicketID,
-			"worker_id":    input.WorkerID,
-			"task_run_id":  taskRunID,
-			"failure_code": input.FailureCode,
-			"reason":       input.Reason,
-			"retry_count":  retryCount,
-			"max_retries":  defaultZombieMaxRetries,
-		}, input.Now); err != nil {
-			return err
-		}
-		statusEvent = s.buildStatusChangeEvent(input.TicketID, contracts.TicketActive, target, input.Source, input.Now)
-		if statusEvent != nil {
-			statusEvent.WorkerID = input.WorkerID
-			statusEvent.Detail = input.Reason
-		}
-
 		if target == contracts.TicketQueued {
-			return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+			lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 				TicketID:       input.TicketID,
 				EventType:      contracts.TicketLifecycleRequeued,
 				Source:         input.Source,
@@ -246,6 +225,29 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 				},
 				CreatedAt: input.Now,
 			})
+			if err != nil {
+				return err
+			}
+			if !lifecycleResult.WorkflowChanged() {
+				return nil
+			}
+			if err := s.appendTicketWorkflowEventTx(ctx, tx, input.TicketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, input.Source, executionConvergenceReason(target, exhausted), map[string]any{
+				"ticket_id":    input.TicketID,
+				"worker_id":    input.WorkerID,
+				"task_run_id":  taskRunID,
+				"failure_code": input.FailureCode,
+				"reason":       input.Reason,
+				"retry_count":  retryCount,
+				"max_retries":  defaultZombieMaxRetries,
+			}, input.Now); err != nil {
+				return err
+			}
+			statusEvent = s.buildStatusChangeEvent(input.TicketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, input.Source, input.Now)
+			if statusEvent != nil {
+				statusEvent.WorkerID = input.WorkerID
+				statusEvent.Detail = input.Reason
+			}
+			return nil
 		}
 
 		if _, err := s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
@@ -260,7 +262,7 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 		}); err != nil {
 			return err
 		}
-		return s.appendTicketLifecycleEventTx(ctx, tx, ticketlifecycle.AppendInput{
+		lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 			TicketID:       input.TicketID,
 			EventType:      contracts.TicketLifecycleExecutionEscalated,
 			Source:         input.Source,
@@ -281,6 +283,29 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 			},
 			CreatedAt: input.Now,
 		})
+		if err != nil {
+			return err
+		}
+		if !lifecycleResult.WorkflowChanged() {
+			return nil
+		}
+		if err := s.appendTicketWorkflowEventTx(ctx, tx, input.TicketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, input.Source, executionConvergenceReason(target, exhausted), map[string]any{
+			"ticket_id":    input.TicketID,
+			"worker_id":    input.WorkerID,
+			"task_run_id":  taskRunID,
+			"failure_code": input.FailureCode,
+			"reason":       input.Reason,
+			"retry_count":  retryCount,
+			"max_retries":  defaultZombieMaxRetries,
+		}, input.Now); err != nil {
+			return err
+		}
+		statusEvent = s.buildStatusChangeEvent(input.TicketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, input.Source, input.Now)
+		if statusEvent != nil {
+			statusEvent.WorkerID = input.WorkerID
+			statusEvent.Detail = input.Reason
+		}
+		return nil
 	})
 	if err != nil {
 		return result, err

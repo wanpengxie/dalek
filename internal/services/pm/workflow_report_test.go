@@ -100,3 +100,94 @@ func TestApplyWorkerReport_DoneFreezesTicketIntegrationSynchronously(t *testing.
 		t.Fatalf("done lifecycle event should record task_run_id, got=%+v", lifecycle)
 	}
 }
+
+func TestApplyWorkerReport_WaitUserDuplicateDoesNotDuplicateLifecycleOrInbox(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "workflow-report-wait-user-duplicate")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+
+	report := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		Summary:    "缺少审批结果",
+		NeedsUser:  true,
+		Blockers:   []string{"请确认发布窗口"},
+		NextAction: string(contracts.NextWaitUser),
+	}
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
+		t.Fatalf("first ApplyWorkerReport failed: %v", err)
+	}
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
+		t.Fatalf("second ApplyWorkerReport failed: %v", err)
+	}
+
+	var lifecycleCount int64
+	if err := p.DB.Model(&contracts.TicketLifecycleEvent{}).
+		Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleWaitUserReported).
+		Count(&lifecycleCount).Error; err != nil {
+		t.Fatalf("count wait_user lifecycle events failed: %v", err)
+	}
+	if lifecycleCount != 1 {
+		t.Fatalf("expected exactly 1 wait_user lifecycle event, got=%d", lifecycleCount)
+	}
+
+	var inboxCount int64
+	if err := p.DB.Model(&contracts.InboxItem{}).
+		Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).
+		Count(&inboxCount).Error; err != nil {
+		t.Fatalf("count wait_user inbox failed: %v", err)
+	}
+	if inboxCount != 1 {
+		t.Fatalf("expected exactly 1 open needs_user inbox, got=%d", inboxCount)
+	}
+}
+
+func TestApplyWorkerReport_DoneDuplicateDoesNotReopenNeedsMergeAfterAbandon(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "workflow-report-done-duplicate")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+
+	report := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		Summary:    "开发完成",
+		NextAction: string(contracts.NextDone),
+	}
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
+		t.Fatalf("first ApplyWorkerReport failed: %v", err)
+	}
+	if err := svc.AbandonTicketIntegration(context.Background(), tk.ID, "需求取消"); err != nil {
+		t.Fatalf("AbandonTicketIntegration failed: %v", err)
+	}
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
+		t.Fatalf("second ApplyWorkerReport failed: %v", err)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("reload ticket failed: %v", err)
+	}
+	if got := contracts.CanonicalIntegrationStatus(ticket.IntegrationStatus); got != contracts.IntegrationAbandoned {
+		t.Fatalf("expected integration_status abandoned after duplicate done report, got=%s", got)
+	}
+
+	var lifecycleCount int64
+	if err := p.DB.Model(&contracts.TicketLifecycleEvent{}).
+		Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleDoneReported).
+		Count(&lifecycleCount).Error; err != nil {
+		t.Fatalf("count done lifecycle events failed: %v", err)
+	}
+	if lifecycleCount != 1 {
+		t.Fatalf("expected exactly 1 done lifecycle event, got=%d", lifecycleCount)
+	}
+}

@@ -173,3 +173,35 @@ func TestRebuildSnapshot_ExecutionConvergenceEvents(t *testing.T) {
 		t.Fatalf("expected event_count=%d, got=%d", len(events), got.EventCount)
 	}
 }
+
+func TestProjectFromLastEvent_MatchesRebuildSnapshot(t *testing.T) {
+	events := []contracts.TicketLifecycleEvent{
+		{Sequence: 1, EventType: contracts.TicketLifecycleCreated},
+		{Sequence: 2, EventType: contracts.TicketLifecycleStartRequested},
+		{Sequence: 3, EventType: contracts.TicketLifecycleActivated},
+		{Sequence: 4, EventType: contracts.TicketLifecycleExecutionLost},
+		{Sequence: 5, EventType: contracts.TicketLifecycleRequeued},
+		{Sequence: 6, EventType: contracts.TicketLifecycleActivated},
+		{Sequence: 7, EventType: contracts.TicketLifecycleDoneReported},
+		{Sequence: 8, EventType: contracts.TicketLifecycleMergeObserved},
+		{Sequence: 9, EventType: contracts.TicketLifecycleArchived},
+	}
+
+	var projected SnapshotProjection
+	for _, ev := range events {
+		projected = ProjectFromLastEvent(projected, ev)
+	}
+	rebuilt := RebuildSnapshot(events)
+	if projected.WorkflowStatus != rebuilt.WorkflowStatus {
+		t.Fatalf("workflow mismatch: projected=%s rebuilt=%s", projected.WorkflowStatus, rebuilt.WorkflowStatus)
+	}
+	if projected.IntegrationStatus != rebuilt.IntegrationStatus {
+		t.Fatalf("integration mismatch: projected=%s rebuilt=%s", projected.IntegrationStatus, rebuilt.IntegrationStatus)
+	}
+	if projected.EventCount != rebuilt.EventCount {
+		t.Fatalf("event_count mismatch: projected=%d rebuilt=%d", projected.EventCount, rebuilt.EventCount)
+	}
+	if projected.LastSequence != rebuilt.LastSequence {
+		t.Fatalf("last_sequence mismatch: projected=%d rebuilt=%d", projected.LastSequence, rebuilt.LastSequence)
+	}
+}
