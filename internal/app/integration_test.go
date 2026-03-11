@@ -59,6 +59,30 @@ func mustProjectDB(t *testing.T, p *Project) *gorm.DB {
 	return db
 }
 
+func uintFromAny(v any) uint {
+	switch n := v.(type) {
+	case uint:
+		return n
+	case uint64:
+		return uint(n)
+	case uint32:
+		return uint(n)
+	case int:
+		if n > 0 {
+			return uint(n)
+		}
+	case int64:
+		if n > 0 {
+			return uint(n)
+		}
+	case float64:
+		if n > 0 {
+			return uint(n)
+		}
+	}
+	return 0
+}
+
 func ensureNotebookShapingSkill(t *testing.T, p *Project) {
 	t.Helper()
 	skillPath := p.NotebookShapingSkillPath()
@@ -322,318 +346,143 @@ func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, 
 	return job
 }
 
-func assertRecoveredDispatchJob(t *testing.T, p *Project, jobID uint) contracts.PMDispatchJob {
+func createActiveDeliverRunForRecovery(t *testing.T, p *Project, ticketID uint, workflow contracts.TicketWorkflowStatus, workerStatus contracts.WorkerStatus) (contracts.Worker, contracts.TaskRun) {
 	t.Helper()
-	var got contracts.PMDispatchJob
-	if err := mustProjectDB(t, p).WithContext(context.Background()).First(&got, jobID).Error; err != nil {
-		t.Fatalf("load recovered dispatch job failed: %v", err)
+	ctx := context.Background()
+	worker, err := p.StartTicket(ctx, ticketID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
 	}
-	if got.Status != contracts.PMDispatchFailed {
-		t.Fatalf("dispatch job should be failed after recovery, got=%s", got.Status)
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", ticketID).Updates(map[string]any{
+		"workflow_status": workflow,
+		"updated_at":      now,
+	}).Error; err != nil {
+		t.Fatalf("set ticket workflow failed: %v", err)
 	}
-	if got.ActiveTicketKey != nil {
-		t.Fatalf("active_ticket_key should be cleared after recovery")
+	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", worker.ID).Updates(map[string]any{
+		"status":     workerStatus,
+		"updated_at": now,
+	}).Error; err != nil {
+		t.Fatalf("set worker status failed: %v", err)
 	}
-	if strings.TrimSpace(got.RunnerID) != "" {
-		t.Fatalf("runner_id should be cleared after recovery, got=%q", got.RunnerID)
+	run, err := p.task.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           "deliver_ticket",
+		ProjectKey:         p.Key(),
+		TicketID:           ticketID,
+		WorkerID:           worker.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", ticketID),
+		RequestID:          fmt.Sprintf("recovery-active-%d-%d", ticketID, now.UnixNano()),
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("create active deliver run failed: %v", err)
 	}
-	if got.LeaseExpiresAt != nil {
-		t.Fatalf("lease_expires_at should be cleared after recovery")
-	}
-	if got.FinishedAt == nil {
-		t.Fatalf("finished_at should be set after recovery")
-	}
-	return got
+	return *worker, run
 }
 
-func TestIntegration_DaemonRecovery_PMDispatchRunning_AutopilotOff(t *testing.T) {
+func TestIntegration_DaemonRecovery_RepairsQueuedProjectionFromActiveWorkerRun(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
 
-	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery dispatch running", "running dispatch should be recovered")
+	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery active run", "startup recovery should repair queued projection from active deliver run")
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
-	if _, err := p.SetAutopilotEnabled(ctx, false); err != nil {
-		t.Fatalf("SetAutopilotEnabled(false) failed: %v", err)
-	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": contracts.TicketActive,
-		"updated_at":      time.Now(),
-	}).Error; err != nil {
-		t.Fatalf("set ticket active failed: %v", err)
-	}
-	if job.ActiveTicketKey == nil {
-		t.Fatalf("expected active_ticket_key before recovery")
-	}
+	w, run := createActiveDeliverRunForRecovery(t, p, tk.ID, contracts.TicketQueued, contracts.WorkerStopped)
 
 	manager := newDaemonManagerComponent(h, nil)
 	manager.runRecovery(ctx)
-
-	got := assertRecoveredDispatchJob(t, p, job.ID)
-	if strings.TrimSpace(got.Error) == "" || !strings.Contains(got.Error, "daemon restart recovery") {
-		t.Fatalf("unexpected recovered error message: %q", got.Error)
-	}
-
-	var run contracts.TaskRun
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
-		t.Fatalf("load task run failed: %v", err)
-	}
-	if run.OrchestrationState != contracts.TaskFailed {
-		t.Fatalf("task run should be failed after recovery, got=%s", run.OrchestrationState)
-	}
 
 	var ticket contracts.Ticket
 	if err := mustProjectDB(t, p).WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != contracts.TicketBlocked {
-		t.Fatalf("autopilot=false should demote ticket to blocked, got=%s", ticket.WorkflowStatus)
+	if ticket.WorkflowStatus != contracts.TicketActive {
+		t.Fatalf("expected queued projection repaired to active, got=%s", ticket.WorkflowStatus)
 	}
 
-	var inbox contracts.InboxItem
-	if err := mustProjectDB(t, p).WithContext(ctx).Where("key = ?", fmt.Sprintf("daemon_recovery_dispatch_%d", job.ID)).First(&inbox).Error; err != nil {
-		t.Fatalf("expected dispatch recovery inbox item: %v", err)
+	var worker contracts.Worker
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&worker, w.ID).Error; err != nil {
+		t.Fatalf("load worker failed: %v", err)
 	}
-	if inbox.TicketID != tk.ID {
-		t.Fatalf("unexpected inbox ticket id: got=%d want=%d", inbox.TicketID, tk.ID)
-	}
-
-	if _, err := p.SubmitDispatchTicket(ctx, tk.ID, DispatchSubmitOptions{
-		RequestID: fmt.Sprintf("redispatch-after-recovery-%d", time.Now().UnixNano()),
-	}); err != nil {
-		t.Fatalf("ticket should be dispatchable after recovery: %v", err)
+	if worker.Status != contracts.WorkerRunning {
+		t.Fatalf("expected worker marked running from active run recovery, got=%s", worker.Status)
 	}
 
 	st, err := p.GetPMState(ctx)
 	if err != nil {
 		t.Fatalf("GetPMState failed: %v", err)
 	}
-	if st.LastRecoveryAt == nil || st.LastRecoveryDispatchJobs == 0 || st.LastRecoveryTaskRuns == 0 {
+	if st.LastRecoveryAt == nil || st.LastRecoveryTaskRuns == 0 {
 		t.Fatalf("recovery summary not persisted: %+v", st)
 	}
-}
-
-func TestIntegration_DaemonRecovery_PMDispatchPending_AutopilotOn(t *testing.T) {
-	h, p := newIntegrationHomeProject(t)
-	ctx := context.Background()
-
-	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery dispatch pending", "pending dispatch should be recovered")
-	if err != nil {
-		t.Fatalf("CreateTicket failed: %v", err)
-	}
-	if _, err := p.SetAutopilotEnabled(ctx, true); err != nil {
-		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
-	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchPending)
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": contracts.TicketActive,
-		"updated_at":      time.Now(),
-	}).Error; err != nil {
-		t.Fatalf("set ticket active failed: %v", err)
+	if st.LastRecoveryDispatchJobs != 0 {
+		t.Fatalf("expected dispatch-centric recovery count stays zero, got=%d", st.LastRecoveryDispatchJobs)
 	}
 
-	manager := newDaemonManagerComponent(h, nil)
-	manager.runRecovery(ctx)
-
-	assertRecoveredDispatchJob(t, p, job.ID)
-
-	var run contracts.TaskRun
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
-		t.Fatalf("load task run failed: %v", err)
+	var repaired contracts.TicketLifecycleEvent
+	if err := mustProjectDB(t, p).WithContext(ctx).
+		Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleRepaired).
+		Order("id desc").
+		First(&repaired).Error; err != nil {
+		t.Fatalf("expected recovery repaired lifecycle event: %v", err)
 	}
-	if run.OrchestrationState != contracts.TaskFailed {
-		t.Fatalf("task run should be failed after recovery, got=%s", run.OrchestrationState)
+	if strings.TrimSpace(repaired.Source) != "pm.recovery.active_run" {
+		t.Fatalf("unexpected recovery event source: %q", repaired.Source)
 	}
-
-	var ticket contracts.Ticket
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
-		t.Fatalf("load ticket failed: %v", err)
+	if got := strings.TrimSpace(fmt.Sprint(repaired.PayloadJSON["target_workflow"])); got != string(contracts.TicketActive) {
+		t.Fatalf("expected repaired target_workflow=active, got=%q", got)
 	}
-	if ticket.WorkflowStatus != contracts.TicketQueued {
-		t.Fatalf("autopilot=true should move ticket to queued, got=%s", ticket.WorkflowStatus)
-	}
-
-	if _, err := p.SubmitDispatchTicket(ctx, tk.ID, DispatchSubmitOptions{
-		RequestID: fmt.Sprintf("redispatch-autopilot-%d", time.Now().UnixNano()),
-	}); err != nil {
-		t.Fatalf("ticket should be redispatchable after recovery: %v", err)
+	if got := uintFromAny(repaired.PayloadJSON["task_run_id"]); got != run.ID {
+		t.Fatalf("expected repaired task_run_id=%d, got=%d", run.ID, got)
 	}
 }
 
-func TestIntegration_DaemonRecovery_DispatchRunDedupEventAndInbox(t *testing.T) {
+func TestIntegration_DaemonRecovery_LegacyDispatchJobsRemainReadOnly(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
 
-	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery dedup", "dispatch recovery should own run event/inbox")
+	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery legacy dispatch", "legacy dispatch jobs should stay audit-only during recovery")
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
 	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
 	if job.TaskRunID == 0 {
-		t.Fatalf("expected dispatch job with task run")
+		t.Fatalf("expected legacy dispatch job with task run")
 	}
+	beforeLease := job.LeaseExpiresAt
+	beforeRunner := strings.TrimSpace(job.RunnerID)
 
 	manager := newDaemonManagerComponent(h, nil)
 	manager.runRecovery(ctx)
 
-	var run contracts.TaskRun
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
-		t.Fatalf("load task run failed: %v", err)
+	var after contracts.PMDispatchJob
+	if err := mustProjectDB(t, p).WithContext(ctx).First(&after, job.ID).Error; err != nil {
+		t.Fatalf("load legacy dispatch job failed: %v", err)
 	}
-	if run.OrchestrationState != contracts.TaskFailed {
-		t.Fatalf("expected task run failed after recovery, got=%s", run.OrchestrationState)
+	if after.Status != job.Status {
+		t.Fatalf("expected legacy dispatch status unchanged, got=%s want=%s", after.Status, job.Status)
 	}
-
-	var dispatchEventCount int64
-	if err := mustProjectDB(t, p).WithContext(ctx).
-		Model(&contracts.TaskEvent{}).
-		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "daemon_recovery_dispatch_failed").
-		Count(&dispatchEventCount).Error; err != nil {
-		t.Fatalf("count dispatch recovery events failed: %v", err)
+	if strings.TrimSpace(after.RunnerID) != beforeRunner {
+		t.Fatalf("expected legacy dispatch runner unchanged, got=%q want=%q", after.RunnerID, beforeRunner)
 	}
-	if dispatchEventCount != 1 {
-		t.Fatalf("expected exactly one dispatch recovery event, got=%d", dispatchEventCount)
+	switch {
+	case beforeLease == nil && after.LeaseExpiresAt != nil:
+		t.Fatalf("expected legacy dispatch lease stays nil, got=%v", after.LeaseExpiresAt)
+	case beforeLease != nil && (after.LeaseExpiresAt == nil || !after.LeaseExpiresAt.Equal(*beforeLease)):
+		t.Fatalf("expected legacy dispatch lease unchanged, got=%v want=%v", after.LeaseExpiresAt, beforeLease)
 	}
 
-	var fallbackEventCount int64
-	if err := mustProjectDB(t, p).WithContext(ctx).
-		Model(&contracts.TaskEvent{}).
-		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "daemon_recovery_failed").
-		Count(&fallbackEventCount).Error; err != nil {
-		t.Fatalf("count fallback recovery events failed: %v", err)
-	}
-	if fallbackEventCount != 0 {
-		t.Fatalf("expected no fallback recovery events for dispatch-owned run, got=%d", fallbackEventCount)
-	}
-
-	var dispatchInboxCount int64
-	if err := mustProjectDB(t, p).WithContext(ctx).
-		Model(&contracts.InboxItem{}).
-		Where("key = ?", fmt.Sprintf("daemon_recovery_dispatch_%d", job.ID)).
-		Count(&dispatchInboxCount).Error; err != nil {
-		t.Fatalf("count dispatch recovery inbox failed: %v", err)
-	}
-	if dispatchInboxCount != 1 {
-		t.Fatalf("expected exactly one dispatch recovery inbox, got=%d", dispatchInboxCount)
-	}
-
-	var fallbackInboxCount int64
-	if err := mustProjectDB(t, p).WithContext(ctx).
-		Model(&contracts.InboxItem{}).
-		Where("key = ?", fmt.Sprintf("daemon_recovery_run_%d", job.TaskRunID)).
-		Count(&fallbackInboxCount).Error; err != nil {
-		t.Fatalf("count fallback run inbox failed: %v", err)
-	}
-	if fallbackInboxCount != 0 {
-		t.Fatalf("expected no fallback run inbox for dispatch-owned run, got=%d", fallbackInboxCount)
-	}
-}
-
-func TestIntegration_DaemonManagerTick_RecoversExpiredLeaseDispatch(t *testing.T) {
-	h, p := newIntegrationHomeProject(t)
-	ctx := context.Background()
-
-	tk, err := p.CreateTicketWithDescription(ctx, "integration lease expired", "tick should recover expired dispatch lease")
+	st, err := p.GetPMState(ctx)
 	if err != nil {
-		t.Fatalf("CreateTicket failed: %v", err)
+		t.Fatalf("GetPMState failed: %v", err)
 	}
-	if _, err := p.SetAutopilotEnabled(ctx, false); err != nil {
-		t.Fatalf("SetAutopilotEnabled(false) failed: %v", err)
-	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
-	expiredAt := time.Now().Add(-3 * time.Minute)
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
-		"status":           contracts.PMDispatchRunning,
-		"lease_expires_at": &expiredAt,
-		"updated_at":       time.Now(),
-	}).Error; err != nil {
-		t.Fatalf("set dispatch lease expired failed: %v", err)
-	}
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
-		"orchestration_state": contracts.TaskRunning,
-		"lease_expires_at":    &expiredAt,
-		"updated_at":          time.Now(),
-	}).Error; err != nil {
-		t.Fatalf("set task run lease expired failed: %v", err)
-	}
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": contracts.TicketActive,
-		"updated_at":      time.Now(),
-	}).Error; err != nil {
-		t.Fatalf("set ticket active failed: %v", err)
-	}
-
-	manager := newDaemonManagerComponent(h, nil)
-	manager.runTickProject(ctx, p.Name(), "test")
-
-	got := assertRecoveredDispatchJob(t, p, job.ID)
-	if !strings.Contains(strings.ToLower(strings.TrimSpace(got.Error)), "lease expired") {
-		t.Fatalf("expected lease expired error message, got=%q", got.Error)
-	}
-
-	var run contracts.TaskRun
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
-		t.Fatalf("load task run failed: %v", err)
-	}
-	if run.OrchestrationState != contracts.TaskFailed {
-		t.Fatalf("expected task run failed, got=%s", run.OrchestrationState)
-	}
-	if strings.TrimSpace(run.ErrorCode) != "lease_expired" {
-		t.Fatalf("expected task run error_code lease_expired, got=%q", run.ErrorCode)
-	}
-
-	var leaseEventCount int64
-	if err := mustProjectDB(t, p).WithContext(ctx).
-		Model(&contracts.TaskEvent{}).
-		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "lease_expired_dispatch_failed").
-		Count(&leaseEventCount).Error; err != nil {
-		t.Fatalf("count lease expired events failed: %v", err)
-	}
-	if leaseEventCount != 1 {
-		t.Fatalf("expected exactly one lease expired event, got=%d", leaseEventCount)
-	}
-
-	var recoveryEventCount int64
-	if err := mustProjectDB(t, p).WithContext(ctx).
-		Model(&contracts.TaskEvent{}).
-		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "daemon_recovery_dispatch_failed").
-		Count(&recoveryEventCount).Error; err != nil {
-		t.Fatalf("count daemon recovery events failed: %v", err)
-	}
-	if recoveryEventCount != 0 {
-		t.Fatalf("expected zero daemon recovery events in lease check, got=%d", recoveryEventCount)
-	}
-
-	var leaseInboxCount int64
-	if err := mustProjectDB(t, p).WithContext(ctx).
-		Model(&contracts.InboxItem{}).
-		Where("key = ?", fmt.Sprintf("lease_expired_dispatch_%d", job.ID)).
-		Count(&leaseInboxCount).Error; err != nil {
-		t.Fatalf("count lease expired inbox failed: %v", err)
-	}
-	if leaseInboxCount != 1 {
-		t.Fatalf("expected exactly one lease expired inbox, got=%d", leaseInboxCount)
-	}
-
-	var recoveryInboxCount int64
-	if err := mustProjectDB(t, p).WithContext(ctx).
-		Model(&contracts.InboxItem{}).
-		Where("key = ?", fmt.Sprintf("daemon_recovery_dispatch_%d", job.ID)).
-		Count(&recoveryInboxCount).Error; err != nil {
-		t.Fatalf("count daemon recovery inbox failed: %v", err)
-	}
-	if recoveryInboxCount != 0 {
-		t.Fatalf("expected zero daemon recovery inbox for lease check, got=%d", recoveryInboxCount)
-	}
-
-	var ticket contracts.Ticket
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
-		t.Fatalf("load ticket failed: %v", err)
-	}
-	if ticket.WorkflowStatus != contracts.TicketBlocked {
-		t.Fatalf("autopilot=false should move ticket to blocked on lease expiry, got=%s", ticket.WorkflowStatus)
+	if st.LastRecoveryDispatchJobs != 0 {
+		t.Fatalf("legacy dispatch audit rows should not contribute recovery count, got=%d", st.LastRecoveryDispatchJobs)
 	}
 }
 

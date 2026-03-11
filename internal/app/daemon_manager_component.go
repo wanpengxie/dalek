@@ -51,13 +51,10 @@ type daemonManagerComponent struct {
 }
 
 type recoveryProjectSummary struct {
-	DispatchJobs   int
-	TaskRuns       int
-	PlannerOps     int
-	Notes          int
-	Workers        int
-	TicketsQueued  int
-	TicketsBlocked int
+	ActiveRunRepairs int
+	PlannerOps       int
+	Notes            int
+	Workers          int
 }
 
 func newDaemonManagerComponent(home *Home, logger *slog.Logger, registries ...*ProjectRegistry) *daemonManagerComponent {
@@ -190,21 +187,10 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 		}
 		summary := recoveryProjectSummary{}
 
-		recoveredRunIDs := map[uint]struct{}{}
-		if recovered, recoveredRuns, err := p.pm.RecoverStuckDispatchJobs(ctx, name, now, autopilotEnabled); err != nil {
-			m.logf("recovery dispatch jobs failed: project=%s err=%v", name, err)
-		} else {
-			summary.DispatchJobs = recovered.DispatchJobs
-			summary.TaskRuns += recovered.TaskRuns
-			summary.TicketsQueued = recovered.TicketsQueued
-			summary.TicketsBlocked = recovered.TicketsBlocked
-			recoveredRunIDs = recoveredRuns
-		}
-
-		if recovered, err := p.pm.RecoverActiveTaskRuns(ctx, name, now, recoveredRunIDs); err != nil {
+		if repaired, err := p.pm.RecoverActiveTaskRuns(ctx, name, now, nil); err != nil {
 			m.logf("recovery active runs failed: project=%s err=%v", name, err)
 		} else {
-			summary.TaskRuns += recovered
+			summary.ActiveRunRepairs = repaired
 		}
 		if recovered, err := p.pm.RecoverPlannerOps(ctx, now); err != nil {
 			m.logf("recovery planner ops failed: project=%s err=%v", name, err)
@@ -225,21 +211,18 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			summary.Workers = fixed
 		}
 		if pmErr == nil && pmState.ID != 0 {
-			if err := p.pm.UpdateRecoverySummary(ctx, pmState.ID, now, summary.DispatchJobs, summary.TaskRuns, summary.Notes, summary.Workers); err != nil {
+			if err := p.pm.UpdateRecoverySummary(ctx, pmState.ID, now, 0, summary.ActiveRunRepairs, summary.Notes, summary.Workers); err != nil {
 				m.logf("recovery summary persist failed: project=%s err=%v", name, err)
 			}
 		}
 		m.logf(
-			"recovery summary: project=%s dispatch_jobs=%d task_runs=%d planner_ops=%d reopened_notes=%d fixed_workers=%d autopilot=%v queued=%d blocked=%d",
+			"recovery summary: project=%s active_run_repairs=%d planner_ops=%d reopened_notes=%d fixed_workers=%d autopilot=%v",
 			name,
-			summary.DispatchJobs,
-			summary.TaskRuns,
+			summary.ActiveRunRepairs,
 			summary.PlannerOps,
 			summary.Notes,
 			summary.Workers,
 			autopilotEnabled,
-			summary.TicketsQueued,
-			summary.TicketsBlocked,
 		)
 	}
 }
@@ -362,41 +345,6 @@ func (m *daemonManagerComponent) runTick(parent context.Context) {
 	}
 }
 
-func (m *daemonManagerComponent) checkExpiredDispatchLeases(ctx context.Context, p *Project, projectName string) {
-	if m == nil || p == nil || p.pm == nil {
-		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	projectName = strings.TrimSpace(projectName)
-	now := time.Now()
-
-	pmState, pmErr := p.GetPMState(ctx)
-	autopilotEnabled := false
-	if pmErr != nil {
-		m.logf("lease check read pm state failed: project=%s err=%v", projectName, pmErr)
-	} else {
-		autopilotEnabled = pmState.AutopilotEnabled
-	}
-	summary, err := p.pm.CheckExpiredDispatchLeases(ctx, projectName, now, autopilotEnabled)
-	if err != nil {
-		m.logf("lease check recover failed: project=%s err=%v", projectName, err)
-		return
-	}
-	if summary.DispatchJobs > 0 || summary.TaskRuns > 0 {
-		m.logf(
-			"lease check summary: project=%s recovered_jobs=%d recovered_runs=%d queued=%d blocked=%d autopilot=%v",
-			projectName,
-			summary.DispatchJobs,
-			summary.TaskRuns,
-			summary.TicketsQueued,
-			summary.TicketsBlocked,
-			autopilotEnabled,
-		)
-	}
-}
-
 func (m *daemonManagerComponent) runTickProject(parent context.Context, projectName, source string) {
 	if m == nil || m.home == nil {
 		return
@@ -422,7 +370,6 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 	if m.statusHookFactory != nil && p != nil && p.pm != nil {
 		p.pm.SetStatusChangeHook(m.statusHookFactory(projectName, p))
 	}
-	m.checkExpiredDispatchLeases(parent, p, projectName)
 	tickCtx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	res, err := p.ManagerTick(tickCtx, ManagerTickOptions{})
 	cancel()

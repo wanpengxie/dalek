@@ -362,8 +362,28 @@ func TestDaemonManagerComponent_WarmupRunProjectIndex_LoadsActiveRuns(t *testing
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
-	if job.TaskRunID == 0 {
+	w, err := p.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	activeRun, err := p.task.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           "deliver_ticket",
+		ProjectKey:         p.Key(),
+		TicketID:           tk.ID,
+		WorkerID:           w.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", tk.ID),
+		RequestID:          fmt.Sprintf("warmup-active-%d", now.UnixNano()),
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("create active worker run failed: %v", err)
+	}
+	legacyDispatch := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
+	if legacyDispatch.TaskRunID == 0 {
 		t.Fatalf("expected dispatch submission has task_run_id")
 	}
 
@@ -373,14 +393,20 @@ func TestDaemonManagerComponent_WarmupRunProjectIndex_LoadsActiveRuns(t *testing
 	manager.warmupRunProjectIndex(ctx)
 
 	warmed := host.snapshotWarmup(p.Name())
-	found := false
+	foundActive := false
+	foundLegacyDispatch := false
 	for _, runID := range warmed {
-		if runID == job.TaskRunID {
-			found = true
-			break
+		if runID == activeRun.ID {
+			foundActive = true
+		}
+		if runID == legacyDispatch.TaskRunID {
+			foundLegacyDispatch = true
 		}
 	}
-	if !found {
-		t.Fatalf("expected warmup includes active run %d, got=%v", job.TaskRunID, warmed)
+	if !foundActive {
+		t.Fatalf("expected warmup includes active worker run %d, got=%v", activeRun.ID, warmed)
+	}
+	if foundLegacyDispatch {
+		t.Fatalf("expected warmup to skip legacy dispatch run %d, got=%v", legacyDispatch.TaskRunID, warmed)
 	}
 }
