@@ -252,9 +252,9 @@ func (m model) selectedTicketForAction(action ticketAction) (uint, bool, string)
 		case ticketActionStart:
 			allowed = cap.CanStart
 		case ticketActionDispatch:
-			allowed = cap.CanDispatch
+			allowed = cap.CanQueueRun || cap.CanDispatch
 		case ticketActionWorkerRun:
-			allowed = cap.CanDispatch
+			allowed = cap.CanQueueRun || cap.CanDispatch
 		case ticketActionInterrupt:
 			// interrupt 需要 session 可用，复用 stop 的 capability。
 			allowed = cap.CanStop

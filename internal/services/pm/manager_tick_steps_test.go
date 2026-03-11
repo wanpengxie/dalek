@@ -267,7 +267,7 @@ func TestScheduleQueuedTickets_StartsAndDispatchesWithSubmitter(t *testing.T) {
 	}
 
 	submitter := &stubDispatchSubmitter{}
-	svc.SetDispatchSubmitter(submitter)
+	svc.SetWorkerRunSubmitter(submitter)
 
 	runningTicketIDs := map[uint]bool{}
 	out := svc.scheduleQueuedTickets(context.Background(), p.DB, scheduleOptions{
@@ -519,7 +519,7 @@ type cancelingDispatchSubmitter struct {
 	called bool
 }
 
-func (s *cancelingDispatchSubmitter) SubmitTicketDispatch(_ context.Context, _ uint) error {
+func (s *cancelingDispatchSubmitter) SubmitTicketWorkerRun(_ context.Context, _ uint) error {
 	if s == nil {
 		return nil
 	}
@@ -560,7 +560,7 @@ func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled
 	tickCtx, cancelTick := context.WithCancel(context.Background())
 	defer cancelTick()
 	submitter := &cancelingDispatchSubmitter{cancel: cancelTick}
-	svc.SetDispatchSubmitter(submitter)
+	svc.SetWorkerRunSubmitter(submitter)
 
 	res, err := svc.ManagerTick(tickCtx, ManagerTickOptions{})
 	if err != nil {

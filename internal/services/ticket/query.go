@@ -28,7 +28,6 @@ type ticketViewData struct {
 	runtimeAliveByWorker       map[uint]bool
 	runtimeProbeFailedByWorker map[uint]bool
 	latestTaskByTicket         map[uint]store.TaskStatusView
-	activeDispatchByTicket     map[uint]contracts.PMDispatchJob
 }
 
 func newTicketViewData() ticketViewData {
@@ -37,7 +36,6 @@ func newTicketViewData() ticketViewData {
 		runtimeAliveByWorker:       map[uint]bool{},
 		runtimeProbeFailedByWorker: map[uint]bool{},
 		latestTaskByTicket:         map[uint]store.TaskStatusView{},
-		activeDispatchByTicket:     map[uint]contracts.PMDispatchJob{},
 	}
 }
 
@@ -151,18 +149,6 @@ func (s *QueryService) GetTicketViewByID(ctx context.Context, ticketID uint) (*T
 		}
 	}
 
-	var job contracts.PMDispatchJob
-	if err := db.WithContext(ctx).
-		Where("ticket_id = ? AND status IN ?", ticketID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
-		Order("id desc").
-		First(&job).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
-	} else {
-		data.activeDispatchByTicket[ticketID] = job
-	}
-
 	view := buildTicketView(t, data)
 	return &view, nil
 }
@@ -237,26 +223,6 @@ func (s *QueryService) fetchTicketViewData(ctx context.Context) (ticketViewData,
 		}
 	}
 
-	if len(ticketIDs) > 0 {
-		var jobs []contracts.PMDispatchJob
-		if err := db.WithContext(ctx).
-			Where("ticket_id IN ? AND status IN ?", ticketIDs, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
-			Order("ticket_id asc").
-			Order("id desc").
-			Find(&jobs).Error; err != nil {
-			return ticketViewData{}, err
-		}
-		for _, job := range jobs {
-			if job.TicketID == 0 {
-				continue
-			}
-			if _, ok := data.activeDispatchByTicket[job.TicketID]; ok {
-				continue
-			}
-			data.activeDispatchByTicket[job.TicketID] = job
-		}
-	}
-
 	return data, nil
 }
 
@@ -278,6 +244,7 @@ func buildTicketView(t contracts.Ticket, data ticketViewData) TicketView {
 	lastEventType := ""
 	lastEventNote := ""
 	var lastEventAt *time.Time
+	hasActiveWorkerRun := false
 
 	if w, ok := data.latestWorkerByTicket[t.ID]; ok {
 		ww := w
@@ -306,15 +273,12 @@ func buildTicketView(t contracts.Ticket, data ticketViewData) TicketView {
 		lastEventType = strings.TrimSpace(tv.LastEventType)
 		lastEventNote = strings.TrimSpace(tv.LastEventNote)
 		lastEventAt = tv.LastEventAt
+		state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
+		hasActiveWorkerRun = state == string(contracts.TaskPending) || state == string(contracts.TaskRunning)
 	}
 
-	var activeDispatch *contracts.PMDispatchJob
-	if job, ok := data.activeDispatchByTicket[t.ID]; ok {
-		j := job
-		activeDispatch = &j
-	}
-	capability := ComputeTicketCapability(d, lw, alive, sessionProbeFailed, activeDispatch != nil, rNeeds, rHealth)
-	rHealth = computeDerivedRuntimeHealth(lw, alive, sessionProbeFailed, runID, rHealth, activeDispatch)
+	capability := ComputeTicketCapability(d, lw, alive, sessionProbeFailed, hasActiveWorkerRun, rNeeds, rHealth)
+	rHealth = computeDerivedRuntimeHealth(lw, alive, sessionProbeFailed, runID, hasActiveWorkerRun, rHealth)
 
 	return TicketView{
 		Ticket:             t,

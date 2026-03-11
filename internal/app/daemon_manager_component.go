@@ -24,7 +24,7 @@ const (
 	plannerPromptListLimit    = 200
 )
 
-type managerDispatchHost interface {
+type managerExecutionHost interface {
 	SubmitWorkerRun(ctx context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error)
 	SubmitPlannerRun(ctx context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error)
 }
@@ -38,7 +38,7 @@ type daemonManagerComponent struct {
 	registry *ProjectRegistry
 	logger   *slog.Logger
 	interval time.Duration
-	host     managerDispatchHost
+	host     managerExecutionHost
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -80,7 +80,7 @@ func newDaemonManagerComponent(home *Home, logger *slog.Logger, registries ...*P
 	}
 }
 
-func (m *daemonManagerComponent) setDispatchHost(host managerDispatchHost) {
+func (m *daemonManagerComponent) setExecutionHost(host managerExecutionHost) {
 	if m == nil {
 		return
 	}
@@ -414,7 +414,7 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 		return
 	}
 	if m.host != nil && p != nil && p.pm != nil {
-		p.pm.SetDispatchSubmitter(daemonManagerDispatchSubmitter{
+		p.pm.SetWorkerRunSubmitter(daemonManagerWorkerRunSubmitter{
 			projectName: projectName,
 			host:        m.host,
 		})
@@ -652,12 +652,12 @@ func (m *daemonManagerComponent) logf(format string, args ...any) {
 	m.logger.Info(fmt.Sprintf(format, args...))
 }
 
-type daemonManagerDispatchSubmitter struct {
+type daemonManagerWorkerRunSubmitter struct {
 	projectName string
-	host        managerDispatchHost
+	host        managerExecutionHost
 }
 
-func (s daemonManagerDispatchSubmitter) SubmitTicketDispatch(ctx context.Context, ticketID uint) error {
+func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Context, ticketID uint) error {
 	if s.host == nil {
 		return fmt.Errorf("worker run host 未初始化")
 	}

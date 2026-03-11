@@ -72,6 +72,7 @@ func TestSelectedTicketForAction_BacklogRunningWorkerAllowsDispatch(t *testing.T
 		},
 	}
 	v := m.viewsByID[10]
+	v.Capability.CanQueueRun = true
 	v.Capability.CanDispatch = true
 	m.viewsByID[10] = v
 
@@ -93,6 +94,7 @@ func TestSelectedTicketForAction_BacklogWithoutSessionStillDenied(t *testing.T) 
 		},
 	}
 	v := m.viewsByID[10]
+	v.Capability.CanQueueRun = false
 	v.Capability.CanDispatch = false
 	v.Capability.Reason = "worker 缺少 session"
 	m.viewsByID[10] = v
@@ -115,6 +117,7 @@ func TestUpdateTable_WorkerRunDenied(t *testing.T) {
 		},
 	}
 	v := m.viewsByID[10]
+	v.Capability.CanQueueRun = false
 	v.Capability.CanDispatch = false
 	v.Capability.Reason = "已完成"
 	m.viewsByID[10] = v
@@ -139,6 +142,7 @@ func TestUpdateTable_WorkerRunAllowed(t *testing.T) {
 		},
 	}
 	v := m.viewsByID[10]
+	v.Capability.CanQueueRun = true
 	v.Capability.CanDispatch = true
 	m.viewsByID[10] = v
 

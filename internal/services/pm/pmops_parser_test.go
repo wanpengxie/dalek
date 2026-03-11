@@ -1,6 +1,7 @@
 package pm
 
 import (
+	"strings"
 	"testing"
 
 	"dalek/internal/contracts"
@@ -56,5 +57,43 @@ func TestParsePlannerPMOps_PlainTextWithoutJSONReturnsEmpty(t *testing.T) {
 func TestPlannerPMOpIsCritical_StartTicket(t *testing.T) {
 	if !plannerPMOpIsCritical(contracts.PMOp{Kind: contracts.PMOpStartTicket}) {
 		t.Fatalf("expected start_ticket marked as critical")
+	}
+}
+
+func TestParsePlannerPMOps_NormalizesLegacyDispatchTicketToStartTicket(t *testing.T) {
+	raw := `
+<pmops>
+{
+  "ops": [
+    {
+      "kind": "dispatch_ticket",
+      "arguments": {"ticket_id": 42}
+    }
+  ]
+}
+</pmops>
+`
+	ops, err := parsePlannerPMOps(raw, 18, "req_dispatch_legacy")
+	if err != nil {
+		t.Fatalf("parsePlannerPMOps failed: %v", err)
+	}
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 op, got=%d", len(ops))
+	}
+	op := ops[0]
+	if op.Kind != contracts.PMOpStartTicket {
+		t.Fatalf("expected legacy dispatch_ticket normalized to start_ticket, got=%s", op.Kind)
+	}
+	if !op.Critical {
+		t.Fatalf("expected normalized start_ticket marked critical")
+	}
+	if !strings.HasPrefix(op.IdempotencyKey, "start_ticket:") {
+		t.Fatalf("expected normalized idempotency key to use start_ticket prefix, got=%q", op.IdempotencyKey)
+	}
+}
+
+func TestPlannerPMOpIsCritical_LegacyDispatchTicketIsNotNormalCriticalOp(t *testing.T) {
+	if plannerPMOpIsCritical(contracts.PMOp{Kind: contracts.PMOpDispatchTicket}) {
+		t.Fatalf("expected legacy dispatch_ticket excluded from normal critical ops")
 	}
 }

@@ -15,7 +15,7 @@ type stubDispatchSubmitter struct {
 	err   error
 }
 
-func (s *stubDispatchSubmitter) SubmitTicketDispatch(_ context.Context, ticketID uint) error {
+func (s *stubDispatchSubmitter) SubmitTicketWorkerRun(_ context.Context, ticketID uint) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, ticketID)
@@ -42,7 +42,7 @@ func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
 	}
 
 	submitter := &stubDispatchSubmitter{}
-	svc.SetDispatchSubmitter(submitter)
+	svc.SetWorkerRunSubmitter(submitter)
 
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{})
 	if err != nil {
@@ -133,7 +133,7 @@ func TestManagerTick_DryRunSkipsDispatchSubmitter(t *testing.T) {
 	}
 
 	submitter := &stubDispatchSubmitter{}
-	svc.SetDispatchSubmitter(submitter)
+	svc.SetWorkerRunSubmitter(submitter)
 
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{DryRun: true})
 	if err != nil {
@@ -159,7 +159,7 @@ func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 	}
 
 	submitter := &stubDispatchSubmitter{}
-	svc.SetDispatchSubmitter(submitter)
+	svc.SetWorkerRunSubmitter(submitter)
 
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{SyncDispatch: true})
 	if err != nil {
@@ -232,7 +232,7 @@ func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *test
 			Waited:     5 * time.Second,
 		},
 	}
-	svc.SetDispatchSubmitter(submitter)
+	svc.SetWorkerRunSubmitter(submitter)
 
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{})
 	if err != nil {

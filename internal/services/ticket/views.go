@@ -35,7 +35,7 @@ type TicketView struct {
 	LastEventAt   *time.Time
 }
 
-func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contracts.Worker, sessionAlive bool, sessionProbeFailed bool, hasActiveDispatch bool, runtimeNeedsUser bool, runtimeHealth contracts.TaskRuntimeHealthState) contracts.TicketCapability {
+func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contracts.Worker, sessionAlive bool, sessionProbeFailed bool, hasActiveWorkerRun bool, runtimeNeedsUser bool, runtimeHealth contracts.TaskRuntimeHealthState) contracts.TicketCapability {
 	wf := contracts.TicketWorkflowStatus(strings.TrimSpace(strings.ToLower(string(workflow))))
 	if wf == "" {
 		wf = contracts.TicketBacklog
@@ -59,10 +59,11 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 	// start：只按 workflow 门禁（资源是否存在由后端决定是否复用/重建）。
 	cap.CanStart = !isDone && !isArchived
 
-	// dispatch：默认允许自动 start，所以仅保留 workflow/并发门禁。
-	cap.CanDispatch = !isDone &&
+	// queue run：默认允许自动 start，所以仅保留 workflow/并发门禁。
+	cap.CanQueueRun = !isDone &&
 		!isArchived &&
-		!hasActiveDispatch
+		!hasActiveWorkerRun
+	cap.CanDispatch = cap.CanQueueRun
 
 	// attach：只支持 runtime 日志 attach。
 	cap.CanAttach = hasWorker &&
@@ -71,9 +72,9 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 	// stop：仅 runtime 句柄可停止。
 	cap.CanStop = hasWorker && hasRuntimeHandle
 
-	// archive：要求没有 running worker，且没有进行中的 dispatch。
+	// archive：要求没有 running worker，且没有进行中的 worker run。
 	cap.CanArchive = !isArchived &&
-		!hasActiveDispatch &&
+		!hasActiveWorkerRun &&
 		(!hasWorker || workerStatus != contracts.WorkerRunning)
 
 	// Reason：给 UI 一个可读提示（不做门禁）。
@@ -86,16 +87,16 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 		cap.Reason = "等待输入"
 	case runtimeHealth == contracts.TaskHealthStalled:
 		cap.Reason = "运行错误"
-	case hasActiveDispatch:
-		cap.Reason = "dispatch 进行中"
+	case hasActiveWorkerRun:
+		cap.Reason = "worker run 进行中"
 	case !hasWorker:
-		cap.Reason = "将自动启动 worker"
+		cap.Reason = "将自动准备 worker"
 	case hasRuntimeHandle && !hasRuntimeLog:
-		cap.Reason = "worker 缺少日志路径（dispatch 时将自动修复）"
+		cap.Reason = "worker 缺少日志路径（启动执行前将自动修复）"
 	case !hasRuntimeHandle:
-		cap.Reason = "worker 缺少运行日志锚点（dispatch 时将自动修复）"
+		cap.Reason = "worker 缺少运行日志锚点（启动执行前将自动修复）"
 	case runtimeKnownDead:
-		cap.Reason = "worker 运行通道不在线（dispatch 时将自动修复）"
+		cap.Reason = "worker 运行通道不在线"
 	case sessionProbeFailed:
 		cap.Reason = "运行态探测失败"
 	}
@@ -103,15 +104,12 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 	return cap
 }
 
-func computeDerivedRuntimeHealth(latestWorker *contracts.Worker, sessionAlive bool, sessionProbeFailed bool, taskRunID uint, runtimeHealth contracts.TaskRuntimeHealthState, activeDispatch *contracts.PMDispatchJob) contracts.TaskRuntimeHealthState {
-	if activeDispatch != nil {
-		switch activeDispatch.Status {
-		case contracts.PMDispatchPending, contracts.PMDispatchRunning:
-			if runtimeHealth == contracts.TaskHealthWaitingUser || runtimeHealth == contracts.TaskHealthStalled {
-				return runtimeHealth
-			}
-			return contracts.TaskHealthBusy
+func computeDerivedRuntimeHealth(latestWorker *contracts.Worker, sessionAlive bool, sessionProbeFailed bool, taskRunID uint, hasActiveWorkerRun bool, runtimeHealth contracts.TaskRuntimeHealthState) contracts.TaskRuntimeHealthState {
+	if hasActiveWorkerRun {
+		if runtimeHealth == contracts.TaskHealthWaitingUser || runtimeHealth == contracts.TaskHealthStalled {
+			return runtimeHealth
 		}
+		return contracts.TaskHealthBusy
 	}
 	if latestWorker == nil && taskRunID == 0 {
 		return contracts.TaskHealthUnknown

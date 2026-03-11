@@ -89,13 +89,13 @@ func TestDaemonManagerComponent_NotifyProject_TriggersTick(t *testing.T) {
 	t.Fatalf("manager notify did not trigger tick within timeout")
 }
 
-type stubManagerDispatchHost struct {
+type stubManagerExecutionHost struct {
 	mu           sync.Mutex
 	calls        []daemonsvc.WorkerRunSubmitRequest
 	plannerCalls []daemonsvc.PlannerSubmitRequest
 }
 
-func (s *stubManagerDispatchHost) SubmitWorkerRun(_ context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error) {
+func (s *stubManagerExecutionHost) SubmitWorkerRun(_ context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, req)
@@ -107,7 +107,7 @@ func (s *stubManagerDispatchHost) SubmitWorkerRun(_ context.Context, req daemons
 	}, nil
 }
 
-func (s *stubManagerDispatchHost) SubmitPlannerRun(_ context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error) {
+func (s *stubManagerExecutionHost) SubmitPlannerRun(_ context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.plannerCalls = append(s.plannerCalls, req)
@@ -119,7 +119,7 @@ func (s *stubManagerDispatchHost) SubmitPlannerRun(_ context.Context, req daemon
 	}, nil
 }
 
-func (s *stubManagerDispatchHost) snapshot() []daemonsvc.WorkerRunSubmitRequest {
+func (s *stubManagerExecutionHost) snapshot() []daemonsvc.WorkerRunSubmitRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]daemonsvc.WorkerRunSubmitRequest, len(s.calls))
@@ -127,7 +127,7 @@ func (s *stubManagerDispatchHost) snapshot() []daemonsvc.WorkerRunSubmitRequest 
 	return out
 }
 
-func (s *stubManagerDispatchHost) snapshotPlanner() []daemonsvc.PlannerSubmitRequest {
+func (s *stubManagerExecutionHost) snapshotPlanner() []daemonsvc.PlannerSubmitRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]daemonsvc.PlannerSubmitRequest, len(s.plannerCalls))
@@ -135,12 +135,12 @@ func (s *stubManagerDispatchHost) snapshotPlanner() []daemonsvc.PlannerSubmitReq
 	return out
 }
 
-type stubWarmupDispatchHost struct {
+type stubWarmupExecutionHost struct {
 	mu          sync.Mutex
 	warmupCalls map[string][]uint
 }
 
-func (s *stubWarmupDispatchHost) SubmitWorkerRun(_ context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error) {
+func (s *stubWarmupExecutionHost) SubmitWorkerRun(_ context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error) {
 	return daemonsvc.WorkerRunSubmitReceipt{
 		Accepted:  true,
 		Project:   req.Project,
@@ -149,7 +149,7 @@ func (s *stubWarmupDispatchHost) SubmitWorkerRun(_ context.Context, req daemonsv
 	}, nil
 }
 
-func (s *stubWarmupDispatchHost) SubmitPlannerRun(_ context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error) {
+func (s *stubWarmupExecutionHost) SubmitPlannerRun(_ context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error) {
 	return daemonsvc.PlannerSubmitReceipt{
 		Accepted:  true,
 		Project:   req.Project,
@@ -158,7 +158,7 @@ func (s *stubWarmupDispatchHost) SubmitPlannerRun(_ context.Context, req daemons
 	}, nil
 }
 
-func (s *stubWarmupDispatchHost) WarmupRunProjectIndex(project string, runIDs []uint) int {
+func (s *stubWarmupExecutionHost) WarmupRunProjectIndex(project string, runIDs []uint) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.warmupCalls == nil {
@@ -171,7 +171,7 @@ func (s *stubWarmupDispatchHost) WarmupRunProjectIndex(project string, runIDs []
 	return len(runIDs)
 }
 
-func (s *stubWarmupDispatchHost) snapshotWarmup(project string) []uint {
+func (s *stubWarmupExecutionHost) snapshotWarmup(project string) []uint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	project = strings.TrimSpace(project)
@@ -199,9 +199,9 @@ func TestDaemonManagerComponent_RunTickProject_UsesWorkerRunHostSubmitter(t *tes
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 
-	host := &stubManagerDispatchHost{}
+	host := &stubManagerExecutionHost{}
 	manager := newDaemonManagerComponent(h, nil)
-	manager.setDispatchHost(host)
+	manager.setExecutionHost(host)
 	manager.runTickProject(ctx, p.Name(), "test")
 
 	calls := host.snapshot()
@@ -278,9 +278,9 @@ func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t 
 		t.Fatalf("append watch_error event failed: %v", err)
 	}
 
-	host := &stubManagerDispatchHost{}
+	host := &stubManagerExecutionHost{}
 	manager := newDaemonManagerComponent(h, nil)
-	manager.setDispatchHost(host)
+	manager.setExecutionHost(host)
 	manager.runTickProject(ctx, p.Name(), "test")
 
 	if got := len(host.snapshot()); got != 0 {
@@ -367,9 +367,9 @@ func TestDaemonManagerComponent_WarmupRunProjectIndex_LoadsActiveRuns(t *testing
 		t.Fatalf("expected dispatch submission has task_run_id")
 	}
 
-	host := &stubWarmupDispatchHost{}
+	host := &stubWarmupExecutionHost{}
 	manager := newDaemonManagerComponent(h, nil)
-	manager.setDispatchHost(host)
+	manager.setExecutionHost(host)
 	manager.warmupRunProjectIndex(ctx)
 
 	warmed := host.snapshotWarmup(p.Name())

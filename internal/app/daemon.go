@@ -71,7 +71,7 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *slog.Logger) erro
 	if err != nil {
 		return err
 	}
-	manager.setDispatchHost(host)
+	manager.setExecutionHost(host)
 	internalSendDB, err := home.OpenGatewayDB()
 	if err != nil {
 		return err

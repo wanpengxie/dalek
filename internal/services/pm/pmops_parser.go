@@ -196,7 +196,7 @@ func normalizePlannerPMOps(in []contracts.PMOp, plannerRunID uint, requestID str
 	opIDSeen := map[string]int{}
 	for idx := range in {
 		op := in[idx]
-		op.Kind = contracts.PMOpKind(strings.TrimSpace(string(op.Kind)))
+		op.Kind = normalizePlannerPMOpKind(op.Kind)
 		if strings.TrimSpace(string(op.Kind)) == "" {
 			continue
 		}
@@ -225,12 +225,20 @@ func normalizePlannerPMOps(in []contracts.PMOp, plannerRunID uint, requestID str
 	return out
 }
 
+func normalizePlannerPMOpKind(kind contracts.PMOpKind) contracts.PMOpKind {
+	normalized := contracts.PMOpKind(strings.TrimSpace(string(kind)))
+	if normalized == contracts.PMOpDispatchTicket {
+		return contracts.PMOpStartTicket
+	}
+	return normalized
+}
+
 func plannerPMOpIsCritical(op contracts.PMOp) bool {
 	if op.Critical {
 		return true
 	}
 	switch op.Kind {
-	case contracts.PMOpCreateTicket, contracts.PMOpStartTicket, contracts.PMOpDispatchTicket, contracts.PMOpCreateIntegration:
+	case contracts.PMOpCreateTicket, contracts.PMOpStartTicket, contracts.PMOpCreateIntegration:
 		return true
 	default:
 		return false

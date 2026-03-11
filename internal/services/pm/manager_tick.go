@@ -879,7 +879,7 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 		out.StartedTickets = append(out.StartedTickets, t.ID)
 		runningTicketIDs[t.ID] = true
 
-		dispatched, errs := s.activateScheduledTicket(ctx, t.ID, w.ID, opt)
+		dispatched, errs := s.submitScheduledWorkerRun(ctx, t.ID, w.ID, opt)
 		out.Errors = append(out.Errors, errs...)
 		if dispatched {
 			out.DispatchedTickets = append(out.DispatchedTickets, t.ID)
@@ -890,7 +890,7 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 	return out
 }
 
-func (s *Service) activateScheduledTicket(ctx context.Context, ticketID, workerID uint, opt scheduleOptions) (bool, []string) {
+func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, workerID uint, opt scheduleOptions) (bool, []string) {
 	if opt.SyncDispatch {
 		dispatchCtx := ctx
 		cancelDispatch := func() {}
@@ -905,8 +905,8 @@ func (s *Service) activateScheduledTicket(ctx context.Context, ticketID, workerI
 		return true, nil
 	}
 
-	if submitter := s.getDispatchSubmitter(); submitter != nil {
-		derr := submitter.SubmitTicketDispatch(context.WithoutCancel(ctx), ticketID)
+	if submitter := s.getWorkerRunSubmitter(); submitter != nil {
+		derr := submitter.SubmitTicketWorkerRun(context.WithoutCancel(ctx), ticketID)
 		if derr != nil {
 			return false, s.handleDispatchFailure(ctx, ticketID, workerID, derr, "submit worker run 失败")
 		}

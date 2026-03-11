@@ -20,13 +20,13 @@ import (
 type workerSDKHandleLauncherFunc func(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (agentexec.AgentRunHandle, error)
 
 type Service struct {
-	p                 *core.Project
-	worker            *worker.Service
-	logger            *slog.Logger
-	mu                sync.RWMutex
-	dispatchSubmitter DispatchSubmitter
-	statusChangeHook  WorkflowStatusChangeHook
-	statusHookWG      sync.WaitGroup
+	p                  *core.Project
+	worker             *worker.Service
+	logger             *slog.Logger
+	mu                 sync.RWMutex
+	workerRunSubmitter WorkerRunSubmitter
+	statusChangeHook   WorkflowStatusChangeHook
+	statusHookWG       sync.WaitGroup
 
 	workerReadyTimeout      time.Duration
 	workerReadyPollInterval time.Duration
@@ -51,13 +51,13 @@ func New(p *core.Project, workerSvc *worker.Service) *Service {
 	}
 }
 
-func (s *Service) SetDispatchSubmitter(submitter DispatchSubmitter) {
+func (s *Service) SetWorkerRunSubmitter(submitter WorkerRunSubmitter) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.dispatchSubmitter = submitter
+	s.workerRunSubmitter = submitter
 }
 
 func (s *Service) SetStatusChangeHook(hook WorkflowStatusChangeHook) {
@@ -69,13 +69,13 @@ func (s *Service) SetStatusChangeHook(hook WorkflowStatusChangeHook) {
 	s.statusChangeHook = hook
 }
 
-func (s *Service) getDispatchSubmitter() DispatchSubmitter {
+func (s *Service) getWorkerRunSubmitter() WorkerRunSubmitter {
 	if s == nil {
 		return nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.dispatchSubmitter
+	return s.workerRunSubmitter
 }
 
 func (s *Service) getStatusChangeHook() WorkflowStatusChangeHook {
