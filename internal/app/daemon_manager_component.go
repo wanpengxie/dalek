@@ -378,7 +378,7 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 		return
 	}
 	m.submitPlannerRunIfScheduled(parent, p, projectName, res)
-	m.logf("manager tick ok: source=%s project=%s running=%d blocked=%d capacity=%d started=%d dispatched=%d planner_scheduled=%v", strings.TrimSpace(source), projectName, res.Running, res.RunningBlocked, res.Capacity, len(res.StartedTickets), len(res.DispatchedTickets), res.PlannerRunScheduled)
+	m.logf("manager tick ok: source=%s project=%s running=%d blocked=%d capacity=%d started=%d activated=%d planner_scheduled=%v", strings.TrimSpace(source), projectName, res.Running, res.RunningBlocked, res.Capacity, len(res.StartedTickets), len(res.DispatchedTickets), res.PlannerRunScheduled)
 }
 
 func (m *daemonManagerComponent) submitPlannerRunIfScheduled(parent context.Context, p *Project, projectName string, res pmsvc.ManagerTickResult) {

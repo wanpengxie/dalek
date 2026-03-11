@@ -185,7 +185,7 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	}
 	res.Capacity = capacity
 
-	// merge 观测不受 autopilot 门控：只是被动检测 git 事实，不产生 start/dispatch 副作用。
+	// merge 观测不受 autopilot 门控：只是被动检测 git 事实，不产生 start/activation 副作用。
 	mergeResult := s.freezeMergesForDoneTickets(ctx, db, st, opt.DryRun)
 	res.applyMergeFrozenResult(mergeResult)
 
@@ -892,15 +892,15 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 
 func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, workerID uint, opt scheduleOptions) (bool, []string) {
 	if opt.SyncDispatch {
-		dispatchCtx := ctx
-		cancelDispatch := func() {}
+		activationCtx := ctx
+		cancelActivation := func() {}
 		if opt.DispatchTimeout > 0 {
-			dispatchCtx, cancelDispatch = context.WithTimeout(ctx, opt.DispatchTimeout)
+			activationCtx, cancelActivation = context.WithTimeout(ctx, opt.DispatchTimeout)
 		}
-		_, derr := s.DirectDispatchWorker(dispatchCtx, ticketID, DirectDispatchOptions{})
-		cancelDispatch()
+		_, derr := s.DirectDispatchWorker(activationCtx, ticketID, DirectDispatchOptions{})
+		cancelActivation()
 		if derr != nil {
-			return false, s.handleDispatchFailure(ctx, ticketID, workerID, derr, "sync activation 失败")
+			return false, s.handleActivationFailure(ctx, ticketID, workerID, derr, "sync activation 失败")
 		}
 		return true, nil
 	}
@@ -908,7 +908,7 @@ func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, worker
 	if submitter := s.getWorkerRunSubmitter(); submitter != nil {
 		derr := submitter.SubmitTicketWorkerRun(context.WithoutCancel(ctx), ticketID)
 		if derr != nil {
-			return false, s.handleDispatchFailure(ctx, ticketID, workerID, derr, "submit worker run 失败")
+			return false, s.handleActivationFailure(ctx, ticketID, workerID, derr, "submit worker run 失败")
 		}
 		return true, nil
 	}
@@ -927,33 +927,33 @@ func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, worker
 	return false, []string{errMsg}
 }
 
-func (s *Service) handleDispatchFailure(ctx context.Context, ticketID, workerID uint, dispatchErr error, prefix string) []string {
-	if dispatchErr == nil {
+func (s *Service) handleActivationFailure(ctx context.Context, ticketID, workerID uint, activationErr error, prefix string) []string {
+	if activationErr == nil {
 		return nil
 	}
 	errs := []string{}
 
 	_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-		Key:      inboxKeyWorkerIncident(workerID, "dispatch_failed"),
+		Key:      inboxKeyWorkerIncident(workerID, "activation_failed"),
 		Status:   contracts.InboxOpen,
 		Severity: contracts.InboxWarn,
 		Reason:   contracts.InboxIncident,
-		Title:    fmt.Sprintf("派发失败：t%d w%d", ticketID, workerID),
-		Body:     dispatchErr.Error(),
+		Title:    fmt.Sprintf("激活失败：t%d w%d", ticketID, workerID),
+		Body:     activationErr.Error(),
 		TicketID: ticketID,
 		WorkerID: workerID,
 	})
 
-	if isWorkerReadyTimeout(dispatchErr) {
-		if berr := s.demoteTicketBlockedOnWorkerNotReady(ctx, ticketID, workerID, dispatchErr.Error(), time.Now()); berr != nil {
+	if isWorkerReadyTimeout(activationErr) {
+		if berr := s.demoteTicketBlockedOnWorkerNotReady(ctx, ticketID, workerID, activationErr.Error(), time.Now()); berr != nil {
 			errs = append(errs, fmt.Sprintf("worker 未就绪降级失败：t%d w%d: %v", ticketID, workerID, berr))
 		}
 	}
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
-		prefix = "dispatch 失败"
+		prefix = "激活失败"
 	}
-	errs = append(errs, fmt.Sprintf("%s：t%d w%d: %v", prefix, ticketID, workerID, dispatchErr))
+	errs = append(errs, fmt.Sprintf("%s：t%d w%d: %v", prefix, ticketID, workerID, activationErr))
 	return errs
 }
 

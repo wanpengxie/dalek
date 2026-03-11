@@ -136,6 +136,29 @@ func TestSubmitEndpoints_SyncTrueResponseConsistency(t *testing.T) {
 	}
 }
 
+func TestSubmitEndpoints_RequestIDAliasReuseSameRun(t *testing.T) {
+	svc := startTestInternalAPIForSubmit(t)
+
+	dispatchStatus, dispatchBody := postSubmitSyncFalse(t, svc, "/api/dispatch/submit", "req-submit-alias-shared")
+	workerStatus, workerBody := postSubmitSyncFalse(t, svc, "/api/worker-run/submit", "req-submit-alias-shared")
+
+	if dispatchStatus != http.StatusAccepted {
+		t.Fatalf("unexpected dispatch status=%d body=%+v", dispatchStatus, dispatchBody)
+	}
+	if workerStatus != http.StatusAccepted {
+		t.Fatalf("unexpected worker status=%d body=%+v", workerStatus, workerBody)
+	}
+	if dispatchBody["task_run_id"] != workerBody["task_run_id"] {
+		t.Fatalf("expected shared task_run_id, dispatch=%v worker=%v", dispatchBody["task_run_id"], workerBody["task_run_id"])
+	}
+	if dispatchBody["request_id"] != workerBody["request_id"] {
+		t.Fatalf("expected shared request_id, dispatch=%v worker=%v", dispatchBody["request_id"], workerBody["request_id"])
+	}
+	if dispatchBody["worker_id"] != workerBody["worker_id"] {
+		t.Fatalf("expected shared worker_id, dispatch=%v worker=%v", dispatchBody["worker_id"], workerBody["worker_id"])
+	}
+}
+
 func postSubmitSyncFalse(t *testing.T, svc *InternalAPI, route, requestID string) (int, map[string]any) {
 	t.Helper()
 	payload := map[string]any{

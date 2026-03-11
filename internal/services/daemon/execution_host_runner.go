@@ -14,9 +14,6 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 	defer h.notifyRunSettled(handle.project)
 
 	runLabel := "worker run"
-	if handle.kind == runKindDispatch {
-		runLabel = "dispatch compat submit"
-	}
 	logLabel := strings.ReplaceAll(runLabel, " ", "_")
 
 	if !h.acquireSlot(handle.ctx) {

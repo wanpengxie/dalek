@@ -740,6 +740,43 @@ func TestExecutionHost_SubmitDispatch_IdempotentByRequestID(t *testing.T) {
 	}
 }
 
+func TestExecutionHost_SubmitDispatch_ReusesWorkerRunAlias(t *testing.T) {
+	project := &testExecutionHostProject{}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	dispatchReceipt, err := host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "dispatch-worker-alias-shared",
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("SubmitDispatch failed: %v", err)
+	}
+	workerReceipt, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "dispatch-worker-alias-shared",
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("SubmitWorkerRun failed: %v", err)
+	}
+
+	if dispatchReceipt.TaskRunID != workerReceipt.TaskRunID {
+		t.Fatalf("expected compat alias to reuse worker run: dispatch=%d worker=%d", dispatchReceipt.TaskRunID, workerReceipt.TaskRunID)
+	}
+	if dispatchReceipt.RequestID != workerReceipt.RequestID {
+		t.Fatalf("expected same request id: dispatch=%q worker=%q", dispatchReceipt.RequestID, workerReceipt.RequestID)
+	}
+	if got := project.DirectDispatchCount(); got != 1 {
+		t.Fatalf("expected shared alias path to create one direct worker run, got=%d", got)
+	}
+}
+
 func TestExecutionHost_SubmitDispatch_ForwardsAutoStartOption(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})

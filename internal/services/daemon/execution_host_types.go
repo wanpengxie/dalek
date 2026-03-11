@@ -299,7 +299,6 @@ type ExecutionHostOptions struct {
 type executionRunKind string
 
 const (
-	runKindDispatch executionRunKind = "dispatch"
 	runKindWorker   executionRunKind = "worker_run"
 	runKindSubagent executionRunKind = "subagent"
 	runKindPlanner  executionRunKind = "planner_run"

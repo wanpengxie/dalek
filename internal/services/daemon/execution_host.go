@@ -114,20 +114,18 @@ func (h *ExecutionHost) Stop(ctx context.Context) error {
 }
 
 func (h *ExecutionHost) SubmitDispatch(ctx context.Context, req DispatchSubmitRequest) (DispatchSubmitReceipt, error) {
-	handle, err := h.submitTicketRun(ctx, ticketRunSubmitRequest{
-		kind:          runKindDispatch,
-		project:       req.Project,
-		ticketID:      req.TicketID,
-		requestID:     req.RequestID,
-		prompt:        req.Prompt,
-		autoStart:     req.AutoStart,
-		baseBranch:    req.BaseBranch,
-		requestPrefix: "dsp",
+	receipt, err := h.SubmitWorkerRun(ctx, WorkerRunSubmitRequest{
+		Project:    req.Project,
+		TicketID:   req.TicketID,
+		RequestID:  req.RequestID,
+		Prompt:     req.Prompt,
+		AutoStart:  req.AutoStart,
+		BaseBranch: req.BaseBranch,
 	})
 	if err != nil {
 		return DispatchSubmitReceipt{}, err
 	}
-	return h.dispatchReceiptFromHandle(handle), nil
+	return dispatchReceiptFromWorkerReceipt(receipt), nil
 }
 
 func (h *ExecutionHost) StartTicket(ctx context.Context, req StartTicketRequest) (StartTicketReceipt, error) {

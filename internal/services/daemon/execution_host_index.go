@@ -23,28 +23,25 @@ func (h *ExecutionHost) lookupTicketRunHandle(kind executionRunKind, project str
 }
 
 func (h *ExecutionHost) lookupDispatchRequest(project string, ticketID uint, requestID string) (DispatchSubmitReceipt, bool) {
-	handle, ok := h.lookupTicketRunHandle(runKindDispatch, project, ticketID, requestID)
+	receipt, ok := h.lookupWorkerRequest(project, ticketID, requestID)
 	if !ok {
 		return DispatchSubmitReceipt{}, false
 	}
-	return h.dispatchReceiptFromHandle(handle), true
+	return dispatchReceiptFromWorkerReceipt(receipt), true
 }
 
 func (h *ExecutionHost) dispatchReceiptFromHandle(handle *executionRunHandle) DispatchSubmitReceipt {
-	if handle == nil {
-		return DispatchSubmitReceipt{}
-	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	return dispatchReceiptFromWorkerReceipt(h.workerReceiptFromHandle(handle))
+}
+
+func dispatchReceiptFromWorkerReceipt(receipt WorkerRunSubmitReceipt) DispatchSubmitReceipt {
 	return DispatchSubmitReceipt{
-		Accepted:  true,
-		Project:   handle.project,
-		RequestID: handle.requestID,
-		TaskRunID: handle.runID,
-		JobID:     handle.jobID,
-		TicketID:  handle.ticketID,
-		WorkerID:  handle.workerID,
-		JobStatus: handle.jobStatus,
+		Accepted:  receipt.Accepted,
+		Project:   receipt.Project,
+		RequestID: receipt.RequestID,
+		TaskRunID: receipt.TaskRunID,
+		TicketID:  receipt.TicketID,
+		WorkerID:  receipt.WorkerID,
 	}
 }
 
