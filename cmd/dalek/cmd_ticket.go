@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"dalek/internal/app"
+	"dalek/internal/services/ticketlifecycle"
 )
 
 func cmdTicket(args []string) {
@@ -1276,6 +1277,7 @@ func cmdTicketCheck(args []string) {
 	fmt.Printf("status: %s\n", status)
 	fmt.Printf("snapshot: workflow=%s integration=%s\n", res.Snapshot.WorkflowStatus, res.Snapshot.IntegrationStatus)
 	fmt.Printf("rebuilt: workflow=%s integration=%s\n", res.Rebuilt.WorkflowStatus, res.Rebuilt.IntegrationStatus)
+	fmt.Printf("rebuilt_reason: %s\n", formatLifecycleExplanation(res.Rebuilt.Explanation))
 	fmt.Printf("events: %d\n", res.EventCount)
 	fmt.Printf("last_sequence: %d\n", res.LastSequence)
 	if len(res.Mismatches) == 0 {
@@ -1286,6 +1288,31 @@ func cmdTicketCheck(args []string) {
 	for _, item := range res.Mismatches {
 		fmt.Printf("- %s\n", trimOneLine(item))
 	}
+}
+
+func formatLifecycleExplanation(exp *ticketlifecycle.SnapshotExplanation) string {
+	if exp == nil {
+		return "-"
+	}
+	parts := []string{
+		fmt.Sprintf("event=%s", exp.EventType),
+	}
+	if value := strings.TrimSpace(exp.BlockedReason); value != "" {
+		parts = append(parts, fmt.Sprintf("blocked_reason=%s", value))
+	}
+	if value := strings.TrimSpace(exp.ObservationKind); value != "" {
+		parts = append(parts, fmt.Sprintf("observation=%s", value))
+	}
+	if value := strings.TrimSpace(exp.FailureCode); value != "" {
+		parts = append(parts, fmt.Sprintf("failure=%s", value))
+	}
+	if exp.RetryCount > 0 {
+		parts = append(parts, fmt.Sprintf("retry=%d", exp.RetryCount))
+	}
+	if value := strings.TrimSpace(exp.Reason); value != "" {
+		parts = append(parts, fmt.Sprintf("reason=%s", trimOneLine(value)))
+	}
+	return strings.Join(parts, " ")
 }
 
 func cmdTicketCleanup(args []string) {

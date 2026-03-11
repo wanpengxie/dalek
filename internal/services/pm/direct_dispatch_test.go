@@ -226,6 +226,9 @@ func TestDirectDispatchWorker_RequeuesAfterActiveRunFailure(t *testing.T) {
 	if lost.TaskRunID == nil || *lost.TaskRunID != run.ID {
 		t.Fatalf("expected execution_lost task_run_id=%d, got=%+v", run.ID, lost)
 	}
+	if got := strings.TrimSpace(lost.PayloadJSON.String()); !strings.Contains(got, `"observation_kind":"unexpected_exit"`) || !strings.Contains(got, `"failure_code":"worker_loop_failed"`) {
+		t.Fatalf("unexpected execution_lost payload: %s", got)
+	}
 	var requeued contracts.TicketLifecycleEvent
 	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleRequeued).Order("sequence desc").First(&requeued).Error; err != nil {
 		t.Fatalf("expected requeued lifecycle event: %v", err)
@@ -271,6 +274,9 @@ func TestDirectDispatchWorker_EscalatesAfterRetryBudgetExhausted(t *testing.T) {
 	var escalated contracts.TicketLifecycleEvent
 	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionEscalated).Order("sequence desc").First(&escalated).Error; err != nil {
 		t.Fatalf("expected execution_escalated lifecycle event: %v", err)
+	}
+	if got := strings.TrimSpace(escalated.PayloadJSON.String()); !strings.Contains(got, `"observation_kind":"unexpected_exit"`) || !strings.Contains(got, `"blocked_reason":"system_incident"`) {
+		t.Fatalf("unexpected execution_escalated payload: %s", got)
 	}
 
 	var inbox contracts.InboxItem

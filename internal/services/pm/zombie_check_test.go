@@ -71,6 +71,13 @@ func TestCheckZombieWorkers_DeadWorker_Recovery(t *testing.T) {
 	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleRequeued).Order("sequence desc").First(&lifecycle).Error; err != nil {
 		t.Fatalf("expected requeued lifecycle event: %v", err)
 	}
+	var lost contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionLost).Order("sequence desc").First(&lost).Error; err != nil {
+		t.Fatalf("expected execution_lost lifecycle event: %v", err)
+	}
+	if got := strings.TrimSpace(lost.PayloadJSON.String()); !strings.Contains(got, `"observation_kind":"host_loss"`) || !strings.Contains(got, `"failure_code":"runtime_anchor_missing"`) {
+		t.Fatalf("unexpected execution_lost payload: %s", got)
+	}
 }
 
 func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
@@ -130,6 +137,13 @@ func TestCheckZombieWorkers_StalledWorker_Recovery(t *testing.T) {
 	}
 	if ticket.WorkflowStatus != contracts.TicketQueued {
 		t.Fatalf("expected ticket queued after stalled recovery, got=%s", ticket.WorkflowStatus)
+	}
+	var lost contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionLost).Order("sequence desc").First(&lost).Error; err != nil {
+		t.Fatalf("expected execution_lost lifecycle event: %v", err)
+	}
+	if got := strings.TrimSpace(lost.PayloadJSON.String()); !strings.Contains(got, `"observation_kind":"visibility_timeout"`) || !strings.Contains(got, `"last_seen_at"`) {
+		t.Fatalf("unexpected execution_lost payload: %s", got)
 	}
 }
 
@@ -315,6 +329,62 @@ func TestCheckZombieWorkers_ActiveWithStoppedWorker_Requeues(t *testing.T) {
 	}
 	if ticket.WorkflowStatus != contracts.TicketQueued {
 		t.Fatalf("expected ticket queued, got=%s", ticket.WorkflowStatus)
+	}
+
+	var lost contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionLost).Order("sequence desc").First(&lost).Error; err != nil {
+		t.Fatalf("expected execution_lost lifecycle event: %v", err)
+	}
+	if got := strings.TrimSpace(lost.PayloadJSON.String()); !strings.Contains(got, `"observation_kind":"unexpected_exit"`) || !strings.Contains(got, `"worker_status":"stopped"`) {
+		t.Fatalf("unexpected execution_lost payload: %s", got)
+	}
+}
+
+func TestCheckZombieWorkers_ActiveWithoutRuntimeStatus_RequeuesHostLoss(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "zombie-active-no-runtime-status")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	now := time.Now()
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      now,
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": now,
+	}).Error; err != nil {
+		t.Fatalf("set worker running failed: %v", err)
+	}
+
+	rt, err := svc.taskRuntimeForDB(p.DB)
+	if err != nil {
+		t.Fatalf("taskRuntimeForDB failed: %v", err)
+	}
+	out := svc.checkZombieWorkers(context.Background(), p.DB, rt)
+	if out.Recovered != 1 || out.Blocked != 0 {
+		t.Fatalf("expected recovered=1 blocked=0, got recovered=%d blocked=%d errors=%v", out.Recovered, out.Blocked, out.Errors)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected ticket queued, got=%s", ticket.WorkflowStatus)
+	}
+
+	var lost contracts.TicketLifecycleEvent
+	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionLost).Order("sequence desc").First(&lost).Error; err != nil {
+		t.Fatalf("expected execution_lost lifecycle event: %v", err)
+	}
+	if got := strings.TrimSpace(lost.PayloadJSON.String()); !strings.Contains(got, `"observation_kind":"host_loss"`) || !strings.Contains(got, `"failure_code":"active_run_missing"`) {
+		t.Fatalf("unexpected execution_lost payload: %s", got)
 	}
 }
 

@@ -3,6 +3,7 @@ package ticketlifecycle
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -10,6 +11,21 @@ import (
 
 	"gorm.io/gorm"
 )
+
+type SnapshotExplanation struct {
+	EventType       contracts.TicketLifecycleEventType `json:"event_type,omitempty"`
+	Source          string                             `json:"source,omitempty"`
+	Reason          string                             `json:"reason,omitempty"`
+	BlockedReason   string                             `json:"blocked_reason,omitempty"`
+	FailureCode     string                             `json:"failure_code,omitempty"`
+	ObservationKind string                             `json:"observation_kind,omitempty"`
+	RetryCount      int                                `json:"retry_count,omitempty"`
+	MaxRetries      int                                `json:"max_retries,omitempty"`
+	TaskRunID       uint                               `json:"task_run_id,omitempty"`
+	WorkerID        uint                               `json:"worker_id,omitempty"`
+	LastSeenAt      *time.Time                         `json:"last_seen_at,omitempty"`
+	LeaseExpiresAt  *time.Time                         `json:"lease_expires_at,omitempty"`
+}
 
 type AppendInput struct {
 	TicketID       uint
@@ -28,6 +44,7 @@ type SnapshotProjection struct {
 	IntegrationStatus contracts.IntegrationStatus    `json:"integration_status"`
 	EventCount        int                            `json:"event_count"`
 	LastSequence      uint                           `json:"last_sequence"`
+	Explanation       *SnapshotExplanation           `json:"explanation,omitempty"`
 }
 
 type ConsistencyCheck struct {
@@ -57,28 +74,38 @@ func projectSnapshotEvent(out *SnapshotProjection, ev contracts.TicketLifecycleE
 	case contracts.TicketLifecycleCreated:
 		out.WorkflowStatus = contracts.TicketBacklog
 		out.IntegrationStatus = contracts.IntegrationNone
+		out.Explanation = snapshotExplanationForEvent(ev)
 	case contracts.TicketLifecycleStartRequested:
 		out.WorkflowStatus = contracts.TicketQueued
+		out.Explanation = snapshotExplanationForEvent(ev)
 	case contracts.TicketLifecycleActivated:
 		out.WorkflowStatus = contracts.TicketActive
+		out.Explanation = snapshotExplanationForEvent(ev)
 	case contracts.TicketLifecycleExecutionLost:
 		// execution_lost 是事实事件，本身不改变投影状态；
 		// 后续由 requeued / execution_escalated 完成正式收敛。
 	case contracts.TicketLifecycleRequeued:
 		out.WorkflowStatus = contracts.TicketQueued
+		out.Explanation = snapshotExplanationForEvent(ev)
 	case contracts.TicketLifecycleExecutionEscalated:
 		out.WorkflowStatus = contracts.TicketBlocked
+		out.Explanation = snapshotExplanationForEvent(ev)
 	case contracts.TicketLifecycleWaitUserReported:
 		out.WorkflowStatus = contracts.TicketBlocked
+		out.Explanation = snapshotExplanationForEvent(ev)
 	case contracts.TicketLifecycleDoneReported:
 		out.WorkflowStatus = contracts.TicketDone
 		out.IntegrationStatus = contracts.IntegrationNeedsMerge
+		out.Explanation = snapshotExplanationForEvent(ev)
 	case contracts.TicketLifecycleMergeObserved:
 		out.IntegrationStatus = contracts.IntegrationMerged
+		out.Explanation = snapshotExplanationForEvent(ev)
 	case contracts.TicketLifecycleMergeAbandoned:
 		out.IntegrationStatus = contracts.IntegrationAbandoned
+		out.Explanation = snapshotExplanationForEvent(ev)
 	case contracts.TicketLifecycleArchived:
 		out.WorkflowStatus = contracts.TicketArchived
+		out.Explanation = snapshotExplanationForEvent(ev)
 	case contracts.TicketLifecycleRepaired:
 		payload := ev.PayloadJSON
 		if targetWorkflow := strings.TrimSpace(fmt.Sprint(payload["target_workflow"])); targetWorkflow != "" && targetWorkflow != "<nil>" {
@@ -87,6 +114,7 @@ func projectSnapshotEvent(out *SnapshotProjection, ev contracts.TicketLifecycleE
 		if targetIntegration := strings.TrimSpace(fmt.Sprint(payload["target_integration"])); targetIntegration != "" && targetIntegration != "<nil>" {
 			out.IntegrationStatus = contracts.CanonicalIntegrationStatus(contracts.IntegrationStatus(targetIntegration))
 		}
+		out.Explanation = snapshotExplanationForEvent(ev)
 	}
 }
 
@@ -347,4 +375,154 @@ func isLifecycleUniqueConflict(err error) bool {
 	}
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	return strings.Contains(msg, "unique constraint failed") || strings.Contains(msg, "duplicate key")
+}
+
+func snapshotExplanationForEvent(ev contracts.TicketLifecycleEvent) *SnapshotExplanation {
+	eventType := contracts.CanonicalTicketLifecycleEventType(ev.EventType)
+	if eventType == contracts.TicketLifecycleExecutionLost {
+		return nil
+	}
+	exp := &SnapshotExplanation{
+		EventType: eventType,
+		Source:    strings.TrimSpace(ev.Source),
+	}
+	if ev.WorkerID != nil {
+		exp.WorkerID = *ev.WorkerID
+	}
+	if ev.TaskRunID != nil {
+		exp.TaskRunID = *ev.TaskRunID
+	}
+	payload := ev.PayloadJSON
+	exp.Reason = payloadString(payload, "reason")
+	if exp.Reason == "" {
+		switch eventType {
+		case contracts.TicketLifecycleWaitUserReported, contracts.TicketLifecycleDoneReported:
+			exp.Reason = payloadString(payload, "summary")
+		case contracts.TicketLifecycleRepaired:
+			exp.Reason = payloadString(payload, "anomaly_reason")
+		}
+	}
+	exp.BlockedReason = payloadString(payload, "blocked_reason")
+	if exp.BlockedReason == "" {
+		switch eventType {
+		case contracts.TicketLifecycleWaitUserReported:
+			exp.BlockedReason = string(contracts.InboxNeedsUser)
+		case contracts.TicketLifecycleExecutionEscalated:
+			exp.BlockedReason = "system_incident"
+		}
+	}
+	exp.FailureCode = payloadString(payload, "failure_code")
+	if exp.FailureCode == "" && eventType == contracts.TicketLifecycleRepaired {
+		exp.FailureCode = payloadString(payload, "anomaly_code")
+	}
+	exp.ObservationKind = payloadString(payload, "observation_kind")
+	exp.RetryCount = payloadInt(payload, "retry_count")
+	exp.MaxRetries = payloadInt(payload, "max_retries")
+	if exp.TaskRunID == 0 {
+		exp.TaskRunID = payloadUint(payload, "task_run_id")
+	}
+	if exp.WorkerID == 0 {
+		exp.WorkerID = payloadUint(payload, "worker_id")
+	}
+	if lastSeenAt, ok := payloadTime(payload, "last_seen_at"); ok {
+		exp.LastSeenAt = &lastSeenAt
+	}
+	if leaseExpiresAt, ok := payloadTime(payload, "lease_expires_at"); ok {
+		exp.LeaseExpiresAt = &leaseExpiresAt
+	}
+	return exp
+}
+
+func payloadString(payload contracts.JSONMap, key string) string {
+	if payload == nil {
+		return ""
+	}
+	raw, ok := payload[key]
+	if !ok || raw == nil {
+		return ""
+	}
+	out := strings.TrimSpace(fmt.Sprint(raw))
+	if out == "<nil>" {
+		return ""
+	}
+	return out
+}
+
+func payloadInt(payload contracts.JSONMap, key string) int {
+	if payload == nil {
+		return 0
+	}
+	raw, ok := payload[key]
+	if !ok || raw == nil {
+		return 0
+	}
+	switch v := raw.(type) {
+	case int:
+		return v
+	case int8:
+		return int(v)
+	case int16:
+		return int(v)
+	case int32:
+		return int(v)
+	case int64:
+		return int(v)
+	case uint:
+		return int(v)
+	case uint8:
+		return int(v)
+	case uint16:
+		return int(v)
+	case uint32:
+		return int(v)
+	case uint64:
+		return int(v)
+	case float32:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+func payloadUint(payload contracts.JSONMap, key string) uint {
+	if n := payloadInt(payload, key); n > 0 {
+		return uint(n)
+	}
+	return 0
+}
+
+func payloadTime(payload contracts.JSONMap, key string) (time.Time, bool) {
+	if payload == nil {
+		return time.Time{}, false
+	}
+	raw, ok := payload[key]
+	if !ok || raw == nil {
+		return time.Time{}, false
+	}
+	switch v := raw.(type) {
+	case time.Time:
+		if v.IsZero() {
+			return time.Time{}, false
+		}
+		return v, true
+	case *time.Time:
+		if v == nil || v.IsZero() {
+			return time.Time{}, false
+		}
+		return *v, true
+	case string:
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+			ts, err := time.Parse(layout, strings.TrimSpace(v))
+			if err == nil && !ts.IsZero() {
+				return ts, true
+			}
+		}
+	}
+	return time.Time{}, false
 }

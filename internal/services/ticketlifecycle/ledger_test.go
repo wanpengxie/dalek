@@ -160,10 +160,33 @@ func TestRebuildSnapshot_ExecutionConvergenceEvents(t *testing.T) {
 		{EventType: contracts.TicketLifecycleStartRequested},
 		{EventType: contracts.TicketLifecycleActivated},
 		{EventType: contracts.TicketLifecycleExecutionLost},
-		{EventType: contracts.TicketLifecycleRequeued},
+		{
+			EventType: contracts.TicketLifecycleRequeued,
+			PayloadJSON: contracts.JSONMap{
+				"failure_code":     "active_run_missing",
+				"observation_kind": "host_loss",
+				"reason":           "ticket active 且 worker running，但缺少可信 active task run",
+				"retry_count":      1,
+				"task_run_id":      41,
+				"worker_id":        7,
+			},
+		},
 		{EventType: contracts.TicketLifecycleActivated},
 		{EventType: contracts.TicketLifecycleExecutionLost},
-		{EventType: contracts.TicketLifecycleExecutionEscalated},
+		{
+			EventType: contracts.TicketLifecycleExecutionEscalated,
+			PayloadJSON: contracts.JSONMap{
+				"failure_code":     "runtime_stalled",
+				"observation_kind": "visibility_timeout",
+				"reason":           "最近活动距今 11m0s（阈值 10m0s）",
+				"retry_count":      3,
+				"blocked_reason":   "system_incident",
+				"last_seen_at":     "2026-03-11T09:00:00Z",
+				"lease_expires_at": "2026-03-11T09:05:00Z",
+				"task_run_id":      42,
+				"worker_id":        7,
+			},
+		},
 	}
 	got := RebuildSnapshot(events)
 	if got.WorkflowStatus != contracts.TicketBlocked {
@@ -171,6 +194,71 @@ func TestRebuildSnapshot_ExecutionConvergenceEvents(t *testing.T) {
 	}
 	if got.EventCount != len(events) {
 		t.Fatalf("expected event_count=%d, got=%d", len(events), got.EventCount)
+	}
+	if got.Explanation == nil {
+		t.Fatalf("expected explanation after execution_escalated")
+	}
+	if got.Explanation.EventType != contracts.TicketLifecycleExecutionEscalated {
+		t.Fatalf("expected explanation event_type=%s, got=%s", contracts.TicketLifecycleExecutionEscalated, got.Explanation.EventType)
+	}
+	if got.Explanation.BlockedReason != "system_incident" {
+		t.Fatalf("expected blocked_reason=system_incident, got=%q", got.Explanation.BlockedReason)
+	}
+	if got.Explanation.ObservationKind != "visibility_timeout" {
+		t.Fatalf("expected observation_kind=visibility_timeout, got=%q", got.Explanation.ObservationKind)
+	}
+	if got.Explanation.FailureCode != "runtime_stalled" {
+		t.Fatalf("expected failure_code=runtime_stalled, got=%q", got.Explanation.FailureCode)
+	}
+	if got.Explanation.RetryCount != 3 {
+		t.Fatalf("expected retry_count=3, got=%d", got.Explanation.RetryCount)
+	}
+	if got.Explanation.TaskRunID != 42 || got.Explanation.WorkerID != 7 {
+		t.Fatalf("unexpected task/worker ids: %+v", got.Explanation)
+	}
+	if got.Explanation.LastSeenAt == nil || got.Explanation.LeaseExpiresAt == nil {
+		t.Fatalf("expected last_seen_at and lease_expires_at in explanation, got=%+v", got.Explanation)
+	}
+}
+
+func TestRebuildSnapshot_QueuedExplanationDistinguishesStartAndRetry(t *testing.T) {
+	startQueued := RebuildSnapshot([]contracts.TicketLifecycleEvent{
+		{EventType: contracts.TicketLifecycleCreated},
+		{EventType: contracts.TicketLifecycleStartRequested},
+	})
+	if startQueued.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected queued after start_requested, got=%s", startQueued.WorkflowStatus)
+	}
+	if startQueued.Explanation == nil || startQueued.Explanation.EventType != contracts.TicketLifecycleStartRequested {
+		t.Fatalf("expected start_requested explanation, got=%+v", startQueued.Explanation)
+	}
+
+	retryQueued := RebuildSnapshot([]contracts.TicketLifecycleEvent{
+		{EventType: contracts.TicketLifecycleCreated},
+		{EventType: contracts.TicketLifecycleStartRequested},
+		{EventType: contracts.TicketLifecycleActivated},
+		{EventType: contracts.TicketLifecycleExecutionLost},
+		{
+			EventType: contracts.TicketLifecycleRequeued,
+			PayloadJSON: contracts.JSONMap{
+				"failure_code":     "worker_loop_failed",
+				"observation_kind": "unexpected_exit",
+				"reason":           "worker loop failed",
+				"retry_count":      1,
+			},
+		},
+	})
+	if retryQueued.Explanation == nil {
+		t.Fatalf("expected retry explanation")
+	}
+	if retryQueued.Explanation.EventType != contracts.TicketLifecycleRequeued {
+		t.Fatalf("expected requeued explanation, got=%s", retryQueued.Explanation.EventType)
+	}
+	if retryQueued.Explanation.ObservationKind != "unexpected_exit" {
+		t.Fatalf("expected observation_kind=unexpected_exit, got=%q", retryQueued.Explanation.ObservationKind)
+	}
+	if retryQueued.Explanation.FailureCode != "worker_loop_failed" {
+		t.Fatalf("expected failure_code=worker_loop_failed, got=%q", retryQueued.Explanation.FailureCode)
 	}
 }
 

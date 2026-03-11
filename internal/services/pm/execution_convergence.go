@@ -15,13 +15,15 @@ import (
 )
 
 type executionLossInput struct {
-	TicketID    uint
-	WorkerID    uint
-	TaskRunID   uint
-	Source      string
-	FailureCode string
-	Reason      string
-	Now         time.Time
+	TicketID        uint
+	WorkerID        uint
+	TaskRunID       uint
+	Source          string
+	ObservationKind string
+	FailureCode     string
+	Reason          string
+	Payload         map[string]any
+	Now             time.Time
 }
 
 type executionLossResult struct {
@@ -94,6 +96,7 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 	if input.FailureCode == "" {
 		input.FailureCode = "execution_lost"
 	}
+	input.ObservationKind = normalizeExecutionLossObservationKind(input.ObservationKind, input.FailureCode)
 	input.Reason = strings.TrimSpace(input.Reason)
 	if input.Reason == "" {
 		input.Reason = "worker execution lost"
@@ -145,6 +148,7 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 			fmt.Sprintf("ticket:%d", input.TicketID),
 			fmt.Sprintf("worker:%d", input.WorkerID),
 			fmt.Sprintf("run:%d", taskRunID),
+			input.ObservationKind,
 			input.FailureCode,
 			input.Reason,
 		)
@@ -156,14 +160,8 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 			WorkerID:       input.WorkerID,
 			TaskRunID:      taskRunID,
 			IdempotencyKey: ticketlifecycle.ExecutionLostIdempotencyKey(input.TicketID, taskRunID, input.WorkerID),
-			Payload: map[string]any{
-				"ticket_id":    input.TicketID,
-				"worker_id":    input.WorkerID,
-				"task_run_id":  taskRunID,
-				"failure_code": input.FailureCode,
-				"reason":       input.Reason,
-			},
-			CreatedAt: input.Now,
+			Payload:        executionLossPayload(input, taskRunID, nil),
+			CreatedAt:      input.Now,
 		})
 		if err != nil {
 			return err
@@ -212,17 +210,12 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 				WorkerID:       input.WorkerID,
 				TaskRunID:      taskRunID,
 				IdempotencyKey: ticketlifecycle.RequeuedIdempotencyKey(input.TicketID, taskRunID, input.WorkerID, retryCount),
-				Payload: map[string]any{
-					"ticket_id":        input.TicketID,
-					"worker_id":        input.WorkerID,
-					"task_run_id":      taskRunID,
-					"failure_code":     input.FailureCode,
-					"reason":           input.Reason,
+				Payload: executionLossPayload(input, taskRunID, map[string]any{
 					"retry_count":      retryCount,
 					"max_retries":      defaultZombieMaxRetries,
 					"target_workflow":  string(contracts.TicketQueued),
 					"retry_backoff_ms": workerRetryBackoffDurationMS(retryCount),
-				},
+				}),
 				CreatedAt: input.Now,
 			})
 			if err != nil {
@@ -270,17 +263,12 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 			WorkerID:       input.WorkerID,
 			TaskRunID:      taskRunID,
 			IdempotencyKey: ticketlifecycle.ExecutionEscalatedIdempotencyKey(input.TicketID, taskRunID, input.WorkerID, retryCount),
-			Payload: map[string]any{
-				"ticket_id":       input.TicketID,
-				"worker_id":       input.WorkerID,
-				"task_run_id":     taskRunID,
-				"failure_code":    input.FailureCode,
-				"reason":          input.Reason,
+			Payload: executionLossPayload(input, taskRunID, map[string]any{
 				"retry_count":     retryCount,
 				"max_retries":     defaultZombieMaxRetries,
 				"target_workflow": string(contracts.TicketBlocked),
 				"blocked_reason":  "system_incident",
-			},
+			}),
 			CreatedAt: input.Now,
 		})
 		if err != nil {
@@ -343,4 +331,39 @@ func workerRetryBackoffDurationMS(retryCount int) int64 {
 		return 0
 	}
 	return int64(zombieRetryBackoff(retryCount-1) / time.Millisecond)
+}
+
+func normalizeExecutionLossObservationKind(kind, failureCode string) string {
+	switch strings.TrimSpace(strings.ToLower(kind)) {
+	case "unexpected_exit", "host_loss", "visibility_timeout":
+		return strings.TrimSpace(strings.ToLower(kind))
+	}
+	switch strings.TrimSpace(strings.ToLower(failureCode)) {
+	case "worker_loop_failed", "active_worker_not_running", "worker_not_running", "unexpected_exit":
+		return "unexpected_exit"
+	case "runtime_dead", "runtime_anchor_missing", "active_run_missing", "host_loss":
+		return "host_loss"
+	case "runtime_stalled", "lease_expired", "visibility_timeout":
+		return "visibility_timeout"
+	default:
+		return "execution_lost"
+	}
+}
+
+func executionLossPayload(input executionLossInput, taskRunID uint, extra map[string]any) map[string]any {
+	out := map[string]any{
+		"ticket_id":        input.TicketID,
+		"worker_id":        input.WorkerID,
+		"task_run_id":      taskRunID,
+		"failure_code":     input.FailureCode,
+		"observation_kind": input.ObservationKind,
+		"reason":           input.Reason,
+	}
+	for k, v := range input.Payload {
+		out[k] = v
+	}
+	for k, v := range extra {
+		out[k] = v
+	}
+	return out
 }

@@ -50,12 +50,19 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 		out.Errors = append(out.Errors, fmt.Sprintf("zombie 检查查询 running workers 失败: %v", err))
 		return out
 	}
+	ticketWorkflowByID, ticketErr := ticketWorkflowStatusesByWorker(ctx, db, running)
+	if ticketErr != nil {
+		out.Errors = append(out.Errors, fmt.Sprintf("zombie 检查加载 ticket workflow 失败: %v", ticketErr))
+	}
 	runtimeByWorker := map[uint]contracts.TaskStatusView{}
+	runtimeViewLoaded := len(running) == 0
 	if len(running) > 0 {
 		var rerr error
 		runtimeByWorker, rerr = latestWorkerRuntimeStatus(ctx, taskRuntime)
 		if rerr != nil {
 			out.Errors = append(out.Errors, fmt.Sprintf("zombie 检查加载 task_status_view 失败: %v", rerr))
+		} else {
+			runtimeViewLoaded = true
 		}
 	}
 
@@ -64,15 +71,48 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 		out.Checked++
 
 		tv, hasTV := runtimeByWorker[w.ID]
+		ticketWorkflow := ticketWorkflowByID[w.TicketID]
 		deadReason := ""
 		runtimeAlive := false
+		deadInput := executionLossInput{}
 		if !hasWorkerRuntimeHandle(w) {
 			deadReason = "worker 缺少运行日志锚点"
+			deadInput = executionLossInput{
+				TicketID:        w.TicketID,
+				WorkerID:        w.ID,
+				Source:          "pm.zombie",
+				ObservationKind: "host_loss",
+				FailureCode:     "runtime_anchor_missing",
+				Reason:          deadReason,
+				Payload: map[string]any{
+					"ticket_workflow":        string(ticketWorkflow),
+					"runtime_anchor_present": false,
+				},
+				Now: now,
+			}
 		} else {
 			switch {
 			case !hasTV:
-				// 允许 running worker 暂无活跃 run（例如刚 start 尚未 dispatch）。
-				runtimeAlive = true
+				if runtimeViewLoaded && ticketWorkflow == contracts.TicketActive {
+					deadReason = "ticket active 且 worker running，但缺少可信 active task run"
+					deadInput = executionLossInput{
+						TicketID:        w.TicketID,
+						WorkerID:        w.ID,
+						Source:          "pm.zombie",
+						ObservationKind: "host_loss",
+						FailureCode:     "active_run_missing",
+						Reason:          deadReason,
+						Payload: map[string]any{
+							"ticket_workflow":        string(ticketWorkflow),
+							"runtime_anchor_present": true,
+							"has_runtime_status":     false,
+						},
+						Now: now,
+					}
+				} else {
+					// 允许 running worker 暂无活跃 run（例如刚 start 尚未 dispatch）。
+					runtimeAlive = true
+				}
 			case isWorkerTaskRunActive(tv):
 				runtimeAlive = true
 			default:
@@ -81,10 +121,27 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 					state = "unknown"
 				}
 				deadReason = fmt.Sprintf("worker 无活跃 task run：run=%d state=%s", tv.RunID, state)
+				deadInput = executionLossInput{
+					TicketID:        w.TicketID,
+					WorkerID:        w.ID,
+					TaskRunID:       tv.RunID,
+					Source:          "pm.zombie",
+					ObservationKind: "host_loss",
+					FailureCode:     "active_run_missing",
+					Reason:          deadReason,
+					Payload: map[string]any{
+						"ticket_workflow":              string(ticketWorkflow),
+						"runtime_anchor_present":       true,
+						"has_runtime_status":           true,
+						"observed_run_id":              tv.RunID,
+						"observed_orchestration_state": state,
+					},
+					Now: now,
+				}
 			}
 		}
 		if deadReason != "" {
-			recovered, blocked, herr := s.handleDeadWorker(ctx, db, w, now, deadReason)
+			recovered, blocked, herr := s.handleDeadWorker(ctx, db, w, now, deadInput)
 			if recovered {
 				out.Recovered++
 			}
@@ -103,17 +160,36 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 		if !hasTV {
 			continue
 		}
-		lastActiveAt, ok := latestZombieActivityAt(tv)
-		if !ok {
-			continue
-		}
-		idle := now.Sub(lastActiveAt)
-		if idle < defaultZombieStallThreshold {
+		timedOut, lastActiveAt, hasLastActive, leaseExpired := zombieVisibilityTimedOut(tv, now)
+		if !timedOut {
 			continue
 		}
 
-		reason := fmt.Sprintf("最近活动距今 %s（阈值 %s）", idle.Round(time.Second), defaultZombieStallThreshold)
-		recovered, blocked, herr := s.handleStalledWorker(ctx, db, taskRuntime, w, lastActiveAt, now, reason)
+		reason := zombieVisibilityTimeoutReason(lastActiveAt, hasLastActive, tv.LeaseExpiresAt, leaseExpired, now)
+		payload := map[string]any{
+			"ticket_workflow":              string(ticketWorkflow),
+			"observed_run_id":              tv.RunID,
+			"observed_orchestration_state": strings.TrimSpace(strings.ToLower(tv.OrchestrationState)),
+			"visibility_timeout_seconds":   int(defaultZombieStallThreshold / time.Second),
+		}
+		if hasLastActive {
+			payload["last_seen_at"] = lastActiveAt
+		}
+		if tv.LeaseExpiresAt != nil && !tv.LeaseExpiresAt.IsZero() {
+			payload["lease_expires_at"] = *tv.LeaseExpiresAt
+			payload["lease_expired"] = leaseExpired
+		}
+		recovered, blocked, herr := s.handleStalledWorker(ctx, db, taskRuntime, w, lastActiveAt, now, executionLossInput{
+			TicketID:        w.TicketID,
+			WorkerID:        w.ID,
+			TaskRunID:       tv.RunID,
+			Source:          "pm.zombie",
+			ObservationKind: "visibility_timeout",
+			FailureCode:     "runtime_stalled",
+			Reason:          reason,
+			Payload:         payload,
+			Now:             now,
+		})
 		if recovered {
 			out.Recovered++
 		}
@@ -219,12 +295,17 @@ func (s *Service) reconcileZombieStateDrift(ctx context.Context, db *gorm.DB, no
 		if w.Status != contracts.WorkerRunning {
 			reason := fmt.Sprintf("ticket active 但 worker 不在 running（status=%s）", strings.TrimSpace(string(w.Status)))
 			outcome, err := s.convergeExecutionLost(ctx, executionLossInput{
-				TicketID:    t.ID,
-				WorkerID:    w.ID,
-				Source:      "pm.zombie",
-				FailureCode: "active_worker_not_running",
-				Reason:      reason,
-				Now:         now,
+				TicketID:        t.ID,
+				WorkerID:        w.ID,
+				Source:          "pm.zombie",
+				ObservationKind: "unexpected_exit",
+				FailureCode:     "active_worker_not_running",
+				Reason:          reason,
+				Payload: map[string]any{
+					"ticket_workflow": string(status),
+					"worker_status":   string(w.Status),
+				},
+				Now: now,
 			})
 			if err != nil {
 				out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检处理非法状态失败：t%d w%d: %v", t.ID, w.ID, err))
@@ -365,6 +446,42 @@ func latestWorkerRuntimeStatus(ctx context.Context, taskRuntime core.TaskRuntime
 	return out, nil
 }
 
+func ticketWorkflowStatusesByWorker(ctx context.Context, db *gorm.DB, workers []contracts.Worker) (map[uint]contracts.TicketWorkflowStatus, error) {
+	out := map[uint]contracts.TicketWorkflowStatus{}
+	if db == nil || len(workers) == 0 {
+		return out, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ids := make([]uint, 0, len(workers))
+	seen := make(map[uint]struct{}, len(workers))
+	for _, w := range workers {
+		if w.TicketID == 0 {
+			continue
+		}
+		if _, exists := seen[w.TicketID]; exists {
+			continue
+		}
+		seen[w.TicketID] = struct{}{}
+		ids = append(ids, w.TicketID)
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var tickets []contracts.Ticket
+	if err := db.WithContext(ctx).
+		Select("id", "workflow_status").
+		Where("id IN ?", ids).
+		Find(&tickets).Error; err != nil {
+		return nil, err
+	}
+	for _, t := range tickets {
+		out[t.ID] = contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
+	}
+	return out, nil
+}
+
 func latestZombieActivityAt(tv contracts.TaskStatusView) (time.Time, bool) {
 	var latest time.Time
 	for _, ts := range []*time.Time{tv.RuntimeObservedAt, tv.SemanticReportedAt, tv.LastEventAt} {
@@ -379,6 +496,38 @@ func latestZombieActivityAt(tv contracts.TaskStatusView) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return latest, true
+}
+
+func zombieVisibilityTimedOut(tv contracts.TaskStatusView, now time.Time) (bool, time.Time, bool, bool) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	lastSeenAt, hasLastSeen := latestZombieActivityAt(tv)
+	leaseExpired := false
+	if tv.LeaseExpiresAt != nil && !tv.LeaseExpiresAt.IsZero() && !tv.LeaseExpiresAt.After(now) {
+		leaseExpired = true
+	}
+	if leaseExpired {
+		return true, lastSeenAt, hasLastSeen, true
+	}
+	if !hasLastSeen {
+		return false, time.Time{}, false, false
+	}
+	return now.Sub(lastSeenAt) >= defaultZombieStallThreshold, lastSeenAt, true, false
+}
+
+func zombieVisibilityTimeoutReason(lastSeenAt time.Time, hasLastSeen bool, leaseExpiresAt *time.Time, leaseExpired bool, now time.Time) string {
+	parts := make([]string, 0, 2)
+	if hasLastSeen {
+		parts = append(parts, fmt.Sprintf("最近活动距今 %s（阈值 %s）", now.Sub(lastSeenAt).Round(time.Second), defaultZombieStallThreshold))
+	}
+	if leaseExpired && leaseExpiresAt != nil && !leaseExpiresAt.IsZero() {
+		parts = append(parts, fmt.Sprintf("lease 已于 %s 过期", leaseExpiresAt.Format(time.RFC3339)))
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("worker 可见性超时（阈值 %s）", defaultZombieStallThreshold)
+	}
+	return strings.Join(parts, "；")
 }
 
 func isWorkerTaskRunActive(tv contracts.TaskStatusView) bool {
@@ -403,18 +552,23 @@ func zombieRetryBackoff(retryCount int) time.Duration {
 	return wait
 }
 
-func (s *Service) handleDeadWorker(ctx context.Context, db *gorm.DB, w contracts.Worker, now time.Time, reason string) (bool, bool, error) {
+func (s *Service) handleDeadWorker(ctx context.Context, db *gorm.DB, w contracts.Worker, now time.Time, input executionLossInput) (bool, bool, error) {
 	if err := s.worker.MarkWorkerRuntimeNotAlive(ctx, w, now); err != nil {
 		return false, false, err
 	}
-	outcome, err := s.convergeExecutionLost(ctx, executionLossInput{
-		TicketID:    w.TicketID,
-		WorkerID:    w.ID,
-		Source:      "pm.zombie",
-		FailureCode: "runtime_dead",
-		Reason:      reason,
-		Now:         now,
-	})
+	if input.TicketID == 0 {
+		input.TicketID = w.TicketID
+	}
+	if input.WorkerID == 0 {
+		input.WorkerID = w.ID
+	}
+	if strings.TrimSpace(input.Source) == "" {
+		input.Source = "pm.zombie"
+	}
+	if input.Now.IsZero() {
+		input.Now = now
+	}
+	outcome, err := s.convergeExecutionLost(ctx, input)
 	if err != nil {
 		return false, false, err
 	}
@@ -427,7 +581,7 @@ func (s *Service) handleDeadWorker(ctx context.Context, db *gorm.DB, w contracts
 	return false, false, nil
 }
 
-func (s *Service) handleStalledWorker(ctx context.Context, db *gorm.DB, taskRuntime core.TaskRuntime, w contracts.Worker, lastActiveAt, now time.Time, reason string) (bool, bool, error) {
+func (s *Service) handleStalledWorker(ctx context.Context, db *gorm.DB, taskRuntime core.TaskRuntime, w contracts.Worker, lastActiveAt, now time.Time, input executionLossInput) (bool, bool, error) {
 	interruptErr := error(nil)
 	interruptRecovered := false
 	if _, err := s.worker.InterruptWorker(ctx, w.ID); err != nil {
@@ -447,15 +601,21 @@ func (s *Service) handleStalledWorker(ctx context.Context, db *gorm.DB, taskRunt
 	if interruptRecovered {
 		return true, false, nil
 	}
+	reason := strings.TrimSpace(input.Reason)
 	failErr := s.worker.MarkWorkerFailed(ctx, w.ID, now, reason)
-	outcome, err := s.convergeExecutionLost(ctx, executionLossInput{
-		TicketID:    w.TicketID,
-		WorkerID:    w.ID,
-		Source:      "pm.zombie",
-		FailureCode: "runtime_stalled",
-		Reason:      reason,
-		Now:         now,
-	})
+	if input.TicketID == 0 {
+		input.TicketID = w.TicketID
+	}
+	if input.WorkerID == 0 {
+		input.WorkerID = w.ID
+	}
+	if strings.TrimSpace(input.Source) == "" {
+		input.Source = "pm.zombie"
+	}
+	if input.Now.IsZero() {
+		input.Now = now
+	}
+	outcome, err := s.convergeExecutionLost(ctx, input)
 	err = joinZombieErrors(interruptErr, failErr, err)
 	if outcome.Requeued {
 		return true, false, err

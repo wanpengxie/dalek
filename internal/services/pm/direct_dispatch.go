@@ -181,13 +181,17 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		loopErrMsg := strings.TrimSpace(err.Error())
 		if workflowPromoted {
 			if _, cerr := s.convergeExecutionLost(ctx, executionLossInput{
-				TicketID:    ticketID,
-				WorkerID:    w.ID,
-				TaskRunID:   loopResult.LastRunID,
-				Source:      "pm.direct_dispatch",
-				FailureCode: "worker_loop_failed",
-				Reason:      loopErrMsg,
-				Now:         time.Now(),
+				TicketID:        ticketID,
+				WorkerID:        w.ID,
+				TaskRunID:       loopResult.LastRunID,
+				Source:          "pm.direct_dispatch",
+				ObservationKind: "unexpected_exit",
+				FailureCode:     "worker_loop_failed",
+				Reason:          loopErrMsg,
+				Payload: map[string]any{
+					"loop_stage_count": loopResult.Stages,
+				},
+				Now: time.Now(),
 			}); cerr != nil {
 				return DirectDispatchResult{}, fmt.Errorf("%w（且 execution 收敛失败: %v）", err, cerr)
 			}
