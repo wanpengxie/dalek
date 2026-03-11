@@ -75,34 +75,14 @@ func (p *daemonProjectAdapter) StartTicket(ctx context.Context, ticketID uint, o
 	})
 }
 
-func (p *daemonProjectAdapter) SubmitDispatchTicket(ctx context.Context, ticketID uint, opt daemonsvc.DispatchSubmitOptions) (daemonsvc.DispatchSubmission, error) {
-	if p == nil || p.project == nil {
-		return daemonsvc.DispatchSubmission{}, fmt.Errorf("daemon project 为空")
-	}
-	opt.RequestID = strings.TrimSpace(opt.RequestID)
-	res, err := p.project.SubmitDispatchTicket(ctx, ticketID, opt)
-	if err != nil {
-		return daemonsvc.DispatchSubmission{}, err
-	}
-	res.RequestID = strings.TrimSpace(res.RequestID)
-	return res, nil
-}
-
-func (p *daemonProjectAdapter) RunDispatchJob(ctx context.Context, jobID uint, opt daemonsvc.DispatchRunOptions) error {
-	if p == nil || p.project == nil {
-		return fmt.Errorf("daemon project 为空")
-	}
-	opt.RunnerID = strings.TrimSpace(opt.RunnerID)
-	opt.EntryPrompt = strings.TrimSpace(opt.EntryPrompt)
-	return p.project.RunDispatchJob(ctx, jobID, opt)
-}
-
 func (p *daemonProjectAdapter) DirectDispatchWorker(ctx context.Context, ticketID uint, opt daemonsvc.WorkerRunOptions) (daemonsvc.WorkerRunResult, error) {
 	if p == nil || p.project == nil {
 		return daemonsvc.WorkerRunResult{}, fmt.Errorf("daemon project 为空")
 	}
 	res, err := p.project.DirectDispatchWorker(ctx, ticketID, DirectDispatchOptions{
 		EntryPrompt: strings.TrimSpace(opt.EntryPrompt),
+		AutoStart:   opt.AutoStart,
+		BaseBranch:  strings.TrimSpace(opt.BaseBranch),
 	})
 	if err != nil {
 		return daemonsvc.WorkerRunResult{}, err

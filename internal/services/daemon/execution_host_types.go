@@ -54,8 +54,6 @@ type ExecutionHostResolver interface {
 
 type ExecutionHostProject interface {
 	StartTicket(ctx context.Context, ticketID uint, opt StartTicketOptions) (*contracts.Worker, error)
-	SubmitDispatchTicket(ctx context.Context, ticketID uint, opt DispatchSubmitOptions) (DispatchSubmission, error)
-	RunDispatchJob(ctx context.Context, jobID uint, opt DispatchRunOptions) error
 	DirectDispatchWorker(ctx context.Context, ticketID uint, opt WorkerRunOptions) (WorkerRunResult, error)
 	SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptions) (SubagentSubmission, error)
 	RunSubagentJob(ctx context.Context, taskRunID uint, opt SubagentRunOptions) error
@@ -77,9 +75,6 @@ type DashboardProject interface {
 	ListInbox(ctx context.Context, opt ListInboxOptions) ([]contracts.InboxItem, error)
 }
 
-type DispatchSubmitOptions = pmsvc.DispatchSubmitOptions
-type DispatchSubmission = pmsvc.DispatchSubmission
-type DispatchRunOptions = pmsvc.DispatchRunOptions
 type StartTicketOptions = pmsvc.StartOptions
 
 type DashboardResult struct {
@@ -160,6 +155,8 @@ type DispatchSubmitReceipt struct {
 
 type WorkerRunOptions struct {
 	EntryPrompt string
+	AutoStart   *bool
+	BaseBranch  string
 }
 
 type WorkerRunResult struct {
@@ -169,10 +166,12 @@ type WorkerRunResult struct {
 }
 
 type WorkerRunSubmitRequest struct {
-	Project   string
-	TicketID  uint
-	RequestID string
-	Prompt    string
+	Project    string
+	TicketID   uint
+	RequestID  string
+	Prompt     string
+	AutoStart  *bool
+	BaseBranch string
 }
 
 type WorkerRunSubmitReceipt struct {
@@ -309,16 +308,19 @@ const (
 type executionRunHandle struct {
 	kind executionRunKind
 
-	project   string
-	requestID string
-	runID     uint
-	jobID     uint
-	jobStatus contracts.PMDispatchJobStatus
-	ticketID  uint
-	workerID  uint
+	project       string
+	requestID     string
+	retainRequest bool
+	runID         uint
+	jobID         uint
+	jobStatus     contracts.PMDispatchJobStatus
+	ticketID      uint
+	workerID      uint
 
 	runnerID    string
 	entryPrompt string
+	autoStart   *bool
+	baseBranch  string
 	provider    string
 	model       string
 

@@ -77,22 +77,19 @@ func (r *testExecutionHostResolver) ListProjectsCount() int64 {
 type testExecutionHostProject struct {
 	mu sync.Mutex
 
-	startCalls            int
-	dispatchCalls         int
-	runDispatchCalls      int
-	directDispatchCalls   int
-	subagentCalls         int
-	runSubagentCalls      int
-	runPlannerCalls       int
-	lastStartBaseBranch   string
-	lastDispatchAutoStart *bool
-	lastPlannerPrompt     string
+	startCalls                   int
+	directDispatchCalls          int
+	subagentCalls                int
+	runSubagentCalls             int
+	runPlannerCalls              int
+	lastStartBaseBranch          string
+	lastDirectDispatchAutoStart  *bool
+	lastDirectDispatchBaseBranch string
+	lastPlannerPrompt            string
 
-	nextJobID   uint
 	nextRunID   uint
 	workerRunID uint
 
-	dispatchByRequest map[string]DispatchSubmission
 	subagentByRequest map[string]SubagentSubmission
 	projectName       string
 	statusByRun       map[uint]*RunStatus
@@ -110,11 +107,6 @@ type testExecutionHostProject struct {
 	listInboxCalls    int
 	lastMergeOpt      ListMergeItemsOptions
 	lastInboxOpt      ListInboxOptions
-
-	runDispatchDelay        time.Duration
-	runDispatchStarted      chan struct{}
-	runDispatchRelease      chan struct{}
-	runDispatchIgnoreCancel bool
 
 	directDispatchDelay        time.Duration
 	directDispatchStarted      chan struct{}
@@ -147,63 +139,12 @@ func (p *testExecutionHostProject) StartTicket(ctx context.Context, ticketID uin
 	}, nil
 }
 
-func (p *testExecutionHostProject) SubmitDispatchTicket(ctx context.Context, ticketID uint, opt DispatchSubmitOptions) (DispatchSubmission, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.dispatchCalls++
-	p.lastDispatchAutoStart = cloneBoolPtr(opt.AutoStart)
-
-	if p.dispatchByRequest == nil {
-		p.dispatchByRequest = make(map[string]DispatchSubmission)
-	}
-	if p.nextJobID == 0 {
-		p.nextJobID = 100
-	}
-	if p.nextRunID == 0 {
-		p.nextRunID = 200
-	}
-
-	requestID := strings.TrimSpace(opt.RequestID)
-	if requestID == "" {
-		requestID = fmt.Sprintf("dsp-test-generated-%d", p.dispatchCalls)
-	}
-	if existing, ok := p.dispatchByRequest[requestID]; ok {
-		return existing, nil
-	}
-
-	p.nextJobID++
-	p.nextRunID++
-	submission := DispatchSubmission{
-		JobID:      p.nextJobID,
-		TaskRunID:  p.nextRunID,
-		RequestID:  requestID,
-		TicketID:   ticketID,
-		WorkerID:   301,
-		JobStatus:  contracts.PMDispatchPending,
-		Dispatched: false,
-	}
-	p.dispatchByRequest[requestID] = submission
-	return submission, nil
-}
-
 func cloneBoolPtr(v *bool) *bool {
 	if v == nil {
 		return nil
 	}
 	b := *v
 	return &b
-}
-
-func (p *testExecutionHostProject) RunDispatchJob(ctx context.Context, jobID uint, opt DispatchRunOptions) error {
-	p.mu.Lock()
-	p.runDispatchCalls++
-	delay := p.runDispatchDelay
-	started := p.runDispatchStarted
-	release := p.runDispatchRelease
-	ignoreCancel := p.runDispatchIgnoreCancel
-	p.mu.Unlock()
-	notifyExecutionStarted(started)
-	return waitExecutionRelease(ctx, delay, release, ignoreCancel)
 }
 
 func (p *testExecutionHostProject) DirectDispatchWorker(ctx context.Context, ticketID uint, opt WorkerRunOptions) (WorkerRunResult, error) {
@@ -214,13 +155,19 @@ func (p *testExecutionHostProject) DirectDispatchWorker(ctx context.Context, tic
 	release := p.directDispatchRelease
 	ignoreCancel := p.directDispatchIgnoreCancel
 	runID := p.workerRunID
+	if runID == 0 {
+		if p.nextRunID == 0 {
+			p.nextRunID = 500
+		}
+		p.nextRunID++
+		runID = p.nextRunID
+	}
+	p.lastDirectDispatchAutoStart = cloneBoolPtr(opt.AutoStart)
+	p.lastDirectDispatchBaseBranch = strings.TrimSpace(opt.BaseBranch)
 	p.mu.Unlock()
 	notifyExecutionStarted(started)
 	if err := waitExecutionRelease(ctx, delay, release, ignoreCancel); err != nil {
 		return WorkerRunResult{}, err
-	}
-	if runID == 0 {
-		runID = 501
 	}
 	return WorkerRunResult{
 		TicketID: ticketID,
@@ -491,12 +438,6 @@ func copyDashboardMap(src map[string]int) map[string]int {
 	return dst
 }
 
-func (p *testExecutionHostProject) DispatchSubmitCount() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.dispatchCalls
-}
-
 func (p *testExecutionHostProject) StartTicketCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -509,16 +450,16 @@ func (p *testExecutionHostProject) LastStartBaseBranch() string {
 	return strings.TrimSpace(p.lastStartBaseBranch)
 }
 
-func (p *testExecutionHostProject) LastDispatchAutoStart() *bool {
+func (p *testExecutionHostProject) LastDirectDispatchAutoStart() *bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return cloneBoolPtr(p.lastDispatchAutoStart)
+	return cloneBoolPtr(p.lastDirectDispatchAutoStart)
 }
 
-func (p *testExecutionHostProject) RunDispatchCount() int {
+func (p *testExecutionHostProject) LastDirectDispatchBaseBranch() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.runDispatchCalls
+	return strings.TrimSpace(p.lastDirectDispatchBaseBranch)
 }
 
 func (p *testExecutionHostProject) DirectDispatchCount() int {
@@ -794,8 +735,8 @@ func TestExecutionHost_SubmitDispatch_IdempotentByRequestID(t *testing.T) {
 	if first.RequestID != second.RequestID {
 		t.Fatalf("expected same request_id in receipt: first=%q second=%q", first.RequestID, second.RequestID)
 	}
-	if got := project.DispatchSubmitCount(); got != 1 {
-		t.Fatalf("expected only one SubmitDispatchTicket call, got=%d", got)
+	if got := project.DirectDispatchCount(); got != 1 {
+		t.Fatalf("expected dispatch compat path to reuse one direct worker run, got=%d", got)
 	}
 }
 
@@ -808,19 +749,23 @@ func TestExecutionHost_SubmitDispatch_ForwardsAutoStartOption(t *testing.T) {
 
 	autoStart := false
 	_, err = host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
-		Project:   "demo",
-		TicketID:  1,
-		RequestID: "dispatch-forward-auto-start",
-		Prompt:    "继续执行任务",
-		AutoStart: &autoStart,
+		Project:    "demo",
+		TicketID:   1,
+		RequestID:  "dispatch-forward-auto-start",
+		Prompt:     "继续执行任务",
+		AutoStart:  &autoStart,
+		BaseBranch: "release/v2",
 	})
 	if err != nil {
 		t.Fatalf("SubmitDispatch failed: %v", err)
 	}
 
-	got := project.LastDispatchAutoStart()
+	got := project.LastDirectDispatchAutoStart()
 	if got == nil || *got {
 		t.Fatalf("expected forwarded auto_start=false, got=%v", got)
+	}
+	if got := project.LastDirectDispatchBaseBranch(); got != "release/v2" {
+		t.Fatalf("expected forwarded base_branch=release/v2, got=%q", got)
 	}
 }
 
@@ -907,8 +852,8 @@ func TestExecutionHost_SubmitDispatch_EmptyRequestIDCompatible(t *testing.T) {
 	if first.TaskRunID == second.TaskRunID {
 		t.Fatalf("expected different run id when request_id is empty: first=%d second=%d", first.TaskRunID, second.TaskRunID)
 	}
-	if got := project.DispatchSubmitCount(); got != 2 {
-		t.Fatalf("expected two SubmitDispatchTicket calls for empty request_id, got=%d", got)
+	if got := project.DirectDispatchCount(); got != 2 {
+		t.Fatalf("expected two direct worker runs for empty request_id, got=%d", got)
 	}
 }
 
@@ -941,8 +886,8 @@ func TestExecutionHost_SubmitDispatch_DifferentRequestIDCreatesDifferentRuns(t *
 	if first.TaskRunID == second.TaskRunID {
 		t.Fatalf("expected different run id for different request_id: first=%d second=%d", first.TaskRunID, second.TaskRunID)
 	}
-	if got := project.DispatchSubmitCount(); got != 2 {
-		t.Fatalf("expected two SubmitDispatchTicket calls for different request_id, got=%d", got)
+	if got := project.DirectDispatchCount(); got != 2 {
+		t.Fatalf("expected two direct worker runs for different request_id, got=%d", got)
 	}
 }
 
@@ -1024,9 +969,9 @@ func TestExecutionHost_SubmitPlannerRun_IdempotentByRequestID(t *testing.T) {
 func TestExecutionHost_Stop_WaitsForDispatchExit(t *testing.T) {
 	releaseCh := make(chan struct{})
 	project := &testExecutionHostProject{
-		runDispatchStarted:      make(chan struct{}, 1),
-		runDispatchRelease:      releaseCh,
-		runDispatchIgnoreCancel: true,
+		directDispatchStarted:      make(chan struct{}, 1),
+		directDispatchRelease:      releaseCh,
+		directDispatchIgnoreCancel: true,
 	}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
@@ -1044,7 +989,7 @@ func TestExecutionHost_Stop_WaitsForDispatchExit(t *testing.T) {
 	}
 
 	select {
-	case <-project.runDispatchStarted:
+	case <-project.directDispatchStarted:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("dispatch goroutine not started")
 	}

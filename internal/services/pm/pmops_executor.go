@@ -18,15 +18,13 @@ type plannerPMOpExecutor interface {
 }
 
 func (s *Service) plannerPMOpExecutor(kind contracts.PMOpKind) plannerPMOpExecutor {
-	switch contracts.PMOpKind(strings.TrimSpace(string(kind))) {
+	switch normalizePlannerPMOpKind(kind) {
 	case contracts.PMOpCreateTicket:
 		return createTicketPMOpExecutor{s: s}
 	case contracts.PMOpCreateIntegration:
 		return createIntegrationTicketPMOpExecutor{s: s}
 	case contracts.PMOpStartTicket:
 		return startTicketPMOpExecutor{s: s}
-	case contracts.PMOpDispatchTicket:
-		return dispatchTicketPMOpExecutor{s: s}
 	case contracts.PMOpCloseInbox:
 		return closeInboxPMOpExecutor{s: s}
 	case contracts.PMOpRunAcceptance:
@@ -169,10 +167,6 @@ func (e createIntegrationTicketPMOpExecutor) Execute(ctx context.Context, op con
 	return createTicketPMOpExecutor{s: e.s}.Execute(ctx, op)
 }
 
-type dispatchTicketPMOpExecutor struct {
-	s *Service
-}
-
 type startTicketPMOpExecutor struct {
 	s *Service
 }
@@ -235,15 +229,6 @@ func (e startTicketPMOpExecutor) Execute(ctx context.Context, op contracts.PMOp)
 		"ticket_id":       ticketID,
 		"workflow_status": workflowStatus,
 	}, nil
-}
-
-func (e dispatchTicketPMOpExecutor) Reconcile(ctx context.Context, op contracts.PMOp) (bool, contracts.JSONMap, error) {
-	// legacy alias: dispatch_ticket should converge through start semantics instead of PM dispatch.
-	return startTicketPMOpExecutor{s: e.s}.Reconcile(ctx, op)
-}
-
-func (e dispatchTicketPMOpExecutor) Execute(ctx context.Context, op contracts.PMOp) (contracts.JSONMap, error) {
-	return startTicketPMOpExecutor{s: e.s}.Execute(ctx, op)
 }
 
 type closeInboxPMOpExecutor struct {

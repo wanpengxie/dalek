@@ -175,7 +175,7 @@ func postSubmitSyncFalse(t *testing.T, svc *InternalAPI, route, requestID string
 	return resp.StatusCode, body
 }
 
-func postDispatchSubmitWithAutoStart(t *testing.T, svc *InternalAPI, requestID string, autoStart *bool) (int, map[string]any) {
+func postDispatchSubmitWithAutoStart(t *testing.T, svc *InternalAPI, requestID string, autoStart *bool, baseBranch string) (int, map[string]any) {
 	t.Helper()
 	payload := map[string]any{
 		"project":    "demo",
@@ -186,6 +186,9 @@ func postDispatchSubmitWithAutoStart(t *testing.T, svc *InternalAPI, requestID s
 	}
 	if autoStart != nil {
 		payload["auto_start"] = *autoStart
+	}
+	if strings.TrimSpace(baseBranch) != "" {
+		payload["base_branch"] = strings.TrimSpace(baseBranch)
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -394,13 +397,16 @@ func TestHandleDispatchSubmit_ForwardsAutoStartFalse(t *testing.T) {
 	})
 
 	autoStart := false
-	status, body := postDispatchSubmitWithAutoStart(t, svc, "req-dispatch-auto-start-false", &autoStart)
+	status, body := postDispatchSubmitWithAutoStart(t, svc, "req-dispatch-auto-start-false", &autoStart, "release/v2")
 	if status != http.StatusAccepted {
 		t.Fatalf("unexpected status=%d body=%+v", status, body)
 	}
-	got := project.LastDispatchAutoStart()
+	got := project.LastDirectDispatchAutoStart()
 	if got == nil || *got {
 		t.Fatalf("expected forwarded auto_start=false, got=%v", got)
+	}
+	if got := project.LastDirectDispatchBaseBranch(); got != "release/v2" {
+		t.Fatalf("expected forwarded base_branch=release/v2, got=%q", got)
 	}
 }
 

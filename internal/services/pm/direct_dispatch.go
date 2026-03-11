@@ -16,6 +16,8 @@ type DirectDispatchOptions struct {
 	EntryPrompt string
 	// AutoStart=nil/true 时，dispatch 发现 worker 未就绪会先自动 start。
 	AutoStart *bool
+	// BaseBranch 非空时，auto-start worker 会优先从该基线创建/修复 worktree。
+	BaseBranch string
 }
 
 // DirectDispatchResult 是 DirectDispatchWorker 的返回结果。
@@ -57,6 +59,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	}
 
 	autoStart := dispatchAutoStartEnabled(opt.AutoStart)
+	baseBranch := strings.TrimSpace(opt.BaseBranch)
 	w, err := s.worker.LatestWorker(ctx, ticketID)
 	if err != nil {
 		return DirectDispatchResult{}, err
@@ -66,7 +69,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		return DirectDispatchResult{}, rerr
 	}
 	if autoStart && (w == nil || !ready) {
-		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, "")
+		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, baseBranch)
 		if err != nil {
 			return DirectDispatchResult{}, err
 		}
@@ -82,7 +85,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 		w = ready
 	}
 	if autoStart && w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped {
-		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, "")
+		w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, baseBranch)
 		if err != nil {
 			return DirectDispatchResult{}, err
 		}
@@ -103,7 +106,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	}
 	if !ready {
 		if autoStart {
-			w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, "")
+			w, err = s.ensureDispatchWorkerStarted(ctx, ticketID, baseBranch)
 			if err != nil {
 				return DirectDispatchResult{}, err
 			}

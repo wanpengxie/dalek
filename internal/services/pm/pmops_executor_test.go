@@ -36,11 +36,16 @@ func TestStartTicketPMOpExecutor_ExecutesQueuedProjection(t *testing.T) {
 	}
 }
 
-func TestDispatchTicketPMOpExecutor_AliasesStartProjection(t *testing.T) {
+func TestPlannerPMOpExecutor_LegacyDispatchAliasesStartProjection(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "pmop-dispatch-ticket")
 
-	res, err := dispatchTicketPMOpExecutor{s: svc}.Execute(context.Background(), contracts.PMOp{
+	executor := svc.plannerPMOpExecutor(contracts.PMOpDispatchTicket)
+	if executor == nil {
+		t.Fatalf("expected legacy dispatch kind to resolve to start executor")
+	}
+
+	res, err := executor.Execute(context.Background(), contracts.PMOp{
 		Kind: contracts.PMOpDispatchTicket,
 		Arguments: contracts.JSONMap{
 			"ticket_id": tk.ID,

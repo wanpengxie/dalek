@@ -6,17 +6,25 @@ import (
 	"strings"
 )
 
-func (h *ExecutionHost) lookupDispatchRequest(project string, ticketID uint, requestID string) (DispatchSubmitReceipt, bool) {
+func (h *ExecutionHost) lookupTicketRunHandle(kind executionRunKind, project string, ticketID uint, requestID string) (*executionRunHandle, bool) {
 	h.mu.RLock()
 	handle := h.requests[requestID]
 	h.mu.RUnlock()
 	if handle == nil {
-		return DispatchSubmitReceipt{}, false
+		return nil, false
 	}
-	if handle.kind != runKindDispatch {
-		return DispatchSubmitReceipt{}, false
+	if handle.kind != kind {
+		return nil, false
 	}
 	if handle.project != project || handle.ticketID != ticketID {
+		return nil, false
+	}
+	return handle, true
+}
+
+func (h *ExecutionHost) lookupDispatchRequest(project string, ticketID uint, requestID string) (DispatchSubmitReceipt, bool) {
+	handle, ok := h.lookupTicketRunHandle(runKindDispatch, project, ticketID, requestID)
+	if !ok {
 		return DispatchSubmitReceipt{}, false
 	}
 	return h.dispatchReceiptFromHandle(handle), true
@@ -41,16 +49,8 @@ func (h *ExecutionHost) dispatchReceiptFromHandle(handle *executionRunHandle) Di
 }
 
 func (h *ExecutionHost) lookupWorkerRequest(project string, ticketID uint, requestID string) (WorkerRunSubmitReceipt, bool) {
-	h.mu.RLock()
-	handle := h.requests[requestID]
-	h.mu.RUnlock()
-	if handle == nil {
-		return WorkerRunSubmitReceipt{}, false
-	}
-	if handle.kind != runKindWorker {
-		return WorkerRunSubmitReceipt{}, false
-	}
-	if handle.project != project || handle.ticketID != ticketID {
+	handle, ok := h.lookupTicketRunHandle(runKindWorker, project, ticketID, requestID)
+	if !ok {
 		return WorkerRunSubmitReceipt{}, false
 	}
 	return h.workerReceiptFromHandle(handle), true
@@ -266,7 +266,11 @@ func (h *ExecutionHost) finalizeHandle(handle *executionRunHandle) {
 	}
 	if handle.requestID != "" {
 		if cur := h.requests[handle.requestID]; cur == handle {
-			delete(h.requests, handle.requestID)
+			if handle.retainRequest {
+				h.requests[handle.requestID] = handle
+			} else {
+				delete(h.requests, handle.requestID)
+			}
 		}
 	}
 	h.mu.Unlock()

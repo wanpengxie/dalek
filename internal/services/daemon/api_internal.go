@@ -331,12 +331,14 @@ type startTicketPayload struct {
 }
 
 type workerRunSubmitPayload struct {
-	RequestID string `json:"request_id"`
-	Project   string `json:"project"`
-	TicketID  uint   `json:"ticket_id"`
-	Prompt    string `json:"prompt"`
-	Sync      bool   `json:"sync"`
-	TimeoutMS int64  `json:"timeout_ms"`
+	RequestID  string `json:"request_id"`
+	Project    string `json:"project"`
+	TicketID   uint   `json:"ticket_id"`
+	Prompt     string `json:"prompt"`
+	AutoStart  *bool  `json:"auto_start"`
+	BaseBranch string `json:"base_branch"`
+	Sync       bool   `json:"sync"`
+	TimeoutMS  int64  `json:"timeout_ms"`
 }
 
 type subagentSubmitPayload struct {
@@ -442,10 +444,12 @@ func (s *InternalAPI) handleWorkerRunSubmit(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	receipt, err := s.host.SubmitWorkerRun(r.Context(), WorkerRunSubmitRequest{
-		Project:   strings.TrimSpace(payload.Project),
-		TicketID:  payload.TicketID,
-		RequestID: strings.TrimSpace(payload.RequestID),
-		Prompt:    strings.TrimSpace(payload.Prompt),
+		Project:    strings.TrimSpace(payload.Project),
+		TicketID:   payload.TicketID,
+		RequestID:  strings.TrimSpace(payload.RequestID),
+		Prompt:     strings.TrimSpace(payload.Prompt),
+		AutoStart:  payload.AutoStart,
+		BaseBranch: strings.TrimSpace(payload.BaseBranch),
 	})
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "submit_failed", err.Error())

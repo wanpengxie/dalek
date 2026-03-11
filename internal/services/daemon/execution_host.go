@@ -114,110 +114,20 @@ func (h *ExecutionHost) Stop(ctx context.Context) error {
 }
 
 func (h *ExecutionHost) SubmitDispatch(ctx context.Context, req DispatchSubmitRequest) (DispatchSubmitReceipt, error) {
-	if h == nil || h.resolver == nil {
-		return DispatchSubmitReceipt{}, fmt.Errorf("execution host 未初始化")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	projectName := strings.TrimSpace(req.Project)
-	if projectName == "" {
-		return DispatchSubmitReceipt{}, fmt.Errorf("project 不能为空")
-	}
-	if req.TicketID == 0 {
-		return DispatchSubmitReceipt{}, fmt.Errorf("ticket_id 不能为空")
-	}
-	requestID := strings.TrimSpace(req.RequestID)
-	if requestID != "" {
-		if receipt, ok := h.lookupDispatchRequest(projectName, req.TicketID, requestID); ok {
-			return receipt, nil
-		}
-	}
-	project, err := h.resolver.OpenProject(projectName)
-	if err != nil {
-		return DispatchSubmitReceipt{}, err
-	}
-	submission, err := project.SubmitDispatchTicket(ctx, req.TicketID, DispatchSubmitOptions{
-		RequestID:  requestID,
-		AutoStart:  req.AutoStart,
-		BaseBranch: strings.TrimSpace(req.BaseBranch),
+	handle, err := h.submitTicketRun(ctx, ticketRunSubmitRequest{
+		kind:          runKindDispatch,
+		project:       req.Project,
+		ticketID:      req.TicketID,
+		requestID:     req.RequestID,
+		prompt:        req.Prompt,
+		autoStart:     req.AutoStart,
+		baseBranch:    req.BaseBranch,
+		requestPrefix: "dsp",
 	})
 	if err != nil {
 		return DispatchSubmitReceipt{}, err
 	}
-	if submission.TaskRunID == 0 {
-		return DispatchSubmitReceipt{}, fmt.Errorf("dispatch submit 未返回 task_run_id")
-	}
-
-	runID := submission.TaskRunID
-	requestID = submission.RequestID
-	if requestID == "" {
-		requestID = NewRequestID("dsp")
-	}
-
-	h.mu.Lock()
-	existing := h.runs[runID]
-	if existing == nil {
-		runCtx, cancel := context.WithCancel(context.Background())
-		handle := &executionRunHandle{
-			kind:        runKindDispatch,
-			project:     projectName,
-			requestID:   requestID,
-			runID:       runID,
-			jobID:       submission.JobID,
-			jobStatus:   submission.JobStatus,
-			ticketID:    req.TicketID,
-			workerID:    submission.WorkerID,
-			runnerID:    "daemon_" + NewRequestID("runner"),
-			entryPrompt: req.Prompt,
-			ctx:         runCtx,
-			cancel:      cancel,
-			ready:       make(chan struct{}),
-			done:        make(chan struct{}),
-		}
-		h.runs[runID] = handle
-		h.requests[requestID] = handle
-		h.addRunProjectIndexLocked(runID, projectName)
-		h.wg.Add(1)
-		h.mu.Unlock()
-		go h.executeDispatch(handle)
-	} else {
-		if existing.project == "" {
-			existing.project = projectName
-		}
-		if existing.requestID == "" {
-			existing.requestID = requestID
-		}
-		if existing.ticketID == 0 {
-			existing.ticketID = req.TicketID
-		}
-		if existing.workerID == 0 {
-			existing.workerID = submission.WorkerID
-		}
-		if existing.jobID == 0 {
-			existing.jobID = submission.JobID
-		}
-		if existing.jobStatus == "" {
-			existing.jobStatus = submission.JobStatus
-		}
-		if existing.entryPrompt == "" {
-			existing.entryPrompt = req.Prompt
-		}
-		h.requests[requestID] = existing
-		h.addRunProjectIndexLocked(runID, projectName)
-		h.mu.Unlock()
-	}
-
-	return DispatchSubmitReceipt{
-		Accepted:  true,
-		Project:   projectName,
-		RequestID: requestID,
-		TaskRunID: submission.TaskRunID,
-		JobID:     submission.JobID,
-		TicketID:  submission.TicketID,
-		WorkerID:  submission.WorkerID,
-		JobStatus: submission.JobStatus,
-	}, nil
+	return h.dispatchReceiptFromHandle(handle), nil
 }
 
 func (h *ExecutionHost) StartTicket(ctx context.Context, req StartTicketRequest) (StartTicketReceipt, error) {
@@ -262,58 +172,100 @@ func (h *ExecutionHost) StartTicket(ctx context.Context, req StartTicketRequest)
 }
 
 func (h *ExecutionHost) SubmitWorkerRun(ctx context.Context, req WorkerRunSubmitRequest) (WorkerRunSubmitReceipt, error) {
-	if h == nil || h.resolver == nil {
-		return WorkerRunSubmitReceipt{}, fmt.Errorf("execution host 未初始化")
+	handle, err := h.submitTicketRun(ctx, ticketRunSubmitRequest{
+		kind:          runKindWorker,
+		project:       req.Project,
+		ticketID:      req.TicketID,
+		requestID:     req.RequestID,
+		prompt:        req.Prompt,
+		autoStart:     req.AutoStart,
+		baseBranch:    req.BaseBranch,
+		requestPrefix: "wrk",
+	})
+	if err != nil {
+		return WorkerRunSubmitReceipt{}, err
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	projectName := strings.TrimSpace(req.Project)
-	if projectName == "" {
-		return WorkerRunSubmitReceipt{}, fmt.Errorf("project 不能为空")
-	}
-	if req.TicketID == 0 {
-		return WorkerRunSubmitReceipt{}, fmt.Errorf("ticket_id 不能为空")
-	}
-	requestID := strings.TrimSpace(req.RequestID)
-	if requestID == "" {
-		requestID = NewRequestID("wrk")
-	}
+	return h.workerReceiptFromHandle(handle), nil
+}
 
-	if receipt, ok := h.lookupWorkerRequest(projectName, req.TicketID, requestID); ok {
-		return receipt, nil
+type ticketRunSubmitRequest struct {
+	kind          executionRunKind
+	project       string
+	ticketID      uint
+	requestID     string
+	prompt        string
+	autoStart     *bool
+	baseBranch    string
+	requestPrefix string
+}
+
+func (h *ExecutionHost) submitTicketRun(ctx context.Context, req ticketRunSubmitRequest) (*executionRunHandle, error) {
+	if h == nil || h.resolver == nil {
+		return nil, fmt.Errorf("execution host 未初始化")
+	}
+	_ = ctx
+	projectName := strings.TrimSpace(req.project)
+	if projectName == "" {
+		return nil, fmt.Errorf("project 不能为空")
+	}
+	if req.ticketID == 0 {
+		return nil, fmt.Errorf("ticket_id 不能为空")
+	}
+	requestID := strings.TrimSpace(req.requestID)
+	retainRequest := requestID != ""
+	if requestID != "" {
+		if handle, ok := h.lookupTicketRunHandle(req.kind, projectName, req.ticketID, requestID); ok {
+			return handle, nil
+		}
+	}
+	if requestID == "" {
+		requestID = NewRequestID(req.requestPrefix)
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
 	handle := &executionRunHandle{
-		kind:        runKindWorker,
-		project:     projectName,
-		requestID:   requestID,
-		ticketID:    req.TicketID,
-		entryPrompt: req.Prompt,
-		ctx:         runCtx,
-		cancel:      cancel,
-		ready:       make(chan struct{}),
-		done:        make(chan struct{}),
+		kind:          req.kind,
+		project:       projectName,
+		requestID:     requestID,
+		retainRequest: retainRequest,
+		ticketID:      req.ticketID,
+		entryPrompt:   req.prompt,
+		autoStart:     copyBoolPtr(req.autoStart),
+		baseBranch:    strings.TrimSpace(req.baseBranch),
+		ctx:           runCtx,
+		cancel:        cancel,
+		ready:         make(chan struct{}),
+		done:          make(chan struct{}),
 	}
 
 	h.mu.Lock()
 	if existing := h.requests[requestID]; existing != nil {
 		h.mu.Unlock()
 		cancel()
-		return h.workerReceiptFromHandle(existing), nil
+		if existing.kind == req.kind && existing.project == projectName && existing.ticketID == req.ticketID {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("request_id 已绑定其他运行：%s", requestID)
 	}
 	h.requests[requestID] = handle
 	h.wg.Add(1)
 	h.mu.Unlock()
 
-	go h.executeWorkerRun(handle)
+	go h.executeTicketRun(handle)
 
 	select {
 	case <-handle.ready:
 	case <-time.After(workerRunReadyTimeout):
 	}
-	return h.workerReceiptFromHandle(handle), nil
+	return handle, nil
+}
+
+func copyBoolPtr(v *bool) *bool {
+	if v == nil {
+		return nil
+	}
+	b := *v
+	return &b
 }
 
 func (h *ExecutionHost) SubmitSubagentRun(ctx context.Context, req SubagentSubmitRequest) (SubagentSubmitReceipt, error) {

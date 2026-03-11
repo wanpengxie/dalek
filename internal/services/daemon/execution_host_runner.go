@@ -2,9 +2,10 @@ package daemon
 
 import (
 	"context"
+	"strings"
 )
 
-func (h *ExecutionHost) executeDispatch(handle *executionRunHandle) {
+func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 	if handle == nil {
 		return
 	}
@@ -12,10 +13,17 @@ func (h *ExecutionHost) executeDispatch(handle *executionRunHandle) {
 	defer h.finalizeHandle(handle)
 	defer h.notifyRunSettled(handle.project)
 
+	runLabel := "worker run"
+	if handle.kind == runKindDispatch {
+		runLabel = "dispatch compat submit"
+	}
+	logLabel := strings.ReplaceAll(runLabel, " ", "_")
+
 	if !h.acquireSlot(handle.ctx) {
 		if handle.ctx.Err() != nil {
-			h.logger.Info("execution host dispatch canceled before start",
+			h.logger.Info("execution host ticket run canceled before start",
 				"request_id", handle.requestID,
+				"run_kind", logLabel,
 			)
 		}
 		return
@@ -24,61 +32,10 @@ func (h *ExecutionHost) executeDispatch(handle *executionRunHandle) {
 
 	project, err := h.resolver.OpenProject(handle.project)
 	if err != nil {
-		h.logger.Warn("execution host open project failed",
-			"project", handle.project,
-			"run_id", handle.runID,
-			"error", err,
-		)
-		return
-	}
-	err = project.RunDispatchJob(handle.ctx, handle.jobID, DispatchRunOptions{
-		RunnerID:    handle.runnerID,
-		EntryPrompt: handle.entryPrompt,
-	})
-	if err != nil {
-		if handle.ctx.Err() != nil {
-			h.logger.Info("execution host dispatch canceled",
-				"run_id", handle.runID,
-				"project", handle.project,
-			)
-		} else {
-			h.logger.Warn("execution host dispatch failed",
-				"run_id", handle.runID,
-				"project", handle.project,
-				"error", err,
-			)
-		}
-		return
-	}
-	h.logger.Info("execution host dispatch completed",
-		"run_id", handle.runID,
-		"project", handle.project,
-	)
-}
-
-func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
-	if handle == nil {
-		return
-	}
-	defer h.wg.Done()
-	defer h.finalizeHandle(handle)
-	defer h.notifyRunSettled(handle.project)
-
-	if !h.acquireSlot(handle.ctx) {
-		if handle.ctx.Err() != nil {
-			h.logger.Info("execution host worker run canceled before start",
-				"request_id", handle.requestID,
-			)
-		}
-		return
-	}
-	defer h.releaseSlot()
-
-	project, err := h.resolver.OpenProject(handle.project)
-	if err != nil {
-		h.logger.Warn("execution host worker run open project failed",
+		h.logger.Warn("execution host ticket run open project failed",
 			"project", handle.project,
 			"request_id", handle.requestID,
+			"run_kind", logLabel,
 			"error", err,
 		)
 		return
@@ -92,7 +49,11 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 	resCh := make(chan WorkerRunResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		res, runErr := project.DirectDispatchWorker(handle.ctx, handle.ticketID, WorkerRunOptions{EntryPrompt: handle.entryPrompt})
+		res, runErr := project.DirectDispatchWorker(handle.ctx, handle.ticketID, WorkerRunOptions{
+			EntryPrompt: handle.entryPrompt,
+			AutoStart:   handle.autoStart,
+			BaseBranch:  handle.baseBranch,
+		})
 		if runErr != nil {
 			errCh <- runErr
 			return
@@ -116,10 +77,11 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 				h.attachHandleRun(handle, status.RunID, status.WorkerID)
 			}
 		}
-		h.logger.Info("execution host worker run completed",
+		h.logger.Info("execution host ticket run completed",
 			"run_id", handle.runID,
 			"project", handle.project,
 			"request_id", handle.requestID,
+			"run_kind", logLabel,
 		)
 	case runErr := <-errCh:
 		if handle.runID == 0 {
@@ -128,15 +90,17 @@ func (h *ExecutionHost) executeWorkerRun(handle *executionRunHandle) {
 			}
 		}
 		if handle.ctx.Err() != nil {
-			h.logger.Info("execution host worker run canceled",
+			h.logger.Info("execution host ticket run canceled",
 				"request_id", handle.requestID,
 				"project", handle.project,
+				"run_kind", logLabel,
 			)
 			return
 		}
-		h.logger.Warn("execution host worker run failed",
+		h.logger.Warn("execution host ticket run failed",
 			"request_id", handle.requestID,
 			"project", handle.project,
+			"run_kind", logLabel,
 			"error", runErr,
 		)
 	}

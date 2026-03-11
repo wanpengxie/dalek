@@ -60,10 +60,12 @@ type DaemonTicketStartReceipt struct {
 }
 
 type DaemonWorkerRunSubmitRequest struct {
-	Project   string
-	TicketID  uint
-	RequestID string
-	Prompt    string
+	Project    string
+	TicketID   uint
+	RequestID  string
+	Prompt     string
+	AutoStart  *bool
+	BaseBranch string
 }
 
 type DaemonWorkerRunSubmitReceipt struct {
@@ -200,40 +202,24 @@ func (c *DaemonAPIClient) SubmitDispatch(ctx context.Context, req DaemonDispatch
 	if c == nil {
 		return DaemonDispatchSubmitReceipt{}, fmt.Errorf("daemon client 为空")
 	}
-	payload := map[string]any{
-		"project":    strings.TrimSpace(req.Project),
-		"ticket_id":  req.TicketID,
-		"request_id": strings.TrimSpace(req.RequestID),
-		"prompt":     strings.TrimSpace(req.Prompt),
-	}
-	if req.AutoStart != nil {
-		payload["auto_start"] = *req.AutoStart
-	}
-	if strings.TrimSpace(req.BaseBranch) != "" {
-		payload["base_branch"] = strings.TrimSpace(req.BaseBranch)
-	}
-	var out struct {
-		Accepted  bool   `json:"accepted"`
-		Project   string `json:"project"`
-		RequestID string `json:"request_id"`
-		TaskRunID uint   `json:"task_run_id"`
-		TicketID  uint   `json:"ticket_id"`
-		WorkerID  uint   `json:"worker_id"`
-	}
-	code, err := c.doJSON(ctx, http.MethodPost, "/api/dispatch/submit", payload, &out)
+	receipt, err := c.SubmitWorkerRun(ctx, DaemonWorkerRunSubmitRequest{
+		Project:    req.Project,
+		TicketID:   req.TicketID,
+		RequestID:  req.RequestID,
+		Prompt:     req.Prompt,
+		AutoStart:  req.AutoStart,
+		BaseBranch: req.BaseBranch,
+	})
 	if err != nil {
 		return DaemonDispatchSubmitReceipt{}, err
 	}
-	if code != http.StatusAccepted {
-		return DaemonDispatchSubmitReceipt{}, fmt.Errorf("dispatch submit 响应码异常: %d", code)
-	}
 	return DaemonDispatchSubmitReceipt{
-		Accepted:  out.Accepted,
-		Project:   strings.TrimSpace(out.Project),
-		RequestID: strings.TrimSpace(out.RequestID),
-		TaskRunID: out.TaskRunID,
-		TicketID:  out.TicketID,
-		WorkerID:  out.WorkerID,
+		Accepted:  receipt.Accepted,
+		Project:   receipt.Project,
+		RequestID: receipt.RequestID,
+		TaskRunID: receipt.TaskRunID,
+		TicketID:  receipt.TicketID,
+		WorkerID:  receipt.WorkerID,
 	}, nil
 }
 
@@ -286,6 +272,12 @@ func (c *DaemonAPIClient) SubmitWorkerRun(ctx context.Context, req DaemonWorkerR
 		"ticket_id":  req.TicketID,
 		"request_id": strings.TrimSpace(req.RequestID),
 		"prompt":     strings.TrimSpace(req.Prompt),
+	}
+	if req.AutoStart != nil {
+		payload["auto_start"] = *req.AutoStart
+	}
+	if strings.TrimSpace(req.BaseBranch) != "" {
+		payload["base_branch"] = strings.TrimSpace(req.BaseBranch)
 	}
 	var out struct {
 		Accepted  bool   `json:"accepted"`
