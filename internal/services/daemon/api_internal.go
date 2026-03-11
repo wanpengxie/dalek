@@ -113,7 +113,6 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	}, s.logger)
 	mux.HandleFunc("/health", s.withInternalAccess(s.handleHealth))
 	mux.HandleFunc("/api/tickets/start", s.withInternalAccess(s.handleTicketStart))
-	mux.HandleFunc("/api/dispatch/submit", s.withInternalAccess(s.handleDispatchSubmit))
 	mux.HandleFunc("/api/worker-run/submit", s.withInternalAccess(s.handleWorkerRunSubmit))
 	mux.HandleFunc("/api/subagent/submit", s.withInternalAccess(s.handleSubagentSubmit))
 	mux.HandleFunc("/api/notes", s.withInternalAccess(s.handleNoteSubmit))
@@ -313,17 +312,6 @@ func (s *InternalAPI) handleSend(w http.ResponseWriter, r *http.Request) {
 	s.sendHandler(w, r)
 }
 
-type dispatchSubmitPayload struct {
-	RequestID  string `json:"request_id"`
-	Project    string `json:"project"`
-	TicketID   uint   `json:"ticket_id"`
-	Prompt     string `json:"prompt"`
-	AutoStart  *bool  `json:"auto_start"`
-	BaseBranch string `json:"base_branch"`
-	Sync       bool   `json:"sync"`
-	TimeoutMS  int64  `json:"timeout_ms"`
-}
-
 type startTicketPayload struct {
 	Project    string `json:"project"`
 	TicketID   uint   `json:"ticket_id"`
@@ -354,48 +342,6 @@ type subagentSubmitPayload struct {
 type noteSubmitPayload struct {
 	Project string `json:"project"`
 	Text    string `json:"text"`
-}
-
-func (s *InternalAPI) handleDispatchSubmit(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
-		return
-	}
-	var payload dispatchSubmitPayload
-	if err := decodeJSONBody(r, &payload); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	if payload.Sync {
-		writeAPIError(w, http.StatusBadRequest, "bad_request", "daemon submit 不支持 sync=true")
-		return
-	}
-	receipt, err := s.host.SubmitDispatch(r.Context(), DispatchSubmitRequest{
-		Project:    strings.TrimSpace(payload.Project),
-		TicketID:   payload.TicketID,
-		RequestID:  strings.TrimSpace(payload.RequestID),
-		Prompt:     strings.TrimSpace(payload.Prompt),
-		AutoStart:  payload.AutoStart,
-		BaseBranch: strings.TrimSpace(payload.BaseBranch),
-	})
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "submit_failed", err.Error())
-		return
-	}
-	runID := receipt.TaskRunID
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"accepted":    true,
-		"project":     receipt.Project,
-		"request_id":  receipt.RequestID,
-		"task_run_id": runID,
-		"ticket_id":   receipt.TicketID,
-		"worker_id":   receipt.WorkerID,
-		"query": map[string]string{
-			"show":   fmt.Sprintf("dalek task show --id %d", runID),
-			"events": fmt.Sprintf("dalek task events --id %d", runID),
-			"cancel": fmt.Sprintf("dalek task cancel --id %d", runID),
-		},
-	})
 }
 
 func (s *InternalAPI) handleTicketStart(w http.ResponseWriter, r *http.Request) {

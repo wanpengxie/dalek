@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"dalek/internal/contracts"
+	pmsvc "dalek/internal/services/pm"
 )
 
 func (p *Project) StartTicket(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
@@ -16,6 +17,13 @@ func (p *Project) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		return nil, fmt.Errorf("project pm service 为空")
 	}
 	return p.pm.StartTicketWithOptions(ctx, ticketID, opt)
+}
+
+func (p *Project) RunTicketWorker(ctx context.Context, ticketID uint, opt pmsvc.WorkerRunOptions) (pmsvc.WorkerRunResult, error) {
+	if p == nil || p.pm == nil {
+		return pmsvc.WorkerRunResult{}, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.RunTicketWorker(ctx, ticketID, opt)
 }
 
 func (p *Project) FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*TaskStatus, error) {

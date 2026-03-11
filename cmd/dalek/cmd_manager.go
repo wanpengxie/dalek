@@ -44,7 +44,7 @@ func printManagerUsage() {
 	printGroupUsage("PM 调度器控制", "dalek manager <command> [flags]", []string{
 		"status    查看 PM 状态",
 		"tick      执行一次调度循环",
-		"run       单次调度（--sync-dispatch 调试入口）",
+		"run       单次调试（--sync-worker-run 调试入口）",
 		"pause     暂停自动派发",
 		"resume    恢复自动派发",
 	})
@@ -119,11 +119,11 @@ func cmdManagerStatus(args []string) {
 		lastRecovery := any(nil)
 		if st.LastRecoveryAt != nil {
 			lastRecovery = map[string]any{
-				"recovered_at":  st.LastRecoveryAt.Local().Format(time.RFC3339),
-				"dispatch_jobs": st.LastRecoveryDispatchJobs,
-				"task_runs":     st.LastRecoveryTaskRuns,
-				"notes":         st.LastRecoveryNotes,
-				"workers":       st.LastRecoveryWorkers,
+				"recovered_at": st.LastRecoveryAt.Local().Format(time.RFC3339),
+				"planner_ops":  st.LastRecoveryPlannerOps,
+				"task_runs":    st.LastRecoveryTaskRuns,
+				"notes":        st.LastRecoveryNotes,
+				"workers":      st.LastRecoveryWorkers,
 			}
 		}
 		printJSONOrExit(map[string]any{
@@ -173,24 +173,24 @@ func cmdManagerStatus(args []string) {
 	)
 	if st.LastRecoveryAt != nil {
 		fmt.Printf(
-			"last_recovery=%s  dispatch_jobs=%d  task_runs=%d  notes=%d  workers=%d\n",
+			"last_recovery=%s  planner_ops=%d  task_runs=%d  notes=%d  workers=%d\n",
 			st.LastRecoveryAt.Local().Format("01-02 15:04:05"),
-			st.LastRecoveryDispatchJobs,
+			st.LastRecoveryPlannerOps,
 			st.LastRecoveryTaskRuns,
 			st.LastRecoveryNotes,
 			st.LastRecoveryWorkers,
 		)
 	}
 	fmt.Printf(
-		"health window=%s..%s  planner_timeout_rate=%.2f%%(%d/%d)  dispatch_bootstrap_failure_rate=%.2f%%(%d/%d)  terminal_state_conflict_count=%d  duplicate_terminal_report_count=%d  merge_discard_count=%d  integration_ticket_count=%d  manual_intervention_count=%d  real_acceptance_pass_rate=%s\n",
+		"health window=%s..%s  planner_timeout_rate=%.2f%%(%d/%d)  worker_bootstrap_failure_rate=%.2f%%(%d/%d)  terminal_state_conflict_count=%d  duplicate_terminal_report_count=%d  merge_discard_count=%d  integration_ticket_count=%d  manual_intervention_count=%d  real_acceptance_pass_rate=%s\n",
 		healthMetrics.WindowStart.Local().Format("01-02 15:04:05"),
 		healthMetrics.WindowEnd.Local().Format("01-02 15:04:05"),
 		healthMetrics.PlannerTimeoutRate*100,
 		healthMetrics.PlannerTimeoutCount,
 		healthMetrics.PlannerRunCount,
-		healthMetrics.DispatchBootstrapFailureRate*100,
-		healthMetrics.DispatchBootstrapFailureCount,
-		healthMetrics.DispatchRunCount,
+		healthMetrics.WorkerBootstrapFailureRate*100,
+		healthMetrics.WorkerBootstrapFailureCount,
+		healthMetrics.WorkerRunCount,
 		healthMetrics.TerminalStateConflictCount,
 		healthMetrics.DuplicateTerminalReportCount,
 		healthMetrics.MergeDiscardCount,
@@ -260,7 +260,7 @@ func cmdManagerTick(args []string) {
 	proj := fs.String("project", globalProject, "项目名（可选）")
 	projShort := fs.String("p", globalProject, "项目名（可选）")
 	maxRunning := fs.Int("max", 0, "最大并发 running workers（可选；0 表示用 DB 默认）")
-	dryRun := fs.Bool("dry-run", false, "只观测/生成 inbox/merge 提案，不做 start/dispatch")
+	dryRun := fs.Bool("dry-run", false, "只观测/生成 inbox/merge 提案，不做 start/worker-run")
 	timeout := fs.Duration("timeout", 0, "本次 tick 超时（默认 0，不超时）")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
 	parseFlagSetOrExit(fs, args, globalOutput, "manager tick 参数解析失败", "运行 dalek manager tick --help 查看参数")
@@ -290,37 +290,37 @@ func cmdManagerTick(args []string) {
 
 	if out == outputJSON {
 		printJSONOrExit(map[string]any{
-			"schema":             "dalek.manager.tick.v1",
-			"at":                 res.At.Local().Format(time.RFC3339),
-			"autopilot":          res.AutopilotEnabled,
-			"max_running":        res.MaxRunning,
-			"running":            res.Running,
-			"running_blocked":    res.RunningBlocked,
-			"zombie_recovered":   res.ZombieRecovered,
-			"zombie_blocked":     res.ZombieBlocked,
-			"zombie_illegal":     res.ZombieIllegal,
-			"zombie_undefined":   res.ZombieUndefined,
-			"capacity":           res.Capacity,
-			"events_consumed":    res.EventsConsumed,
-			"inbox_upserts":      res.InboxUpserts,
-			"started_tickets":    res.StartedTickets,
-			"dispatched_tickets": res.DispatchedTickets,
-			"serial_deferred":    res.SerialDeferred,
-			"merge_frozen":       res.MergeFrozen,
-			"surface_conflicts":  res.SurfaceConflicts,
-			"errors":             res.Errors,
+			"schema":            "dalek.manager.tick.v1",
+			"at":                res.At.Local().Format(time.RFC3339),
+			"autopilot":         res.AutopilotEnabled,
+			"max_running":       res.MaxRunning,
+			"running":           res.Running,
+			"running_blocked":   res.RunningBlocked,
+			"zombie_recovered":  res.ZombieRecovered,
+			"zombie_blocked":    res.ZombieBlocked,
+			"zombie_illegal":    res.ZombieIllegal,
+			"zombie_undefined":  res.ZombieUndefined,
+			"capacity":          res.Capacity,
+			"events_consumed":   res.EventsConsumed,
+			"inbox_upserts":     res.InboxUpserts,
+			"started_tickets":   res.StartedTickets,
+			"activated_tickets": res.ActivatedTickets,
+			"serial_deferred":   res.SerialDeferred,
+			"merge_frozen":      res.MergeFrozen,
+			"surface_conflicts": res.SurfaceConflicts,
+			"errors":            res.Errors,
 		})
 		return
 	}
 
-	fmt.Printf("%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  serial_deferred=%d  inbox=%d  merge_frozen=%d  surface_conflicts=%d\n",
+	fmt.Printf("%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  activated=%d  serial_deferred=%d  inbox=%d  merge_frozen=%d  surface_conflicts=%d\n",
 		res.At.Local().Format("01-02 15:04:05"),
 		res.AutopilotEnabled,
 		res.Running, res.RunningBlocked,
 		res.ZombieRecovered, res.ZombieBlocked, res.ZombieIllegal, res.ZombieUndefined,
 		res.Capacity,
 		len(res.StartedTickets),
-		len(res.DispatchedTickets),
+		len(res.ActivatedTickets),
 		len(res.SerialDeferred),
 		res.InboxUpserts,
 		len(res.MergeFrozen),
@@ -340,9 +340,9 @@ func cmdManagerRun(args []string) {
 		printSubcommandUsage(
 			fs,
 			"执行一次调度（非 daemon 调试入口）",
-			"dalek manager run --once --sync-dispatch --dispatch-timeout 120m [--max N] [--dry-run] [--output text|json]",
-			"dalek manager run --once --sync-dispatch --dispatch-timeout 120m",
-			"dalek manager run --once --sync-dispatch --dry-run -o json",
+			"dalek manager run --once --sync-worker-run --worker-run-timeout 120m [--max N] [--dry-run] [--output text|json]",
+			"dalek manager run --once --sync-worker-run --worker-run-timeout 120m",
+			"dalek manager run --once --sync-worker-run --dry-run -o json",
 			"dalek manager run",
 			"dalek daemon start",
 		)
@@ -352,35 +352,35 @@ func cmdManagerRun(args []string) {
 	projShort := fs.String("p", globalProject, "项目名（可选）")
 	_ = fs.Duration("interval", 15*time.Second, "已废弃（manager run 前台循环已移除）")
 	maxRunning := fs.Int("max", 0, "最大并发 running workers（可选；0 表示用 DB 默认）")
-	dryRun := fs.Bool("dry-run", false, "只观测/生成 inbox/merge 提案，不做 start/dispatch")
-	once := fs.Bool("once", false, "仅执行一次调度循环（sync-dispatch 模式必填）")
-	syncDispatch := fs.Bool("sync-dispatch", false, "本地同步派发（阻塞等待 dispatch 完成，不走 daemon）")
-	dispatchTimeout := fs.Duration("dispatch-timeout", 0, "同步派发超时（仅 --sync-dispatch 时生效，必须 > 0）")
+	dryRun := fs.Bool("dry-run", false, "只观测/生成 inbox/merge 提案，不做 start/worker-run")
+	once := fs.Bool("once", false, "仅执行一次调度循环（sync-worker-run 模式必填）")
+	syncWorkerRun := fs.Bool("sync-worker-run", false, "本地同步执行 worker run（阻塞等待 worker run 完成，不走 daemon）")
+	workerRunTimeout := fs.Duration("worker-run-timeout", 0, "同步 worker run 超时（仅 --sync-worker-run 时生效，必须 > 0）")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
 	parseFlagSetOrExit(fs, args, globalOutput, "manager run 参数解析失败", "运行 dalek manager run --help 查看参数")
 	if strings.TrimSpace(*projShort) != "" {
 		*proj = strings.TrimSpace(*projShort)
 	}
 	out := parseOutputOrExit(*output, true)
-	if !*syncDispatch {
+	if !*syncWorkerRun {
 		exitRuntimeError(out,
 			"manager run 已迁移到 daemon，前台循环已移除",
 			"请使用 dalek daemon start 启动常驻 manager loop（30s tick + 事件驱动）",
-			"如需非 daemon 单次调试，请使用 dalek manager run --once --sync-dispatch",
+			"如需非 daemon 单次调试，请使用 dalek manager run --once --sync-worker-run",
 		)
 	}
 	if !*once {
 		exitUsageError(out,
 			"缺少必填参数 --once",
-			"--sync-dispatch 仅支持配合 --once 使用",
-			"例如: dalek manager run --once --sync-dispatch --dispatch-timeout 120m",
+			"--sync-worker-run 仅支持配合 --once 使用",
+			"例如: dalek manager run --once --sync-worker-run --worker-run-timeout 120m",
 		)
 	}
-	if *dispatchTimeout <= 0 {
+	if *workerRunTimeout <= 0 {
 		exitUsageError(out,
-			"--sync-dispatch 模式必须指定 --dispatch-timeout > 0",
-			"同步派发需要设置超时，避免终端无限阻塞",
-			"例如: dalek manager run --once --sync-dispatch --dispatch-timeout 120m",
+			"--sync-worker-run 模式必须指定 --worker-run-timeout > 0",
+			"同步 worker run 需要设置超时，避免终端无限阻塞",
+			"例如: dalek manager run --once --sync-worker-run --worker-run-timeout 120m",
 		)
 	}
 
@@ -388,8 +388,8 @@ func cmdManagerRun(args []string) {
 	res, err := p.ManagerTick(context.Background(), app.ManagerTickOptions{
 		MaxRunningWorkers: *maxRunning,
 		DryRun:            *dryRun,
-		SyncDispatch:      true,
-		DispatchTimeout:   *dispatchTimeout,
+		SyncWorkerRun:     true,
+		WorkerRunTimeout:  *workerRunTimeout,
 	})
 	if err != nil {
 		exitRuntimeError(out,
@@ -402,8 +402,8 @@ func cmdManagerRun(args []string) {
 	if out == outputJSON {
 		printJSONOrExit(map[string]any{
 			"schema":             "dalek.manager.run.v1",
-			"mode":               "sync_dispatch",
-			"dispatch_timeout":   dispatchTimeout.String(),
+			"mode":               "sync_worker_run",
+			"worker_run_timeout": workerRunTimeout.String(),
 			"at":                 res.At.Local().Format(time.RFC3339),
 			"autopilot":          res.AutopilotEnabled,
 			"max_running":        res.MaxRunning,
@@ -417,7 +417,7 @@ func cmdManagerRun(args []string) {
 			"events_consumed":    res.EventsConsumed,
 			"inbox_upserts":      res.InboxUpserts,
 			"started_tickets":    res.StartedTickets,
-			"dispatched_tickets": res.DispatchedTickets,
+			"activated_tickets":  res.ActivatedTickets,
 			"serial_deferred":    res.SerialDeferred,
 			"merge_frozen":       res.MergeFrozen,
 			"surface_conflicts":  res.SurfaceConflicts,
@@ -427,10 +427,10 @@ func cmdManagerRun(args []string) {
 	}
 
 	timeoutText := "none"
-	if *dispatchTimeout > 0 {
-		timeoutText = dispatchTimeout.String()
+	if *workerRunTimeout > 0 {
+		timeoutText = workerRunTimeout.String()
 	}
-	fmt.Printf("%s  mode=sync_dispatch  dispatch_timeout=%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  dispatched=%d  serial_deferred=%d  inbox=%d  merge_frozen=%d  surface_conflicts=%d\n",
+	fmt.Printf("%s  mode=sync_worker_run  worker_run_timeout=%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  activated=%d  serial_deferred=%d  inbox=%d  merge_frozen=%d  surface_conflicts=%d\n",
 		res.At.Local().Format("01-02 15:04:05"),
 		timeoutText,
 		res.AutopilotEnabled,
@@ -438,7 +438,7 @@ func cmdManagerRun(args []string) {
 		res.ZombieRecovered, res.ZombieBlocked, res.ZombieIllegal, res.ZombieUndefined,
 		res.Capacity,
 		len(res.StartedTickets),
-		len(res.DispatchedTickets),
+		len(res.ActivatedTickets),
 		len(res.SerialDeferred),
 		res.InboxUpserts,
 		len(res.MergeFrozen),

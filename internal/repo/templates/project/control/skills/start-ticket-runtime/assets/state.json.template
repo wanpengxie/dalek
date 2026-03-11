@@ -1,0 +1,28 @@
+{
+  "ticket": {
+    "id": "{{DALEK_TICKET_ID}}",
+    "worker_id": "{{DALEK_WORKER_ID}}"
+  },
+  "phases": {
+    "current_id": "{{CURRENT_PHASE}}",
+    "current_status": "{{PHASE_STATUS}}",
+    "next_action": "{{NEXT_ACTION}}",
+    "summary": "{{SUMMARY}}",
+    "items": [
+      {
+        "id": "phase-understanding",
+        "name": "需求理解与边界确认",
+        "goal": "明确目标、约束与验收口径",
+        "status": "in_progress",
+        "order": 1
+      }
+    ]
+  },
+  "blockers": [],
+  "code": {
+    "head_sha": "{{HEAD_SHA}}",
+    "working_tree": "{{WORKING_TREE_STATUS}}",
+    "last_commit_subject": "{{LAST_COMMIT_SUBJECT}}"
+  },
+  "updated_at": "{{NOW_RFC3339}}"
+}

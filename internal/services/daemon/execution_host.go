@@ -113,21 +113,6 @@ func (h *ExecutionHost) Stop(ctx context.Context) error {
 	}
 }
 
-func (h *ExecutionHost) SubmitDispatch(ctx context.Context, req DispatchSubmitRequest) (DispatchSubmitReceipt, error) {
-	receipt, err := h.SubmitWorkerRun(ctx, WorkerRunSubmitRequest{
-		Project:    req.Project,
-		TicketID:   req.TicketID,
-		RequestID:  req.RequestID,
-		Prompt:     req.Prompt,
-		AutoStart:  req.AutoStart,
-		BaseBranch: req.BaseBranch,
-	})
-	if err != nil {
-		return DispatchSubmitReceipt{}, err
-	}
-	return dispatchReceiptFromWorkerReceipt(receipt), nil
-}
-
 func (h *ExecutionHost) StartTicket(ctx context.Context, req StartTicketRequest) (StartTicketReceipt, error) {
 	if h == nil || h.resolver == nil {
 		return StartTicketReceipt{}, fmt.Errorf("execution host 未初始化")

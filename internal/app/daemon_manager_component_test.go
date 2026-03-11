@@ -382,10 +382,6 @@ func TestDaemonManagerComponent_WarmupRunProjectIndex_LoadsActiveRuns(t *testing
 	if err != nil {
 		t.Fatalf("create active worker run failed: %v", err)
 	}
-	legacyDispatch := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
-	if legacyDispatch.TaskRunID == 0 {
-		t.Fatalf("expected dispatch submission has task_run_id")
-	}
 
 	host := &stubWarmupExecutionHost{}
 	manager := newDaemonManagerComponent(h, nil)
@@ -394,19 +390,12 @@ func TestDaemonManagerComponent_WarmupRunProjectIndex_LoadsActiveRuns(t *testing
 
 	warmed := host.snapshotWarmup(p.Name())
 	foundActive := false
-	foundLegacyDispatch := false
 	for _, runID := range warmed {
 		if runID == activeRun.ID {
 			foundActive = true
 		}
-		if runID == legacyDispatch.TaskRunID {
-			foundLegacyDispatch = true
-		}
 	}
 	if !foundActive {
 		t.Fatalf("expected warmup includes active worker run %d, got=%v", activeRun.ID, warmed)
-	}
-	if foundLegacyDispatch {
-		t.Fatalf("expected warmup to skip legacy dispatch run %d, got=%v", legacyDispatch.TaskRunID, warmed)
 	}
 }

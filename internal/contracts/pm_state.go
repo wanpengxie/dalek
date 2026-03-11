@@ -14,11 +14,11 @@ type PMState struct {
 	LastTickAt  *time.Time `gorm:""`
 	LastEventID uint       `gorm:"not null;default:0"`
 
-	LastRecoveryAt           *time.Time `gorm:""`
-	LastRecoveryDispatchJobs int        `gorm:"not null;default:0"`
-	LastRecoveryTaskRuns     int        `gorm:"not null;default:0"`
-	LastRecoveryNotes        int        `gorm:"not null;default:0"`
-	LastRecoveryWorkers      int        `gorm:"not null;default:0"`
+	LastRecoveryAt         *time.Time `gorm:""`
+	LastRecoveryPlannerOps int        `gorm:"column:last_recovery_dispatch_jobs;not null;default:0"`
+	LastRecoveryTaskRuns   int        `gorm:"not null;default:0"`
+	LastRecoveryNotes      int        `gorm:"not null;default:0"`
+	LastRecoveryWorkers    int        `gorm:"not null;default:0"`
 
 	PlannerDirty           bool       `gorm:"not null;default:false"`
 	PlannerWakeVersion     uint       `gorm:"not null;default:0"`

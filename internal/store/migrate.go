@@ -168,7 +168,6 @@ func migrateBaselineSchema(db *gorm.DB) error {
 		&Ticket{},
 		&Worker{},
 		&PMState{},
-		&PMDispatchJob{},
 		&InboxItem{},
 		&MergeItem{},
 		&TaskRun{},

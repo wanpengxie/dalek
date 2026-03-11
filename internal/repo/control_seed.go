@@ -269,7 +269,7 @@ func ensureControlPlaneDirs(layout Layout) error {
 		layout.PMArchiveDir,
 		layout.RuntimeDir,
 		layout.RuntimeWorkersDir,
-		filepath.Join(layout.ControlSkillsDir, "dispatch-new-ticket"),
+		filepath.Join(layout.ControlSkillsDir, "start-ticket-runtime"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

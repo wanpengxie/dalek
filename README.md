@@ -90,7 +90,7 @@ dalek            # 默认启动 TUI
 
 命令分组总览：
 
-- `ticket`：`ls/create/show/start/dispatch/interrupt/stop/archive/events`
+- `ticket`：`ls/create/show/start/interrupt/stop/archive/events`
 - `note`：`add/ls/show/approve/reject/discard`
 - `task`：`ls/show/events/cancel`
 - `manager`：`status/tick/run/pause/resume`
@@ -112,17 +112,22 @@ dalek ticket create --help
 
 ### daemon 模式与执行语义（重要）
 
-`dalek ticket dispatch` 和 `dalek worker run` 在当前版本中默认是**异步**：
+当前版本的 ticket 执行主链路是：
+
+- `dalek ticket start`：准备 worktree / worker runtime，并把 ticket 置为 `queued`
+- `dalek worker run`：通过 daemon 提交一次 worker run；命令返回 accepted 回执
+
+`dalek worker run` 在当前版本中默认是**异步**：
 
 - 命令提交到 daemon 后立即返回 accepted 回执，不会阻塞到任务完成。
-- 如需阻塞执行，请显式传 `--sync --timeout`。
+- 如需前台单次阻塞调试，可改用 `dalek manager run --once --sync-worker-run --worker-run-timeout 120m`。
 
 异步回执（text）示例：
 
 ```bash
-dalek ticket dispatch --ticket 12 --prompt "先补测试再改代码"
+dalek worker run --ticket 12 --prompt "先补测试再改代码"
 
-dispatch accepted: ticket=12 worker=7 request=req_01J... run=184
+worker run accepted: ticket=12 worker=7 request=req_01J... run=184
 query: dalek task show --id 184
 events: dalek task events --id 184
 cancel: dalek task cancel --id 184
@@ -131,37 +136,32 @@ cancel: dalek task cancel --id 184
 异步回执（json）示例（关键字段）：
 
 ```bash
-dalek ticket dispatch --ticket 12 -o json
-# schema: dalek.ticket.dispatch.accepted.v1
+dalek worker run --ticket 12 -o json
+# schema: dalek.worker.run.accepted.v1
 # mode: async
 # accepted: true
 # request_id: req_01J...
 # query.show/query.events/query.cancel: task 查询命令
 ```
 
-daemon 不在线时（默认异步路径）会报错，并提示同步兜底用法：
+daemon 不在线时（默认异步路径）会报错，并要求先启动 daemon：
 
 ```text
-Error: daemon 不在线，无法异步派发
+Error: daemon 不在线，无法异步执行 worker run
 Cause: <daemon 连接错误详情>
 Fix: daemon unavailable: 请先执行 `dalek daemon start`
-如需同步执行（会阻塞当前终端），可使用：
-  dalek ticket dispatch --ticket 12 --sync --timeout 120m
 ```
 
-同步兜底（显式阻塞）：
+前台阻塞调试：
 
 ```bash
-dalek ticket dispatch --ticket 12 --sync --timeout 120m
-dalek worker run --ticket 12 --sync --timeout 120m
+dalek manager run --once --sync-worker-run --worker-run-timeout 120m
 ```
 
-如果你选择“统一 sync，但后台跑”，可用 nohup 包裹：
+如果你需要后台跑 daemon：
 
 ```bash
-# 方案：nohup（无交互日志）
-nohup dalek worker run --ticket 12 --sync --timeout 120m \
-  > worker-run.log 2>&1 &
+nohup dalek daemon start > dalek-daemon.log 2>&1 &
 ```
 
 常见工作流：
@@ -174,8 +174,7 @@ dalek init --name demo
 dalek ticket create --title "smoke test" --desc "验证 CLI 流程"
 dalek ticket ls -o json
 dalek ticket start --ticket 1
-# 默认是异步；这里显式使用同步兜底（阻塞直到完成）
-dalek ticket dispatch --ticket 1 --prompt "先补测试再改代码" --sync --timeout 120m
+dalek worker run --ticket 1 --prompt "先补测试再改代码"
 dalek ticket events --ticket 1 -n 50 -o json
 dalek ticket stop --ticket 1
 dalek ticket archive --ticket 1
@@ -210,15 +209,15 @@ JSON 输出与错误格式：
 - `dalek ls` -> `dalek ticket ls`
 - `dalek create` -> `dalek ticket create`
 - `dalek start` -> `dalek ticket start`
-- `dalek dispatch` -> `dalek ticket dispatch`
+- `dalek dispatch` -> 已移除；请改用 `dalek ticket start` + `dalek worker run`
 - `dalek interrupt` -> `dalek ticket interrupt`
 - `dalek stop` -> `dalek ticket stop`
 - `dalek archive` -> `dalek ticket archive`
 - `dalek events` -> `dalek ticket events`
 - `dalek agent run finish` -> `dalek agent finish`
 - `dalek gateway serve` -> 已迁移到 `dalek daemon start`（`gateway serve` 及其已移除的旧兼容参数均报错退出）
-- `dalek ticket dispatch` / `dalek worker run`：默认从“同步阻塞”迁移为“异步 accepted 回执”
-- 若需要旧行为（阻塞等待结果），请显式加 `--sync --timeout`
+- `dalek worker run`：默认返回异步 accepted 回执
+- 若需要前台单次阻塞调试，请使用 `dalek manager run --once --sync-worker-run --worker-run-timeout ...`
 
 ## watcher 的数据获取与判断策略（v0）
 
@@ -246,7 +245,7 @@ cheap sampler 每轮对每个 running worker 会做：
 
 触发语义判断的典型场景：
 
-- `dispatch/interrupt` 等事件触发（系统会标记 “watch_requested”，下一轮尽快跑一次语义判断）
+- `worker_run/interrupt` 等事件触发（系统会标记 “watch_requested”，下一轮尽快跑一次语义判断）
 - `runtime_state` 处于 `running/unknown`，且超过 `watcher_stall_ms` 没有进展（判断是否完成/等待输入/报错）
 
 补充：

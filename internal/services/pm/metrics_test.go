@@ -50,8 +50,8 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 		UpdatedAt:          outside,
 	})
 	createTaskRunForMetrics(t, db, contracts.TaskRun{
-		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           contracts.TaskTypeDispatchTicket,
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		RequestID:          "dispatch-failed-in",
 		OrchestrationState: contracts.TaskFailed,
@@ -60,8 +60,8 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 		UpdatedAt:          inside,
 	})
 	createTaskRunForMetrics(t, db, contracts.TaskRun{
-		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           contracts.TaskTypeDispatchTicket,
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		RequestID:          "dispatch-ok-in",
 		OrchestrationState: contracts.TaskSucceeded,
@@ -69,8 +69,8 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 		UpdatedAt:          inside.Add(8 * time.Minute),
 	})
 	createTaskRunForMetrics(t, db, contracts.TaskRun{
-		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           contracts.TaskTypeDispatchTicket,
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		RequestID:          "dispatch-failed-out",
 		OrchestrationState: contracts.TaskFailed,
@@ -168,11 +168,11 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 	if metrics.PlannerTimeoutRate != 0.5 {
 		t.Fatalf("unexpected planner_timeout_rate: got=%v want=0.5", metrics.PlannerTimeoutRate)
 	}
-	if metrics.DispatchRunCount != 2 || metrics.DispatchBootstrapFailureCount != 1 {
-		t.Fatalf("unexpected dispatch counts: %+v", metrics)
+	if metrics.WorkerRunCount != 2 || metrics.WorkerBootstrapFailureCount != 1 {
+		t.Fatalf("unexpected worker-run counts: %+v", metrics)
 	}
-	if metrics.DispatchBootstrapFailureRate != 0.5 {
-		t.Fatalf("unexpected dispatch_bootstrap_failure_rate: got=%v want=0.5", metrics.DispatchBootstrapFailureRate)
+	if metrics.WorkerBootstrapFailureRate != 0.5 {
+		t.Fatalf("unexpected worker_bootstrap_failure_rate: got=%v want=0.5", metrics.WorkerBootstrapFailureRate)
 	}
 	if metrics.TerminalStateConflictCount != 1 {
 		t.Fatalf("unexpected terminal_state_conflict_count: got=%d want=1", metrics.TerminalStateConflictCount)

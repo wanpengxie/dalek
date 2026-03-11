@@ -3,6 +3,8 @@ package pm
 import (
 	"context"
 	"dalek/internal/contracts"
+	"dalek/internal/services/agentexec"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -51,28 +53,13 @@ func TestManagerTick_UsesWorkerRunSubmitterWhenConfigured(t *testing.T) {
 	if !containsTicketID(res.StartedTickets, tk.ID) {
 		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, res.StartedTickets)
 	}
-	if !containsTicketID(res.DispatchedTickets, tk.ID) {
-		t.Fatalf("expected activated ticket recorded in DispatchedTickets for t%d, got=%v", tk.ID, res.DispatchedTickets)
+	if !containsTicketID(res.ActivatedTickets, tk.ID) {
+		t.Fatalf("expected activated ticket recorded in ActivatedTickets for t%d, got=%v", tk.ID, res.ActivatedTickets)
 	}
 
 	callIDs := submitter.CallIDs()
 	if len(callIDs) != 1 || callIDs[0] != tk.ID {
 		t.Fatalf("expected submitter called once with t%d, got=%v", tk.ID, callIDs)
-	}
-
-	deadline := time.Now().Add(400 * time.Millisecond)
-	for {
-		var cnt int64
-		if err := p.DB.Model(&contracts.PMDispatchJob{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
-			t.Fatalf("count pm dispatch jobs failed: %v", err)
-		}
-		if cnt > 0 {
-			t.Fatalf("submitter path should not create local dispatch job, count=%d", cnt)
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(30 * time.Millisecond)
 	}
 }
 
@@ -94,20 +81,12 @@ func TestManagerTick_RejectsActivationWithoutSubmitter(t *testing.T) {
 	if !containsTicketID(res.StartedTickets, tk.ID) {
 		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, res.StartedTickets)
 	}
-	if containsTicketID(res.DispatchedTickets, tk.ID) {
-		t.Fatalf("activation should be rejected without submitter, got=%v", res.DispatchedTickets)
+	if containsTicketID(res.ActivatedTickets, tk.ID) {
+		t.Fatalf("activation should be rejected without submitter, got=%v", res.ActivatedTickets)
 	}
 	joined := strings.Join(res.Errors, "\n")
 	if !strings.Contains(joined, "worker run submitter 未配置") {
 		t.Fatalf("expected submitter missing error, got=%v", res.Errors)
-	}
-
-	var cnt int64
-	if err := p.DB.Model(&contracts.PMDispatchJob{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
-		t.Fatalf("count pm dispatch jobs failed: %v", err)
-	}
-	if cnt != 0 {
-		t.Fatalf("expected no local dispatch job without submitter, got=%d", cnt)
 	}
 
 	var inbox contracts.InboxItem
@@ -142,15 +121,15 @@ func TestManagerTick_DryRunSkipsWorkerRunSubmitter(t *testing.T) {
 	if len(submitter.CallIDs()) != 0 {
 		t.Fatalf("dry-run should not call worker run submitter")
 	}
-	if len(res.StartedTickets) != 0 || len(res.DispatchedTickets) != 0 {
-		t.Fatalf("dry-run should not start/activate tickets, started=%v activated=%v", res.StartedTickets, res.DispatchedTickets)
+	if len(res.StartedTickets) != 0 || len(res.ActivatedTickets) != 0 {
+		t.Fatalf("dry-run should not start/activate tickets, started=%v activated=%v", res.StartedTickets, res.ActivatedTickets)
 	}
 }
 
-func TestManagerTick_SyncActivationBypassesSubmitter(t *testing.T) {
+func TestManagerTick_SyncWorkerRunBypassesSubmitter(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	svc.SetAutopilotEnabled(context.Background(), true)
-	tk := createTicket(t, p.DB, "manager-tick-sync-dispatch")
+	tk := createTicket(t, p.DB, "manager-tick-sync-worker-run")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
@@ -160,31 +139,28 @@ func TestManagerTick_SyncActivationBypassesSubmitter(t *testing.T) {
 
 	submitter := &stubWorkerRunSubmitter{}
 	svc.SetWorkerRunSubmitter(submitter)
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, fmt.Sprintf("sync-activation-%d", ticket.ID))
+		makeSemanticReport(t, svc, run.ID, "done")
+		return &fakeAgentRunHandle{runID: run.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+	}
 
-	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{SyncDispatch: true})
+	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{SyncWorkerRun: true})
 	if err != nil {
 		t.Fatalf("ManagerTick failed: %v", err)
 	}
 	if !containsTicketID(res.StartedTickets, tk.ID) {
 		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, res.StartedTickets)
 	}
-	if !containsTicketID(res.DispatchedTickets, tk.ID) {
-		t.Fatalf("expected activated ticket recorded in DispatchedTickets for t%d, got=%v", tk.ID, res.DispatchedTickets)
+	if !containsTicketID(res.ActivatedTickets, tk.ID) {
+		t.Fatalf("expected activated ticket recorded in ActivatedTickets for t%d, got=%v", tk.ID, res.ActivatedTickets)
 	}
 	if len(submitter.CallIDs()) != 0 {
 		t.Fatalf("sync activation should bypass worker run submitter, got=%v", submitter.CallIDs())
 	}
-
-	var cnt int64
-	if err := p.DB.Model(&contracts.PMDispatchJob{}).Where("ticket_id = ?", tk.ID).Count(&cnt).Error; err != nil {
-		t.Fatalf("count pm dispatch jobs failed: %v", err)
-	}
-	if cnt != 0 {
-		t.Fatalf("expected sync activation path skips pm dispatch jobs, got=%d", cnt)
-	}
 }
 
-func TestManagerTick_SyncActivationHonorsDispatchTimeout(t *testing.T) {
+func TestManagerTick_SyncWorkerRunHonorsTimeout(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	svc.SetAutopilotEnabled(context.Background(), true)
 	tk := createTicket(t, p.DB, "manager-tick-sync-timeout")
@@ -194,16 +170,20 @@ func TestManagerTick_SyncActivationHonorsDispatchTimeout(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, fmt.Sprintf("sync-timeout-%d", ticket.ID))
+		return blockingAgentRunHandle{runID: run.ID}, nil
+	}
 
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{
-		SyncDispatch:    true,
-		DispatchTimeout: time.Nanosecond,
+		SyncWorkerRun:    true,
+		WorkerRunTimeout: time.Nanosecond,
 	})
 	if err != nil {
 		t.Fatalf("ManagerTick failed: %v", err)
 	}
-	if containsTicketID(res.DispatchedTickets, tk.ID) {
-		t.Fatalf("activation should timeout when dispatch-timeout is tiny, got=%v", res.DispatchedTickets)
+	if containsTicketID(res.ActivatedTickets, tk.ID) {
+		t.Fatalf("activation should timeout when worker-run-timeout is tiny, got=%v", res.ActivatedTickets)
 	}
 	if len(res.Errors) == 0 {
 		t.Fatalf("expected sync activation timeout errors")
@@ -238,8 +218,8 @@ func TestManagerTick_DemotesBlockedWhenActivationReportsWorkerReadyTimeout(t *te
 	if err != nil {
 		t.Fatalf("ManagerTick failed: %v", err)
 	}
-	if containsTicketID(res.DispatchedTickets, tk.ID) {
-		t.Fatalf("worker ready timeout should not mark activated, got=%v", res.DispatchedTickets)
+	if containsTicketID(res.ActivatedTickets, tk.ID) {
+		t.Fatalf("worker ready timeout should not mark activated, got=%v", res.ActivatedTickets)
 	}
 	joined := strings.Join(res.Errors, "\n")
 	if !strings.Contains(joined, "submit worker run 失败") {
@@ -280,3 +260,16 @@ func containsTicketID(ids []uint, want uint) bool {
 	}
 	return false
 }
+
+type blockingAgentRunHandle struct {
+	runID uint
+}
+
+func (h blockingAgentRunHandle) RunID() uint { return h.runID }
+
+func (h blockingAgentRunHandle) Wait(ctx context.Context) (agentexec.AgentRunResult, error) {
+	<-ctx.Done()
+	return agentexec.AgentRunResult{}, ctx.Err()
+}
+
+func (h blockingAgentRunHandle) Cancel() error { return nil }

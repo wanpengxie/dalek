@@ -18,8 +18,8 @@ import (
 type ManagerTickOptions struct {
 	MaxRunningWorkers int
 	DryRun            bool
-	SyncDispatch      bool
-	DispatchTimeout   time.Duration
+	SyncWorkerRun     bool
+	WorkerRunTimeout  time.Duration
 }
 
 type ManagerTickResult struct {
@@ -40,11 +40,11 @@ type ManagerTickResult struct {
 
 	PlannerRunScheduled bool
 
-	StartedTickets    []uint
-	DispatchedTickets []uint
-	SerialDeferred    []uint
-	MergeFrozen       []uint
-	SurfaceConflicts  []SurfaceConflict
+	StartedTickets   []uint
+	ActivatedTickets []uint
+	SerialDeferred   []uint
+	MergeFrozen      []uint
+	SurfaceConflicts []SurfaceConflict
 
 	Errors []string
 }
@@ -74,17 +74,17 @@ type scheduleOptions struct {
 	Capacity         int
 	RunningTicketIDs map[uint]bool
 	DryRun           bool
-	SyncDispatch     bool
-	DispatchTimeout  time.Duration
+	SyncWorkerRun    bool
+	WorkerRunTimeout time.Duration
 	PMState          *contracts.PMState
 }
 
 type scheduleResult struct {
-	StartedTickets    []uint
-	DispatchedTickets []uint
-	SerialDeferred    []uint
-	SurfaceConflicts  []SurfaceConflict
-	Errors            []string
+	StartedTickets   []uint
+	ActivatedTickets []uint
+	SerialDeferred   []uint
+	SurfaceConflicts []SurfaceConflict
+	Errors           []string
 }
 
 const managerTickFinalizeTimeout = 30 * time.Second
@@ -96,7 +96,7 @@ func managerTickFinalizeContext(parent context.Context) (context.Context, contex
 	return context.WithTimeout(context.WithoutCancel(parent), managerTickFinalizeTimeout)
 }
 
-func (s *Service) managerDispatchTimeout() time.Duration {
+func (s *Service) managerWorkerRunTimeout() time.Duration {
 	p, _, err := s.require()
 	if err != nil {
 		return 0
@@ -202,8 +202,8 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		Capacity:         capacity,
 		RunningTicketIDs: scanResult.RunningTicketIDs,
 		DryRun:           opt.DryRun,
-		SyncDispatch:     opt.SyncDispatch,
-		DispatchTimeout:  opt.DispatchTimeout,
+		SyncWorkerRun:    opt.SyncWorkerRun,
+		WorkerRunTimeout: opt.WorkerRunTimeout,
 		PMState:          st,
 	})
 	res.applyScheduleResult(scheduleResult)
@@ -346,7 +346,7 @@ func (res *ManagerTickResult) applyMergeFrozenResult(step mergeFrozenResult) {
 
 func (res *ManagerTickResult) applyScheduleResult(step scheduleResult) {
 	res.StartedTickets = append(res.StartedTickets, step.StartedTickets...)
-	res.DispatchedTickets = append(res.DispatchedTickets, step.DispatchedTickets...)
+	res.ActivatedTickets = append(res.ActivatedTickets, step.ActivatedTickets...)
 	res.SerialDeferred = append(res.SerialDeferred, step.SerialDeferred...)
 	res.SurfaceConflicts = append(res.SurfaceConflicts, step.SurfaceConflicts...)
 	res.Errors = append(res.Errors, step.Errors...)
@@ -719,7 +719,7 @@ func (s *Service) maybeSchedulePlannerRun(ctx context.Context, db *gorm.DB, st *
 	if err != nil {
 		return false, err
 	}
-	requestID := "pln_" + strings.TrimPrefix(newPMDispatchRequestID(), "dsp_")
+	requestID := newPMRequestID("pln")
 	taskRun, err := taskRuntime.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerPM,
 		TaskType:           contracts.TaskTypePMPlannerRun,
@@ -882,7 +882,7 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 		dispatched, errs := s.submitScheduledWorkerRun(ctx, t.ID, w.ID, opt)
 		out.Errors = append(out.Errors, errs...)
 		if dispatched {
-			out.DispatchedTickets = append(out.DispatchedTickets, t.ID)
+			out.ActivatedTickets = append(out.ActivatedTickets, t.ID)
 		}
 		capacity--
 	}
@@ -891,13 +891,13 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 }
 
 func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, workerID uint, opt scheduleOptions) (bool, []string) {
-	if opt.SyncDispatch {
+	if opt.SyncWorkerRun {
 		activationCtx := ctx
 		cancelActivation := func() {}
-		if opt.DispatchTimeout > 0 {
-			activationCtx, cancelActivation = context.WithTimeout(ctx, opt.DispatchTimeout)
+		if opt.WorkerRunTimeout > 0 {
+			activationCtx, cancelActivation = context.WithTimeout(ctx, opt.WorkerRunTimeout)
 		}
-		_, derr := s.DirectDispatchWorker(activationCtx, ticketID, DirectDispatchOptions{})
+		_, derr := s.RunTicketWorker(activationCtx, ticketID, WorkerRunOptions{})
 		cancelActivation()
 		if derr != nil {
 			return false, s.handleActivationFailure(ctx, ticketID, workerID, derr, "sync activation 失败")

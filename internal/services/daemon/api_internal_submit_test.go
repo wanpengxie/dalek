@@ -95,13 +95,6 @@ func assertSubmitSyncRejected(t *testing.T, status int, body internalSubmitAPIEr
 	}
 }
 
-func TestHandleDispatchSubmit_RejectsSyncTrue(t *testing.T) {
-	svc := startTestInternalAPIForSubmit(t)
-
-	status, body, _ := postSubmitSyncTrue(t, svc, "/api/dispatch/submit")
-	assertSubmitSyncRejected(t, status, body)
-}
-
 func TestHandleWorkerRunSubmit_RejectsSyncTrue(t *testing.T) {
 	svc := startTestInternalAPIForSubmit(t)
 
@@ -116,46 +109,11 @@ func TestHandleSubagentSubmit_RejectsSyncTrue(t *testing.T) {
 	assertSubmitSyncRejected(t, status, body)
 }
 
-func TestSubmitEndpoints_SyncTrueResponseConsistency(t *testing.T) {
+func TestHandleDispatchSubmitRouteRemoved(t *testing.T) {
 	svc := startTestInternalAPIForSubmit(t)
-
-	dispatchStatus, dispatchBody, dispatchRaw := postSubmitSyncTrue(t, svc, "/api/dispatch/submit")
-	workerStatus, workerBody, workerRaw := postSubmitSyncTrue(t, svc, "/api/worker-run/submit")
-
-	assertSubmitSyncRejected(t, dispatchStatus, dispatchBody)
-	assertSubmitSyncRejected(t, workerStatus, workerBody)
-
-	if dispatchStatus != workerStatus {
-		t.Fatalf("status mismatch: dispatch=%d worker=%d", dispatchStatus, workerStatus)
-	}
-	if dispatchBody != workerBody {
-		t.Fatalf("payload mismatch: dispatch=%+v worker=%+v", dispatchBody, workerBody)
-	}
-	if dispatchRaw != workerRaw {
-		t.Fatalf("raw response mismatch: dispatch=%s worker=%s", dispatchRaw, workerRaw)
-	}
-}
-
-func TestSubmitEndpoints_RequestIDAliasReuseSameRun(t *testing.T) {
-	svc := startTestInternalAPIForSubmit(t)
-
-	dispatchStatus, dispatchBody := postSubmitSyncFalse(t, svc, "/api/dispatch/submit", "req-submit-alias-shared")
-	workerStatus, workerBody := postSubmitSyncFalse(t, svc, "/api/worker-run/submit", "req-submit-alias-shared")
-
-	if dispatchStatus != http.StatusAccepted {
-		t.Fatalf("unexpected dispatch status=%d body=%+v", dispatchStatus, dispatchBody)
-	}
-	if workerStatus != http.StatusAccepted {
-		t.Fatalf("unexpected worker status=%d body=%+v", workerStatus, workerBody)
-	}
-	if dispatchBody["task_run_id"] != workerBody["task_run_id"] {
-		t.Fatalf("expected shared task_run_id, dispatch=%v worker=%v", dispatchBody["task_run_id"], workerBody["task_run_id"])
-	}
-	if dispatchBody["request_id"] != workerBody["request_id"] {
-		t.Fatalf("expected shared request_id, dispatch=%v worker=%v", dispatchBody["request_id"], workerBody["request_id"])
-	}
-	if dispatchBody["worker_id"] != workerBody["worker_id"] {
-		t.Fatalf("expected shared worker_id, dispatch=%v worker=%v", dispatchBody["worker_id"], workerBody["worker_id"])
+	status := postMissingRoute(t, svc, "/api/dispatch/submit")
+	if status != http.StatusNotFound {
+		t.Fatalf("expected removed dispatch route to return 404, got=%d", status)
 	}
 }
 
@@ -198,7 +156,7 @@ func postSubmitSyncFalse(t *testing.T, svc *InternalAPI, route, requestID string
 	return resp.StatusCode, body
 }
 
-func postDispatchSubmitWithAutoStart(t *testing.T, svc *InternalAPI, requestID string, autoStart *bool, baseBranch string) (int, map[string]any) {
+func postWorkerRunSubmitWithAutoStart(t *testing.T, svc *InternalAPI, requestID string, autoStart *bool, baseBranch string) (int, map[string]any) {
 	t.Helper()
 	payload := map[string]any{
 		"project":    "demo",
@@ -217,7 +175,7 @@ func postDispatchSubmitWithAutoStart(t *testing.T, svc *InternalAPI, requestID s
 	if err != nil {
 		t.Fatalf("marshal request failed: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, "http://"+svc.listener.Addr().String()+"/api/dispatch/submit", bytes.NewReader(raw))
+	req, err := http.NewRequest(http.MethodPost, "http://"+svc.listener.Addr().String()+"/api/worker-run/submit", bytes.NewReader(raw))
 	if err != nil {
 		t.Fatalf("new request failed: %v", err)
 	}
@@ -237,6 +195,21 @@ func postDispatchSubmitWithAutoStart(t *testing.T, svc *InternalAPI, requestID s
 		t.Fatalf("decode response failed: %v raw=%s", err, string(bodyRaw))
 	}
 	return resp.StatusCode, body
+}
+
+func postMissingRoute(t *testing.T, svc *InternalAPI, route string) int {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, "http://"+svc.listener.Addr().String()+route, bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("new request failed: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("http do failed: %v", err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode
 }
 
 func postSubmitRaw(t *testing.T, svc *InternalAPI, route string, body io.Reader) (int, internalSubmitAPIError) {
@@ -336,38 +309,6 @@ func TestHandleTicketStart_ForwardsBaseBranch(t *testing.T) {
 	}
 }
 
-func TestHandleDispatchSubmit_QueryUsesIDFlag(t *testing.T) {
-	svc := startTestInternalAPIForSubmit(t)
-	status, body := postSubmitSyncFalse(t, svc, "/api/dispatch/submit", "req-dispatch-query-id")
-	if status != http.StatusAccepted {
-		t.Fatalf("unexpected status=%d body=%+v", status, body)
-	}
-	queryAny, ok := body["query"]
-	if !ok {
-		t.Fatalf("missing query field: %+v", body)
-	}
-	query, ok := queryAny.(map[string]any)
-	if !ok {
-		t.Fatalf("query should be object, got=%T", queryAny)
-	}
-	for _, key := range []string{"show", "events", "cancel"} {
-		raw, ok := query[key]
-		if !ok {
-			t.Fatalf("missing query.%s", key)
-		}
-		value, ok := raw.(string)
-		if !ok {
-			t.Fatalf("query.%s should be string, got=%T", key, raw)
-		}
-		if !strings.Contains(value, "--id ") {
-			t.Fatalf("query.%s should contain --id, got=%q", key, value)
-		}
-		if strings.Contains(value, "--run ") {
-			t.Fatalf("query.%s should not contain --run, got=%q", key, value)
-		}
-	}
-}
-
 func TestHandleWorkerRunSubmit_QueryUsesIDFlag(t *testing.T) {
 	svc := startTestInternalAPIForSubmit(t)
 	status, body := postSubmitSyncFalse(t, svc, "/api/worker-run/submit", "req-worker-query-id")
@@ -400,7 +341,7 @@ func TestHandleWorkerRunSubmit_QueryUsesIDFlag(t *testing.T) {
 	}
 }
 
-func TestHandleDispatchSubmit_ForwardsAutoStartFalse(t *testing.T) {
+func TestHandleWorkerRunSubmit_ForwardsAutoStartFalse(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
@@ -420,7 +361,7 @@ func TestHandleDispatchSubmit_ForwardsAutoStartFalse(t *testing.T) {
 	})
 
 	autoStart := false
-	status, body := postDispatchSubmitWithAutoStart(t, svc, "req-dispatch-auto-start-false", &autoStart, "release/v2")
+	status, body := postWorkerRunSubmitWithAutoStart(t, svc, "req-worker-auto-start-false", &autoStart, "release/v2")
 	if status != http.StatusAccepted {
 		t.Fatalf("unexpected status=%d body=%+v", status, body)
 	}
@@ -464,28 +405,6 @@ func TestHandleSubagentSubmit_QueryUsesRunIDFlag(t *testing.T) {
 		if !strings.Contains(value, marker) {
 			t.Fatalf("query.%s should contain %q, got=%q", key, marker, value)
 		}
-	}
-}
-
-func TestHandleDispatchSubmit_RejectsOversizedBody(t *testing.T) {
-	svc := startTestInternalAPIForSubmit(t)
-	oversized := map[string]any{
-		"project":    "demo",
-		"ticket_id":  1,
-		"request_id": "req-big-dispatch",
-		"prompt":     strings.Repeat("x", int(internalAPIMaxJSONBodyBytes)),
-		"sync":       false,
-	}
-	raw, err := json.Marshal(oversized)
-	if err != nil {
-		t.Fatalf("marshal request failed: %v", err)
-	}
-	status, body := postSubmitRaw(t, svc, "/api/dispatch/submit", bytes.NewReader(raw))
-	if status != http.StatusBadRequest {
-		t.Fatalf("unexpected status: %d body=%+v", status, body)
-	}
-	if body.Error != "bad_request" || !strings.Contains(body.Cause, "request body 过大") {
-		t.Fatalf("unexpected response: %+v", body)
 	}
 }
 

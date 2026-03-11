@@ -8,7 +8,7 @@ import (
 
 func TestComputeTicketCapability_DefaultBacklogNoWorker(t *testing.T) {
 	capability := ComputeTicketCapability("", nil, false, false, false, false, contracts.TaskHealthUnknown)
-	if !capability.CanStart || !capability.CanQueueRun || !capability.CanDispatch {
+	if !capability.CanStart || !capability.CanQueueRun {
 		t.Fatalf("expected backlog ticket to allow start and queue-run")
 	}
 	if !capability.CanArchive {
@@ -25,7 +25,7 @@ func TestComputeTicketCapability_ActiveRunGateAndReason(t *testing.T) {
 		LogPath: "/tmp/w1.log",
 	}
 	capability := ComputeTicketCapability(contracts.TicketActive, worker, true, false, true, false, contracts.TaskHealthBusy)
-	if capability.CanQueueRun || capability.CanDispatch {
+	if capability.CanQueueRun {
 		t.Fatalf("expected active run to block queue-run compatibility")
 	}
 	if capability.CanArchive {

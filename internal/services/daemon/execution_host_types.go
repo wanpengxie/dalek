@@ -54,6 +54,7 @@ type ExecutionHostResolver interface {
 
 type ExecutionHostProject interface {
 	StartTicket(ctx context.Context, ticketID uint, opt StartTicketOptions) (*contracts.Worker, error)
+	RunTicketWorker(ctx context.Context, ticketID uint, opt WorkerRunOptions) (WorkerRunResult, error)
 	SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptions) (SubagentSubmission, error)
 	RunSubagentJob(ctx context.Context, taskRunID uint, opt SubagentRunOptions) error
 	RunPlannerJob(ctx context.Context, taskRunID uint, opt PlannerRunOptions) error
@@ -290,8 +291,6 @@ type executionRunHandle struct {
 	requestID     string
 	retainRequest bool
 	runID         uint
-	jobID         uint
-	jobStatus     contracts.PMDispatchJobStatus
 	ticketID      uint
 	workerID      uint
 

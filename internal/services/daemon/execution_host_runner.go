@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"strings"
+	"time"
 )
 
 func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
@@ -43,10 +44,21 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 		baselineRunID = latest.RunID
 	}
 
+	attachLatestRun := func(probeCtx context.Context) {
+		if handle.runID != 0 {
+			return
+		}
+		status, serr := project.FindLatestWorkerRun(probeCtx, handle.ticketID, baselineRunID)
+		if serr != nil || status == nil {
+			return
+		}
+		h.attachHandleRun(handle, status.RunID, status.WorkerID)
+	}
+
 	resCh := make(chan WorkerRunResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		res, runErr := project.DirectDispatchWorker(handle.ctx, handle.ticketID, WorkerRunOptions{
+		res, runErr := project.RunTicketWorker(handle.ctx, handle.ticketID, WorkerRunOptions{
 			EntryPrompt: handle.entryPrompt,
 			AutoStart:   handle.autoStart,
 			BaseBranch:  handle.baseBranch,
@@ -58,48 +70,53 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 		resCh <- res
 	}()
 
-	select {
-	case res := <-resCh:
-		if res.RunID != 0 {
-			h.attachHandleRun(handle, res.RunID, res.WorkerID)
-		} else if res.WorkerID != 0 {
-			h.mu.Lock()
-			if handle.workerID == 0 {
-				handle.workerID = res.WorkerID
+	probeTicker := time.NewTicker(100 * time.Millisecond)
+	defer probeTicker.Stop()
+
+	for {
+		select {
+		case res := <-resCh:
+			if res.RunID != 0 {
+				h.attachHandleRun(handle, res.RunID, res.WorkerID)
+			} else if res.WorkerID != 0 {
+				h.mu.Lock()
+				if handle.workerID == 0 {
+					handle.workerID = res.WorkerID
+				}
+				h.mu.Unlock()
 			}
-			h.mu.Unlock()
-		}
-		if handle.runID == 0 {
-			if status, serr := project.FindLatestWorkerRun(context.Background(), handle.ticketID, baselineRunID); serr == nil && status != nil {
-				h.attachHandleRun(handle, status.RunID, status.WorkerID)
+			if handle.runID == 0 {
+				attachLatestRun(context.Background())
 			}
-		}
-		h.logger.Info("execution host ticket run completed",
-			"run_id", handle.runID,
-			"project", handle.project,
-			"request_id", handle.requestID,
-			"run_kind", logLabel,
-		)
-	case runErr := <-errCh:
-		if handle.runID == 0 {
-			if status, serr := project.FindLatestWorkerRun(context.Background(), handle.ticketID, baselineRunID); serr == nil && status != nil {
-				h.attachHandleRun(handle, status.RunID, status.WorkerID)
-			}
-		}
-		if handle.ctx.Err() != nil {
-			h.logger.Info("execution host ticket run canceled",
-				"request_id", handle.requestID,
+			h.logger.Info("execution host ticket run completed",
+				"run_id", handle.runID,
 				"project", handle.project,
+				"request_id", handle.requestID,
 				"run_kind", logLabel,
 			)
 			return
+		case runErr := <-errCh:
+			if handle.runID == 0 {
+				attachLatestRun(context.Background())
+			}
+			if handle.ctx.Err() != nil {
+				h.logger.Info("execution host ticket run canceled",
+					"request_id", handle.requestID,
+					"project", handle.project,
+					"run_kind", logLabel,
+				)
+				return
+			}
+			h.logger.Warn("execution host ticket run failed",
+				"request_id", handle.requestID,
+				"project", handle.project,
+				"run_kind", logLabel,
+				"error", runErr,
+			)
+			return
+		case <-probeTicker.C:
+			attachLatestRun(context.Background())
 		}
-		h.logger.Warn("execution host ticket run failed",
-			"request_id", handle.requestID,
-			"project", handle.project,
-			"run_kind", logLabel,
-			"error", runErr,
-		)
 	}
 }
 

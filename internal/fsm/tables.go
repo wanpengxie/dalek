@@ -59,27 +59,6 @@ var WorkerLifecycleTable = TransitionTable[contracts.WorkerStatus]{
 	},
 }
 
-var PMDispatchJobTable = TransitionTable[contracts.PMDispatchJobStatus]{
-	Name:          "pm_dispatch_job",
-	InitialStates: []contracts.PMDispatchJobStatus{contracts.PMDispatchPending},
-	TerminalStates: []contracts.PMDispatchJobStatus{
-		contracts.PMDispatchSucceeded,
-		contracts.PMDispatchFailed,
-	},
-	Transitions: map[contracts.PMDispatchJobStatus][]contracts.PMDispatchJobStatus{
-		contracts.PMDispatchPending: {
-			contracts.PMDispatchRunning,
-			contracts.PMDispatchFailed,
-		},
-		contracts.PMDispatchRunning: {
-			contracts.PMDispatchSucceeded,
-			contracts.PMDispatchFailed,
-		},
-		contracts.PMDispatchSucceeded: {},
-		contracts.PMDispatchFailed:    {},
-	},
-}
-
 var TaskRunOrchestrationTable = TransitionTable[contracts.TaskOrchestrationState]{
 	Name:          "task_run_orchestration",
 	InitialStates: []contracts.TaskOrchestrationState{contracts.TaskPending},
@@ -111,10 +90,6 @@ func CanTicketWorkflowTransition(from, to contracts.TicketWorkflowStatus) bool {
 
 func CanWorkerLifecycleTransition(from, to contracts.WorkerStatus) bool {
 	return WorkerLifecycleTable.CanTransition(from, to)
-}
-
-func CanPMDispatchJobTransition(from, to contracts.PMDispatchJobStatus) bool {
-	return PMDispatchJobTable.CanTransition(from, to)
 }
 
 func CanTaskRunTransition(from, to contracts.TaskOrchestrationState) bool {

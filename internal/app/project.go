@@ -90,17 +90,6 @@ func (p *Project) RefreshInterval() time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-func (p *Project) PMDispatchTimeout() time.Duration {
-	if p == nil || p.core == nil {
-		return 0
-	}
-	ms := p.core.Config.WithDefaults().PMDispatchTimeoutMS
-	if ms <= 0 {
-		return 0
-	}
-	return time.Duration(ms) * time.Millisecond
-}
-
 func (p *Project) GatewayTurnTimeout() time.Duration {
 	if p == nil || p.core == nil {
 		return 0

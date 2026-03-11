@@ -139,6 +139,10 @@ func (p *testExecutionHostProject) StartTicket(ctx context.Context, ticketID uin
 	}, nil
 }
 
+func (p *testExecutionHostProject) RunTicketWorker(ctx context.Context, ticketID uint, opt WorkerRunOptions) (WorkerRunResult, error) {
+	return p.DirectDispatchWorker(ctx, ticketID, opt)
+}
+
 func cloneBoolPtr(v *bool) *bool {
 	if v == nil {
 		return nil
@@ -516,38 +520,6 @@ func (p *testExecutionHostProject) LastInboxOptions() ListInboxOptions {
 	return p.lastInboxOpt
 }
 
-func TestExecutionHost_OnRunSettled_Dispatch(t *testing.T) {
-	resolver := &testExecutionHostResolver{project: &testExecutionHostProject{}}
-	notifyCh := make(chan string, 1)
-	host, err := NewExecutionHost(resolver, ExecutionHostOptions{
-		OnRunSettled: func(project string) {
-			notifyCh <- strings.TrimSpace(project)
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewExecutionHost failed: %v", err)
-	}
-
-	_, err = host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
-		Project:   "demo",
-		TicketID:  1,
-		RequestID: "dispatch-notify-test",
-		Prompt:    "继续执行任务",
-	})
-	if err != nil {
-		t.Fatalf("SubmitDispatch failed: %v", err)
-	}
-
-	select {
-	case got := <-notifyCh:
-		if got != "demo" {
-			t.Fatalf("unexpected project notify: got=%q want=%q", got, "demo")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("expected OnRunSettled callback for dispatch")
-	}
-}
-
 func TestExecutionHost_StartTicket_ForwardsBaseBranch(t *testing.T) {
 	project := &testExecutionHostProject{
 		ticketViews: []TicketView{
@@ -707,26 +679,26 @@ func TestExecutionHost_OnRunSettled_PlannerRun(t *testing.T) {
 	}
 }
 
-func TestExecutionHost_SubmitDispatch_IdempotentByRequestID(t *testing.T) {
+func TestExecutionHost_SubmitWorkerRun_IdempotentByRequestID(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	req := DispatchSubmitRequest{
+	req := WorkerRunSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
-		RequestID: "dispatch-idempotent-single",
+		RequestID: "worker-idempotent-single",
 		Prompt:    "继续执行任务",
 	}
-	first, err := host.SubmitDispatch(context.Background(), req)
+	first, err := host.SubmitWorkerRun(context.Background(), req)
 	if err != nil {
-		t.Fatalf("first SubmitDispatch failed: %v", err)
+		t.Fatalf("first SubmitWorkerRun failed: %v", err)
 	}
-	second, err := host.SubmitDispatch(context.Background(), req)
+	second, err := host.SubmitWorkerRun(context.Background(), req)
 	if err != nil {
-		t.Fatalf("second SubmitDispatch failed: %v", err)
+		t.Fatalf("second SubmitWorkerRun failed: %v", err)
 	}
 
 	if first.TaskRunID != second.TaskRunID {
@@ -736,48 +708,11 @@ func TestExecutionHost_SubmitDispatch_IdempotentByRequestID(t *testing.T) {
 		t.Fatalf("expected same request_id in receipt: first=%q second=%q", first.RequestID, second.RequestID)
 	}
 	if got := project.DirectDispatchCount(); got != 1 {
-		t.Fatalf("expected dispatch compat path to reuse one direct worker run, got=%d", got)
+		t.Fatalf("expected duplicate worker-run request to reuse one direct worker run, got=%d", got)
 	}
 }
 
-func TestExecutionHost_SubmitDispatch_ReusesWorkerRunAlias(t *testing.T) {
-	project := &testExecutionHostProject{}
-	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
-	if err != nil {
-		t.Fatalf("NewExecutionHost failed: %v", err)
-	}
-
-	dispatchReceipt, err := host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
-		Project:   "demo",
-		TicketID:  1,
-		RequestID: "dispatch-worker-alias-shared",
-		Prompt:    "继续执行任务",
-	})
-	if err != nil {
-		t.Fatalf("SubmitDispatch failed: %v", err)
-	}
-	workerReceipt, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
-		Project:   "demo",
-		TicketID:  1,
-		RequestID: "dispatch-worker-alias-shared",
-		Prompt:    "继续执行任务",
-	})
-	if err != nil {
-		t.Fatalf("SubmitWorkerRun failed: %v", err)
-	}
-
-	if dispatchReceipt.TaskRunID != workerReceipt.TaskRunID {
-		t.Fatalf("expected compat alias to reuse worker run: dispatch=%d worker=%d", dispatchReceipt.TaskRunID, workerReceipt.TaskRunID)
-	}
-	if dispatchReceipt.RequestID != workerReceipt.RequestID {
-		t.Fatalf("expected same request id: dispatch=%q worker=%q", dispatchReceipt.RequestID, workerReceipt.RequestID)
-	}
-	if got := project.DirectDispatchCount(); got != 1 {
-		t.Fatalf("expected shared alias path to create one direct worker run, got=%d", got)
-	}
-}
-
-func TestExecutionHost_SubmitDispatch_ForwardsAutoStartOption(t *testing.T) {
+func TestExecutionHost_SubmitWorkerRun_ForwardsAutoStartOption(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
@@ -785,16 +720,16 @@ func TestExecutionHost_SubmitDispatch_ForwardsAutoStartOption(t *testing.T) {
 	}
 
 	autoStart := false
-	_, err = host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
+	_, err = host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
 		Project:    "demo",
 		TicketID:   1,
-		RequestID:  "dispatch-forward-auto-start",
+		RequestID:  "worker-forward-auto-start",
 		Prompt:     "继续执行任务",
 		AutoStart:  &autoStart,
 		BaseBranch: "release/v2",
 	})
 	if err != nil {
-		t.Fatalf("SubmitDispatch failed: %v", err)
+		t.Fatalf("SubmitWorkerRun failed: %v", err)
 	}
 
 	got := project.LastDirectDispatchAutoStart()
@@ -806,7 +741,7 @@ func TestExecutionHost_SubmitDispatch_ForwardsAutoStartOption(t *testing.T) {
 	}
 }
 
-func TestExecutionHost_SubmitDispatch_IdempotentByRequestIDConcurrent(t *testing.T) {
+func TestExecutionHost_SubmitWorkerRun_IdempotentByRequestIDConcurrent(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
@@ -814,7 +749,7 @@ func TestExecutionHost_SubmitDispatch_IdempotentByRequestIDConcurrent(t *testing
 	}
 
 	const workers = 8
-	results := make(chan DispatchSubmitReceipt, workers)
+	results := make(chan WorkerRunSubmitReceipt, workers)
 	errs := make(chan error, workers)
 
 	var wg sync.WaitGroup
@@ -822,10 +757,10 @@ func TestExecutionHost_SubmitDispatch_IdempotentByRequestIDConcurrent(t *testing
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			receipt, submitErr := host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
+			receipt, submitErr := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
 				Project:   "demo",
 				TicketID:  1,
-				RequestID: "dispatch-idempotent-concurrent",
+				RequestID: "worker-idempotent-concurrent",
 				Prompt:    "继续执行任务",
 			})
 			if submitErr != nil {
@@ -841,7 +776,7 @@ func TestExecutionHost_SubmitDispatch_IdempotentByRequestIDConcurrent(t *testing
 
 	for err := range errs {
 		if err != nil {
-			t.Fatalf("concurrent SubmitDispatch failed: %v", err)
+			t.Fatalf("concurrent SubmitWorkerRun failed: %v", err)
 		}
 	}
 
@@ -860,30 +795,30 @@ func TestExecutionHost_SubmitDispatch_IdempotentByRequestIDConcurrent(t *testing
 	}
 }
 
-func TestExecutionHost_SubmitDispatch_EmptyRequestIDCompatible(t *testing.T) {
+func TestExecutionHost_SubmitWorkerRun_EmptyRequestIDCreatesDistinctRuns(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	first, err := host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
+	first, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("first SubmitDispatch failed: %v", err)
+		t.Fatalf("first SubmitWorkerRun failed: %v", err)
 	}
-	second, err := host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
+	second, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("second SubmitDispatch failed: %v", err)
+		t.Fatalf("second SubmitWorkerRun failed: %v", err)
 	}
 
 	if first.TaskRunID == second.TaskRunID {
@@ -894,30 +829,30 @@ func TestExecutionHost_SubmitDispatch_EmptyRequestIDCompatible(t *testing.T) {
 	}
 }
 
-func TestExecutionHost_SubmitDispatch_DifferentRequestIDCreatesDifferentRuns(t *testing.T) {
+func TestExecutionHost_SubmitWorkerRun_DifferentRequestIDCreatesDifferentRuns(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	first, err := host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
+	first, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
-		RequestID: "dispatch-id-a",
+		RequestID: "worker-id-a",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("first SubmitDispatch failed: %v", err)
+		t.Fatalf("first SubmitWorkerRun failed: %v", err)
 	}
-	second, err := host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
+	second, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
-		RequestID: "dispatch-id-b",
+		RequestID: "worker-id-b",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("second SubmitDispatch failed: %v", err)
+		t.Fatalf("second SubmitWorkerRun failed: %v", err)
 	}
 
 	if first.TaskRunID == second.TaskRunID {
@@ -1003,7 +938,7 @@ func TestExecutionHost_SubmitPlannerRun_IdempotentByRequestID(t *testing.T) {
 	}
 }
 
-func TestExecutionHost_Stop_WaitsForDispatchExit(t *testing.T) {
+func TestExecutionHost_Stop_WaitsForWorkerRunExit(t *testing.T) {
 	releaseCh := make(chan struct{})
 	project := &testExecutionHostProject{
 		directDispatchStarted:      make(chan struct{}, 1),
@@ -1015,20 +950,20 @@ func TestExecutionHost_Stop_WaitsForDispatchExit(t *testing.T) {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	_, err = host.SubmitDispatch(context.Background(), DispatchSubmitRequest{
+	_, err = host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
-		RequestID: "dispatch-stop-wait",
+		RequestID: "worker-stop-wait",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("SubmitDispatch failed: %v", err)
+		t.Fatalf("SubmitWorkerRun failed: %v", err)
 	}
 
 	select {
 	case <-project.directDispatchStarted:
 	case <-time.After(2 * time.Second):
-		t.Fatalf("dispatch goroutine not started")
+		t.Fatalf("worker-run goroutine not started")
 	}
 
 	stopDone := make(chan error, 1)
@@ -1038,7 +973,7 @@ func TestExecutionHost_Stop_WaitsForDispatchExit(t *testing.T) {
 
 	select {
 	case err := <-stopDone:
-		t.Fatalf("Stop returned before dispatch released: err=%v", err)
+		t.Fatalf("Stop returned before worker run released: err=%v", err)
 	case <-time.After(120 * time.Millisecond):
 	}
 
@@ -1050,7 +985,7 @@ func TestExecutionHost_Stop_WaitsForDispatchExit(t *testing.T) {
 			t.Fatalf("Stop failed: %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatalf("Stop should return after dispatch exits")
+		t.Fatalf("Stop should return after worker run exits")
 	}
 }
 

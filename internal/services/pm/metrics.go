@@ -21,9 +21,9 @@ type HealthMetrics struct {
 	WindowStart time.Time `json:"window_start"`
 	WindowEnd   time.Time `json:"window_end"`
 
-	PlannerTimeoutRate           float64  `json:"planner_timeout_rate"`
-	DispatchBootstrapFailureRate float64  `json:"dispatch_bootstrap_failure_rate"`
-	RealAcceptancePassRate       *float64 `json:"real_acceptance_pass_rate"`
+	PlannerTimeoutRate         float64  `json:"planner_timeout_rate"`
+	WorkerBootstrapFailureRate float64  `json:"worker_bootstrap_failure_rate"`
+	RealAcceptancePassRate     *float64 `json:"real_acceptance_pass_rate"`
 
 	TerminalStateConflictCount   int64 `json:"terminal_state_conflict_count"`
 	DuplicateTerminalReportCount int64 `json:"duplicate_terminal_report_count"`
@@ -31,10 +31,10 @@ type HealthMetrics struct {
 	IntegrationTicketCount       int64 `json:"integration_ticket_count"`
 	ManualInterventionCount      int64 `json:"manual_intervention_count"`
 
-	PlannerTimeoutCount           int64 `json:"planner_timeout_count"`
-	PlannerRunCount               int64 `json:"planner_run_count"`
-	DispatchBootstrapFailureCount int64 `json:"dispatch_bootstrap_failure_count"`
-	DispatchRunCount              int64 `json:"dispatch_run_count"`
+	PlannerTimeoutCount         int64 `json:"planner_timeout_count"`
+	PlannerRunCount             int64 `json:"planner_run_count"`
+	WorkerBootstrapFailureCount int64 `json:"worker_bootstrap_failure_count"`
+	WorkerRunCount              int64 `json:"worker_run_count"`
 }
 
 type healthMetricsWindow struct {
@@ -83,15 +83,15 @@ func (s *Service) CalculateHealthMetrics(ctx context.Context, opt HealthMetricsO
 	}
 	out.PlannerTimeoutRate = safeRate(out.PlannerTimeoutCount, out.PlannerRunCount)
 
-	out.DispatchRunCount, err = s.countTaskRunsByTypeAndStatus(ctx, db, contracts.TaskOwnerPM, contracts.TaskTypeDispatchTicket, "", window)
+	out.WorkerRunCount, err = s.countTaskRunsByTypeAndStatus(ctx, db, contracts.TaskOwnerWorker, contracts.TaskTypeDeliverTicket, "", window)
 	if err != nil {
 		return out, err
 	}
-	out.DispatchBootstrapFailureCount, err = s.countTaskRunsByTypeAndStatus(ctx, db, contracts.TaskOwnerPM, contracts.TaskTypeDispatchTicket, contracts.TaskFailed, window)
+	out.WorkerBootstrapFailureCount, err = s.countTaskRunsByTypeAndStatus(ctx, db, contracts.TaskOwnerWorker, contracts.TaskTypeDeliverTicket, contracts.TaskFailed, window)
 	if err != nil {
 		return out, err
 	}
-	out.DispatchBootstrapFailureRate = safeRate(out.DispatchBootstrapFailureCount, out.DispatchRunCount)
+	out.WorkerBootstrapFailureRate = safeRate(out.WorkerBootstrapFailureCount, out.WorkerRunCount)
 
 	index, found := s.tryLoadSurfaceConflictIndex()
 	if found {

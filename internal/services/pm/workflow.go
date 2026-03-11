@@ -112,18 +112,6 @@ func (s *Service) ArchiveTicket(ctx context.Context, ticketID uint) error {
 		return archiveTicketGuardError(ticketID, t.WorkflowStatus, t.IntegrationStatus)
 	}
 
-	// 禁止在 dispatch 进行中归档（否则会出现 archived 票仍在跑任务的脏状态）。
-	var activeDispatch int64
-	if err := db.WithContext(ctx).
-		Model(&contracts.PMDispatchJob{}).
-		Where("ticket_id = ? AND status IN ?", ticketID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
-		Count(&activeDispatch).Error; err != nil {
-		return err
-	}
-	if activeDispatch > 0 {
-		return fmt.Errorf("该 ticket 正在 dispatch（pending/running），不能归档")
-	}
-
 	var cnt int64
 	if err := db.WithContext(ctx).
 		Model(&contracts.Worker{}).

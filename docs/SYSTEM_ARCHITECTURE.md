@@ -24,7 +24,6 @@
 - `ticket (1) -> (1) worker`（当前实现是单 worker 记录复用）
 - `worker (1) -> (N) task_run`
 - `task_run (1) -> (N) task_runtime_sample / task_semantic_report / task_event`
-- `ticket (1) -> (N) pm_dispatch_job`
 - `ticket (1) -> (N) inbox_item`
 - `ticket (1) -> (N) merge_item`
 
@@ -62,7 +61,7 @@
 
 推荐推进：
 - `backlog -> queued`：start/入队。
-- `queued -> active`：dispatch 成功。
+- `queued -> active`：worker run 被系统接受。
 - `active -> blocked`：语义 `next_action=wait_user`。
 - `blocked -> active`：问题解除后继续执行。
 - `active -> done`：语义 `next_action=done`。
@@ -155,7 +154,7 @@
 
 ### 5.2 任务队列（Task Queue）
 
-字段：`pm_dispatch_jobs.status`
+字段：`task_runs.orchestration_state`（限定 `owner_type=worker`、`task_type=deliver_ticket`）
 
 状态集合：
 - `pending`
@@ -164,7 +163,7 @@
 - `failed`
 
 约束：
-- 同一 ticket 同时最多一个 active dispatch job（`pending/running`）。
+- 同一 ticket 同时最多一个 active deliver_ticket run（`pending/running`）。
 
 ### 5.3 通知队列（Notification Queue）
 
@@ -201,14 +200,13 @@
 能力字段：
 - `can_start`
 - `can_queue_run`
-- `can_dispatch`
 - `can_attach`
 - `can_stop`
 - `can_archive`
 - `reason`
 
 说明：
-- `can_queue_run` 是主语义；`can_dispatch` 仅保留为兼容 alias。
+- `can_queue_run` 是唯一当前语义。
 
 门禁规则：
 1. 动作可用性由 capability 决定。

@@ -1385,18 +1385,6 @@ func (a testPMActionAdapter) StartTicket(ctx context.Context, ticketID uint, bas
 	return a.svc.StartTicketWithOptions(ctx, ticketID, pmsvc.StartOptions{BaseBranch: baseBranch})
 }
 
-func (a testPMActionAdapter) DispatchTicket(ctx context.Context, ticketID uint, entryPrompt string) (DispatchTicketResult, error) {
-	res, err := a.svc.DispatchTicketWithOptions(ctx, ticketID, pmsvc.DispatchOptions{EntryPrompt: entryPrompt})
-	if err != nil {
-		return DispatchTicketResult{}, err
-	}
-	return DispatchTicketResult{
-		TicketID:  res.TicketID,
-		WorkerID:  res.WorkerID,
-		TaskRunID: res.TaskRunID,
-	}, nil
-}
-
 func (a testPMActionAdapter) ArchiveTicket(ctx context.Context, ticketID uint) error {
 	return a.svc.ArchiveTicket(ctx, ticketID)
 }

@@ -7,6 +7,7 @@ import (
 
 	"dalek/internal/contracts"
 	daemonsvc "dalek/internal/services/daemon"
+	pmsvc "dalek/internal/services/pm"
 )
 
 type daemonProjectResolver struct {
@@ -73,6 +74,25 @@ func (p *daemonProjectAdapter) StartTicket(ctx context.Context, ticketID uint, o
 	return p.project.StartTicketWithOptions(ctx, ticketID, StartOptions{
 		BaseBranch: strings.TrimSpace(opt.BaseBranch),
 	})
+}
+
+func (p *daemonProjectAdapter) RunTicketWorker(ctx context.Context, ticketID uint, opt daemonsvc.WorkerRunOptions) (daemonsvc.WorkerRunResult, error) {
+	if p == nil || p.project == nil {
+		return daemonsvc.WorkerRunResult{}, fmt.Errorf("daemon project 为空")
+	}
+	res, err := p.project.RunTicketWorker(ctx, ticketID, pmsvc.WorkerRunOptions{
+		EntryPrompt: strings.TrimSpace(opt.EntryPrompt),
+		AutoStart:   opt.AutoStart,
+		BaseBranch:  strings.TrimSpace(opt.BaseBranch),
+	})
+	if err != nil {
+		return daemonsvc.WorkerRunResult{}, err
+	}
+	return daemonsvc.WorkerRunResult{
+		TicketID: res.TicketID,
+		WorkerID: res.WorkerID,
+		RunID:    res.RunID,
+	}, nil
 }
 
 func (p *daemonProjectAdapter) SubmitSubagentRun(ctx context.Context, opt daemonsvc.SubagentSubmitOptions) (daemonsvc.SubagentSubmission, error) {

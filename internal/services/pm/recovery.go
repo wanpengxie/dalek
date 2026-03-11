@@ -93,7 +93,7 @@ func (s *Service) ListActiveTaskRunIDs(ctx context.Context) ([]uint, error) {
 	return runIDs, nil
 }
 
-func (s *Service) UpdateRecoverySummary(ctx context.Context, pmStateID uint, now time.Time, dispatchJobs, taskRuns, notes, workers int) error {
+func (s *Service) UpdateRecoverySummary(ctx context.Context, pmStateID uint, now time.Time, plannerOps, taskRuns, notes, workers int) error {
 	_, db, err := s.require()
 	if err != nil {
 		return err
@@ -109,7 +109,7 @@ func (s *Service) UpdateRecoverySummary(ctx context.Context, pmStateID uint, now
 	}
 	return db.WithContext(ctx).Model(&contracts.PMState{}).Where("id = ?", pmStateID).Updates(map[string]any{
 		"last_recovery_at":            &now,
-		"last_recovery_dispatch_jobs": dispatchJobs,
+		"last_recovery_dispatch_jobs": plannerOps,
 		"last_recovery_task_runs":     taskRuns,
 		"last_recovery_notes":         notes,
 		"last_recovery_workers":       workers,

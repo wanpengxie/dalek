@@ -80,17 +80,18 @@ func (s *Service) recordPMTaskFailure(ctx context.Context, taskRunID uint, err e
 		return
 	}
 	msg := strings.TrimSpace(err.Error())
-	s.recordPMTaskRuntime(ctx, taskRunID, contracts.TaskHealthStalled, false, msg, "pm_dispatch", map[string]any{
+	s.recordPMTaskRuntime(ctx, taskRunID, contracts.TaskHealthStalled, false, msg, "pm_worker_run", map[string]any{
 		"error": msg,
 	})
-	s.recordPMTaskSemantic(ctx, taskRunID, contracts.TaskPhaseBlocked, "dispatch_failed", "wait_user", msg, map[string]any{
+	s.recordPMTaskSemantic(ctx, taskRunID, contracts.TaskPhaseBlocked, "worker_run_failed", "wait_user", msg, map[string]any{
 		"error": msg,
 	})
 }
 
-func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contracts.PMDispatchJob, t contracts.Ticket, w contracts.Worker, taskPath string, health contracts.TaskRuntimeHealthState, phase contracts.TaskSemanticPhase, nextAction, summary string, payload any) (contracts.TaskRun, error) {
-	if strings.TrimSpace(job.RequestID) == "" {
-		return contracts.TaskRun{}, fmt.Errorf("dispatch request_id 为空")
+func (s *Service) ensureWorkerTaskRunForDelivery(ctx context.Context, requestID string, upstreamTaskRunID uint, t contracts.Ticket, w contracts.Worker, taskPath string, health contracts.TaskRuntimeHealthState, phase contracts.TaskSemanticPhase, nextAction, summary string, payload any) (contracts.TaskRun, error) {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return contracts.TaskRun{}, fmt.Errorf("worker run request_id 为空")
 	}
 	p, db, err := s.require()
 	if err != nil {
@@ -100,8 +101,8 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contr
 		ctx = context.Background()
 	}
 	now := time.Now()
-	reason := fmt.Sprintf("redispatch superseded by request=%s", strings.TrimSpace(job.RequestID))
-	requestID := "wrk_" + strings.TrimSpace(job.RequestID)
+	reason := fmt.Sprintf("worker run superseded by request=%s", requestID)
+	requestID = "wrk_" + requestID
 	var run contracts.TaskRun
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		rt, err := s.taskRuntimeForDB(tx)
@@ -123,9 +124,9 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contr
 			OrchestrationState: contracts.TaskRunning,
 			StartedAt:          &now,
 			RequestPayloadJSON: marshalJSON(map[string]any{
-				"dispatch_request_id":  strings.TrimSpace(job.RequestID),
-				"dispatch_task_run_id": job.TaskRunID,
-				"task_path":            strings.TrimSpace(taskPath),
+				"worker_run_request_id": requestID,
+				"upstream_task_run_id":  upstreamTaskRunID,
+				"task_path":             strings.TrimSpace(taskPath),
 			}),
 		})
 		if err != nil {
@@ -137,7 +138,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contr
 			ToState: map[string]any{
 				"orchestration_state": contracts.TaskRunning,
 			},
-			Note: "dispatch accepted by worker",
+			Note: "worker run accepted by worker",
 		}); err != nil {
 			return err
 		}
@@ -146,7 +147,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contr
 			State:      health,
 			NeedsUser:  false,
 			Summary:    strings.TrimSpace(summary),
-			Source:     "pm_dispatch",
+			Source:     "pm_worker_run",
 			ObservedAt: now,
 			Metrics:    payload,
 		}); err != nil {
@@ -155,7 +156,7 @@ func (s *Service) ensureWorkerTaskRunFromDispatch(ctx context.Context, job contr
 		if err := rt.AppendSemanticReport(ctx, contracts.TaskSemanticReportInput{
 			TaskRunID:  created.ID,
 			Phase:      phase,
-			Milestone:  "dispatch_ready",
+			Milestone:  "worker_run_ready",
 			NextAction: strings.TrimSpace(nextAction),
 			Summary:    strings.TrimSpace(summary),
 			ReportedAt: now,

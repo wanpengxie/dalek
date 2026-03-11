@@ -16,14 +16,7 @@ import (
 // app 层对外暴露的类型尽量是“稳定 API”。
 // notebook 域类型已迁移到 services/notebook，app 层保留兼容别名避免上层调用回退。
 
-type DispatchResult = pmsvc.DispatchResult
 type StartOptions = pmsvc.StartOptions
-type DispatchOptions = pmsvc.DispatchOptions
-type DispatchSubmitOptions = pmsvc.DispatchSubmitOptions
-type DispatchSubmission = pmsvc.DispatchSubmission
-type DispatchRunOptions = pmsvc.DispatchRunOptions
-type DirectDispatchOptions = pmsvc.DirectDispatchOptions
-type DirectDispatchResult = pmsvc.DirectDispatchResult
 type InterruptResult = workersvc.InterruptResult
 type WorktreeCleanupOptions = workersvc.CleanupWorktreeOptions
 type WorktreeCleanupResult = workersvc.CleanupWorktreeResult

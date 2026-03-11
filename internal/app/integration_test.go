@@ -300,52 +300,6 @@ func TestIntegration_DaemonRecovery_ReconcileLostWorkerRuntime_ArchivedTicket(t 
 	}
 }
 
-func createStuckDispatchJobForRecovery(t *testing.T, p *Project, ticketID uint, jobStatus contracts.PMDispatchJobStatus) contracts.PMDispatchJob {
-	t.Helper()
-	ctx := context.Background()
-	if _, err := p.StartTicket(ctx, ticketID); err != nil {
-		t.Fatalf("StartTicket failed: %v", err)
-	}
-	submission, err := p.SubmitDispatchTicket(ctx, ticketID, DispatchSubmitOptions{
-		RequestID: fmt.Sprintf("recovery-dispatch-%d-%d", ticketID, time.Now().UnixNano()),
-	})
-	if err != nil {
-		t.Fatalf("SubmitDispatchTicket failed: %v", err)
-	}
-	var job contracts.PMDispatchJob
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&job, submission.JobID).Error; err != nil {
-		t.Fatalf("load dispatch job failed: %v", err)
-	}
-	if jobStatus == contracts.PMDispatchRunning {
-		now := time.Now()
-		lease := now.Add(2 * time.Minute)
-		if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.PMDispatchJob{}).Where("id = ?", job.ID).Updates(map[string]any{
-			"status":           contracts.PMDispatchRunning,
-			"runner_id":        "recovery-runner",
-			"lease_expires_at": &lease,
-			"started_at":       &now,
-			"updated_at":       now,
-		}).Error; err != nil {
-			t.Fatalf("set dispatch running failed: %v", err)
-		}
-		if job.TaskRunID != 0 {
-			if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.TaskRun{}).Where("id = ?", job.TaskRunID).Updates(map[string]any{
-				"orchestration_state": contracts.TaskRunning,
-				"runner_id":           "recovery-runner",
-				"lease_expires_at":    &lease,
-				"started_at":          &now,
-				"updated_at":          now,
-			}).Error; err != nil {
-				t.Fatalf("set task run running failed: %v", err)
-			}
-		}
-	}
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&job, job.ID).Error; err != nil {
-		t.Fatalf("reload dispatch job failed: %v", err)
-	}
-	return job
-}
-
 func createActiveDeliverRunForRecovery(t *testing.T, p *Project, ticketID uint, workflow contracts.TicketWorkflowStatus, workerStatus contracts.WorkerStatus) (contracts.Worker, contracts.TaskRun) {
 	t.Helper()
 	ctx := context.Background()
@@ -420,8 +374,8 @@ func TestIntegration_DaemonRecovery_RepairsQueuedProjectionFromActiveWorkerRun(t
 	if st.LastRecoveryAt == nil || st.LastRecoveryTaskRuns == 0 {
 		t.Fatalf("recovery summary not persisted: %+v", st)
 	}
-	if st.LastRecoveryDispatchJobs != 0 {
-		t.Fatalf("expected dispatch-centric recovery count stays zero, got=%d", st.LastRecoveryDispatchJobs)
+	if st.LastRecoveryPlannerOps != 0 {
+		t.Fatalf("expected planner recovery count stays zero, got=%d", st.LastRecoveryPlannerOps)
 	}
 
 	var repaired contracts.TicketLifecycleEvent
@@ -439,117 +393,6 @@ func TestIntegration_DaemonRecovery_RepairsQueuedProjectionFromActiveWorkerRun(t
 	}
 	if got := uintFromAny(repaired.PayloadJSON["task_run_id"]); got != run.ID {
 		t.Fatalf("expected repaired task_run_id=%d, got=%d", run.ID, got)
-	}
-}
-
-func TestIntegration_DaemonRecovery_LegacyDispatchJobsRemainReadOnly(t *testing.T) {
-	h, p := newIntegrationHomeProject(t)
-	ctx := context.Background()
-
-	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery legacy dispatch", "legacy dispatch jobs should stay audit-only during recovery")
-	if err != nil {
-		t.Fatalf("CreateTicket failed: %v", err)
-	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
-	if job.TaskRunID == 0 {
-		t.Fatalf("expected legacy dispatch job with task run")
-	}
-	beforeLease := job.LeaseExpiresAt
-	beforeRunner := strings.TrimSpace(job.RunnerID)
-
-	manager := newDaemonManagerComponent(h, nil)
-	manager.runRecovery(ctx)
-
-	var after contracts.PMDispatchJob
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&after, job.ID).Error; err != nil {
-		t.Fatalf("load legacy dispatch job failed: %v", err)
-	}
-	if after.Status != job.Status {
-		t.Fatalf("expected legacy dispatch status unchanged, got=%s want=%s", after.Status, job.Status)
-	}
-	if strings.TrimSpace(after.RunnerID) != beforeRunner {
-		t.Fatalf("expected legacy dispatch runner unchanged, got=%q want=%q", after.RunnerID, beforeRunner)
-	}
-	switch {
-	case beforeLease == nil && after.LeaseExpiresAt != nil:
-		t.Fatalf("expected legacy dispatch lease stays nil, got=%v", after.LeaseExpiresAt)
-	case beforeLease != nil && (after.LeaseExpiresAt == nil || !after.LeaseExpiresAt.Equal(*beforeLease)):
-		t.Fatalf("expected legacy dispatch lease unchanged, got=%v want=%v", after.LeaseExpiresAt, beforeLease)
-	}
-
-	st, err := p.GetPMState(ctx)
-	if err != nil {
-		t.Fatalf("GetPMState failed: %v", err)
-	}
-	if st.LastRecoveryDispatchJobs != 0 {
-		t.Fatalf("legacy dispatch audit rows should not contribute recovery count, got=%d", st.LastRecoveryDispatchJobs)
-	}
-}
-
-func TestIntegration_DaemonRecovery_PMDispatchTerminalJobs_Unaffected(t *testing.T) {
-	h, p := newIntegrationHomeProject(t)
-	ctx := context.Background()
-
-	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery terminal jobs", "terminal jobs should not be touched")
-	if err != nil {
-		t.Fatalf("CreateTicket failed: %v", err)
-	}
-	w, err := p.StartTicket(ctx, tk.ID)
-	if err != nil {
-		t.Fatalf("StartTicket failed: %v", err)
-	}
-	now := time.Now()
-	doneFinished := now.Add(-2 * time.Minute)
-	failFinished := now.Add(-1 * time.Minute)
-	doneJob := contracts.PMDispatchJob{
-		RequestID:       fmt.Sprintf("terminal-succeeded-%d", now.UnixNano()),
-		TicketID:        tk.ID,
-		WorkerID:        w.ID,
-		Status:          contracts.PMDispatchSucceeded,
-		ActiveTicketKey: nil,
-		ResultJSON:      contracts.PMDispatchJobResult{Schema: contracts.PMDispatchJobResultSchemaV1},
-		FinishedAt:      &doneFinished,
-	}
-	failJob := contracts.PMDispatchJob{
-		RequestID:       fmt.Sprintf("terminal-failed-%d", now.UnixNano()),
-		TicketID:        tk.ID,
-		WorkerID:        w.ID,
-		Status:          contracts.PMDispatchFailed,
-		ActiveTicketKey: nil,
-		Error:           "already failed",
-		FinishedAt:      &failFinished,
-	}
-	if err := mustProjectDB(t, p).WithContext(ctx).Create(&doneJob).Error; err != nil {
-		t.Fatalf("create done job failed: %v", err)
-	}
-	if err := mustProjectDB(t, p).WithContext(ctx).Create(&failJob).Error; err != nil {
-		t.Fatalf("create fail job failed: %v", err)
-	}
-
-	manager := newDaemonManagerComponent(h, nil)
-	manager.runRecovery(ctx)
-
-	var doneAfter contracts.PMDispatchJob
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&doneAfter, doneJob.ID).Error; err != nil {
-		t.Fatalf("load done job failed: %v", err)
-	}
-	if doneAfter.Status != contracts.PMDispatchSucceeded {
-		t.Fatalf("succeeded job should remain succeeded, got=%s", doneAfter.Status)
-	}
-	var failAfter contracts.PMDispatchJob
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&failAfter, failJob.ID).Error; err != nil {
-		t.Fatalf("load fail job failed: %v", err)
-	}
-	if failAfter.Status != contracts.PMDispatchFailed || !strings.Contains(failAfter.Error, "already failed") {
-		t.Fatalf("failed job should remain unchanged: %+v", failAfter)
-	}
-
-	st, err := p.GetPMState(ctx)
-	if err != nil {
-		t.Fatalf("GetPMState failed: %v", err)
-	}
-	if st.LastRecoveryDispatchJobs != 0 {
-		t.Fatalf("terminal-only recovery should not count dispatch jobs, got=%d", st.LastRecoveryDispatchJobs)
 	}
 }
 
@@ -630,78 +473,6 @@ func TestIntegration_StartStopArchiveFlow(t *testing.T) {
 	}
 	if worker.WorktreeGCRequestedAt == nil {
 		t.Fatalf("expected worktree_gc_requested_at set after archive")
-	}
-}
-
-func TestIntegration_StopTicket_ForceFailActiveDispatchAndArchive(t *testing.T) {
-	p := newIntegrationProject(t)
-	ctx := context.Background()
-
-	tk, err := p.CreateTicketWithDescription(ctx, "integration stop force fail dispatch", "stop should force-fail active dispatch before archive")
-	if err != nil {
-		t.Fatalf("CreateTicket failed: %v", err)
-	}
-	job := createStuckDispatchJobForRecovery(t, p, tk.ID, contracts.PMDispatchRunning)
-	if job.TaskRunID == 0 {
-		t.Fatalf("expected dispatch task_run_id before stop")
-	}
-
-	err = p.ArchiveTicket(ctx, tk.ID)
-	if err == nil {
-		t.Fatalf("expected archive blocked when active dispatch exists")
-	}
-	if !strings.Contains(err.Error(), "正在 dispatch") {
-		t.Fatalf("unexpected archive blocked error: %v", err)
-	}
-
-	if err := p.StopTicket(ctx, tk.ID); err != nil {
-		t.Fatalf("StopTicket failed: %v", err)
-	}
-
-	var afterJob contracts.PMDispatchJob
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&afterJob, job.ID).Error; err != nil {
-		t.Fatalf("load dispatch job after stop failed: %v", err)
-	}
-	if afterJob.Status != contracts.PMDispatchFailed {
-		t.Fatalf("dispatch job should be failed after stop, got=%s", afterJob.Status)
-	}
-	if strings.TrimSpace(afterJob.RunnerID) != "" {
-		t.Fatalf("runner_id should be cleared after stop, got=%q", afterJob.RunnerID)
-	}
-	if afterJob.LeaseExpiresAt != nil {
-		t.Fatalf("lease_expires_at should be cleared after stop")
-	}
-	if afterJob.ActiveTicketKey != nil {
-		t.Fatalf("active_ticket_key should be cleared after stop")
-	}
-	if afterJob.FinishedAt == nil {
-		t.Fatalf("finished_at should be set after stop")
-	}
-	if !strings.Contains(afterJob.Error, "ticket stop") {
-		t.Fatalf("unexpected dispatch error after stop: %q", afterJob.Error)
-	}
-
-	var run contracts.TaskRun
-	if err := mustProjectDB(t, p).WithContext(ctx).First(&run, job.TaskRunID).Error; err != nil {
-		t.Fatalf("load dispatch task run failed: %v", err)
-	}
-	if run.OrchestrationState != contracts.TaskFailed {
-		t.Fatalf("dispatch task run should be failed after stop, got=%s", run.OrchestrationState)
-	}
-	if strings.TrimSpace(run.ErrorCode) != "dispatch_force_failed_on_stop" {
-		t.Fatalf("unexpected dispatch task run error_code: %q", run.ErrorCode)
-	}
-
-	var ev contracts.TaskEvent
-	if err := mustProjectDB(t, p).WithContext(ctx).
-		Where("task_run_id = ? AND event_type = ?", job.TaskRunID, "dispatch_force_failed_on_stop").
-		Order("id desc").
-		First(&ev).Error; err != nil {
-		t.Fatalf("expected task event dispatch_force_failed_on_stop after stop: %v", err)
-	}
-
-	if err := p.ArchiveTicket(ctx, tk.ID); err != nil {
-		t.Fatalf("ArchiveTicket should succeed right after stop force-failed dispatch, got: %v", err)
 	}
 }
 
@@ -1264,12 +1035,12 @@ func TestIntegration_InitCreatesControlPlaneSeed(t *testing.T) {
 		filepath.Join(p.ProjectDir(), "agent-kernel.md"),
 		filepath.Join(p.ProjectDir(), "agent-user.md"),
 		filepath.Join(p.ProjectDir(), "bootstrap.sh"),
-		filepath.Join(p.ProjectDir(), "control", "skills", "dispatch-new-ticket"),
-		filepath.Join(p.ProjectDir(), "control", "skills", "dispatch-new-ticket", "SKILL.md"),
+		filepath.Join(p.ProjectDir(), "control", "skills", "start-ticket-runtime"),
+		filepath.Join(p.ProjectDir(), "control", "skills", "start-ticket-runtime", "SKILL.md"),
 		filepath.Join(p.ProjectDir(), "control", "skills", "notebook-shaping"),
 		filepath.Join(p.ProjectDir(), "control", "skills", "notebook-shaping", "SKILL.md"),
-		filepath.Join(p.ProjectDir(), "control", "skills", "dispatch-new-ticket", "references", "output-contract.md"),
-		filepath.Join(p.ProjectDir(), "control", "skills", "dispatch-new-ticket", "assets", "worker-agents.md.template"),
+		filepath.Join(p.ProjectDir(), "control", "skills", "start-ticket-runtime", "references", "output-contract.md"),
+		filepath.Join(p.ProjectDir(), "control", "skills", "start-ticket-runtime", "assets", "worker-agents.md.template"),
 		filepath.Join(p.ProjectDir(), "runtime"),
 		filepath.Join(p.ProjectDir(), ".gitignore"),
 	}

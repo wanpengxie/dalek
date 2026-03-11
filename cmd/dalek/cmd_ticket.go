@@ -73,7 +73,7 @@ func printTicketUsage() {
 	fmt.Fprintln(out, "  edit        编辑 ticket 标题/描述")
 	fmt.Fprintln(out, "  set-priority 设置 ticket 优先级（high/medium/low/none）")
 	fmt.Fprintln(out, "  show        查看 ticket 详情")
-	fmt.Fprintln(out, "  start       启动 ticket 并提交执行")
+	fmt.Fprintln(out, "  start       准备 ticket 并置为 queued")
 	fmt.Fprintln(out, "  interrupt   软中断 worker（发送进程 SIGINT）")
 	fmt.Fprintln(out, "  stop        停止 worker")
 	fmt.Fprintln(out, "  cleanup     清理 ticket worktree")
@@ -816,6 +816,7 @@ func cmdTicketStart(args []string) {
 			"例如: dalek ticket start --ticket 1 --timeout 60s",
 		)
 	}
+	enforceDispatchDepthGuardOrExit(out, "dalek ticket start")
 	p := mustOpenProjectWithOutput(out, *home, *proj)
 	_, daemonClient := mustOpenDaemonClient(out, *home)
 	ctx, cancel := projectCtx(*timeout)

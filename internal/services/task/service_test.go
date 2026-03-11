@@ -193,7 +193,7 @@ func TestService_ListStatus_FilterByPMPlannerRunType(t *testing.T) {
 	}
 	_, err = svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           contracts.TaskTypeDispatchTicket,
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           2,
 		RequestID:          "pm-dispatch-run",

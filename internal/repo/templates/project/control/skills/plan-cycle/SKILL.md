@@ -26,4 +26,4 @@ version: "1.0"
 
 ## 输出要求
 - `plan.md` 中至少更新：当前阶段、下一阶段、阻塞项、验收标准。
-- 形成一段可直接用于调度的执行摘要（供 PM dispatch 使用）。
+- 形成一段可直接用于 PM handoff 的执行摘要（供 ticket start / worker run 相关链路使用）。

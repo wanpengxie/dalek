@@ -93,7 +93,7 @@ func TestParsePlannerPMOps_NormalizesLegacyDispatchTicketToStartTicket(t *testin
 }
 
 func TestPlannerPMOpIsCritical_LegacyDispatchTicketIsNotNormalCriticalOp(t *testing.T) {
-	if plannerPMOpIsCritical(contracts.PMOp{Kind: contracts.PMOpDispatchTicket}) {
+	if plannerPMOpIsCritical(contracts.PMOp{Kind: contracts.PMOpKind("dispatch_ticket")}) {
 		t.Fatalf("expected legacy dispatch_ticket excluded from normal critical ops")
 	}
 }

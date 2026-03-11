@@ -12,7 +12,6 @@ func TestDomainTablesValidate(t *testing.T) {
 	}{
 		{name: "ticket_workflow", check: TicketWorkflowTable.Validate},
 		{name: "worker_lifecycle", check: WorkerLifecycleTable.Validate},
-		{name: "pm_dispatch_job", check: PMDispatchJobTable.Validate},
 		{name: "task_run_orchestration", check: TaskRunOrchestrationTable.Validate},
 	}
 	for _, tc := range tables {
@@ -82,34 +81,6 @@ func TestWorkerLifecycleTable(t *testing.T) {
 				t.Fatalf("unexpected transition result: %s -> %s, got=%v want=%v", tc.from, tc.to, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestPMDispatchJobTable(t *testing.T) {
-	tests := []struct {
-		name string
-		from contracts.PMDispatchJobStatus
-		to   contracts.PMDispatchJobStatus
-		want bool
-	}{
-		{name: "pending_to_running", from: contracts.PMDispatchPending, to: contracts.PMDispatchRunning, want: true},
-		{name: "pending_to_failed", from: contracts.PMDispatchPending, to: contracts.PMDispatchFailed, want: true},
-		{name: "running_to_succeeded", from: contracts.PMDispatchRunning, to: contracts.PMDispatchSucceeded, want: true},
-		{name: "running_to_failed", from: contracts.PMDispatchRunning, to: contracts.PMDispatchFailed, want: true},
-		{name: "succeeded_to_running_forbidden", from: contracts.PMDispatchSucceeded, to: contracts.PMDispatchRunning, want: false},
-		{name: "failed_to_pending_forbidden", from: contracts.PMDispatchFailed, to: contracts.PMDispatchPending, want: false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := CanTransition(PMDispatchJobTable, tc.from, tc.to)
-			if got != tc.want {
-				t.Fatalf("unexpected transition result: %s -> %s, got=%v want=%v", tc.from, tc.to, got, tc.want)
-			}
-		})
-	}
-
-	if !PMDispatchJobTable.IsTerminal(contracts.PMDispatchSucceeded) || !PMDispatchJobTable.IsTerminal(contracts.PMDispatchFailed) {
-		t.Fatalf("succeeded/failed should be terminal")
 	}
 }
 

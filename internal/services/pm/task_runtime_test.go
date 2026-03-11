@@ -9,7 +9,7 @@ import (
 	tasksvc "dalek/internal/services/task"
 )
 
-func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *testing.T) {
+func TestEnsureWorkerTaskRunForDelivery_CancelsPreviousAndWritesRuntime(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "pm-task-runtime")
@@ -41,13 +41,10 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 		t.Fatalf("create old run failed: %v", err)
 	}
 
-	job := contracts.PMDispatchJob{
-		RequestID: "dispatch_req_21",
-		TaskRunID: 2101,
-	}
-	created, err := svc.ensureWorkerTaskRunFromDispatch(
+	created, err := svc.ensureWorkerTaskRunForDelivery(
 		context.Background(),
-		job,
+		"deliver_req_21",
+		2101,
 		tk,
 		w,
 		".dalek/PLAN.md",
@@ -58,7 +55,7 @@ func TestEnsureWorkerTaskRunFromDispatch_CancelsPreviousAndWritesRuntime(t *test
 		map[string]any{"source": "pm_test"},
 	)
 	if err != nil {
-		t.Fatalf("ensureWorkerTaskRunFromDispatch failed: %v", err)
+		t.Fatalf("ensureWorkerTaskRunForDelivery failed: %v", err)
 	}
 	if created.ID == 0 {
 		t.Fatalf("expected created run id")

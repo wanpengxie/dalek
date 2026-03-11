@@ -232,8 +232,8 @@ func TestManagerTick_SkipsQueuedRetryDuringBackoff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ManagerTick failed: %v", err)
 	}
-	if len(res.StartedTickets) != 0 || len(res.DispatchedTickets) != 0 {
-		t.Fatalf("expected queued retry deferred by backoff, started=%v dispatched=%v", res.StartedTickets, res.DispatchedTickets)
+	if len(res.StartedTickets) != 0 || len(res.ActivatedTickets) != 0 {
+		t.Fatalf("expected queued retry deferred by backoff, started=%v activated=%v", res.StartedTickets, res.ActivatedTickets)
 	}
 
 	var got contracts.Worker

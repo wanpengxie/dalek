@@ -225,11 +225,11 @@ func TestPlannerRunStateHelpers_FailPlannerRun(t *testing.T) {
 	}
 }
 
-func TestManagerDispatchTimeout_UsesConfig(t *testing.T) {
+func TestManagerWorkerRunTimeout_UsesConfig(t *testing.T) {
 	pmSvc, p := newPMServiceForTest(t)
 	p.Config.PMDispatchTimeoutMS = 123456
 
-	got := pmSvc.managerDispatchTimeout()
+	got := pmSvc.managerWorkerRunTimeout()
 	want := 123456 * time.Millisecond
 	if got != want {
 		t.Fatalf("unexpected manager dispatch timeout: got=%v want=%v", got, want)

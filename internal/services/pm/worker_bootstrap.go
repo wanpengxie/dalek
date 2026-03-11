@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	workerBootstrapKernelTemplate = "templates/project/control/skills/dispatch-new-ticket/assets/worker-agents.md.template"
-	workerBootstrapPlanTemplate   = "templates/project/control/skills/dispatch-new-ticket/assets/plan.md.template"
+	workerBootstrapKernelTemplate = "templates/project/control/skills/start-ticket-runtime/assets/worker-agents.md.template"
+	workerBootstrapPlanTemplate   = "templates/project/control/skills/start-ticket-runtime/assets/plan.md.template"
 
 	workerKernelTitlePlaceholder       = "{{TICKET_TITLE：业务任务标题。用于定义本轮交付主题，回答“这轮要完成什么业务目标”。}}"
 	workerKernelDescPlaceholder        = "{{TICKET_DESCRIPTION：业务需求正文。用于说明背景、目标、约束与期望结果，回答“为什么做、做到什么算有效”。}}"

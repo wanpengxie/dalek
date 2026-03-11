@@ -277,8 +277,8 @@ func TestScheduleQueuedTickets_StartsAndActivatesWithSubmitter(t *testing.T) {
 	if !containsTicketID(out.StartedTickets, tk.ID) {
 		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, out.StartedTickets)
 	}
-	if !containsTicketID(out.DispatchedTickets, tk.ID) {
-		t.Fatalf("expected activated ticket recorded in DispatchedTickets for t%d, got=%v", tk.ID, out.DispatchedTickets)
+	if !containsTicketID(out.ActivatedTickets, tk.ID) {
+		t.Fatalf("expected activated ticket recorded in ActivatedTickets for t%d, got=%v", tk.ID, out.ActivatedTickets)
 	}
 	if len(out.Errors) != 0 {
 		t.Fatalf("expected no schedule errors, got=%v", out.Errors)

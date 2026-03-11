@@ -300,7 +300,7 @@ func TestQueryService_ListTicketViews_ActiveWorkerRunProjectsBusyRuntime(t *test
 	if views[0].RuntimeHealthState != contracts.TaskHealthBusy {
 		t.Fatalf("expected active worker run to project runtime busy, got=%s", views[0].RuntimeHealthState)
 	}
-	if views[0].Capability.CanDispatch || views[0].Capability.CanQueueRun {
+	if views[0].Capability.CanQueueRun {
 		t.Fatalf("expected active worker run to block queue-run capability, capability=%+v", views[0].Capability)
 	}
 }

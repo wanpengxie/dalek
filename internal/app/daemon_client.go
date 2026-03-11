@@ -24,24 +24,6 @@ type DaemonAPIClient struct {
 	client  *http.Client
 }
 
-type DaemonDispatchSubmitRequest struct {
-	Project    string
-	TicketID   uint
-	RequestID  string
-	Prompt     string
-	AutoStart  *bool
-	BaseBranch string
-}
-
-type DaemonDispatchSubmitReceipt struct {
-	Accepted  bool
-	Project   string
-	RequestID string
-	TaskRunID uint
-	TicketID  uint
-	WorkerID  uint
-}
-
 type DaemonTicketStartRequest struct {
 	Project    string
 	TicketID   uint
@@ -196,31 +178,6 @@ func (c *DaemonAPIClient) Health(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-
-func (c *DaemonAPIClient) SubmitDispatch(ctx context.Context, req DaemonDispatchSubmitRequest) (DaemonDispatchSubmitReceipt, error) {
-	if c == nil {
-		return DaemonDispatchSubmitReceipt{}, fmt.Errorf("daemon client 为空")
-	}
-	receipt, err := c.SubmitWorkerRun(ctx, DaemonWorkerRunSubmitRequest{
-		Project:    req.Project,
-		TicketID:   req.TicketID,
-		RequestID:  req.RequestID,
-		Prompt:     req.Prompt,
-		AutoStart:  req.AutoStart,
-		BaseBranch: req.BaseBranch,
-	})
-	if err != nil {
-		return DaemonDispatchSubmitReceipt{}, err
-	}
-	return DaemonDispatchSubmitReceipt{
-		Accepted:  receipt.Accepted,
-		Project:   receipt.Project,
-		RequestID: receipt.RequestID,
-		TaskRunID: receipt.TaskRunID,
-		TicketID:  receipt.TicketID,
-		WorkerID:  receipt.WorkerID,
-	}, nil
 }
 
 func (c *DaemonAPIClient) StartTicket(ctx context.Context, req DaemonTicketStartRequest) (DaemonTicketStartReceipt, error) {

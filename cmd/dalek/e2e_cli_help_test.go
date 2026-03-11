@@ -152,20 +152,20 @@ func TestCLI_TicketIntegrationMigrated(t *testing.T) {
 	}
 }
 
-func TestCLI_ManagerRunSyncDispatchRequiresOnce(t *testing.T) {
+func TestCLI_ManagerRunSyncWorkerRunRequiresOnce(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 
-	_, stderr, err := runCLI(t, bin, repo, "manager", "run", "--sync-dispatch")
+	_, stderr, err := runCLI(t, bin, repo, "manager", "run", "--sync-worker-run")
 	if err == nil {
-		t.Fatalf("manager run --sync-dispatch without --once should fail")
+		t.Fatalf("manager run --sync-worker-run without --once should fail")
 	}
 	if !strings.Contains(stderr, "缺少必填参数 --once") {
 		t.Fatalf("missing --once hint not found:\n%s", stderr)
 	}
 }
 
-func TestCLI_ManagerRunSyncDispatchRequiresPositiveDispatchTimeout(t *testing.T) {
+func TestCLI_ManagerRunSyncWorkerRunRequiresPositiveTimeout(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 
@@ -175,11 +175,11 @@ func TestCLI_ManagerRunSyncDispatchRequiresPositiveDispatchTimeout(t *testing.T)
 	}{
 		{
 			name: "missing",
-			args: []string{"manager", "run", "--once", "--sync-dispatch"},
+			args: []string{"manager", "run", "--once", "--sync-worker-run"},
 		},
 		{
 			name: "zero",
-			args: []string{"manager", "run", "--once", "--sync-dispatch", "--dispatch-timeout", "0"},
+			args: []string{"manager", "run", "--once", "--sync-worker-run", "--worker-run-timeout", "0"},
 		},
 	}
 
@@ -187,16 +187,16 @@ func TestCLI_ManagerRunSyncDispatchRequiresPositiveDispatchTimeout(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			_, stderr, err := runCLI(t, bin, repo, tc.args...)
 			if err == nil {
-				t.Fatalf("manager run --sync-dispatch should fail when dispatch-timeout invalid")
+				t.Fatalf("manager run --sync-worker-run should fail when worker-run-timeout invalid")
 			}
-			if !strings.Contains(stderr, "--sync-dispatch 模式必须指定 --dispatch-timeout > 0") {
-				t.Fatalf("dispatch-timeout hard requirement missing:\n%s", stderr)
+			if !strings.Contains(stderr, "--sync-worker-run 模式必须指定 --worker-run-timeout > 0") {
+				t.Fatalf("worker-run-timeout hard requirement missing:\n%s", stderr)
 			}
 		})
 	}
 }
 
-func TestCLI_ManagerRunSyncDispatchOnceDryRunJSON(t *testing.T) {
+func TestCLI_ManagerRunSyncWorkerRunOnceDryRunJSON(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)
 	home := t.TempDir()
@@ -210,19 +210,19 @@ func TestCLI_ManagerRunSyncDispatchOnceDryRunJSON(t *testing.T) {
 		"-project", "demo",
 		"manager", "run",
 		"--once",
-		"--sync-dispatch",
+		"--sync-worker-run",
 		"--dry-run",
-		"--dispatch-timeout", "120m",
+		"--worker-run-timeout", "120m",
 		"-o", "json",
 	)
 	if err != nil {
-		t.Fatalf("manager run sync-dispatch dry-run should succeed: err=%v stderr=%s", err, stderr)
+		t.Fatalf("manager run sync-worker-run dry-run should succeed: err=%v stderr=%s", err, stderr)
 	}
 
 	var payload struct {
-		Schema          string `json:"schema"`
-		Mode            string `json:"mode"`
-		DispatchTimeout string `json:"dispatch_timeout"`
+		Schema           string `json:"schema"`
+		Mode             string `json:"mode"`
+		WorkerRunTimeout string `json:"worker_run_timeout"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("decode manager run json failed: %v\nraw=%s", err, stdout)
@@ -230,10 +230,10 @@ func TestCLI_ManagerRunSyncDispatchOnceDryRunJSON(t *testing.T) {
 	if payload.Schema != "dalek.manager.run.v1" {
 		t.Fatalf("unexpected schema: %q", payload.Schema)
 	}
-	if payload.Mode != "sync_dispatch" {
+	if payload.Mode != "sync_worker_run" {
 		t.Fatalf("unexpected mode: %q", payload.Mode)
 	}
-	if payload.DispatchTimeout != "2h0m0s" {
-		t.Fatalf("unexpected dispatch_timeout: %q", payload.DispatchTimeout)
+	if payload.WorkerRunTimeout != "2h0m0s" {
+		t.Fatalf("unexpected worker_run_timeout: %q", payload.WorkerRunTimeout)
 	}
 }

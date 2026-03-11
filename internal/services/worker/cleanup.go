@@ -108,16 +108,6 @@ func (s *Service) CleanupTicketWorktree(ctx context.Context, ticketID uint, opt 
 	}
 	result.RequestedAt = requestedAt
 
-	var activeDispatch int64
-	if err := p.DB.WithContext(ctx).
-		Model(&contracts.PMDispatchJob{}).
-		Where("ticket_id = ? AND status IN ?", ticketID, []contracts.PMDispatchJobStatus{contracts.PMDispatchPending, contracts.PMDispatchRunning}).
-		Count(&activeDispatch).Error; err != nil {
-		return result, err
-	}
-	if activeDispatch > 0 {
-		return result, fmt.Errorf("ticket 存在进行中的 dispatch，拒绝清理")
-	}
 	if w.Status == contracts.WorkerRunning {
 		return result, fmt.Errorf("worker 仍在 running，拒绝清理")
 	}

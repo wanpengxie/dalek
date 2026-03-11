@@ -34,7 +34,6 @@ func TestDaemonPublicGatewayComponent_NonWebhookRoutesNotExposed(t *testing.T) {
 	paths := []string{
 		"/api/send",
 		"/api/tickets/start",
-		"/api/dispatch/submit",
 		"/api/worker-run/submit",
 		"/api/notes",
 		"/api/runs/1",

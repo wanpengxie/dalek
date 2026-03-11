@@ -211,7 +211,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			summary.Workers = fixed
 		}
 		if pmErr == nil && pmState.ID != 0 {
-			if err := p.pm.UpdateRecoverySummary(ctx, pmState.ID, now, 0, summary.ActiveRunRepairs, summary.Notes, summary.Workers); err != nil {
+			if err := p.pm.UpdateRecoverySummary(ctx, pmState.ID, now, summary.PlannerOps, summary.ActiveRunRepairs, summary.Notes, summary.Workers); err != nil {
 				m.logf("recovery summary persist failed: project=%s err=%v", name, err)
 			}
 		}
@@ -378,7 +378,7 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 		return
 	}
 	m.submitPlannerRunIfScheduled(parent, p, projectName, res)
-	m.logf("manager tick ok: source=%s project=%s running=%d blocked=%d capacity=%d started=%d activated=%d planner_scheduled=%v", strings.TrimSpace(source), projectName, res.Running, res.RunningBlocked, res.Capacity, len(res.StartedTickets), len(res.DispatchedTickets), res.PlannerRunScheduled)
+	m.logf("manager tick ok: source=%s project=%s running=%d blocked=%d capacity=%d started=%d activated=%d planner_scheduled=%v", strings.TrimSpace(source), projectName, res.Running, res.RunningBlocked, res.Capacity, len(res.StartedTickets), len(res.ActivatedTickets), res.PlannerRunScheduled)
 }
 
 func (m *daemonManagerComponent) submitPlannerRunIfScheduled(parent context.Context, p *Project, projectName string, res pmsvc.ManagerTickResult) {
