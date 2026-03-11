@@ -105,9 +105,9 @@ type attachedMsg struct {
 	Err      error
 }
 
-type dispatchedMsg struct {
+type queuedRunMsg struct {
 	TicketID uint
-	Receipt  app.DaemonDispatchSubmitReceipt
+	Receipt  app.DaemonWorkerRunSubmitReceipt
 	Err      error
 }
 
@@ -235,7 +235,7 @@ type model struct {
 	workerLogErr      string
 	workerLogLoadedAt time.Time
 
-	dispatchTicketID uint
+	runRequestTicketID uint
 }
 
 func newModel(p *app.Project, home *app.Home, projectName string) model {
@@ -301,7 +301,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		archivedTickets: nil,
 		showArchiveRows: false,
 		archiveErr:      "",
-		helpMsg:         "g 管理员  n notebook  c 新建  Enter tmux  s 启动  p 派发  i 中断  a 日志  k 停止  d 归档  r 重新跑  e 编辑  v 事件  Shift+K/J backlog排序  +/- 优先级  0-4 状态  t 配色  q 退出",
+		helpMsg:         "g 管理员  n notebook  c 新建  Enter tmux  s 启动  p 排队执行  i 中断  a 日志  k 停止  d 归档  r 重新跑  e 编辑  v 事件  Shift+K/J backlog排序  +/- 优先级  0-4 状态  t 配色  q 退出",
 		status:          "就绪",
 		errMsg:          "",
 		titleInput:      ti,
@@ -339,7 +339,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		workerLogErr:      "",
 		workerLogLoadedAt: time.Time{},
 
-		dispatchTicketID: 0,
+		runRequestTicketID: 0,
 	}
 }
 
@@ -653,13 +653,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshStarted = time.Now()
 		return m, m.refreshCmd()
 
-	case dispatchedMsg:
+	case queuedRunMsg:
+		m.runRequestTicketID = 0
 		if msg.Err != nil {
 			m.errMsg = msg.Err.Error()
-			m.status = fmt.Sprintf("派发失败 t%d：%v", msg.TicketID, msg.Err)
+			m.status = fmt.Sprintf("排队执行失败 t%d：%v", msg.TicketID, msg.Err)
 		} else {
 			m.errMsg = ""
-			m.status = fmt.Sprintf("已派发 t%d", msg.TicketID)
+			worker := "-"
+			if msg.Receipt.WorkerID != 0 {
+				worker = fmt.Sprintf("w%d", msg.Receipt.WorkerID)
+			}
+			m.status = fmt.Sprintf("已提交执行 t%d（worker=%s）", msg.TicketID, worker)
 		}
 		m.refreshInFlight = true
 		m.refreshManual = false
@@ -668,6 +673,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refreshCmd()
 
 	case workerRunMsg:
+		m.runRequestTicketID = 0
 		if msg.Err != nil {
 			m.errMsg = msg.Err.Error()
 			m.status = fmt.Sprintf("重新跑失败 t%d：%v", msg.TicketID, msg.Err)
@@ -1054,7 +1060,7 @@ func (m model) inspectorLeftView(panelW int) string {
 
 	statusB := ticketStatusBadge(v.DerivedStatus)
 	runtimeB := runtimeStatusBadge(v)
-	processB := badge(m.dispatchProcessState(v), cInfo)
+	processB := badge(m.runProcessState(v), cInfo)
 
 	runtimeRef := "-"
 	worker := "-"
@@ -1119,12 +1125,12 @@ func (m model) inspectorLeftView(panelW int) string {
 	integration := formatIntegrationStatus(t.WorkflowStatus, t.IntegrationStatus)
 
 	lines := []string{
-		panelTitle(fmt.Sprintf("元信息  t%d · dispatch/running", t.ID)),
+		panelTitle(fmt.Sprintf("元信息  t%d · ticket/runtime", t.ID)),
 		statusB + " " + runtimeB + " " + processB,
 		kvLine("ticket:", title, innerW),
 		kvLine("标签:", labelOrDash(t.Label), innerW),
 		kvLine("集成:", integration, innerW),
-		kvLine("流程:", m.dispatchProcessState(v), innerW),
+		kvLine("流程:", m.runProcessState(v), innerW),
 		kvLine("run:", runID+"  runtime="+runtimeState, innerW),
 		kvLine("phase:", semPhase+"  next="+semNext, innerW),
 		kvLine("semantic:", semSummary, innerW),
@@ -1155,7 +1161,7 @@ func (m model) inspectorMiddleView(panelW int) string {
 				badge(formatTicketStatus(t.WorkflowStatus), cNeutral),
 				kvLine("来源:", "event_note", innerW),
 				kvLine("状态:", string(t.WorkflowStatus), innerW),
-				faint("该 ticket 暂无活跃运行事实（等待刷新或尚未派发）"),
+				faint("该 ticket 暂无活跃运行事实（等待刷新或尚未进入运行）"),
 			}
 			lines = padBottom(lines, 4+tailShowLines)
 			return strings.Join(lines, "\n")
@@ -1192,7 +1198,7 @@ func (m model) inspectorMiddleView(panelW int) string {
 	lines := []string{
 		panelTitle(fmt.Sprintf("PM事实观察  t%d", v.Ticket.ID)),
 		badge("event_note", cInfo) + " " + badge(eventType, cNeutral),
-		kvLine("流程:", m.dispatchProcessState(v), innerW),
+		kvLine("流程:", m.runProcessState(v), innerW),
 		kvLine("integration:", integration, innerW),
 		kvLine("anchor:", anchor, innerW),
 		kvLine("last_event:", eventType+"  @ "+timeAndAge(v.LastEventAt), innerW),

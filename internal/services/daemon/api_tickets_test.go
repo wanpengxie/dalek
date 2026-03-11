@@ -92,7 +92,7 @@ func TestHandleTickets_ListAndStatusFilter(t *testing.T) {
 				},
 				SessionAlive:       true,
 				DerivedStatus:      contracts.TicketActive,
-				Capability:         contracts.TicketCapability{CanDispatch: true},
+				Capability:         contracts.TicketCapability{CanQueueRun: true, CanDispatch: true},
 				TaskRunID:          901,
 				RuntimeHealthState: contracts.TaskHealthBusy,
 				RuntimeSummary:     "running",

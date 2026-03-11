@@ -43,6 +43,7 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		m.runRequestTicketID = id
 		m.status = fmt.Sprintf("重新跑中 t%d...", id)
 		m.errMsg = ""
 		return m, m.workerRunTicketCmd(id)
@@ -70,7 +71,7 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.startTicketCmd(id)
 	case "p":
-		id, ok, denied := m.selectedTicketForAction(ticketActionDispatch)
+		id, ok, denied := m.selectedTicketForAction(ticketActionQueueRun)
 		if !ok {
 			if denied != "" {
 				m.status = denied
@@ -78,9 +79,10 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		m.status = fmt.Sprintf("派发中 t%d...", id)
+		m.runRequestTicketID = id
+		m.status = fmt.Sprintf("排队执行中 t%d...", id)
 		m.errMsg = ""
-		return m, m.dispatchTicketCmd(id)
+		return m, m.queueRunTicketCmd(id)
 	case "i":
 		id, ok, denied := m.selectedTicketForAction(ticketActionInterrupt)
 		if !ok {

@@ -107,7 +107,7 @@ func (m model) loadWorkerLogCmd(ticketID uint) tea.Cmd {
 			return workerLogLoadedMsg{TicketID: ticketID, WorkerID: 0, Err: fmt.Errorf("该 ticket 尚未启动 worker，请先按 s 启动")}
 		}
 		if strings.TrimSpace(a.LogPath) == "" {
-			return workerLogLoadedMsg{TicketID: ticketID, WorkerID: a.ID, Err: fmt.Errorf("worker 尚无日志锚点，请先 dispatch 或重新跑")}
+			return workerLogLoadedMsg{TicketID: ticketID, WorkerID: a.ID, Err: fmt.Errorf("worker 尚无日志锚点，请先排队执行或重新跑")}
 		}
 
 		pv, err := m.p.CaptureTicketTail(ctx, ticketID, workerLogCaptureLines)

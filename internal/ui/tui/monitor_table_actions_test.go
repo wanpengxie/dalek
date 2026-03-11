@@ -63,7 +63,7 @@ func TestUpdateTable_AllowedActionReturnsCommand(t *testing.T) {
 	}
 }
 
-func TestSelectedTicketForAction_BacklogRunningWorkerAllowsDispatch(t *testing.T) {
+func TestSelectedTicketForAction_BacklogAllowsQueueRun(t *testing.T) {
 	m := newModel(nil, nil, "")
 	m.rowRefs = []rowRef{{kind: rowTicket, section: "backlog", ticketID: 10}}
 	m.viewsByID = map[uint]app.TicketView{
@@ -73,19 +73,18 @@ func TestSelectedTicketForAction_BacklogRunningWorkerAllowsDispatch(t *testing.T
 	}
 	v := m.viewsByID[10]
 	v.Capability.CanQueueRun = true
-	v.Capability.CanDispatch = true
 	m.viewsByID[10] = v
 
-	id, ok, denied := m.selectedTicketForAction(ticketActionDispatch)
+	id, ok, denied := m.selectedTicketForAction(ticketActionQueueRun)
 	if denied != "" {
 		t.Fatalf("unexpected denied: %s", denied)
 	}
 	if !ok || id != 10 {
-		t.Fatalf("expected dispatch allowed for backlog fallback, ok=%v id=%d", ok, id)
+		t.Fatalf("expected queue-run allowed for backlog, ok=%v id=%d", ok, id)
 	}
 }
 
-func TestSelectedTicketForAction_BacklogWithoutSessionStillDenied(t *testing.T) {
+func TestSelectedTicketForAction_BacklogQueueRunStillDenied(t *testing.T) {
 	m := newModel(nil, nil, "")
 	m.rowRefs = []rowRef{{kind: rowTicket, section: "backlog", ticketID: 10}}
 	m.viewsByID = map[uint]app.TicketView{
@@ -95,15 +94,14 @@ func TestSelectedTicketForAction_BacklogWithoutSessionStillDenied(t *testing.T) 
 	}
 	v := m.viewsByID[10]
 	v.Capability.CanQueueRun = false
-	v.Capability.CanDispatch = false
 	v.Capability.Reason = "worker 缺少 session"
 	m.viewsByID[10] = v
 
-	_, ok, denied := m.selectedTicketForAction(ticketActionDispatch)
+	_, ok, denied := m.selectedTicketForAction(ticketActionQueueRun)
 	if ok {
-		t.Fatalf("expected dispatch denied without session")
+		t.Fatalf("expected queue-run denied without session")
 	}
-	if !strings.Contains(denied, "不支持 派发(p)") || !strings.Contains(denied, "worker 缺少 session") {
+	if !strings.Contains(denied, "不支持 排队执行(p)") || !strings.Contains(denied, "worker 缺少 session") {
 		t.Fatalf("unexpected denied message: %q", denied)
 	}
 }
@@ -118,7 +116,6 @@ func TestUpdateTable_WorkerRunDenied(t *testing.T) {
 	}
 	v := m.viewsByID[10]
 	v.Capability.CanQueueRun = false
-	v.Capability.CanDispatch = false
 	v.Capability.Reason = "已完成"
 	m.viewsByID[10] = v
 
@@ -143,7 +140,6 @@ func TestUpdateTable_WorkerRunAllowed(t *testing.T) {
 	}
 	v := m.viewsByID[10]
 	v.Capability.CanQueueRun = true
-	v.Capability.CanDispatch = true
 	m.viewsByID[10] = v
 
 	gotModel, cmd := m.updateTable(keyRune('r'))

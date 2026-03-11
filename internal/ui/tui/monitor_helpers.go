@@ -28,12 +28,12 @@ func kvLine(key, value string, width int) string {
 	return cutANSI(k+" "+v, width)
 }
 
-func (m model) dispatchProcessState(v app.TicketView) string {
-	if m.dispatchTicketID != 0 && m.dispatchTicketID == v.Ticket.ID {
-		return "dispatch请求中"
+func (m model) runProcessState(v app.TicketView) string {
+	if m.runRequestTicketID != 0 && m.runRequestTicketID == v.Ticket.ID {
+		return "执行请求中"
 	}
 	if v.TaskRunID == 0 {
-		return "未派发"
+		return "尚未进入运行"
 	}
 	switch formatExecutionState(v) {
 	case "等待输入":
@@ -190,7 +190,7 @@ type ticketAction string
 
 const (
 	ticketActionStart     ticketAction = "start"
-	ticketActionDispatch  ticketAction = "dispatch"
+	ticketActionQueueRun  ticketAction = "queue_run"
 	ticketActionWorkerRun ticketAction = "worker_run"
 	ticketActionInterrupt ticketAction = "interrupt"
 	ticketActionStop      ticketAction = "stop"
@@ -206,8 +206,8 @@ func actionLabel(action ticketAction) string {
 	switch action {
 	case ticketActionStart:
 		return "启动(s)"
-	case ticketActionDispatch:
-		return "派发(p)"
+	case ticketActionQueueRun:
+		return "排队执行(p)"
 	case ticketActionWorkerRun:
 		return "重新跑(r)"
 	case ticketActionInterrupt:
@@ -251,10 +251,10 @@ func (m model) selectedTicketForAction(action ticketAction) (uint, bool, string)
 		switch action {
 		case ticketActionStart:
 			allowed = cap.CanStart
-		case ticketActionDispatch:
-			allowed = cap.CanQueueRun || cap.CanDispatch
+		case ticketActionQueueRun:
+			allowed = cap.CanQueueRun
 		case ticketActionWorkerRun:
-			allowed = cap.CanQueueRun || cap.CanDispatch
+			allowed = cap.CanQueueRun
 		case ticketActionInterrupt:
 			// interrupt 需要 session 可用，复用 stop 的 capability。
 			allowed = cap.CanStop
@@ -479,24 +479,22 @@ func (m model) startTicketCmd(id uint) tea.Cmd {
 	}
 }
 
-func (m model) dispatchTicketCmd(id uint) tea.Cmd {
+func (m model) queueRunTicketCmd(id uint) tea.Cmd {
 	return func() tea.Msg {
 		client, err := app.NewDaemonAPIClientFromHome(m.home)
 		if err != nil {
-			return dispatchedMsg{TicketID: id, Err: fmt.Errorf("daemon 不在线: %w", err)}
+			return queuedRunMsg{TicketID: id, Err: fmt.Errorf("daemon 不在线: %w", err)}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		autoStart := true
-		r, err := client.SubmitDispatch(ctx, app.DaemonDispatchSubmitRequest{
-			Project:   m.projectName,
-			TicketID:  id,
-			AutoStart: &autoStart,
+		r, err := client.SubmitWorkerRun(ctx, app.DaemonWorkerRunSubmitRequest{
+			Project:  m.projectName,
+			TicketID: id,
 		})
 		if err != nil {
-			return dispatchedMsg{TicketID: id, Err: err}
+			return queuedRunMsg{TicketID: id, Err: err}
 		}
-		return dispatchedMsg{TicketID: id, Receipt: r, Err: nil}
+		return queuedRunMsg{TicketID: id, Receipt: r, Err: nil}
 	}
 }
 

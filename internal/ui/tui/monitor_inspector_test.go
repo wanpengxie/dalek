@@ -11,13 +11,13 @@ import (
 	"dalek/internal/contracts"
 )
 
-func TestInspectorLeftView_ShowsDispatchRunningProcess(t *testing.T) {
+func TestInspectorLeftView_ShowsRuntimeProcess(t *testing.T) {
 	m := newModel(nil, nil, "")
 	now := time.Now().UTC().Add(-3 * time.Second)
 	view := app.TicketView{
 		Ticket: contracts.Ticket{
 			ID:        1,
-			Title:     "dispatch 可视化",
+			Title:     "执行可视化",
 			Label:     "backend",
 			UpdatedAt: now,
 		},
@@ -38,8 +38,8 @@ func TestInspectorLeftView_ShowsDispatchRunningProcess(t *testing.T) {
 		SemanticNextAction: "continue",
 		SemanticSummary:    "继续实现中",
 		SemanticReportedAt: &now,
-		LastEventType:      "task_dispatched",
-		LastEventNote:      "dispatch 已发出",
+		LastEventType:      "activated",
+		LastEventNote:      "worker run 已接收",
 		LastEventAt:        &now,
 	}
 	m.applyViews([]app.TicketView{view})
@@ -49,19 +49,19 @@ func TestInspectorLeftView_ShowsDispatchRunningProcess(t *testing.T) {
 			break
 		}
 	}
-	m.dispatchTicketID = view.Ticket.ID
+	m.runRequestTicketID = view.Ticket.ID
 
 	got := ansi.Strip(m.inspectorLeftView(140))
-	if !strings.Contains(got, "dispatch/running") {
-		t.Fatalf("should render dispatch/running title, got=%q", got)
+	if !strings.Contains(got, "ticket/runtime") {
+		t.Fatalf("should render ticket/runtime title, got=%q", got)
 	}
-	if !strings.Contains(got, "流程: dispatch请求中") {
+	if !strings.Contains(got, "流程: 执行请求中") {
 		t.Fatalf("should render process state, got=%q", got)
 	}
 	if !strings.Contains(got, "run: r42") {
 		t.Fatalf("should render run id, got=%q", got)
 	}
-	if !strings.Contains(got, "last_event: task_dispatched") {
+	if !strings.Contains(got, "last_event: activated") {
 		t.Fatalf("should render last event, got=%q", got)
 	}
 	if !strings.Contains(got, "标签: backend") {

@@ -924,7 +924,7 @@
       ]) +
       renderDetailSection("Capability", [
         detailField("Can Start", formatBoolean(capability.can_start)),
-        detailField("Can Queue Run", formatBoolean(capability.can_queue_run ?? capability.can_dispatch)),
+        detailField("Can Queue Run", formatBoolean(capability.can_queue_run)),
         detailField("Can Attach", formatBoolean(capability.can_attach)),
         detailField("Can Stop", formatBoolean(capability.can_stop)),
         detailField("Can Archive", formatBoolean(capability.can_archive)),
