@@ -103,7 +103,6 @@ func cmdAgentRun(args []string) {
 		*proj = strings.TrimSpace(*projShort)
 	}
 	out := parseOutputOrExit(*output, true)
-	enforceDispatchDepthGuardOrExit(out, "dalek agent run")
 	if strings.TrimSpace(*prompt) == "" {
 		exitUsageError(out,
 			"缺少必填参数 --prompt",

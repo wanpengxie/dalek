@@ -34,8 +34,6 @@ func cmdTicket(args []string) {
 		cmdTicketShow(args[1:])
 	case "start":
 		cmdTicketStart(args[1:])
-	case "dispatch":
-		cmdTicketDispatchRemoved()
 	case "integration":
 		exitTicketIntegrationMigrated()
 	case "interrupt":
@@ -818,8 +816,6 @@ func cmdTicketStart(args []string) {
 			"例如: dalek ticket start --ticket 1 --timeout 60s",
 		)
 	}
-	enforceDispatchDepthGuardOrExit(out, "dalek ticket start")
-
 	p := mustOpenProjectWithOutput(out, *home, *proj)
 	_, daemonClient := mustOpenDaemonClient(out, *home)
 	ctx, cancel := projectCtx(*timeout)
@@ -874,14 +870,6 @@ func cmdTicketStart(args []string) {
 	}
 	fmt.Printf("ticket started: ticket=%d worker=%d status=%s output=%s worktree=%s branch=%s\n",
 		receipt.TicketID, workerID, strings.TrimSpace(receipt.WorkflowStatus), outputRef, worktree, branch)
-}
-
-func cmdTicketDispatchRemoved() {
-	exitUsageError(globalOutput,
-		"ticket dispatch 已移除",
-		"start 现在已经融合 dispatch；请改用 ticket start",
-		"例如: dalek ticket start --ticket 1",
-	)
 }
 
 func exitTicketIntegrationMigrated() {

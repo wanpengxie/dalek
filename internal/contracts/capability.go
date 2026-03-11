@@ -8,8 +8,6 @@ package contracts
 type TicketCapability struct {
 	CanStart    bool `json:"can_start"`
 	CanQueueRun bool `json:"can_queue_run"`
-	// CanDispatch 保留为兼容 alias；主语义已迁移到 CanQueueRun。
-	CanDispatch bool `json:"can_dispatch"`
 	CanAttach   bool `json:"can_attach"`
 	CanStop     bool `json:"can_stop"`
 	CanArchive  bool `json:"can_archive"`

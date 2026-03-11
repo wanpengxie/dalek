@@ -54,7 +54,6 @@ type ExecutionHostResolver interface {
 
 type ExecutionHostProject interface {
 	StartTicket(ctx context.Context, ticketID uint, opt StartTicketOptions) (*contracts.Worker, error)
-	DirectDispatchWorker(ctx context.Context, ticketID uint, opt WorkerRunOptions) (WorkerRunResult, error)
 	SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptions) (SubagentSubmission, error)
 	RunSubagentJob(ctx context.Context, taskRunID uint, opt SubagentRunOptions) error
 	RunPlannerJob(ctx context.Context, taskRunID uint, opt PlannerRunOptions) error
@@ -116,15 +115,6 @@ type ListInboxOptions struct {
 	Limit  int
 }
 
-type DispatchSubmitRequest struct {
-	Project    string
-	TicketID   uint
-	RequestID  string
-	Prompt     string
-	AutoStart  *bool
-	BaseBranch string
-}
-
 type StartTicketRequest struct {
 	Project    string
 	TicketID   uint
@@ -140,17 +130,6 @@ type StartTicketReceipt struct {
 	WorktreePath   string
 	Branch         string
 	LogPath        string
-}
-
-type DispatchSubmitReceipt struct {
-	Accepted  bool
-	Project   string
-	RequestID string
-	TaskRunID uint
-	JobID     uint
-	TicketID  uint
-	WorkerID  uint
-	JobStatus contracts.PMDispatchJobStatus
 }
 
 type WorkerRunOptions struct {

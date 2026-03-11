@@ -30,7 +30,7 @@ import (
 // 方法按职责拆分到以下文件：
 //   - project_ticket.go      ticket 查询与写入
 //   - project_worker.go      worker 生命周期（interrupt/stop/attach/cleanup）
-//   - project_dispatch.go    dispatch & start
+//   - project_ticket_start.go start 与 worker run 观测
 //   - project_task.go        task 执行观测与 subagent
 //   - project_manager.go     PM manager 管理
 //   - project_inbox_merge.go inbox 与 merge queue

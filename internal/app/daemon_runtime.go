@@ -75,25 +75,6 @@ func (p *daemonProjectAdapter) StartTicket(ctx context.Context, ticketID uint, o
 	})
 }
 
-func (p *daemonProjectAdapter) DirectDispatchWorker(ctx context.Context, ticketID uint, opt daemonsvc.WorkerRunOptions) (daemonsvc.WorkerRunResult, error) {
-	if p == nil || p.project == nil {
-		return daemonsvc.WorkerRunResult{}, fmt.Errorf("daemon project 为空")
-	}
-	res, err := p.project.DirectDispatchWorker(ctx, ticketID, DirectDispatchOptions{
-		EntryPrompt: strings.TrimSpace(opt.EntryPrompt),
-		AutoStart:   opt.AutoStart,
-		BaseBranch:  strings.TrimSpace(opt.BaseBranch),
-	})
-	if err != nil {
-		return daemonsvc.WorkerRunResult{}, err
-	}
-	return daemonsvc.WorkerRunResult{
-		TicketID: res.TicketID,
-		WorkerID: res.WorkerID,
-		RunID:    res.LastRunID,
-	}, nil
-}
-
 func (p *daemonProjectAdapter) SubmitSubagentRun(ctx context.Context, opt daemonsvc.SubagentSubmitOptions) (daemonsvc.SubagentSubmission, error) {
 	if p == nil || p.project == nil {
 		return daemonsvc.SubagentSubmission{}, fmt.Errorf("daemon project 为空")

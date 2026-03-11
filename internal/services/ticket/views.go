@@ -63,7 +63,6 @@ func ComputeTicketCapability(workflow contracts.TicketWorkflowStatus, w *contrac
 	cap.CanQueueRun = !isDone &&
 		!isArchived &&
 		!hasActiveWorkerRun
-	cap.CanDispatch = cap.CanQueueRun
 
 	// attach：只支持 runtime 日志 attach。
 	cap.CanAttach = hasWorker &&

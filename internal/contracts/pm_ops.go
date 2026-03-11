@@ -9,8 +9,6 @@ const (
 	PMOpWriteDesignDoc      PMOpKind = "write_design_doc"
 	PMOpCreateTicket        PMOpKind = "create_ticket"
 	PMOpStartTicket         PMOpKind = "start_ticket"
-	// PMOpDispatchTicket 保留为历史 journal 兼容 alias；新 planner 输出必须使用 start_ticket。
-	PMOpDispatchTicket       PMOpKind = "dispatch_ticket"
 	PMOpCreateIntegration    PMOpKind = "create_integration_ticket"
 	PMOpCloseInbox           PMOpKind = "close_inbox"
 	PMOpRunAcceptance        PMOpKind = "run_acceptance"

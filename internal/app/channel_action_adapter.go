@@ -34,18 +34,6 @@ func (a channelPMActionAdapter) StartTicket(ctx context.Context, ticketID uint, 
 	return a.svc.StartTicketWithOptions(ctx, ticketID, pmsvc.StartOptions{BaseBranch: baseBranch})
 }
 
-func (a channelPMActionAdapter) DispatchTicket(ctx context.Context, ticketID uint, entryPrompt string) (channelsvc.DispatchTicketResult, error) {
-	res, err := a.svc.DispatchTicketWithOptions(ctx, ticketID, pmsvc.DispatchOptions{EntryPrompt: entryPrompt})
-	if err != nil {
-		return channelsvc.DispatchTicketResult{}, err
-	}
-	return channelsvc.DispatchTicketResult{
-		TicketID:  res.TicketID,
-		WorkerID:  res.WorkerID,
-		TaskRunID: res.TaskRunID,
-	}, nil
-}
-
 func (a channelPMActionAdapter) ArchiveTicket(ctx context.Context, ticketID uint) error {
 	return a.svc.ArchiveTicket(ctx, ticketID)
 }

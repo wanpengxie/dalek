@@ -158,7 +158,6 @@ func ticketViewToJSON(v TicketView) map[string]any {
 	capability := map[string]any{
 		"can_start":     v.Capability.CanStart,
 		"can_queue_run": v.Capability.CanQueueRun,
-		"can_dispatch":  v.Capability.CanDispatch,
 		"can_attach":    v.Capability.CanAttach,
 		"can_stop":      v.Capability.CanStop,
 		"can_archive":   v.Capability.CanArchive,

@@ -13,8 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const actionDispatchTicket = "dispatch_ticket"
-
 // ActionResult 表示单个 action 的执行结果。
 type ActionResult struct {
 	ActionName string         `json:"action_name"`
@@ -35,15 +33,8 @@ type TicketActionService interface {
 	CreateWithDescriptionAndLabel(ctx context.Context, title, description, label string) (*contracts.Ticket, error)
 }
 
-type DispatchTicketResult struct {
-	TicketID  uint
-	WorkerID  uint
-	TaskRunID uint
-}
-
 type PMActionService interface {
 	StartTicket(ctx context.Context, ticketID uint, baseBranch string) (*contracts.Worker, error)
-	DispatchTicket(ctx context.Context, ticketID uint, entryPrompt string) (DispatchTicketResult, error)
 	ArchiveTicket(ctx context.Context, ticketID uint) error
 	ListMergeItems(ctx context.Context, status contracts.MergeStatus, limit int) ([]contracts.MergeItem, error)
 }
@@ -92,8 +83,6 @@ func (e *ActionExecutor) Execute(ctx context.Context, action contracts.TurnActio
 		return e.executeCreateTicket(ctx, action)
 	case contracts.ActionStartTicket:
 		return e.executeStartTicket(ctx, action)
-	case actionDispatchTicket:
-		return e.executeDispatchTicket(ctx, action)
 	case contracts.ActionInterruptTicket:
 		return e.executeInterruptTicket(ctx, action)
 	case contracts.ActionStopTicket:
@@ -248,31 +237,6 @@ func (e *ActionExecutor) executeStartTicket(ctx context.Context, action contract
 				"ticket_id": worker.TicketID,
 				"status":    worker.Status,
 				"log_path":  worker.LogPath,
-			},
-		},
-	}, nil
-}
-
-func (e *ActionExecutor) executeDispatchTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
-	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
-	if err != nil {
-		return ActionResult{}, err
-	}
-	entryPrompt := actionArgString(action.Args, "entry_prompt", "entryPrompt", "prompt")
-	res, err := e.pmSvc.DispatchTicket(ctx, ticketID, entryPrompt)
-	if err != nil {
-		return ActionResult{}, err
-	}
-	msg := fmt.Sprintf("已派发 t%d -> w%d。", res.TicketID, res.WorkerID)
-	return ActionResult{
-		ActionName: actionDispatchTicket,
-		Success:    true,
-		Message:    msg,
-		Data: map[string]any{
-			"dispatch": map[string]any{
-				"ticket_id":   res.TicketID,
-				"worker_id":   res.WorkerID,
-				"task_run_id": res.TaskRunID,
 			},
 		},
 	}, nil
