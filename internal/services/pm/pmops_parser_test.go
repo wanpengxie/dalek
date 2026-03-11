@@ -60,7 +60,7 @@ func TestPlannerPMOpIsCritical_StartTicket(t *testing.T) {
 	}
 }
 
-func TestParsePlannerPMOps_NormalizesLegacyDispatchTicketToStartTicket(t *testing.T) {
+func TestParsePlannerPMOps_PreservesUnknownLegacyDispatchTicketKind(t *testing.T) {
 	raw := `
 <pmops>
 {
@@ -81,14 +81,14 @@ func TestParsePlannerPMOps_NormalizesLegacyDispatchTicketToStartTicket(t *testin
 		t.Fatalf("expected 1 op, got=%d", len(ops))
 	}
 	op := ops[0]
-	if op.Kind != contracts.PMOpStartTicket {
-		t.Fatalf("expected legacy dispatch_ticket normalized to start_ticket, got=%s", op.Kind)
+	if op.Kind != contracts.PMOpKind("dispatch_ticket") {
+		t.Fatalf("expected legacy dispatch_ticket preserved verbatim, got=%s", op.Kind)
 	}
-	if !op.Critical {
-		t.Fatalf("expected normalized start_ticket marked critical")
+	if op.Critical {
+		t.Fatalf("expected legacy dispatch_ticket not marked critical")
 	}
-	if !strings.HasPrefix(op.IdempotencyKey, "start_ticket:") {
-		t.Fatalf("expected normalized idempotency key to use start_ticket prefix, got=%q", op.IdempotencyKey)
+	if !strings.HasPrefix(op.IdempotencyKey, "dispatch_ticket:") {
+		t.Fatalf("expected legacy idempotency key to preserve dispatch_ticket prefix, got=%q", op.IdempotencyKey)
 	}
 }
 

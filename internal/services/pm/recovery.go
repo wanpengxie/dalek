@@ -31,6 +31,10 @@ func (s *Service) RecoverActiveTaskRuns(ctx context.Context, projectName string,
 	if err != nil {
 		return 0, err
 	}
+	legacyCanceled, err := s.cancelLegacyDispatchRuns(ctx, db, 0, 0, legacyDispatchCleanupReason(0), now)
+	if err != nil {
+		return 0, err
+	}
 	activeRuns, err := taskRuntime.ListStatus(ctx, contracts.TaskListStatusOptions{
 		OwnerType:       contracts.TaskOwnerWorker,
 		TaskType:        "deliver_ticket",
@@ -41,7 +45,7 @@ func (s *Service) RecoverActiveTaskRuns(ctx context.Context, projectName string,
 		return 0, err
 	}
 	if len(activeRuns) == 0 {
-		return 0, nil
+		return legacyCanceled, nil
 	}
 
 	skipRunIDs := sortedRunIDsFromSet(excludedRunIDs)
@@ -50,7 +54,7 @@ func (s *Service) RecoverActiveTaskRuns(ctx context.Context, projectName string,
 		skipSet[runID] = struct{}{}
 	}
 
-	repaired := 0
+	repaired := legacyCanceled
 	seenRuns := make(map[uint]struct{}, len(activeRuns))
 	for _, run := range activeRuns {
 		if run.RunID == 0 || run.TicketID == 0 || run.WorkerID == 0 {

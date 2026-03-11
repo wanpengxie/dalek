@@ -2,8 +2,10 @@ package pm
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"dalek/internal/contracts"
 )
@@ -21,6 +23,7 @@ func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 		ProjectKey: strings.TrimSpace(p.Key),
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
 		Summary:    "缺少生产环境 API token",
 		NeedsUser:  true,
 		Blockers:   []string{"请提供 FEISHU_APP_ID", "请提供 FEISHU_APP_SECRET"},
@@ -71,6 +74,8 @@ func TestApplyWorkerReport_DoneFreezesTicketIntegrationSynchronously(t *testing.
 		ProjectKey: strings.TrimSpace(p.Key),
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
+		HeadSHA:    strings.Repeat("a", 40),
 		Summary:    "开发与测试已完成",
 		NextAction: string(contracts.NextDone),
 	}
@@ -87,6 +92,9 @@ func TestApplyWorkerReport_DoneFreezesTicketIntegrationSynchronously(t *testing.
 	}
 	if got := contracts.CanonicalIntegrationStatus(ticket.IntegrationStatus); got != contracts.IntegrationNeedsMerge {
 		t.Fatalf("expected integration_status needs_merge, got=%s", got)
+	}
+	if strings.TrimSpace(ticket.MergeAnchorSHA) != report.HeadSHA {
+		t.Fatalf("expected merge_anchor_sha from report head, got=%q want=%q", ticket.MergeAnchorSHA, report.HeadSHA)
 	}
 	if strings.TrimSpace(ticket.TargetBranch) != "refs/heads/main" {
 		t.Fatalf("expected target_branch frozen before done report, got=%q", ticket.TargetBranch)
@@ -114,6 +122,7 @@ func TestApplyWorkerReport_WaitUserDuplicateDoesNotDuplicateLifecycleOrInbox(t *
 		ProjectKey: strings.TrimSpace(p.Key),
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
 		Summary:    "缺少审批结果",
 		NeedsUser:  true,
 		Blockers:   []string{"请确认发布窗口"},
@@ -160,6 +169,7 @@ func TestApplyWorkerReport_DoneDuplicateDoesNotReopenNeedsMergeAfterAbandon(t *t
 		ProjectKey: strings.TrimSpace(p.Key),
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
 		Summary:    "开发完成",
 		NextAction: string(contracts.NextDone),
 	}
@@ -190,4 +200,29 @@ func TestApplyWorkerReport_DoneDuplicateDoesNotReopenNeedsMergeAfterAbandon(t *t
 	if lifecycleCount != 1 {
 		t.Fatalf("expected exactly 1 done lifecycle event, got=%d", lifecycleCount)
 	}
+}
+
+func createBoundPMWorkerRunForReport(t *testing.T, svc *Service, projectKey string, ticketID, workerID uint) uint {
+	t.Helper()
+	rt, err := svc.taskRuntime()
+	if err != nil {
+		t.Fatalf("taskRuntime failed: %v", err)
+	}
+	now := time.Now()
+	run, err := rt.CreateRun(context.Background(), contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
+		ProjectKey:         strings.TrimSpace(projectKey),
+		TicketID:           ticketID,
+		WorkerID:           workerID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", ticketID),
+		RequestID:          fmt.Sprintf("test_report_t%d_w%d_%d", ticketID, workerID, now.UnixNano()),
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("create deliver_ticket run failed: %v", err)
+	}
+	return run.ID
 }

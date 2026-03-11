@@ -213,6 +213,7 @@ func TestApplyWorkerReport_Changed_EmitsHook(t *testing.T) {
 		ProjectKey: strings.TrimSpace(p.Key),
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
 		NextAction: string(contracts.NextContinue),
 	}
 	if err := svc.ApplyWorkerReport(context.Background(), report, "test-source"); err != nil {
@@ -249,6 +250,7 @@ func TestApplyWorkerReport_Done_EmitsHook(t *testing.T) {
 		ProjectKey: strings.TrimSpace(p.Key),
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
 		Summary:    "开发完成，准备进入 merge 队列",
 		NextAction: string(contracts.NextDone),
 	}
@@ -292,6 +294,7 @@ func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
 		ProjectKey: strings.TrimSpace(p.Key),
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
 		Summary:    "需要你确认 API 语义",
 		Blockers:   []string{"是否允许破坏性变更？", "命名规范是否采用 v2？"},
 		NextAction: string(contracts.NextWaitUser),

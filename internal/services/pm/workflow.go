@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"dalek/internal/contracts"
 	"dalek/internal/fsm"
 	"dalek/internal/services/ticketlifecycle"
+	workersvc "dalek/internal/services/worker"
 
 	"gorm.io/gorm"
 )
@@ -218,6 +220,9 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 
 	// 1) 运行观测与事件（append-only）
 	if err := s.worker.ApplyWorkerReport(ctx, r, source); err != nil {
+		if errors.Is(err, workersvc.ErrDuplicateTerminalReport) {
+			return nil
+		}
 		return err
 	}
 
@@ -266,10 +271,7 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 			return nil
 		}
 		from := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
-		taskRunID, err := latestWorkerTaskRunIDTx(ctx, tx, r.WorkerID)
-		if err != nil {
-			return err
-		}
+		taskRunID := r.TaskRunID
 		lifecycleSource := fmt.Sprintf("pm.apply_worker_report(%s)", source)
 
 		switch next {
@@ -327,7 +329,7 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 			return err
 
 		case string(contracts.NextDone):
-			freeze, err := s.resolveDoneIntegrationFreezeTx(ctx, tx, t.ID, r.WorkerID)
+			freeze, err := s.resolveDoneIntegrationFreezeTx(ctx, tx, t.ID, r.WorkerID, taskRunID, r.HeadSHA)
 			if err != nil {
 				return err
 			}

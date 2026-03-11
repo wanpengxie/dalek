@@ -226,11 +226,7 @@ func normalizePlannerPMOps(in []contracts.PMOp, plannerRunID uint, requestID str
 }
 
 func normalizePlannerPMOpKind(kind contracts.PMOpKind) contracts.PMOpKind {
-	normalized := contracts.PMOpKind(strings.TrimSpace(string(kind)))
-	if strings.TrimSpace(string(normalized)) == "dispatch_ticket" {
-		return contracts.PMOpStartTicket
-	}
-	return normalized
+	return contracts.PMOpKind(strings.TrimSpace(string(kind)))
 }
 
 func plannerPMOpIsCritical(op contracts.PMOp) bool {

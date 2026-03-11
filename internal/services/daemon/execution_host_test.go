@@ -289,8 +289,12 @@ func waitExecutionRelease(ctx context.Context, delay time.Duration, release chan
 func (p *testExecutionHostProject) FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*RunStatus, error) {
 	p.mu.Lock()
 	runID := p.workerRunID
+	directDispatchCalls := p.directDispatchCalls
 	p.mu.Unlock()
 	if runID == 0 {
+		if afterRunID == 0 && directDispatchCalls == 0 {
+			return nil, nil
+		}
 		runID = 501
 	}
 	if afterRunID >= runID {

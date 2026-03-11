@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -64,13 +65,24 @@ func (s *Service) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 
 	// task runtime 观测链路属于附加可观测性，不阻塞 report 主写入路径。
 	// 使用独立事务确保失败时不会留下半写入的 task run/sample/report/event。
-	_ = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	duplicateTerminal := false
+	runtimeErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		rt, terr := s.taskRuntimeForDB(tx)
 		if terr != nil {
 			return terr
 		}
-		return s.syncTaskRuntimeFromReportWithRuntime(ctx, rt, tx, workerSnapshot, r, runtimeHealth, needs, summary, source, now)
+		duplicate, err := s.syncTaskRuntimeFromReportWithRuntime(ctx, rt, tx, workerSnapshot, r, runtimeHealth, needs, summary, source, now)
+		duplicateTerminal = duplicateTerminal || duplicate
+		return err
 	})
+	if runtimeErr != nil {
+		if errors.Is(runtimeErr, ErrInvalidWorkerReportTaskRun) || errors.Is(runtimeErr, ErrDuplicateTerminalReport) {
+			return runtimeErr
+		}
+	}
+	if duplicateTerminal {
+		return ErrDuplicateTerminalReport
+	}
 
 	if workerSnapshot.ID != 0 && (workerSnapshot.RetryCount > 0 || workerSnapshot.LastRetryAt != nil || strings.TrimSpace(workerSnapshot.LastErrorHash) != "") {
 		if err := db.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", workerSnapshot.ID).Updates(map[string]any{

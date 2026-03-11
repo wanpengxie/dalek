@@ -15,6 +15,8 @@ import (
 	"dalek/internal/services/core"
 )
 
+const envTaskRunID = "DALEK_TASK_RUN_ID"
+
 type SDKConfig struct {
 	AgentConfig provider.AgentConfig
 	Runner      sdkrunner.TaskRunner
@@ -206,12 +208,19 @@ func (h *sdkHandle) run() {
 	if runner == nil {
 		runner = sdkrunner.DefaultTaskRunner{}
 	}
+	env := make(map[string]string, len(h.cfg.Env)+1)
+	for k, v := range h.cfg.Env {
+		env[k] = v
+	}
+	if h.runID != 0 {
+		env[envTaskRunID] = fmt.Sprintf("%d", h.runID)
+	}
 	r, err := runner.Run(h.execCtx, sdkrunner.Request{
 		AgentConfig: h.cfg.AgentConfig,
 		Prompt:      strings.TrimSpace(h.prompt),
 		SessionID:   strings.TrimSpace(h.cfg.SessionID),
 		WorkDir:     strings.TrimSpace(h.cfg.WorkDir),
-		Env:         h.cfg.Env,
+		Env:         env,
 	}, onEvent)
 
 	parsedEvents := make([]any, 0, len(r.Events))

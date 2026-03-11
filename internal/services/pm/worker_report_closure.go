@@ -43,6 +43,7 @@ func (s *Service) applyMissingWorkerReportWaitUser(ctx context.Context, ticketID
 		Schema:     contracts.WorkerReportSchemaV1,
 		WorkerID:   w.ID,
 		TicketID:   ticketID,
+		TaskRunID:  loopResult.LastRunID,
 		Summary:    "worker 连续两轮执行完成但未提交 worker report，系统已自动阻塞并请求人工介入。",
 		NeedsUser:  true,
 		Blockers:   blockers,

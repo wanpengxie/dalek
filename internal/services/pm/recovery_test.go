@@ -125,3 +125,49 @@ func TestListActiveTaskRunIDs_ReturnsOnlyDeliverTicketRuns(t *testing.T) {
 		t.Fatalf("expected deliver run id=%d, got=%v", deliverRun.ID, runIDs)
 	}
 }
+
+func TestRecoverActiveTaskRuns_CancelsLegacyDispatchRuns(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "recovery-legacy-dispatch")
+	worker, err := svc.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	legacyRun := contracts.TaskRun{
+		OwnerType:          contracts.TaskOwnerPM,
+		TaskType:           "dispatch_ticket",
+		ProjectKey:         "test",
+		TicketID:           tk.ID,
+		WorkerID:           worker.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", tk.ID),
+		RequestID:          fmt.Sprintf("legacy-dispatch-%d", now.UnixNano()),
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	}
+	if err := p.DB.WithContext(ctx).Create(&legacyRun).Error; err != nil {
+		t.Fatalf("create legacy dispatch run failed: %v", err)
+	}
+
+	recovered, err := svc.RecoverActiveTaskRuns(ctx, "test", now, nil)
+	if err != nil {
+		t.Fatalf("RecoverActiveTaskRuns failed: %v", err)
+	}
+	if recovered != 1 {
+		t.Fatalf("expected one recovered legacy dispatch run, got=%d", recovered)
+	}
+
+	var after contracts.TaskRun
+	if err := p.DB.WithContext(ctx).First(&after, legacyRun.ID).Error; err != nil {
+		t.Fatalf("reload legacy dispatch run failed: %v", err)
+	}
+	if after.OrchestrationState != contracts.TaskCanceled {
+		t.Fatalf("expected legacy dispatch run canceled, got=%s", after.OrchestrationState)
+	}
+	if after.ErrorCode != "legacy_dispatch_removed" {
+		t.Fatalf("expected legacy dispatch error_code, got=%q", after.ErrorCode)
+	}
+}

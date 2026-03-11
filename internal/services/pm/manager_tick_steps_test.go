@@ -519,15 +519,15 @@ type cancelingWorkerRunSubmitter struct {
 	called bool
 }
 
-func (s *cancelingWorkerRunSubmitter) SubmitTicketWorkerRun(_ context.Context, _ uint) error {
+func (s *cancelingWorkerRunSubmitter) SubmitTicketWorkerRun(_ context.Context, _ uint) (WorkerRunSubmission, error) {
 	if s == nil {
-		return nil
+		return WorkerRunSubmission{}, nil
 	}
 	s.called = true
 	if s.cancel != nil {
 		s.cancel()
 	}
-	return nil
+	return WorkerRunSubmission{TaskRunID: 1}, nil
 }
 
 func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled(t *testing.T) {

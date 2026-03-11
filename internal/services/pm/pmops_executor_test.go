@@ -36,37 +36,12 @@ func TestStartTicketPMOpExecutor_ExecutesQueuedProjection(t *testing.T) {
 	}
 }
 
-func TestPlannerPMOpExecutor_LegacyDispatchAliasesStartProjection(t *testing.T) {
-	svc, p, _ := newServiceForTest(t)
-	tk := createTicket(t, p.DB, "pmop-dispatch-ticket")
+func TestPlannerPMOpExecutor_LegacyDispatchIsNoLongerSupported(t *testing.T) {
+	svc, _, _ := newServiceForTest(t)
 
 	legacyDispatchKind := contracts.PMOpKind("dispatch_ticket")
 	executor := svc.plannerPMOpExecutor(legacyDispatchKind)
-	if executor == nil {
-		t.Fatalf("expected legacy dispatch kind to resolve to start executor")
-	}
-
-	res, err := executor.Execute(context.Background(), contracts.PMOp{
-		Kind: legacyDispatchKind,
-		Arguments: contracts.JSONMap{
-			"ticket_id": tk.ID,
-		},
-	})
-	if err != nil {
-		t.Fatalf("Execute failed: %v", err)
-	}
-	if got := jsonMapUint(res, "ticket_id"); got != tk.ID {
-		t.Fatalf("unexpected ticket_id in result: got=%d want=%d", got, tk.ID)
-	}
-	if got := jsonMapString(res, "workflow_status"); got != string(contracts.TicketQueued) {
-		t.Fatalf("unexpected workflow_status in result: got=%q want=%q", got, contracts.TicketQueued)
-	}
-
-	var after contracts.Ticket
-	if err := p.DB.First(&after, tk.ID).Error; err != nil {
-		t.Fatalf("load ticket failed: %v", err)
-	}
-	if after.WorkflowStatus != contracts.TicketQueued {
-		t.Fatalf("expected queued workflow after legacy dispatch op, got=%s", after.WorkflowStatus)
+	if executor != nil {
+		t.Fatalf("expected legacy dispatch kind to have no executor after dispatch removal")
 	}
 }

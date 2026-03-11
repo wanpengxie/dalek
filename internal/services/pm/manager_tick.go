@@ -601,7 +601,7 @@ func (s *Service) freezeMergesForDoneTickets(ctx context.Context, db *gorm.DB, s
 				continue
 			}
 			if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-				freeze, err := s.resolveDoneIntegrationFreezeTx(ctx, tx, t.ID, 0)
+				freeze, err := s.resolveDoneIntegrationFreezeTx(ctx, tx, t.ID, 0, 0, "")
 				if err != nil {
 					return err
 				}
@@ -883,8 +883,8 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 		out.Errors = append(out.Errors, errs...)
 		if dispatched {
 			out.ActivatedTickets = append(out.ActivatedTickets, t.ID)
+			capacity--
 		}
-		capacity--
 	}
 	out.SurfaceConflicts = uniqueSurfaceConflicts(out.SurfaceConflicts)
 	return out
@@ -906,9 +906,12 @@ func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, worker
 	}
 
 	if submitter := s.getWorkerRunSubmitter(); submitter != nil {
-		derr := submitter.SubmitTicketWorkerRun(context.WithoutCancel(ctx), ticketID)
+		submission, derr := submitter.SubmitTicketWorkerRun(context.WithoutCancel(ctx), ticketID)
 		if derr != nil {
 			return false, s.handleActivationFailure(ctx, ticketID, workerID, derr, "submit worker run 失败")
+		}
+		if submission.TaskRunID == 0 {
+			return false, s.handleActivationFailure(ctx, ticketID, workerID, fmt.Errorf("submit worker run 未返回 task_run_id"), "submit worker run 失败")
 		}
 		return true, nil
 	}

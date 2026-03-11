@@ -22,6 +22,7 @@ type WorkerReport struct {
 	ProjectKey string `json:"project_key"`
 	WorkerID   uint   `json:"worker_id"`
 	TicketID   uint   `json:"ticket_id"`
+	TaskRunID  uint   `json:"task_run_id"`
 
 	HeadSHA string `json:"head_sha"`
 	Dirty   bool   `json:"dirty"`

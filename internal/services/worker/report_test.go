@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +35,7 @@ func TestApplyWorkerReport_DoesNotChangeTicketWorkflow(t *testing.T) {
 		Schema:     contracts.WorkerReportSchemaV1,
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  createBoundWorkerRunForReport(t, svc, w),
 		Summary:    "继续执行",
 		NextAction: string(contracts.NextContinue),
 	}
@@ -46,6 +49,30 @@ func TestApplyWorkerReport_DoesNotChangeTicketWorkflow(t *testing.T) {
 	}
 	if got.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("worker report 不应直接修改 workflow_status, got=%s", got.WorkflowStatus)
+	}
+}
+
+func TestApplyWorkerReport_RejectsMissingTaskRunBinding(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "missing-task-run-binding")
+	w := contracts.Worker{TicketID: tk.ID, Status: contracts.WorkerRunning}
+	if err := p.DB.Create(&w).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+
+	err := svc.ApplyWorkerReport(context.Background(), contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		Summary:    "继续执行",
+		NextAction: string(contracts.NextContinue),
+	}, "test")
+	if err == nil {
+		t.Fatalf("expected missing task_run_id to be rejected")
+	}
+	if !errors.Is(err, ErrInvalidWorkerReportTaskRun) {
+		t.Fatalf("expected ErrInvalidWorkerReportTaskRun, got=%v", err)
 	}
 }
 
@@ -73,6 +100,7 @@ func TestApplyWorkerReport_DoesNotRollbackDoneWorkflow(t *testing.T) {
 		Schema:     contracts.WorkerReportSchemaV1,
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  createBoundWorkerRunForReport(t, svc, w),
 		Summary:    "继续执行",
 		NextAction: string(contracts.NextContinue),
 	}
@@ -104,6 +132,8 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 		t.Fatalf("create worker failed: %v", err)
 	}
 
+	runID := createBoundWorkerRunForReport(t, svc, w)
+
 	// 人为破坏 runtime sample 表，模拟观测链路写入失败。
 	if err := p.DB.Exec("DROP TABLE task_runtime_samples").Error; err != nil {
 		t.Fatalf("drop task_runtime_samples failed: %v", err)
@@ -113,6 +143,7 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 		Schema:     contracts.WorkerReportSchemaV1,
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  runID,
 		Summary:    "继续执行中",
 		NextAction: string(contracts.NextContinue),
 	}
@@ -132,8 +163,8 @@ func TestApplyWorkerReport_RuntimeSyncFailureIsBestEffort(t *testing.T) {
 	if err := p.DB.Model(&contracts.TaskRun{}).Where("worker_id = ?", w.ID).Count(&taskRuns).Error; err != nil {
 		t.Fatalf("count task runs failed: %v", err)
 	}
-	if taskRuns != 0 {
-		t.Fatalf("runtime sync transaction should rollback partial task runs, got=%d", taskRuns)
+	if taskRuns != 1 {
+		t.Fatalf("runtime sync transaction should not create extra task runs, got=%d", taskRuns)
 	}
 }
 
@@ -160,6 +191,7 @@ func TestApplyWorkerReport_ResetsZombieRetryState(t *testing.T) {
 		Schema:     contracts.WorkerReportSchemaV1,
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  createBoundWorkerRunForReport(t, svc, w),
 		Summary:    "恢复正常继续执行",
 		NextAction: string(contracts.NextContinue),
 	}
@@ -196,10 +228,12 @@ func TestApplyWorkerReport_DoneIsIdempotentForTerminalRun(t *testing.T) {
 		t.Fatalf("create worker failed: %v", err)
 	}
 
+	runID := createBoundWorkerRunForReport(t, svc, w)
 	report := contracts.WorkerReport{
 		Schema:     contracts.WorkerReportSchemaV1,
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
+		TaskRunID:  runID,
 		Summary:    "任务已完成",
 		NextAction: string(contracts.NextDone),
 		HeadSHA:    "abc123",
@@ -217,8 +251,10 @@ func TestApplyWorkerReport_DoneIsIdempotentForTerminalRun(t *testing.T) {
 	}
 	firstPayload := strings.TrimSpace(firstRun.ResultPayloadJSON)
 
-	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
-		t.Fatalf("second ApplyWorkerReport failed: %v", err)
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err == nil {
+		t.Fatalf("expected duplicate done to surface duplicate terminal report error")
+	} else if !errors.Is(err, ErrDuplicateTerminalReport) {
+		t.Fatalf("expected duplicate terminal report error, got=%v", err)
 	}
 
 	var runCount int64
@@ -259,4 +295,13 @@ func TestApplyWorkerReport_DoneIsIdempotentForTerminalRun(t *testing.T) {
 	if duplicateCount != 1 {
 		t.Fatalf("expected one duplicate_terminal_report event, got=%d", duplicateCount)
 	}
+}
+
+func createBoundWorkerRunForReport(t *testing.T, svc *Service, w contracts.Worker) uint {
+	t.Helper()
+	run, err := svc.ensureActiveWorkerTaskRun(context.Background(), w, fmt.Sprintf("report test bootstrap w%d", w.ID), time.Now())
+	if err != nil {
+		t.Fatalf("ensure active worker task run failed: %v", err)
+	}
+	return run.ID
 }

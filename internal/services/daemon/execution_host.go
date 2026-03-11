@@ -168,7 +168,18 @@ func (h *ExecutionHost) SubmitWorkerRun(ctx context.Context, req WorkerRunSubmit
 	if err != nil {
 		return WorkerRunSubmitReceipt{}, err
 	}
-	return h.workerReceiptFromHandle(handle), nil
+	receipt := h.workerReceiptFromHandle(handle)
+	if receipt.TaskRunID == 0 {
+		select {
+		case <-handle.ready:
+		case <-time.After(workerRunReadyTimeout):
+		}
+		receipt = h.workerReceiptFromHandle(handle)
+	}
+	if receipt.TaskRunID == 0 {
+		return WorkerRunSubmitReceipt{}, fmt.Errorf("worker-run submit 未返回 task_run_id: project=%s ticket=%d request_id=%s", strings.TrimSpace(req.Project), req.TicketID, strings.TrimSpace(receipt.RequestID))
+	}
+	return receipt, nil
 }
 
 type ticketRunSubmitRequest struct {

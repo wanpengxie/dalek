@@ -176,6 +176,7 @@ func cmdWorkerReport(args []string) {
 		)
 	}
 	workerID := fs.Uint("worker", 0, "worker id（默认读 DALEK_WORKER_ID）")
+	taskRunID := fs.Uint("run", 0, "task run id（默认读 DALEK_TASK_RUN_ID）")
 	summary := fs.String("summary", "", "一句话摘要（可空）")
 	needsUser := fs.String("needs-user", "", "是否需要人类输入（true/false；可空）")
 	blockersJSON := fs.String("blockers-json", "", "blockers 的 JSON 数组（可空）")
@@ -196,6 +197,9 @@ func cmdWorkerReport(args []string) {
 
 	if *workerID == 0 {
 		*workerID = uint(envUint("DALEK_WORKER_ID"))
+	}
+	if *taskRunID == 0 {
+		*taskRunID = uint(envUint("DALEK_TASK_RUN_ID"))
 	}
 	if *workerID == 0 {
 		exitUsageError(out,
@@ -224,6 +228,7 @@ func cmdWorkerReport(args []string) {
 		ProjectKey: strings.TrimSpace(p.Key()),
 		WorkerID:   uint(*workerID),
 		TicketID:   w.TicketID,
+		TaskRunID:  uint(*taskRunID),
 		HeadSHA:    strings.TrimSpace(*headSHA),
 		Summary:    strings.TrimSpace(*summary),
 		NextAction: strings.TrimSpace(*next),
@@ -299,6 +304,7 @@ func cmdWorkerReport(args []string) {
 			"schema":      "dalek.worker.report.v1",
 			"worker_id":   r.WorkerID,
 			"ticket_id":   r.TicketID,
+			"task_run_id": r.TaskRunID,
 			"reported_at": r.ReportedAt,
 			"summary":     r.Summary,
 			"needs_user":  r.NeedsUser,

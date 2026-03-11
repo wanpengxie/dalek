@@ -17,7 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const defaultPlannerRunPrompt = "你是 dalek 的 PM planner agent。请基于当前项目状态做调度决策，并通过 dalek CLI 执行必要动作（如创建 ticket、dispatch worker、处理 merge/inbox）。"
+const defaultPlannerRunPrompt = "你是 dalek 的 PM planner agent。请基于当前项目状态做调度决策，并通过 dalek CLI 执行必要动作（如创建 ticket、start ticket、处理 merge/inbox）。"
 
 type PlannerRunOptions struct {
 	RunnerID string

@@ -604,19 +604,26 @@ type daemonManagerWorkerRunSubmitter struct {
 	host        managerExecutionHost
 }
 
-func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Context, ticketID uint) error {
+func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Context, ticketID uint) (pmsvc.WorkerRunSubmission, error) {
 	if s.host == nil {
-		return fmt.Errorf("worker run host 未初始化")
+		return pmsvc.WorkerRunSubmission{}, fmt.Errorf("worker run host 未初始化")
 	}
 	projectName := strings.TrimSpace(s.projectName)
 	if projectName == "" {
-		return fmt.Errorf("project 不能为空")
+		return pmsvc.WorkerRunSubmission{}, fmt.Errorf("project 不能为空")
 	}
 	requestID := fmt.Sprintf("mgr_t%d_%s", ticketID, strings.TrimSpace(daemonsvc.NewRequestID("mgr")))
-	_, err := s.host.SubmitWorkerRun(ctx, daemonsvc.WorkerRunSubmitRequest{
+	receipt, err := s.host.SubmitWorkerRun(ctx, daemonsvc.WorkerRunSubmitRequest{
 		Project:   projectName,
 		TicketID:  ticketID,
 		RequestID: requestID,
 	})
-	return err
+	if err != nil {
+		return pmsvc.WorkerRunSubmission{}, err
+	}
+	return pmsvc.WorkerRunSubmission{
+		TaskRunID: receipt.TaskRunID,
+		WorkerID:  receipt.WorkerID,
+		RequestID: strings.TrimSpace(receipt.RequestID),
+	}, nil
 }

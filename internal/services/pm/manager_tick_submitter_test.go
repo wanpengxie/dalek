@@ -15,13 +15,21 @@ type stubWorkerRunSubmitter struct {
 	mu    sync.Mutex
 	calls []uint
 	err   error
+	runID uint
 }
 
-func (s *stubWorkerRunSubmitter) SubmitTicketWorkerRun(_ context.Context, ticketID uint) error {
+func (s *stubWorkerRunSubmitter) SubmitTicketWorkerRun(_ context.Context, ticketID uint) (WorkerRunSubmission, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, ticketID)
-	return s.err
+	if s.err != nil {
+		return WorkerRunSubmission{}, s.err
+	}
+	runID := s.runID
+	if runID == 0 {
+		runID = 1
+	}
+	return WorkerRunSubmission{TaskRunID: runID}, nil
 }
 
 func (s *stubWorkerRunSubmitter) CallIDs() []uint {

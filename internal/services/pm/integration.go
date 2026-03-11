@@ -79,7 +79,7 @@ func (s *Service) AbandonTicketIntegration(ctx context.Context, ticketID uint, r
 	})
 }
 
-func (s *Service) resolveDoneIntegrationFreezeTx(ctx context.Context, tx *gorm.DB, ticketID, workerID uint) (doneIntegrationFreeze, error) {
+func (s *Service) resolveDoneIntegrationFreezeTx(ctx context.Context, tx *gorm.DB, ticketID, workerID, taskRunID uint, reportHeadSHA string) (doneIntegrationFreeze, error) {
 	if tx == nil || ticketID == 0 {
 		return doneIntegrationFreeze{}, nil
 	}
@@ -121,7 +121,7 @@ func (s *Service) resolveDoneIntegrationFreezeTx(ctx context.Context, tx *gorm.D
 		targetRef = s.defaultIntegrationTargetBranch(ctx)
 	}
 	return doneIntegrationFreeze{
-		AnchorSHA: strings.TrimSpace(s.tryResolveMergeAnchorSHA(ctx, &w)),
+		AnchorSHA: strings.TrimSpace(s.tryResolveMergeAnchorSHA(ctx, &w, taskRunID, reportHeadSHA)),
 		TargetRef: targetRef,
 	}, nil
 }
@@ -205,27 +205,27 @@ func (s *Service) currentHeadTargetRef(ctx context.Context) string {
 	return normalizeIntegrationTargetRef(branch)
 }
 
-func (s *Service) tryResolveMergeAnchorSHA(ctx context.Context, w *contracts.Worker) string {
-	p, _, err := s.require()
-	if err != nil {
-		return ""
-	}
+func (s *Service) tryResolveMergeAnchorSHA(ctx context.Context, w *contracts.Worker, _ uint, reportHeadSHA string) string {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, integrationGitCheckTimeout)
 	defer cancel()
 
+	reportHeadSHA = strings.TrimSpace(reportHeadSHA)
+	if looksLikeGitCommit(reportHeadSHA) {
+		return reportHeadSHA
+	}
 	if w != nil {
 		wt := strings.TrimSpace(w.WorktreePath)
 		if wt != "" {
 			if code, out, _, err := infra.RunExitCode(checkCtx, wt, "git", "rev-parse", "HEAD"); err == nil && code == 0 {
-				return strings.TrimSpace(out)
+				head := strings.TrimSpace(out)
+				if looksLikeGitCommit(head) {
+					return head
+				}
 			}
 		}
-	}
-	if code, out, _, err := infra.RunExitCode(checkCtx, p.RepoRoot, "git", "rev-parse", "HEAD"); err == nil && code == 0 {
-		return strings.TrimSpace(out)
 	}
 	return ""
 }
