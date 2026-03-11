@@ -208,7 +208,7 @@ type StartOptions struct {
 | 函数 | 签名 | 逻辑 |
 |---|---|---|
 | `CanStartTicket` | `(status TicketWorkflowStatus) bool` | `status != done && !IsTerminal(status)`，即允许 backlog/queued/active/blocked |
-| `CanDispatchTicket` | `(status) bool` | 直接委托 `CanStartTicket` |
+| `CanQueueRunTicket` | `(status) bool` | 直接委托 `CanStartTicket` |
 | `ShouldPromoteOnDispatchClaim` | `(status) bool` | done/archived/active 返回 false，其余检查 FSM 可达性 |
 | `ShouldDemoteOnDispatchFailed` | `(status) bool` | done/archived/blocked 返回 false，其余检查 FSM 可达性 |
 | `CanManualSetWorkflowStatus` | `(current) bool` | `!IsTerminal(current)`，仅阻止 archived |

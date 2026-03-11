@@ -30,7 +30,7 @@ func TestCanStartTicket(t *testing.T) {
 	}
 }
 
-func TestCanDispatchTicket(t *testing.T) {
+func TestCanQueueRunTicket(t *testing.T) {
 	tests := []struct {
 		name   string
 		status contracts.TicketWorkflowStatus
@@ -44,8 +44,8 @@ func TestCanDispatchTicket(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := CanDispatchTicket(tc.status); got != tc.want {
-				t.Fatalf("CanDispatchTicket(%q)=%v, want=%v", tc.status, got, tc.want)
+			if got := CanQueueRunTicket(tc.status); got != tc.want {
+				t.Fatalf("CanQueueRunTicket(%q)=%v, want=%v", tc.status, got, tc.want)
 			}
 		})
 	}

@@ -255,7 +255,7 @@ func TestFreezeMergesForDoneTickets_NeedsMergeKeepsPlannerDirty(t *testing.T) {
 	}
 }
 
-func TestScheduleQueuedTickets_StartsAndDispatchesWithSubmitter(t *testing.T) {
+func TestScheduleQueuedTickets_StartsAndActivatesWithSubmitter(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "manager-tick-schedule-queued")
@@ -266,7 +266,7 @@ func TestScheduleQueuedTickets_StartsAndDispatchesWithSubmitter(t *testing.T) {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 
-	submitter := &stubDispatchSubmitter{}
+	submitter := &stubWorkerRunSubmitter{}
 	svc.SetWorkerRunSubmitter(submitter)
 
 	runningTicketIDs := map[uint]bool{}
@@ -278,7 +278,7 @@ func TestScheduleQueuedTickets_StartsAndDispatchesWithSubmitter(t *testing.T) {
 		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, out.StartedTickets)
 	}
 	if !containsTicketID(out.DispatchedTickets, tk.ID) {
-		t.Fatalf("expected dispatched ticket contains t%d, got=%v", tk.ID, out.DispatchedTickets)
+		t.Fatalf("expected activated ticket recorded in DispatchedTickets for t%d, got=%v", tk.ID, out.DispatchedTickets)
 	}
 	if len(out.Errors) != 0 {
 		t.Fatalf("expected no schedule errors, got=%v", out.Errors)
@@ -514,12 +514,12 @@ func TestManagerTick_SchedulesPlannerRunOnceAfterDirtyEvent(t *testing.T) {
 	}
 }
 
-type cancelingDispatchSubmitter struct {
+type cancelingWorkerRunSubmitter struct {
 	cancel context.CancelFunc
 	called bool
 }
 
-func (s *cancelingDispatchSubmitter) SubmitTicketWorkerRun(_ context.Context, _ uint) error {
+func (s *cancelingWorkerRunSubmitter) SubmitTicketWorkerRun(_ context.Context, _ uint) error {
 	if s == nil {
 		return nil
 	}
@@ -559,7 +559,7 @@ func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled
 
 	tickCtx, cancelTick := context.WithCancel(context.Background())
 	defer cancelTick()
-	submitter := &cancelingDispatchSubmitter{cancel: cancelTick}
+	submitter := &cancelingWorkerRunSubmitter{cancel: cancelTick}
 	svc.SetWorkerRunSubmitter(submitter)
 
 	res, err := svc.ManagerTick(tickCtx, ManagerTickOptions{})
@@ -567,7 +567,7 @@ func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled
 		t.Fatalf("ManagerTick failed: %v", err)
 	}
 	if !submitter.called {
-		t.Fatalf("expected dispatch submitter called and parent context canceled")
+		t.Fatalf("expected worker run submitter called and parent context canceled")
 	}
 	if !containsTicketID(res.MergeFrozen, doneTicket.ID) {
 		t.Fatalf("expected merge freeze for done ticket t%d, got=%v", doneTicket.ID, res.MergeFrozen)

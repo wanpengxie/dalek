@@ -200,11 +200,15 @@
 
 能力字段：
 - `can_start`
+- `can_queue_run`
 - `can_dispatch`
 - `can_attach`
 - `can_stop`
 - `can_archive`
 - `reason`
+
+说明：
+- `can_queue_run` 是主语义；`can_dispatch` 仅保留为兼容 alias。
 
 门禁规则：
 1. 动作可用性由 capability 决定。

@@ -12,8 +12,8 @@ func CanStartTicket(status contracts.TicketWorkflowStatus) bool {
 	return st != contracts.TicketDone && !TicketWorkflowTable.IsTerminal(st)
 }
 
-// CanDispatchTicket 判断 ticket 是否允许进入 dispatch（含 direct dispatch）。
-func CanDispatchTicket(status contracts.TicketWorkflowStatus) bool {
+// CanQueueRunTicket 判断 ticket 是否允许进入 queue-run / activation 入口。
+func CanQueueRunTicket(status contracts.TicketWorkflowStatus) bool {
 	return CanStartTicket(status)
 }
 

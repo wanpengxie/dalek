@@ -9,20 +9,20 @@ import (
 	"time"
 )
 
-type stubDispatchSubmitter struct {
+type stubWorkerRunSubmitter struct {
 	mu    sync.Mutex
 	calls []uint
 	err   error
 }
 
-func (s *stubDispatchSubmitter) SubmitTicketWorkerRun(_ context.Context, ticketID uint) error {
+func (s *stubWorkerRunSubmitter) SubmitTicketWorkerRun(_ context.Context, ticketID uint) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, ticketID)
 	return s.err
 }
 
-func (s *stubDispatchSubmitter) CallIDs() []uint {
+func (s *stubWorkerRunSubmitter) CallIDs() []uint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]uint, len(s.calls))
@@ -30,7 +30,7 @@ func (s *stubDispatchSubmitter) CallIDs() []uint {
 	return out
 }
 
-func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
+func TestManagerTick_UsesWorkerRunSubmitterWhenConfigured(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	svc.SetAutopilotEnabled(context.Background(), true)
 	tk := createTicket(t, p.DB, "manager-tick-submitter")
@@ -41,7 +41,7 @@ func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 
-	submitter := &stubDispatchSubmitter{}
+	submitter := &stubWorkerRunSubmitter{}
 	svc.SetWorkerRunSubmitter(submitter)
 
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{})
@@ -52,7 +52,7 @@ func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
 		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, res.StartedTickets)
 	}
 	if !containsTicketID(res.DispatchedTickets, tk.ID) {
-		t.Fatalf("expected dispatched ticket contains t%d, got=%v", tk.ID, res.DispatchedTickets)
+		t.Fatalf("expected activated ticket recorded in DispatchedTickets for t%d, got=%v", tk.ID, res.DispatchedTickets)
 	}
 
 	callIDs := submitter.CallIDs()
@@ -76,7 +76,7 @@ func TestManagerTick_UsesDispatchSubmitterWhenConfigured(t *testing.T) {
 	}
 }
 
-func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
+func TestManagerTick_RejectsActivationWithoutSubmitter(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	svc.SetAutopilotEnabled(context.Background(), true)
 	tk := createTicket(t, p.DB, "manager-tick-fallback")
@@ -95,7 +95,7 @@ func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, res.StartedTickets)
 	}
 	if containsTicketID(res.DispatchedTickets, tk.ID) {
-		t.Fatalf("dispatch should be rejected without submitter, dispatched=%v", res.DispatchedTickets)
+		t.Fatalf("activation should be rejected without submitter, got=%v", res.DispatchedTickets)
 	}
 	joined := strings.Join(res.Errors, "\n")
 	if !strings.Contains(joined, "worker run submitter 未配置") {
@@ -122,7 +122,7 @@ func TestManagerTick_RejectsDispatchWithoutSubmitter(t *testing.T) {
 	}
 }
 
-func TestManagerTick_DryRunSkipsDispatchSubmitter(t *testing.T) {
+func TestManagerTick_DryRunSkipsWorkerRunSubmitter(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "manager-tick-dry-run")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
@@ -132,7 +132,7 @@ func TestManagerTick_DryRunSkipsDispatchSubmitter(t *testing.T) {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 
-	submitter := &stubDispatchSubmitter{}
+	submitter := &stubWorkerRunSubmitter{}
 	svc.SetWorkerRunSubmitter(submitter)
 
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{DryRun: true})
@@ -140,14 +140,14 @@ func TestManagerTick_DryRunSkipsDispatchSubmitter(t *testing.T) {
 		t.Fatalf("ManagerTick failed: %v", err)
 	}
 	if len(submitter.CallIDs()) != 0 {
-		t.Fatalf("dry-run should not call dispatch submitter")
+		t.Fatalf("dry-run should not call worker run submitter")
 	}
 	if len(res.StartedTickets) != 0 || len(res.DispatchedTickets) != 0 {
-		t.Fatalf("dry-run should not start/dispatch tickets, started=%v dispatched=%v", res.StartedTickets, res.DispatchedTickets)
+		t.Fatalf("dry-run should not start/activate tickets, started=%v activated=%v", res.StartedTickets, res.DispatchedTickets)
 	}
 }
 
-func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
+func TestManagerTick_SyncActivationBypassesSubmitter(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	svc.SetAutopilotEnabled(context.Background(), true)
 	tk := createTicket(t, p.DB, "manager-tick-sync-dispatch")
@@ -158,7 +158,7 @@ func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 
-	submitter := &stubDispatchSubmitter{}
+	submitter := &stubWorkerRunSubmitter{}
 	svc.SetWorkerRunSubmitter(submitter)
 
 	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{SyncDispatch: true})
@@ -169,10 +169,10 @@ func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, res.StartedTickets)
 	}
 	if !containsTicketID(res.DispatchedTickets, tk.ID) {
-		t.Fatalf("expected dispatched ticket contains t%d, got=%v", tk.ID, res.DispatchedTickets)
+		t.Fatalf("expected activated ticket recorded in DispatchedTickets for t%d, got=%v", tk.ID, res.DispatchedTickets)
 	}
 	if len(submitter.CallIDs()) != 0 {
-		t.Fatalf("sync dispatch should bypass dispatch submitter, got=%v", submitter.CallIDs())
+		t.Fatalf("sync activation should bypass worker run submitter, got=%v", submitter.CallIDs())
 	}
 
 	var cnt int64
@@ -184,7 +184,7 @@ func TestManagerTick_SyncDispatchBypassesSubmitter(t *testing.T) {
 	}
 }
 
-func TestManagerTick_SyncDispatchHonorsDispatchTimeout(t *testing.T) {
+func TestManagerTick_SyncActivationHonorsDispatchTimeout(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	svc.SetAutopilotEnabled(context.Background(), true)
 	tk := createTicket(t, p.DB, "manager-tick-sync-timeout")
@@ -203,18 +203,18 @@ func TestManagerTick_SyncDispatchHonorsDispatchTimeout(t *testing.T) {
 		t.Fatalf("ManagerTick failed: %v", err)
 	}
 	if containsTicketID(res.DispatchedTickets, tk.ID) {
-		t.Fatalf("dispatch should timeout when dispatch-timeout is tiny, dispatched=%v", res.DispatchedTickets)
+		t.Fatalf("activation should timeout when dispatch-timeout is tiny, got=%v", res.DispatchedTickets)
 	}
 	if len(res.Errors) == 0 {
-		t.Fatalf("expected sync dispatch timeout errors")
+		t.Fatalf("expected sync activation timeout errors")
 	}
 	joined := strings.Join(res.Errors, "\n")
 	if !strings.Contains(joined, "sync activation 失败") {
-		t.Fatalf("expected sync dispatch failure message, got=%v", res.Errors)
+		t.Fatalf("expected sync activation failure message, got=%v", res.Errors)
 	}
 }
 
-func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *testing.T) {
+func TestManagerTick_DemotesBlockedWhenActivationReportsWorkerReadyTimeout(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	svc.SetAutopilotEnabled(context.Background(), true)
 	tk := createTicket(t, p.DB, "manager-tick-worker-ready-timeout")
@@ -225,7 +225,7 @@ func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *test
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 
-	submitter := &stubDispatchSubmitter{
+	submitter := &stubWorkerRunSubmitter{
 		err: &workerReadyTimeoutError{
 			TicketID:   tk.ID,
 			LastStatus: contracts.WorkerCreating,
@@ -239,11 +239,11 @@ func TestManagerTick_DemotesBlockedWhenDispatchReportsWorkerReadyTimeout(t *test
 		t.Fatalf("ManagerTick failed: %v", err)
 	}
 	if containsTicketID(res.DispatchedTickets, tk.ID) {
-		t.Fatalf("worker ready timeout should not mark dispatched, dispatched=%v", res.DispatchedTickets)
+		t.Fatalf("worker ready timeout should not mark activated, got=%v", res.DispatchedTickets)
 	}
 	joined := strings.Join(res.Errors, "\n")
 	if !strings.Contains(joined, "submit worker run 失败") {
-		t.Fatalf("expected submit dispatch failure in errors, got=%v", res.Errors)
+		t.Fatalf("expected submit worker run failure in errors, got=%v", res.Errors)
 	}
 
 	var ticket contracts.Ticket

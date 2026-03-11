@@ -49,7 +49,7 @@ func (s *Service) DirectDispatchWorker(ctx context.Context, ticketID uint, opt D
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return DirectDispatchResult{}, err
 	}
-	if !fsm.CanDispatchTicket(t.WorkflowStatus) {
+	if !fsm.CanQueueRunTicket(t.WorkflowStatus) {
 		switch contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) {
 		case contracts.TicketArchived:
 			return DirectDispatchResult{}, fmt.Errorf("ticket 已归档：t%d", ticketID)

@@ -185,7 +185,7 @@ func (s *Service) inspectDispatchTarget(ctx context.Context, ticketID uint) (con
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return contracts.Ticket{}, nil, err
 	}
-	if !fsm.CanDispatchTicket(t.WorkflowStatus) {
+	if !fsm.CanQueueRunTicket(t.WorkflowStatus) {
 		switch contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) {
 		case contracts.TicketArchived:
 			return contracts.Ticket{}, nil, fmt.Errorf("ticket 已归档，不能派发（dispatch）：t%d", ticketID)

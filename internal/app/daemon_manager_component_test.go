@@ -188,7 +188,7 @@ func TestDaemonManagerComponent_RunTickProject_UsesWorkerRunHostSubmitter(t *tes
 		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
 	}
 
-	tk, err := p.CreateTicketWithDescription(ctx, "manager submitter wiring", "dispatch should go through execution host submitter")
+	tk, err := p.CreateTicketWithDescription(ctx, "manager submitter wiring", "worker run activation should go through execution host submitter")
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
