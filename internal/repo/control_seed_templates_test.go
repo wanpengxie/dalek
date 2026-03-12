@@ -17,11 +17,8 @@ func TestControlSeed_ProjectEntrypointInjectTemplateAvailableForTests(t *testing
 
 func TestControlSeed_SkillTemplatesAvailableForTests(t *testing.T) {
 	paths := []string{
-		"templates/project/control/skills/start-ticket-runtime/SKILL.md",
-		"templates/project/control/skills/start-ticket-runtime/references/output-contract.md",
-		"templates/project/control/skills/start-ticket-runtime/assets/plan.md.template",
-		"templates/project/control/skills/start-ticket-runtime/assets/state.json.template",
-		"templates/project/control/skills/start-ticket-runtime/assets/worker-agents.md.template",
+		"templates/project/control/worker/worker-kernel.md",
+		"templates/project/control/worker/state.json",
 		"templates/project/control/skills/feature-run/SKILL.md",
 		"templates/project/control/skills/notebook-shaping/SKILL.md",
 		"templates/project/control/skills/plan-cycle/SKILL.md",

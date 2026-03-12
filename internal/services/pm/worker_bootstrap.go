@@ -13,53 +13,20 @@ import (
 )
 
 const (
-	workerBootstrapKernelTemplate = "templates/project/control/skills/start-ticket-runtime/assets/worker-agents.md.template"
-	workerBootstrapPlanTemplate   = "templates/project/control/skills/start-ticket-runtime/assets/plan.md.template"
-
 	workerKernelTitlePlaceholder       = "{{TICKET_TITLE：业务任务标题。用于定义本轮交付主题，回答“这轮要完成什么业务目标”。}}"
 	workerKernelDescPlaceholder        = "{{TICKET_DESCRIPTION：业务需求正文。用于说明背景、目标、约束与期望结果，回答“为什么做、做到什么算有效”。}}"
 	workerKernelAttachmentsPlaceholder = "{{OTHER_DOCUMENTS：需求相关的附属资料与上下文集合。可包含对话记录、GitHub issue、用户与 agent 的详细讨论文档，以及文档路径/接口说明/截图线索等。它是参考输入，不是执行步骤。}}"
-	workerKernelPlanRefPlaceholder     = "{{PLAN_REF：执行规划主文档入口，默认 @.dalek/PLAN.md。必须持续对齐 PLAN 中的需求拆解、方案与验证口径。}}"
 
-	workerPlanTitlePlaceholder       = "{{TICKET_TITLE}}"
-	workerPlanDescriptionPlaceholder = "{{TICKET_DESCRIPTION}}"
-	workerPlanPromptPlaceholder      = "{{ENTRY_PROMPT}}"
+	workerStateTicketIDPlaceholder          = "{{DALEK_TICKET_ID}}"
+	workerStateWorkerIDPlaceholder          = "{{DALEK_WORKER_ID}}"
+	workerStateSummaryPlaceholder           = "{{SUMMARY}}"
+	workerStateHeadSHAPlaceholder           = "{{HEAD_SHA}}"
+	workerStateWorkingTreeStatusPlaceholder = "{{WORKING_TREE_STATUS}}"
+	workerStateLastCommitSubjectPlaceholder = "{{LAST_COMMIT_SUBJECT}}"
+	workerStateNowPlaceholder               = "{{NOW_RFC3339}}"
 )
 
 type bootstrapGitFacts = repo.WorktreeGitBaseline
-
-type bootstrapStateFile struct {
-	Ticket struct {
-		ID       string `json:"id"`
-		WorkerID string `json:"worker_id"`
-	} `json:"ticket"`
-	Phases    bootstrapStatePhases `json:"phases"`
-	Blockers  []string             `json:"blockers"`
-	Code      bootstrapCodeState   `json:"code"`
-	UpdatedAt string               `json:"updated_at"`
-}
-
-type bootstrapStatePhases struct {
-	CurrentID     string               `json:"current_id"`
-	CurrentStatus string               `json:"current_status"`
-	NextAction    string               `json:"next_action"`
-	Summary       string               `json:"summary"`
-	Items         []bootstrapPhaseItem `json:"items"`
-}
-
-type bootstrapPhaseItem struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Goal   string `json:"goal"`
-	Status string `json:"status"`
-	Order  int    `json:"order"`
-}
-
-type bootstrapCodeState struct {
-	HeadSHA           string `json:"head_sha"`
-	WorkingTree       string `json:"working_tree"`
-	LastCommitSubject string `json:"last_commit_subject"`
-}
 
 func (s *Service) ensureWorkerBootstrap(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (repo.ContractPaths, error) {
 	p, db, err := s.require()
@@ -92,23 +59,16 @@ func (s *Service) ensureWorkerBootstrap(ctx context.Context, t contracts.Ticket,
 	now := time.Now()
 	gitFacts := repo.InspectWorktreeGitBaseline(ctx, strings.TrimSpace(w.WorktreePath), p.Git)
 
-	kernelContent, err := renderWorkerKernelBootstrap(latest, w, gitFacts, now)
+	kernelContent, err := renderWorkerKernelBootstrap(p.Layout, latest, w, gitFacts, now)
 	if err != nil {
 		return repo.ContractPaths{}, err
 	}
-	planContent, err := renderWorkerPlanBootstrap(latest, w, entryPrompt)
-	if err != nil {
-		return repo.ContractPaths{}, err
-	}
-	stateContent, err := renderWorkerStateBootstrap(latest, w, gitFacts, now)
+	stateContent, err := renderWorkerStateBootstrap(p.Layout, latest, w, gitFacts, now)
 	if err != nil {
 		return repo.ContractPaths{}, err
 	}
 
 	if err := ensureBootstrapFile(paths.AgentKernelMD, kernelContent, 0o644, false); err != nil {
-		return repo.ContractPaths{}, err
-	}
-	if err := ensureBootstrapFile(paths.PlanMD, planContent, 0o644, false); err != nil {
 		return repo.ContractPaths{}, err
 	}
 	if err := ensureBootstrapFile(paths.StateJSON, stateContent, 0o644, true); err != nil {
@@ -117,8 +77,8 @@ func (s *Service) ensureWorkerBootstrap(ctx context.Context, t contracts.Ticket,
 	return paths, nil
 }
 
-func renderWorkerKernelBootstrap(t contracts.Ticket, w contracts.Worker, facts bootstrapGitFacts, now time.Time) (string, error) {
-	raw, err := repo.ReadSeedTemplate(workerBootstrapKernelTemplate)
+func renderWorkerKernelBootstrap(layout repo.Layout, t contracts.Ticket, w contracts.Worker, facts bootstrapGitFacts, now time.Time) (string, error) {
+	raw, err := repo.ReadControlWorkerKernelTemplate(layout)
 	if err != nil {
 		return "", err
 	}
@@ -126,7 +86,6 @@ func renderWorkerKernelBootstrap(t contracts.Ticket, w contracts.Worker, facts b
 		workerKernelTitlePlaceholder, bootstrapTicketTitle(t),
 		workerKernelDescPlaceholder, bootstrapTicketDescription(t),
 		workerKernelAttachmentsPlaceholder, bootstrapAttachments(t, w),
-		workerKernelPlanRefPlaceholder, "@.dalek/PLAN.md",
 	).Replace(raw)
 
 	rendered, err = replaceTaggedSection(rendered, "current_state", bootstrapCurrentState(t, w, facts, now))
@@ -136,77 +95,27 @@ func renderWorkerKernelBootstrap(t contracts.Ticket, w contracts.Worker, facts b
 	return rendered, nil
 }
 
-func renderWorkerPlanBootstrap(t contracts.Ticket, w contracts.Worker, entryPrompt string) (string, error) {
-	raw, err := repo.ReadSeedTemplate(workerBootstrapPlanTemplate)
+func renderWorkerStateBootstrap(layout repo.Layout, t contracts.Ticket, w contracts.Worker, facts bootstrapGitFacts, now time.Time) (string, error) {
+	raw, err := repo.ReadControlWorkerStateTemplate(layout)
 	if err != nil {
 		return "", err
 	}
-	description := bootstrapPlanDescription(t, w)
-	prompt := strings.TrimSpace(entryPrompt)
-	if prompt == "" {
-		prompt = defaultContinuePrompt
+	rendered := strings.NewReplacer(
+		workerStateTicketIDPlaceholder, fmt.Sprintf("%d", t.ID),
+		workerStateWorkerIDPlaceholder, fmt.Sprintf("%d", w.ID),
+		workerStateSummaryPlaceholder, "bootstrap 已生成，等待 worker 读取上下文、代码和文档后推进实现",
+		workerStateHeadSHAPlaceholder, bootstrapFactOrUnknown(facts.HeadSHA),
+		workerStateWorkingTreeStatusPlaceholder, bootstrapWorkingTreeStatus(facts.WorkingTreeStatus),
+		workerStateLastCommitSubjectPlaceholder, bootstrapFactOrUnknown(facts.LastCommitSubject),
+		workerStateNowPlaceholder, now.Format(time.RFC3339),
+	).Replace(raw)
+	if !json.Valid([]byte(rendered)) {
+		return "", fmt.Errorf("渲染 state.json 失败: 结果不是合法 JSON")
 	}
-	return strings.NewReplacer(
-		workerPlanTitlePlaceholder, bootstrapTicketTitle(t),
-		workerPlanDescriptionPlaceholder, description,
-		workerPlanPromptPlaceholder, prompt,
-	).Replace(raw), nil
-}
-
-func renderWorkerStateBootstrap(t contracts.Ticket, w contracts.Worker, facts bootstrapGitFacts, now time.Time) (string, error) {
-	state := bootstrapStateFile{
-		Phases: bootstrapStatePhases{
-			CurrentID:     "phase-understanding",
-			CurrentStatus: "running",
-			NextAction:    string(contracts.NextContinue),
-			Summary:       "bootstrap 已生成，等待 worker 读取上下文、代码和文档后推进实现",
-			Items: []bootstrapPhaseItem{
-				{
-					ID:     "phase-understanding",
-					Name:   "需求理解与代码探索",
-					Goal:   "读取 bootstrap 上下文、ticket 事实与源码，确认约束与方案",
-					Status: "in_progress",
-					Order:  1,
-				},
-				{
-					ID:     "phase-implementation",
-					Name:   "实现改动",
-					Goal:   "按探索结论实现需求并保持改动可审计",
-					Status: "pending",
-					Order:  2,
-				},
-				{
-					ID:     "phase-validation",
-					Name:   "验证结果",
-					Goal:   "执行必要测试并确认验收口径",
-					Status: "pending",
-					Order:  3,
-				},
-				{
-					ID:     "phase-handoff",
-					Name:   "收口与汇报",
-					Goal:   "同步状态、总结风险并执行 worker report",
-					Status: "pending",
-					Order:  4,
-				},
-			},
-		},
-		Blockers: []string{},
-		Code: bootstrapCodeState{
-			HeadSHA:           bootstrapFactOrUnknown(facts.HeadSHA),
-			WorkingTree:       bootstrapWorkingTreeStatus(facts.WorkingTreeStatus),
-			LastCommitSubject: bootstrapFactOrUnknown(facts.LastCommitSubject),
-		},
-		UpdatedAt: now.Format(time.RFC3339),
+	if !strings.HasSuffix(rendered, "\n") {
+		rendered += "\n"
 	}
-	state.Ticket.ID = fmt.Sprintf("%d", t.ID)
-	state.Ticket.WorkerID = fmt.Sprintf("%d", w.ID)
-
-	b, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("渲染 state.json 失败: %w", err)
-	}
-	return string(append(b, '\n')), nil
+	return rendered, nil
 }
 
 func buildWorkerEntrypointPrompt(entryPrompt string) string {
@@ -215,7 +124,7 @@ func buildWorkerEntrypointPrompt(entryPrompt string) string {
 		supplemental = defaultContinuePrompt
 	}
 	const prompt = "你正在当前 ticket 的 worker worktree 中继续交付。\n" +
-		"先读取并遵循 `.dalek/agent-kernel.md`，再按其中 context_loading 顺序读取 `.dalek/state.json` 和 `.dalek/PLAN.md`。\n" +
+		"先读取并遵循 `.dalek/agent-kernel.md`，再按其中 context_loading 顺序读取 `.dalek/state.json`。\n" +
 		"以本地代码、git 检查点和 worktree 事实为真相源推进实现，并在本轮结束前执行 dalek worker report --next <continue|done|wait_user> --summary \"...\"。\n\n" +
 		"本轮补充指令：%s"
 	return strings.TrimSpace(fmt.Sprintf(prompt, supplemental))
@@ -238,7 +147,7 @@ func bootstrapCurrentState(t contracts.Ticket, w contracts.Worker, facts bootstr
 4. 代码状态：HEAD=%s / working tree=%s / last_commit=%s
    ticket=t%d worker=w%d target_ref=%s worktree=%s
 
-5. 下一步：按 context_loading 顺序读取 state.json、PLAN.md 和 git 基线，然后开始探索需求与实现路径。
+5. 下一步：按 context_loading 顺序读取 state.json 和 git 基线，然后开始探索需求与实现路径。
 
 6. 更新时间：%s`,
 		bootstrapFactOrUnknown(facts.HeadSHA),
@@ -261,33 +170,10 @@ func bootstrapAttachments(t contracts.Ticket, w contracts.Worker) string {
 - worker_branch: %s
 
 本地文档入口：
-- @.dalek/PLAN.md
 - README.md（如果存在）
 - docs/ 与仓库内相关设计文档（如果存在）
 
 说明：worker 需要先基于这些本地事实自行探索代码库，再补充计划与实现细节。`,
-		t.ID,
-		w.ID,
-		bootstrapTargetRef(t),
-		bootstrapFactOrUnknown(strings.TrimSpace(w.WorktreePath)),
-		bootstrapFactOrUnknown(strings.TrimSpace(w.Branch)),
-	))
-}
-
-func bootstrapPlanDescription(t contracts.Ticket, w contracts.Worker) string {
-	base := strings.TrimSpace(t.Description)
-	if base == "" {
-		base = "(ticket 未提供额外描述，请先从代码、git 历史和本地文档补齐上下文)"
-	}
-	return strings.TrimSpace(fmt.Sprintf(`%s
-
-已知启动事实：
-- ticket_id: t%d
-- worker_id: w%d
-- target_ref: %s
-- worktree: %s
-- worker_branch: %s`,
-		base,
 		t.ID,
 		w.ID,
 		bootstrapTargetRef(t),

@@ -409,7 +409,7 @@ func verifyControlPlaneIntegrity(layout repo.Layout) error {
 	}
 	requiredDirs := []string{
 		layout.ControlSkillsDir,
-		filepath.Join(layout.ControlSkillsDir, "start-ticket-runtime"),
+		layout.ControlWorkerDir,
 	}
 	for _, dir := range requiredDirs {
 		info, err := os.Stat(dir)

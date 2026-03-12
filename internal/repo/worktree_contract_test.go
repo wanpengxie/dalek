@@ -21,7 +21,6 @@ func TestEnsureWorktreeContract_OnlyEnsuresContractDir(t *testing.T) {
 	mustNotExist := []string{
 		cp.AgentKernelMD,
 		cp.StateJSON,
-		cp.PlanMD,
 		filepath.Join(cp.Dir, "contract.json"),
 		filepath.Join(cp.Dir, "requests"),
 		filepath.Join(cp.Dir, "responses"),

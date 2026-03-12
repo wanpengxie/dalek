@@ -13,7 +13,6 @@ import (
 type ContractPaths struct {
 	Dir           string
 	AgentKernelMD string
-	PlanMD        string
 	StateJSON     string
 }
 
@@ -22,7 +21,6 @@ func contractPaths(worktreeRoot string) ContractPaths {
 	return ContractPaths{
 		Dir:           dir,
 		AgentKernelMD: filepath.Join(dir, "agent-kernel.md"),
-		PlanMD:        filepath.Join(dir, "PLAN.md"),
 		StateJSON:     filepath.Join(dir, "state.json"),
 	}
 }

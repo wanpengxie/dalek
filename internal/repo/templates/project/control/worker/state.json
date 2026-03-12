@@ -1,0 +1,49 @@
+{
+  "ticket": {
+    "id": "{{DALEK_TICKET_ID}}",
+    "worker_id": "{{DALEK_WORKER_ID}}"
+  },
+  "phases": {
+    "current_id": "phase-understanding",
+    "current_status": "running",
+    "next_action": "continue",
+    "summary": "{{SUMMARY}}",
+    "items": [
+      {
+        "id": "phase-understanding",
+        "name": "需求理解与代码探索",
+        "goal": "读取 worker-kernel、state 与代码事实，形成可执行方案",
+        "status": "in_progress",
+        "order": 1
+      },
+      {
+        "id": "phase-implementation",
+        "name": "实现改动",
+        "goal": "按探索结论完成实现，并保持改动可审计",
+        "status": "pending",
+        "order": 2
+      },
+      {
+        "id": "phase-validation",
+        "name": "验证结果",
+        "goal": "执行必要验证并确认验收口径",
+        "status": "pending",
+        "order": 3
+      },
+      {
+        "id": "phase-handoff",
+        "name": "收口与汇报",
+        "goal": "同步状态、总结风险并执行 worker report",
+        "status": "pending",
+        "order": 4
+      }
+    ]
+  },
+  "blockers": [],
+  "code": {
+    "head_sha": "{{HEAD_SHA}}",
+    "working_tree": "{{WORKING_TREE_STATUS}}",
+    "last_commit_subject": "{{LAST_COMMIT_SUBJECT}}"
+  },
+  "updated_at": "{{NOW_RFC3339}}"
+}

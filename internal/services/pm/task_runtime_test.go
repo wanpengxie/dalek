@@ -47,7 +47,7 @@ func TestEnsureWorkerTaskRunForDelivery_CancelsPreviousAndWritesRuntime(t *testi
 		2101,
 		tk,
 		w,
-		".dalek/PLAN.md",
+		".dalek/agent-kernel.md",
 		contracts.TaskHealthBusy,
 		contracts.TaskPhaseImplementing,
 		"continue",

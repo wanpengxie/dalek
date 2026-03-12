@@ -298,7 +298,7 @@ Case 1: 启动 ticket
   操作：dalek ticket create → dalek ticket start
 	  start 的职责：创建/恢复 worktree + worker session → 准备 worker runtime → ticket 推进到 queued
 	  worker run 被接受后 ticket 才进入 active；worker loop 自主执行开发工作，通过 report 驱动后续状态流转
-	  → skill: .dalek/control/skills/start-ticket-runtime/
+	  → worker runtime: .dalek/control/worker/
 </ticket_start>
 
 <human_notify>
@@ -325,8 +325,8 @@ Case 3: Worker 需要人介入
   daemon 状态         → dalek daemon status
   CLI 命令用法        → dalek <noun> <verb> --help
 
-Skills（操作 SOP，执行特定场景时加载）：
-	  首次启动 ticket     → .dalek/control/skills/start-ticket-runtime/
+控制入口（按场景读取或执行）：
+	  首次启动 ticket     → .dalek/control/worker/
   计划循环维护        → .dalek/control/skills/plan-cycle/
   计划进展同步        → .dalek/control/skills/plan-sync/
   特性交付编排        → .dalek/control/skills/feature-run/

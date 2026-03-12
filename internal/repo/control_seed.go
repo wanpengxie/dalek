@@ -24,6 +24,9 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 	if err := ensureControlPlaneDirs(layout); err != nil {
 		return err
 	}
+	if _, err := ensureControlWorkerTemplates(layout); err != nil {
+		return err
+	}
 	if _, err := seedControlSkillsTemplates(layout, false); err != nil {
 		return err
 	}
@@ -59,6 +62,12 @@ func PlanControlPlaneSeedUpdate(layout Layout, projectName string) ([]ControlPla
 		return nil, fmt.Errorf("project_dir 为空")
 	}
 	changes := make([]ControlPlaneChange, 0)
+
+	workerChanges, err := planControlWorkerTemplateChanges(layout)
+	if err != nil {
+		return nil, err
+	}
+	changes = append(changes, workerChanges...)
 
 	skillChanges, err := planControlSkillsTemplateChanges(layout)
 	if err != nil {
@@ -100,10 +109,15 @@ func UpdateControlPlaneSeed(layout Layout, projectName string) ([]ControlPlaneCh
 	if err := ensureControlPlaneDirs(layout); err != nil {
 		return nil, err
 	}
-	changes, err := seedControlSkillsTemplates(layout, true)
+	changes, err := ensureControlWorkerTemplates(layout)
 	if err != nil {
 		return nil, err
 	}
+	skillChanges, err := seedControlSkillsTemplates(layout, true)
+	if err != nil {
+		return nil, err
+	}
+	changes = append(changes, skillChanges...)
 
 	{
 		kernelExisted := true
@@ -269,7 +283,6 @@ func ensureControlPlaneDirs(layout Layout) error {
 		layout.PMArchiveDir,
 		layout.RuntimeDir,
 		layout.RuntimeWorkersDir,
-		filepath.Join(layout.ControlSkillsDir, "start-ticket-runtime"),
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
