@@ -15,16 +15,26 @@ import (
 
 // fakeAgentRunHandle implements agentexec.AgentRunHandle for testing.
 type fakeAgentRunHandle struct {
-	runID  uint
-	result agentexec.AgentRunResult
-	err    error
+	runID      uint
+	result     agentexec.AgentRunResult
+	err        error
+	waitFunc   func(ctx context.Context) (agentexec.AgentRunResult, error)
+	cancelFunc func() error
 }
 
 func (h *fakeAgentRunHandle) RunID() uint { return h.runID }
 func (h *fakeAgentRunHandle) Wait(ctx context.Context) (agentexec.AgentRunResult, error) {
+	if h.waitFunc != nil {
+		return h.waitFunc(ctx)
+	}
 	return h.result, h.err
 }
-func (h *fakeAgentRunHandle) Cancel() error { return nil }
+func (h *fakeAgentRunHandle) Cancel() error {
+	if h.cancelFunc != nil {
+		return h.cancelFunc()
+	}
+	return nil
+}
 
 // makeSemanticReport inserts a TaskSemanticReport row so that
 // readWorkerNextActionFromRun can pick up the next_action.
@@ -396,5 +406,66 @@ func TestExecuteWorkerLoop_ContextCancellation(t *testing.T) {
 	_, err := svc.executeWorkerLoop(ctx, tk, w, "test prompt")
 	if err == nil {
 		t.Fatalf("expected error on context cancellation")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got=%v", err)
+	}
+
+	_, db, derr := svc.require()
+	if derr != nil {
+		t.Fatalf("require failed: %v", derr)
+	}
+	var after contracts.Worker
+	if err := db.First(&after, w.ID).Error; err != nil {
+		t.Fatalf("load worker failed: %v", err)
+	}
+	if after.Status != contracts.WorkerStopped {
+		t.Fatalf("expected canceled launch to stop worker, got=%s", after.Status)
+	}
+	if strings.TrimSpace(after.LastError) != "" {
+		t.Fatalf("expected canceled launch not mark last_error, got=%q", after.LastError)
+	}
+}
+
+func TestExecuteWorkerLoop_WaitCancellationStopsWorkerWithoutFailure(t *testing.T) {
+	svc, _, _ := newServiceForTest(t)
+	tk, w, runID := createWorkerLoopTestFixture(t, svc, "continue")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	svc.sdkHandleLauncher = func(launchCtx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return &fakeAgentRunHandle{
+			runID: runID,
+			waitFunc: func(waitCtx context.Context) (agentexec.AgentRunResult, error) {
+				cancel()
+				time.Sleep(10 * time.Millisecond)
+				if waitCtx.Err() != nil {
+					return agentexec.AgentRunResult{}, waitCtx.Err()
+				}
+				return agentexec.AgentRunResult{}, context.Canceled
+			},
+		}, nil
+	}
+
+	_, err := svc.executeWorkerLoop(ctx, tk, w, "test prompt")
+	if err == nil {
+		t.Fatalf("expected error on wait cancellation")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got=%v", err)
+	}
+
+	_, db, derr := svc.require()
+	if derr != nil {
+		t.Fatalf("require failed: %v", derr)
+	}
+	var after contracts.Worker
+	if err := db.First(&after, w.ID).Error; err != nil {
+		t.Fatalf("load worker failed: %v", err)
+	}
+	if after.Status != contracts.WorkerStopped {
+		t.Fatalf("expected canceled wait to stop worker, got=%s", after.Status)
+	}
+	if strings.TrimSpace(after.LastError) != "" {
+		t.Fatalf("expected canceled wait not mark last_error, got=%q", after.LastError)
 	}
 }

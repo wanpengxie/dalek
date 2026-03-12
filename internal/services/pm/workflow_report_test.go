@@ -10,7 +10,48 @@ import (
 	"dalek/internal/contracts"
 )
 
-func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
+func TestApplyWorkerReport_DoesNotAdvanceWorkflowSynchronously(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "workflow-report-runtime-only")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+
+	report := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
+		Summary:    "开发与测试已完成",
+		NeedsUser:  true,
+		Blockers:   []string{"请提供 FEISHU_APP_ID"},
+		NextAction: string(contracts.NextDone),
+	}
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
+		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("query ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected ticket queued before closure, got=%s", ticket.WorkflowStatus)
+	}
+	var lifecycleCount int64
+	if err := p.DB.Model(&contracts.TicketLifecycleEvent{}).
+		Where("ticket_id = ? AND event_type IN (?, ?)", tk.ID, contracts.TicketLifecycleWaitUserReported, contracts.TicketLifecycleDoneReported).
+		Count(&lifecycleCount).Error; err != nil {
+		t.Fatalf("count lifecycle failed: %v", err)
+	}
+	if lifecycleCount != 0 {
+		t.Fatalf("expected no terminal lifecycle before closure, got=%d", lifecycleCount)
+	}
+}
+
+func TestApplyWorkerLoopTerminalReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "workflow-report-wait-user")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -29,8 +70,8 @@ func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 		Blockers:   []string{"请提供 FEISHU_APP_ID", "请提供 FEISHU_APP_SECRET"},
 		NextAction: string(contracts.NextWaitUser),
 	}
-	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
-		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report, "pm.worker_loop.closure(test:wait_user)"); err != nil {
+		t.Fatalf("applyWorkerLoopTerminalReport failed: %v", err)
 	}
 
 	var ticket contracts.Ticket
@@ -43,7 +84,7 @@ func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 
 	var inbox contracts.InboxItem
 	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
-		t.Fatalf("wait_user should create inbox immediately: %v", err)
+		t.Fatalf("wait_user should create inbox during closure: %v", err)
 	}
 	if inbox.Reason != contracts.InboxNeedsUser || inbox.Severity != contracts.InboxBlocker {
 		t.Fatalf("unexpected inbox reason/severity: %s/%s", inbox.Reason, inbox.Severity)
@@ -61,7 +102,7 @@ func TestApplyWorkerReport_WaitUserCreatesInboxSynchronously(t *testing.T) {
 	}
 }
 
-func TestApplyWorkerReport_DoneFreezesTicketIntegrationSynchronously(t *testing.T) {
+func TestApplyWorkerLoopTerminalReport_DoneFreezesTicketIntegrationSynchronously(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "workflow-report-done")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -79,8 +120,8 @@ func TestApplyWorkerReport_DoneFreezesTicketIntegrationSynchronously(t *testing.
 		Summary:    "开发与测试已完成",
 		NextAction: string(contracts.NextDone),
 	}
-	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
-		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report, "pm.worker_loop.closure(test:done)"); err != nil {
+		t.Fatalf("applyWorkerLoopTerminalReport failed: %v", err)
 	}
 
 	var ticket contracts.Ticket
@@ -109,7 +150,7 @@ func TestApplyWorkerReport_DoneFreezesTicketIntegrationSynchronously(t *testing.
 	}
 }
 
-func TestApplyWorkerReport_WaitUserDuplicateDoesNotDuplicateLifecycleOrInbox(t *testing.T) {
+func TestApplyWorkerLoopTerminalReport_WaitUserDuplicateDoesNotDuplicateLifecycleOrInbox(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "workflow-report-wait-user-duplicate")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -128,11 +169,11 @@ func TestApplyWorkerReport_WaitUserDuplicateDoesNotDuplicateLifecycleOrInbox(t *
 		Blockers:   []string{"请确认发布窗口"},
 		NextAction: string(contracts.NextWaitUser),
 	}
-	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
-		t.Fatalf("first ApplyWorkerReport failed: %v", err)
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report, "pm.worker_loop.closure(test:wait_user_dup)"); err != nil {
+		t.Fatalf("first applyWorkerLoopTerminalReport failed: %v", err)
 	}
-	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
-		t.Fatalf("second ApplyWorkerReport failed: %v", err)
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report, "pm.worker_loop.closure(test:wait_user_dup)"); err != nil {
+		t.Fatalf("second applyWorkerLoopTerminalReport failed: %v", err)
 	}
 
 	var lifecycleCount int64
@@ -156,7 +197,7 @@ func TestApplyWorkerReport_WaitUserDuplicateDoesNotDuplicateLifecycleOrInbox(t *
 	}
 }
 
-func TestApplyWorkerReport_DoneDuplicateDoesNotReopenNeedsMergeAfterAbandon(t *testing.T) {
+func TestApplyWorkerLoopTerminalReport_DoneDuplicateDoesNotReopenNeedsMergeAfterAbandon(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "workflow-report-done-duplicate")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -173,14 +214,14 @@ func TestApplyWorkerReport_DoneDuplicateDoesNotReopenNeedsMergeAfterAbandon(t *t
 		Summary:    "开发完成",
 		NextAction: string(contracts.NextDone),
 	}
-	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
-		t.Fatalf("first ApplyWorkerReport failed: %v", err)
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report, "pm.worker_loop.closure(test:done_dup)"); err != nil {
+		t.Fatalf("first applyWorkerLoopTerminalReport failed: %v", err)
 	}
 	if err := svc.AbandonTicketIntegration(context.Background(), tk.ID, "需求取消"); err != nil {
 		t.Fatalf("AbandonTicketIntegration failed: %v", err)
 	}
-	if err := svc.ApplyWorkerReport(context.Background(), report, "test"); err != nil {
-		t.Fatalf("second ApplyWorkerReport failed: %v", err)
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report, "pm.worker_loop.closure(test:done_dup)"); err != nil {
+		t.Fatalf("second applyWorkerLoopTerminalReport failed: %v", err)
 	}
 
 	var ticket contracts.Ticket

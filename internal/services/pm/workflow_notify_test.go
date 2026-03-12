@@ -195,7 +195,7 @@ func TestSetTicketWorkflowStatus_NoChange_DoesNotEmitHook(t *testing.T) {
 	assertNoStatusEvent(t, hook.ch)
 }
 
-func TestApplyWorkerReport_Changed_EmitsHook(t *testing.T) {
+func TestApplyWorkerReport_DoesNotEmitHookBeforeClosure(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-apply-report")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -219,20 +219,10 @@ func TestApplyWorkerReport_Changed_EmitsHook(t *testing.T) {
 	if err := svc.ApplyWorkerReport(context.Background(), report, "test-source"); err != nil {
 		t.Fatalf("ApplyWorkerReport failed: %v", err)
 	}
-
-	ev := waitStatusEvent(t, hook.ch)
-	if ev.TicketID != tk.ID {
-		t.Fatalf("unexpected ticket_id: got=%d want=%d", ev.TicketID, tk.ID)
-	}
-	if ev.FromStatus != contracts.TicketQueued || ev.ToStatus != contracts.TicketActive {
-		t.Fatalf("unexpected transition: %s -> %s", ev.FromStatus, ev.ToStatus)
-	}
-	if ev.Source != "pm.apply_worker_report(test-source)" {
-		t.Fatalf("unexpected source: %s", ev.Source)
-	}
+	assertNoStatusEvent(t, hook.ch)
 }
 
-func TestApplyWorkerReport_Done_EmitsHook(t *testing.T) {
+func TestApplyWorkerLoopTerminalReport_Done_EmitsHook(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-apply-report-done")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -254,8 +244,8 @@ func TestApplyWorkerReport_Done_EmitsHook(t *testing.T) {
 		Summary:    "开发完成，准备进入 merge 队列",
 		NextAction: string(contracts.NextDone),
 	}
-	if err := svc.ApplyWorkerReport(context.Background(), report, "test-source"); err != nil {
-		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report, "pm.worker_loop.closure(test-source:done)"); err != nil {
+		t.Fatalf("applyWorkerLoopTerminalReport failed: %v", err)
 	}
 
 	ev := waitStatusEvent(t, hook.ch)
@@ -271,12 +261,12 @@ func TestApplyWorkerReport_Done_EmitsHook(t *testing.T) {
 	if !strings.Contains(ev.Detail, "开发完成") {
 		t.Fatalf("detail missing summary: %q", ev.Detail)
 	}
-	if ev.Source != "pm.apply_worker_report(test-source)" {
+	if ev.Source != "pm.worker_loop.closure(test-source:done)" {
 		t.Fatalf("unexpected source: %s", ev.Source)
 	}
 }
 
-func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
+func TestApplyWorkerLoopTerminalReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "notify-apply-report-wait-user")
 	w, err := svc.StartTicket(context.Background(), tk.ID)
@@ -299,8 +289,8 @@ func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
 		Blockers:   []string{"是否允许破坏性变更？", "命名规范是否采用 v2？"},
 		NextAction: string(contracts.NextWaitUser),
 	}
-	if err := svc.ApplyWorkerReport(context.Background(), report, "test-source"); err != nil {
-		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report, "pm.worker_loop.closure(test-source:wait_user)"); err != nil {
+		t.Fatalf("applyWorkerLoopTerminalReport failed: %v", err)
 	}
 
 	ev := waitStatusEvent(t, hook.ch)
@@ -316,7 +306,7 @@ func TestApplyWorkerReport_WaitUser_EmitsHookWithBlockers(t *testing.T) {
 	if !strings.Contains(ev.Detail, "需要你确认") || !strings.Contains(ev.Detail, "是否允许破坏性变更") {
 		t.Fatalf("detail missing blockers: %q", ev.Detail)
 	}
-	if ev.Source != "pm.apply_worker_report(test-source)" {
+	if ev.Source != "pm.worker_loop.closure(test-source:wait_user)" {
 		t.Fatalf("unexpected source: %s", ev.Source)
 	}
 }

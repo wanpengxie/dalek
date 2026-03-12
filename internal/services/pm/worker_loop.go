@@ -2,6 +2,7 @@ package pm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -73,6 +74,10 @@ func (s *Service) executeWorkerLoopWithHook(ctx context.Context, t contracts.Tic
 		// 1) 启动 worker SDK handle
 		handle, err := s.launchWorkerSDK(loopCtx, t, w, prompt)
 		if err != nil {
+			if isWorkerLoopCanceledError(loopCtx, err) {
+				s.markWorkerLoopExit(loopCtx, w, "")
+				return result, fmt.Errorf("worker_loop stage %d launch 已取消: %w", result.Stages, context.Canceled)
+			}
 			s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop launch failed stage=%d: %v", result.Stages, err))
 			return result, fmt.Errorf("worker_loop stage %d launch 失败: %w", result.Stages, err)
 		}
@@ -81,6 +86,10 @@ func (s *Service) executeWorkerLoopWithHook(ctx context.Context, t contracts.Tic
 		result.LastRunID = handle.RunID()
 		if onStageStarted != nil {
 			if err := onStageStarted(result.Stages, handle.RunID()); err != nil {
+				if isWorkerLoopCanceledError(loopCtx, err) {
+					s.markWorkerLoopExit(loopCtx, w, "")
+					return result, fmt.Errorf("worker_loop stage %d start 已取消: %w", result.Stages, context.Canceled)
+				}
 				s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop stage start hook failed stage=%d: %v", result.Stages, err))
 				return result, fmt.Errorf("worker_loop stage %d start hook 失败: %w", result.Stages, err)
 			}
@@ -95,6 +104,10 @@ func (s *Service) executeWorkerLoopWithHook(ctx context.Context, t contracts.Tic
 		// 2) 等待 agent 完成（无超时）
 		runResult, waitErr := handle.Wait(loopCtx)
 		if waitErr != nil {
+			if isWorkerLoopCanceledError(loopCtx, waitErr) {
+				s.markWorkerLoopExit(loopCtx, w, "")
+				return result, fmt.Errorf("worker_loop stage %d wait 已取消: %w", result.Stages, context.Canceled)
+			}
 			s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop wait failed stage=%d: %v", result.Stages, waitErr))
 			return result, fmt.Errorf("worker_loop stage %d wait 失败: %w", result.Stages, waitErr)
 		}
@@ -155,6 +168,13 @@ func (s *Service) executeWorkerLoopWithHook(ctx context.Context, t contracts.Tic
 	s.markWorkerLoopExit(loopCtx, w, "")
 
 	return result, nil
+}
+
+func isWorkerLoopCanceledError(ctx context.Context, err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	return ctx != nil && errors.Is(ctx.Err(), context.Canceled)
 }
 
 // readWorkerNextActionFromRun 读取指定 run 的最新 semantic_next_action。

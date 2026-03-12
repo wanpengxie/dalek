@@ -6,6 +6,56 @@ import (
 	"strings"
 )
 
+func (h *ExecutionHost) ticketLoopKey(kind executionRunKind, project string, ticketID uint) string {
+	return fmt.Sprintf("%s:%s:%d", strings.TrimSpace(string(kind)), strings.TrimSpace(project), ticketID)
+}
+
+func (h *ExecutionHost) lookupLiveTicketLoop(kind executionRunKind, project string, ticketID uint) (*executionRunHandle, bool) {
+	if h == nil || ticketID == 0 {
+		return nil, false
+	}
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return nil, false
+	}
+	key := h.ticketLoopKey(kind, project, ticketID)
+	h.mu.RLock()
+	handle := h.ticketLoops[key]
+	h.mu.RUnlock()
+	if handle == nil {
+		return nil, false
+	}
+	return handle, true
+}
+
+func (h *ExecutionHost) bindHandleRequestLocked(handle *executionRunHandle, requestID string, retain bool) error {
+	if h == nil || handle == nil {
+		return nil
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return nil
+	}
+	if existing := h.requests[requestID]; existing != nil && existing != handle {
+		return fmt.Errorf("request_id 已绑定其他运行：%s", requestID)
+	}
+	h.requests[requestID] = handle
+	if handle.requestID == "" {
+		handle.requestID = requestID
+		handle.retainRequest = retain
+		return nil
+	}
+	if handle.requestID == requestID {
+		handle.retainRequest = handle.retainRequest || retain
+		return nil
+	}
+	if handle.requestAlias == nil {
+		handle.requestAlias = map[string]struct{}{}
+	}
+	handle.requestAlias[requestID] = struct{}{}
+	return nil
+}
+
 func (h *ExecutionHost) lookupTicketRunHandle(kind executionRunKind, project string, ticketID uint, requestID string) (*executionRunHandle, bool) {
 	h.mu.RLock()
 	handle := h.requests[requestID]
@@ -114,6 +164,11 @@ func (h *ExecutionHost) attachHandleRun(handle *executionRunHandle, runID, worke
 		return
 	}
 	h.mu.Lock()
+	if handle.runID != 0 && handle.runID != runID {
+		if cur := h.runs[handle.runID]; cur == handle {
+			delete(h.runs, handle.runID)
+		}
+	}
 	handle.runID = runID
 	if workerID != 0 {
 		handle.workerID = workerID
@@ -238,6 +293,12 @@ func (h *ExecutionHost) finalizeHandle(handle *executionRunHandle) {
 			delete(h.runProjectIndex, handle.runID)
 		}
 	}
+	if handle.ticketID != 0 && handle.project != "" {
+		key := h.ticketLoopKey(handle.kind, handle.project, handle.ticketID)
+		if cur := h.ticketLoops[key]; cur == handle {
+			delete(h.ticketLoops, key)
+		}
+	}
 	if handle.requestID != "" {
 		if cur := h.requests[handle.requestID]; cur == handle {
 			if handle.retainRequest {
@@ -245,6 +306,11 @@ func (h *ExecutionHost) finalizeHandle(handle *executionRunHandle) {
 			} else {
 				delete(h.requests, handle.requestID)
 			}
+		}
+	}
+	for alias := range handle.requestAlias {
+		if cur := h.requests[alias]; cur == handle {
+			delete(h.requests, alias)
 		}
 	}
 	h.mu.Unlock()

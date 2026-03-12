@@ -107,6 +107,9 @@ type testExecutionHostProject struct {
 	listInboxCalls    int
 	lastMergeOpt      ListMergeItemsOptions
 	lastInboxOpt      ListInboxOptions
+	cancelRunCalls    int
+	cancelRunByID     map[uint]TaskRunCancelResult
+	cancelRunErr      error
 
 	directDispatchDelay        time.Duration
 	directDispatchStarted      chan struct{}
@@ -284,6 +287,37 @@ func waitExecutionRelease(ctx context.Context, delay time.Duration, release chan
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+func (p *testExecutionHostProject) CancelTaskRun(ctx context.Context, runID uint) (TaskRunCancelResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.cancelRunCalls++
+	if p.cancelRunErr != nil {
+		return TaskRunCancelResult{}, p.cancelRunErr
+	}
+	if p.cancelRunByID != nil {
+		if res, ok := p.cancelRunByID[runID]; ok {
+			if res.RunID == 0 {
+				res.RunID = runID
+			}
+			return res, nil
+		}
+	}
+	return TaskRunCancelResult{
+		RunID:     runID,
+		Found:     true,
+		Canceled:  false,
+		Reason:    "task run 已结束",
+		FromState: string(contracts.TaskSucceeded),
+		ToState:   string(contracts.TaskSucceeded),
+	}, nil
+}
+
+func (p *testExecutionHostProject) CancelRunCallCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.cancelRunCalls
 }
 
 func (p *testExecutionHostProject) FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*RunStatus, error) {
@@ -815,6 +849,7 @@ func TestExecutionHost_SubmitWorkerRun_EmptyRequestIDCreatesDistinctRuns(t *test
 	if err != nil {
 		t.Fatalf("first SubmitWorkerRun failed: %v", err)
 	}
+	waitForTicketLoopGone(t, host, "demo", 1)
 	second, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
@@ -849,6 +884,7 @@ func TestExecutionHost_SubmitWorkerRun_DifferentRequestIDCreatesDifferentRuns(t 
 	if err != nil {
 		t.Fatalf("first SubmitWorkerRun failed: %v", err)
 	}
+	waitForTicketLoopGone(t, host, "demo", 1)
 	second, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
@@ -864,6 +900,65 @@ func TestExecutionHost_SubmitWorkerRun_DifferentRequestIDCreatesDifferentRuns(t 
 	}
 	if got := project.DirectDispatchCount(); got != 2 {
 		t.Fatalf("expected two direct worker runs for different request_id, got=%d", got)
+	}
+}
+
+func TestExecutionHost_SubmitWorkerRun_ReusesLiveTicketLoopAcrossRequestIDs(t *testing.T) {
+	releaseCh := make(chan struct{})
+	project := &testExecutionHostProject{
+		directDispatchStarted: make(chan struct{}, 1),
+		directDispatchRelease: releaseCh,
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	first, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "worker-live-loop-a",
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("first SubmitWorkerRun failed: %v", err)
+	}
+	if first.TaskRunID == 0 {
+		t.Fatalf("expected live loop receipt carries task_run_id")
+	}
+	select {
+	case <-project.directDispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("worker-run goroutine not started")
+	}
+
+	probe := host.ProbeTicketLoop("demo", 1)
+	if !probe.Found {
+		t.Fatalf("expected live ticket loop probe to succeed")
+	}
+	if probe.TaskRunID != first.TaskRunID {
+		t.Fatalf("probe task_run_id mismatch: got=%d want=%d", probe.TaskRunID, first.TaskRunID)
+	}
+
+	second, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "worker-live-loop-b",
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("second SubmitWorkerRun failed: %v", err)
+	}
+	if second.TaskRunID != first.TaskRunID {
+		t.Fatalf("expected same live loop task_run_id: first=%d second=%d", first.TaskRunID, second.TaskRunID)
+	}
+	if got := project.DirectDispatchCount(); got != 1 {
+		t.Fatalf("expected only one direct worker run while loop is live, got=%d", got)
+	}
+
+	close(releaseCh)
+	if err := host.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
 	}
 }
 
@@ -1383,6 +1478,118 @@ func TestExecutionHost_CancelRun_UsesRunProjectIndex(t *testing.T) {
 	}
 }
 
+func TestExecutionHost_CancelRun_UsesProjectTaskCancelerForHistoricalRun(t *testing.T) {
+	runID := uint(909)
+	beta := &testExecutionHostProject{
+		projectName: "beta",
+		statusByRun: map[uint]*RunStatus{
+			runID: {
+				RunID:     runID,
+				TicketID:  22,
+				UpdatedAt: time.Now(),
+			},
+		},
+		cancelRunByID: map[uint]TaskRunCancelResult{
+			runID: {
+				RunID:     runID,
+				Found:     true,
+				Canceled:  true,
+				Reason:    "manual cancel",
+				FromState: string(contracts.TaskRunning),
+				ToState:   string(contracts.TaskCanceled),
+			},
+		},
+	}
+	resolver := &testExecutionHostResolver{
+		projects: map[string]*testExecutionHostProject{
+			"beta": beta,
+		},
+		projectOrder: []string{"beta"},
+	}
+	host, err := NewExecutionHost(resolver, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+	host.addRunProjectIndex(runID, "beta")
+
+	res, err := host.CancelRun(runID)
+	if err != nil {
+		t.Fatalf("CancelRun failed: %v", err)
+	}
+	if !res.Found || !res.Canceled {
+		t.Fatalf("expected project canceler to cancel historical run, got=%+v", res)
+	}
+	if got := strings.TrimSpace(res.Project); got != "beta" {
+		t.Fatalf("expected cancel result carries indexed project beta, got=%q", got)
+	}
+	if got := beta.CancelRunCallCount(); got != 1 {
+		t.Fatalf("expected project canceler called once, got=%d", got)
+	}
+	if got := resolver.ListProjectsCount(); got != 0 {
+		t.Fatalf("expected cancel lookup avoid scan when index hits, got=%d", got)
+	}
+	if got := host.scanFallbackCount.Load(); got != 0 {
+		t.Fatalf("expected no fallback scan for indexed cancel lookup, got=%d", got)
+	}
+}
+
+func TestExecutionHost_CancelTicketLoop_CancelsLiveLoop(t *testing.T) {
+	project := &testExecutionHostProject{
+		directDispatchStarted: make(chan struct{}, 1),
+		directDispatchDelay:   5 * time.Second,
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	receipt, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "worker-live-cancel",
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("SubmitWorkerRun failed: %v", err)
+	}
+	if receipt.TaskRunID == 0 {
+		t.Fatalf("expected task_run_id on submit receipt")
+	}
+
+	select {
+	case <-project.directDispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("worker-run goroutine not started")
+	}
+
+	res, err := host.CancelTicketLoop("demo", 1)
+	if err != nil {
+		t.Fatalf("CancelTicketLoop failed: %v", err)
+	}
+	if !res.Found || !res.Canceled {
+		t.Fatalf("expected found=true canceled=true, got=%+v", res)
+	}
+	if got := strings.TrimSpace(res.RequestID); got != "worker-live-cancel" {
+		t.Fatalf("unexpected request_id: got=%q", got)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	cleared := false
+	for time.Now().Before(deadline) {
+		if !host.ProbeTicketLoop("demo", 1).Found {
+			cleared = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !cleared {
+		t.Fatalf("expected live ticket loop cleared after cancel")
+	}
+	if err := host.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+}
+
 func containsProject(projects []string, target string) bool {
 	target = strings.TrimSpace(target)
 	for _, project := range projects {
@@ -1391,4 +1598,16 @@ func containsProject(projects []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func waitForTicketLoopGone(t *testing.T, host *ExecutionHost, project string, ticketID uint) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !host.ProbeTicketLoop(project, ticketID).Found {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected ticket loop to settle: project=%s ticket=%d", project, ticketID)
 }

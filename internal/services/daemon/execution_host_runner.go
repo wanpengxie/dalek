@@ -43,14 +43,15 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 	if latest, lerr := project.FindLatestWorkerRun(handle.ctx, handle.ticketID, 0); lerr == nil && latest != nil {
 		baselineRunID = latest.RunID
 	}
+	observedRunID := baselineRunID
 
 	attachLatestRun := func(probeCtx context.Context) {
-		if handle.runID != 0 {
-			return
-		}
-		status, serr := project.FindLatestWorkerRun(probeCtx, handle.ticketID, baselineRunID)
+		status, serr := project.FindLatestWorkerRun(probeCtx, handle.ticketID, observedRunID)
 		if serr != nil || status == nil {
 			return
+		}
+		if status.RunID > observedRunID {
+			observedRunID = status.RunID
 		}
 		h.attachHandleRun(handle, status.RunID, status.WorkerID)
 	}

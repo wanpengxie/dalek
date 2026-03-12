@@ -250,6 +250,24 @@ func (p *daemonProjectAdapter) ListTaskEvents(ctx context.Context, runID uint, l
 	return out, nil
 }
 
+func (p *daemonProjectAdapter) CancelTaskRun(ctx context.Context, runID uint) (daemonsvc.TaskRunCancelResult, error) {
+	if p == nil || p.project == nil {
+		return daemonsvc.TaskRunCancelResult{}, fmt.Errorf("daemon project 为空")
+	}
+	result, err := p.project.CancelTaskRun(ctx, runID)
+	if err != nil {
+		return daemonsvc.TaskRunCancelResult{}, err
+	}
+	return daemonsvc.TaskRunCancelResult{
+		RunID:     result.RunID,
+		Found:     result.Found,
+		Canceled:  result.Canceled,
+		Reason:    strings.TrimSpace(result.Reason),
+		FromState: strings.TrimSpace(result.FromState),
+		ToState:   strings.TrimSpace(result.ToState),
+	}, nil
+}
+
 func (p *daemonProjectAdapter) Dashboard(ctx context.Context) (daemonsvc.DashboardResult, error) {
 	if p == nil || p.project == nil {
 		return daemonsvc.DashboardResult{}, fmt.Errorf("daemon project 为空")
