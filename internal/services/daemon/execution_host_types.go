@@ -265,8 +265,31 @@ type CancelResult struct {
 	Found     bool
 	Canceled  bool
 	Project   string
+	TicketID  uint
 	RequestID string
 	Reason    string
+}
+
+type TicketLoopProbeResult struct {
+	Found     bool
+	Project   string
+	TicketID  uint
+	RequestID string
+	TaskRunID uint
+	WorkerID  uint
+}
+
+type TaskRunCancelResult struct {
+	RunID     uint
+	Found     bool
+	Canceled  bool
+	Reason    string
+	FromState string
+	ToState   string
+}
+
+type executionHostTaskRunCanceler interface {
+	CancelTaskRun(ctx context.Context, runID uint) (TaskRunCancelResult, error)
 }
 
 type ExecutionHostOptions struct {
@@ -293,6 +316,7 @@ type executionRunHandle struct {
 	runID         uint
 	ticketID      uint
 	workerID      uint
+	requestAlias  map[string]struct{}
 
 	runnerID    string
 	entryPrompt string

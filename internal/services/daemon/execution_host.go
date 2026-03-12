@@ -24,6 +24,7 @@ type ExecutionHost struct {
 	mu              sync.RWMutex
 	runs            map[uint]*executionRunHandle
 	requests        map[string]*executionRunHandle
+	ticketLoops     map[string]*executionRunHandle
 	runProjectIndex map[uint][]string
 
 	scanFallbackCount atomic.Int64
@@ -47,6 +48,7 @@ func NewExecutionHost(resolver ExecutionHostResolver, opt ExecutionHostOptions) 
 		sem:             make(chan struct{}, maxConcurrent),
 		runs:            map[uint]*executionRunHandle{},
 		requests:        map[string]*executionRunHandle{},
+		ticketLoops:     map[string]*executionRunHandle{},
 		runProjectIndex: map[uint][]string{},
 		onRunSettled:    opt.OnRunSettled,
 		onNoteAdded:     opt.OnNoteAdded,
@@ -79,6 +81,7 @@ func (h *ExecutionHost) Stop(ctx context.Context) error {
 	}
 	h.runs = map[uint]*executionRunHandle{}
 	h.requests = map[string]*executionRunHandle{}
+	h.ticketLoops = map[string]*executionRunHandle{}
 	h.runProjectIndex = map[uint][]string{}
 	h.mu.Unlock()
 
@@ -241,7 +244,22 @@ func (h *ExecutionHost) submitTicketRun(ctx context.Context, req ticketRunSubmit
 		}
 		return nil, fmt.Errorf("request_id 已绑定其他运行：%s", requestID)
 	}
-	h.requests[requestID] = handle
+	if existing := h.ticketLoops[h.ticketLoopKey(req.kind, projectName, req.ticketID)]; existing != nil {
+		if err := h.bindHandleRequestLocked(existing, requestID, false); err != nil {
+			h.mu.Unlock()
+			cancel()
+			return nil, err
+		}
+		h.mu.Unlock()
+		cancel()
+		return existing, nil
+	}
+	if err := h.bindHandleRequestLocked(handle, requestID, retainRequest); err != nil {
+		h.mu.Unlock()
+		cancel()
+		return nil, err
+	}
+	h.ticketLoops[h.ticketLoopKey(req.kind, projectName, req.ticketID)] = handle
 	h.wg.Add(1)
 	h.mu.Unlock()
 
@@ -529,13 +547,14 @@ func (h *ExecutionHost) CancelRun(runID uint) (CancelResult, error) {
 	handle := h.runs[runID]
 	h.mu.RUnlock()
 	if handle != nil {
-		if handle.cancel != nil {
-			handle.cancel()
+		if err := h.cancelHandle(handle); err != nil {
+			return CancelResult{}, err
 		}
 		return CancelResult{
 			Found:     true,
 			Canceled:  true,
 			Project:   handle.project,
+			TicketID:  handle.ticketID,
 			RequestID: handle.requestID,
 			Reason:    "cancel signal sent",
 		}, nil
@@ -553,13 +572,121 @@ func (h *ExecutionHost) CancelRun(runID uint) (CancelResult, error) {
 	if status == nil {
 		return CancelResult{Found: false, Canceled: false}, nil
 	}
+	if live, ok := h.lookupLiveTicketLoop(runKindWorker, projectName, status.TicketID); ok {
+		if err := h.cancelHandle(live); err != nil {
+			return CancelResult{}, err
+		}
+		return CancelResult{
+			Found:     true,
+			Canceled:  true,
+			Project:   projectName,
+			TicketID:  status.TicketID,
+			RequestID: live.requestID,
+			Reason:    "ticket loop cancel signal sent",
+		}, nil
+	}
+	if canceled, ok, err := h.cancelTaskRunInProject(projectName, runID); err != nil {
+		return CancelResult{}, err
+	} else if ok {
+		return CancelResult{
+			Found:     canceled.Found,
+			Canceled:  canceled.Canceled,
+			Project:   projectName,
+			TicketID:  status.TicketID,
+			RequestID: "",
+			Reason:    strings.TrimSpace(canceled.Reason),
+		}, nil
+	}
 	return CancelResult{
 		Found:     true,
 		Canceled:  false,
 		Project:   projectName,
+		TicketID:  status.TicketID,
 		RequestID: "",
 		Reason:    "run 不在当前 daemon 执行上下文中（可能已结束或由旧实例启动）",
 	}, nil
+}
+
+func (h *ExecutionHost) ProbeTicketLoop(project string, ticketID uint) TicketLoopProbeResult {
+	if h == nil {
+		return TicketLoopProbeResult{}
+	}
+	project = strings.TrimSpace(project)
+	if project == "" || ticketID == 0 {
+		return TicketLoopProbeResult{}
+	}
+	handle, ok := h.lookupLiveTicketLoop(runKindWorker, project, ticketID)
+	if !ok || handle == nil {
+		return TicketLoopProbeResult{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return TicketLoopProbeResult{
+		Found:     true,
+		Project:   handle.project,
+		TicketID:  handle.ticketID,
+		RequestID: handle.requestID,
+		TaskRunID: handle.runID,
+		WorkerID:  handle.workerID,
+	}
+}
+
+func (h *ExecutionHost) CancelTicketLoop(project string, ticketID uint) (CancelResult, error) {
+	handle, ok := h.lookupLiveTicketLoop(runKindWorker, strings.TrimSpace(project), ticketID)
+	if !ok || handle == nil {
+		return CancelResult{
+			Found:    false,
+			Canceled: false,
+			Project:  strings.TrimSpace(project),
+			TicketID: ticketID,
+			Reason:   "ticket loop 不存在",
+		}, nil
+	}
+	if err := h.cancelHandle(handle); err != nil {
+		return CancelResult{}, err
+	}
+	return CancelResult{
+		Found:     true,
+		Canceled:  true,
+		Project:   handle.project,
+		TicketID:  handle.ticketID,
+		RequestID: handle.requestID,
+		Reason:    "ticket loop cancel signal sent",
+	}, nil
+}
+
+func (h *ExecutionHost) cancelHandle(handle *executionRunHandle) error {
+	if h == nil || handle == nil {
+		return nil
+	}
+	if handle.cancel != nil {
+		handle.cancel()
+	}
+	if handle.runID != 0 {
+		if _, _, err := h.cancelTaskRunInProject(handle.project, handle.runID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *ExecutionHost) cancelTaskRunInProject(projectName string, runID uint) (TaskRunCancelResult, bool, error) {
+	if h == nil || h.resolver == nil || runID == 0 {
+		return TaskRunCancelResult{}, false, nil
+	}
+	project, err := h.resolver.OpenProject(strings.TrimSpace(projectName))
+	if err != nil {
+		return TaskRunCancelResult{}, false, err
+	}
+	canceler, ok := project.(executionHostTaskRunCanceler)
+	if !ok || canceler == nil {
+		return TaskRunCancelResult{}, false, nil
+	}
+	result, err := canceler.CancelTaskRun(context.Background(), runID)
+	if err != nil {
+		return TaskRunCancelResult{}, true, err
+	}
+	return result, true, nil
 }
 
 func (h *ExecutionHost) GetProjectDashboard(ctx context.Context, projectName string) (DashboardResult, error) {

@@ -47,7 +47,8 @@ Worker Agent
 1. 先理解任务目标、范围边界和验收标准。
 2. 按当前 worktree 事实维护自己的 phase / blockers / code 状态。
 3. 先做高风险验证，再做实现，再做必要测试。
-4. 准备退出本轮前，同步 `state.json`，然后执行 `dalek worker report`。
+4. 准备退出本轮前，同步 `state.json`，其中 `phases.next_action` / `blockers` 必须与即将执行的 `dalek worker report` 保持一致。
+5. 完成状态同步后，再执行 `dalek worker report`。
 </work_loop>
 
 <current_state>
@@ -74,4 +75,5 @@ Worker Agent
 3. 退出前必须执行 `dalek worker report`。
 4. `state.json` 必须保持合法 JSON。
 5. `next_action` 只能使用 `continue | done | wait_user`。
+6. `state.json.phases.next_action` 必须与最后一次 `dalek worker report --next ...` 保持一致。
 </hard_rules>

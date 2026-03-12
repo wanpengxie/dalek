@@ -100,23 +100,32 @@ func (s *Service) RunTicketWorker(ctx context.Context, ticketID uint, opt Worker
 		}
 		loopErrMsg := strings.TrimSpace(err.Error())
 		if workflowPromoted {
-			if _, cerr := s.convergeExecutionLost(ctx, executionLossInput{
-				TicketID:        ticketID,
-				WorkerID:        w.ID,
-				TaskRunID:       loopResult.LastRunID,
-				Source:          "pm.worker_run",
-				ObservationKind: "unexpected_exit",
-				FailureCode:     "worker_loop_failed",
-				Reason:          loopErrMsg,
-				Payload: map[string]any{
-					"loop_stage_count": loopResult.Stages,
-				},
-				Now: time.Now(),
-			}); cerr != nil {
-				return WorkerRunResult{}, fmt.Errorf("%w（且 execution 收敛失败: %v）", err, cerr)
+			canceledExit, cerr := s.isCanceledWorkerLoopTermination(ctx, loopResult.LastRunID, err)
+			if cerr != nil {
+				return WorkerRunResult{}, fmt.Errorf("%w（且读取取消状态失败: %v）", err, cerr)
+			}
+			if !canceledExit {
+				if _, cerr := s.convergeExecutionLost(ctx, executionLossInput{
+					TicketID:        ticketID,
+					WorkerID:        w.ID,
+					TaskRunID:       loopResult.LastRunID,
+					Source:          "pm.worker_run",
+					ObservationKind: "unexpected_exit",
+					FailureCode:     "worker_loop_failed",
+					Reason:          loopErrMsg,
+					Payload: map[string]any{
+						"loop_stage_count": loopResult.Stages,
+					},
+					Now: time.Now(),
+				}); cerr != nil {
+					return WorkerRunResult{}, fmt.Errorf("%w（且 execution 收敛失败: %v）", err, cerr)
+				}
 			}
 		}
 		return WorkerRunResult{}, err
+	}
+	if closeErr := s.applyWorkerLoopTerminalClosure(ctx, t.ID, *w, loopResult, "pm.worker_run"); closeErr != nil {
+		return WorkerRunResult{}, closeErr
 	}
 
 	return WorkerRunResult{
@@ -133,6 +142,30 @@ func workerRunAutoStartEnabled(v *bool) bool {
 		return true
 	}
 	return *v
+}
+
+func (s *Service) isCanceledWorkerLoopTermination(ctx context.Context, runID uint, loopErr error) (bool, error) {
+	if !isWorkerLoopCanceledError(ctx, loopErr) || runID == 0 {
+		return false, nil
+	}
+	_, db, err := s.require()
+	if err != nil {
+		return false, err
+	}
+	queryBase := context.Background()
+	if ctx != nil {
+		queryBase = context.WithoutCancel(ctx)
+	}
+	queryCtx, cancel := context.WithTimeout(queryBase, 5*time.Second)
+	defer cancel()
+
+	var run contracts.TaskRun
+	if err := db.WithContext(queryCtx).
+		Select("id", "orchestration_state").
+		First(&run, runID).Error; err != nil {
+		return false, err
+	}
+	return run.OrchestrationState == contracts.TaskCanceled, nil
 }
 
 func (s *Service) resolveWorkerRunTarget(ctx context.Context, ticketID uint, autoStart bool, baseBranch string) (contracts.Ticket, *contracts.Worker, error) {
