@@ -113,6 +113,9 @@ NULL
 <state_update_protocol>
 目标：以 git 本地仓库为真相源，把每次状态变化同步到三处，防止"口头状态"和"代码状态"分裂。
 
+git exclude 规则：
+`.dalek/` 目录下的状态文件（state.json、agent-kernel.md、PLAN.md 等）受 `.git/info/exclude` 管理，不参与 git dirty 判定。更新这些文件后无需重新检查 git status，直接以更新前的 working tree 状态为准。
+
 三重状态面：
 1. Code：git 检查点（HEAD + working tree + commit 证据，真相源）。
 2. State：`.dalek/state.json`（结构化快照，必须反映 git 事实）。
@@ -239,7 +242,7 @@ next_action 语义：
 </workspace_baseline>
 
 <hard_rules>
-  1. 不修改 `.dalek/` 下无关文件。
+  1. 不修改 `.dalek/` 下无关文件。`.dalek/` 已被 `.git/info/exclude` 忽略，不受 git 跟踪，对其的任何读写都不影响 working tree 的 clean/dirty 判定。
   2. 退出前必须发送 report。
   3. 保持改动可审计：有意义改动要 commit。
   4. 禁止只更新单一状态面：状态变更必须同时落到 Kernel + state.json + git 检查点。
