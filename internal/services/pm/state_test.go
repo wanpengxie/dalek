@@ -95,14 +95,12 @@ func TestPM_StateAndSettings(t *testing.T) {
 	}
 }
 
-func TestManagerWorkerRunTimeout_UsesConfig(t *testing.T) {
-	pmSvc, p := newPMServiceForTest(t)
-	p.Config.PMDispatchTimeoutMS = 123456
+func TestManagerWorkerRunTimeout_ReturnsZero(t *testing.T) {
+	pmSvc, _ := newPMServiceForTest(t)
 
 	got := pmSvc.managerWorkerRunTimeout()
-	want := 123456 * time.Millisecond
-	if got != want {
-		t.Fatalf("unexpected manager dispatch timeout: got=%v want=%v", got, want)
+	if got != 0 {
+		t.Fatalf("expected manager worker run timeout=0, got=%v", got)
 	}
 }
 

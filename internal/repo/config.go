@@ -16,10 +16,8 @@ type Config struct {
 	RefreshIntervalMS   int                `json:"refresh_interval_ms"`
 	WorkerAgent         AgentExecConfig    `json:"worker_agent"`
 	PMAgent             AgentExecConfig    `json:"pm_agent"`
-	ManagerCommand      string             `json:"manager_command"`
-	PMDispatchTimeoutMS int                `json:"pm_dispatch_timeout_ms"`
-	PMPlannerTimeoutMS  int                `json:"pm_planner_timeout_ms"`
-	GatewayAgent        GatewayAgentConfig `json:"gateway_agent"`
+	ManagerCommand string             `json:"manager_command"`
+	GatewayAgent   GatewayAgentConfig `json:"gateway_agent"`
 	Notebook            NotebookConfig     `json:"notebook"`
 
 	notebookSet              bool
@@ -165,12 +163,6 @@ func (c Config) WithDefaults() Config {
 	}
 	if out.ManagerCommand == "" {
 		out.ManagerCommand = ""
-	}
-	if out.PMDispatchTimeoutMS < 0 {
-		out.PMDispatchTimeoutMS = 0
-	}
-	if out.PMPlannerTimeoutMS < 0 {
-		out.PMPlannerTimeoutMS = 0
 	}
 	if out.GatewayAgent.TurnTimeoutMS < 0 {
 		out.GatewayAgent.TurnTimeoutMS = 0
@@ -353,12 +345,6 @@ func MergeConfig(oldCfg, override Config) Config {
 	out.PMAgent = mergeAgentExecConfig(out.PMAgent, override.PMAgent)
 	if strings.TrimSpace(override.ManagerCommand) != "" {
 		out.ManagerCommand = strings.TrimSpace(override.ManagerCommand)
-	}
-	if override.PMDispatchTimeoutMS > 0 {
-		out.PMDispatchTimeoutMS = override.PMDispatchTimeoutMS
-	}
-	if override.PMPlannerTimeoutMS > 0 {
-		out.PMPlannerTimeoutMS = override.PMPlannerTimeoutMS
 	}
 	if strings.TrimSpace(override.GatewayAgent.Provider) != "" {
 		out.GatewayAgent.Provider = strings.TrimSpace(override.GatewayAgent.Provider)

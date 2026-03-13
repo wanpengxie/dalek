@@ -86,19 +86,6 @@ func TestListActiveTaskRunIDs_ReturnsOnlyDeliverTicketRuns(t *testing.T) {
 	}
 	deliverRun := createWorkerTaskRun(t, p.DB, tk.ID, worker.ID, fmt.Sprintf("deliver-run-%d", time.Now().UnixNano()))
 
-	plannerRun := contracts.TaskRun{
-		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           "pm_planner_run",
-		ProjectKey:         "test",
-		SubjectType:        "pm",
-		SubjectID:          "planner",
-		RequestID:          fmt.Sprintf("planner-run-%d", time.Now().UnixNano()),
-		OrchestrationState: contracts.TaskRunning,
-	}
-	if err := p.DB.WithContext(ctx).Create(&plannerRun).Error; err != nil {
-		t.Fatalf("create planner run failed: %v", err)
-	}
-
 	legacyDispatchRun := contracts.TaskRun{
 		OwnerType:          contracts.TaskOwnerPM,
 		TaskType:           "dispatch_ticket",

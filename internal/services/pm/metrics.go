@@ -21,9 +21,7 @@ type HealthMetrics struct {
 	WindowStart time.Time `json:"window_start"`
 	WindowEnd   time.Time `json:"window_end"`
 
-	PlannerTimeoutRate         float64  `json:"planner_timeout_rate"`
-	WorkerBootstrapFailureRate float64  `json:"worker_bootstrap_failure_rate"`
-	RealAcceptancePassRate     *float64 `json:"real_acceptance_pass_rate"`
+	WorkerBootstrapFailureRate float64 `json:"worker_bootstrap_failure_rate"`
 
 	TerminalStateConflictCount   int64 `json:"terminal_state_conflict_count"`
 	DuplicateTerminalReportCount int64 `json:"duplicate_terminal_report_count"`
@@ -31,8 +29,6 @@ type HealthMetrics struct {
 	IntegrationTicketCount       int64 `json:"integration_ticket_count"`
 	ManualInterventionCount      int64 `json:"manual_intervention_count"`
 
-	PlannerTimeoutCount         int64 `json:"planner_timeout_count"`
-	PlannerRunCount             int64 `json:"planner_run_count"`
 	WorkerBootstrapFailureCount int64 `json:"worker_bootstrap_failure_count"`
 	WorkerRunCount              int64 `json:"worker_run_count"`
 }
@@ -73,9 +69,6 @@ func (s *Service) CalculateHealthMetrics(ctx context.Context, opt HealthMetricsO
 		return out, err
 	}
 
-	// Planner run metrics: planner loop removed; historical data remains in DB
-	// but no new planner runs are created. Keep fields zero.
-
 	out.WorkerRunCount, err = s.countTaskRunsByTypeAndStatus(ctx, db, contracts.TaskOwnerWorker, contracts.TaskTypeDeliverTicket, "", window)
 	if err != nil {
 		return out, err
@@ -91,8 +84,6 @@ func (s *Service) CalculateHealthMetrics(ctx context.Context, opt HealthMetricsO
 		out.IntegrationTicketCount = index.IntegrationNodeCount
 	}
 
-	// T27 完成前该指标暂无真实数据源，按 nullable 字段输出。
-	out.RealAcceptancePassRate = nil
 	return out, nil
 }
 

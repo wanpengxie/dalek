@@ -147,7 +147,7 @@ func cmdManagerStatus(args []string) {
 		)
 	}
 	fmt.Printf(
-		"health window=%s..%s  worker_bootstrap_failure_rate=%.2f%%(%d/%d)  terminal_state_conflict_count=%d  duplicate_terminal_report_count=%d  merge_discard_count=%d  integration_ticket_count=%d  manual_intervention_count=%d  real_acceptance_pass_rate=%s\n",
+		"health window=%s..%s  worker_bootstrap_failure_rate=%.2f%%(%d/%d)  terminal_state_conflict_count=%d  duplicate_terminal_report_count=%d  merge_discard_count=%d  integration_ticket_count=%d  manual_intervention_count=%d\n",
 		healthMetrics.WindowStart.Local().Format("01-02 15:04:05"),
 		healthMetrics.WindowEnd.Local().Format("01-02 15:04:05"),
 		healthMetrics.WorkerBootstrapFailureRate*100,
@@ -158,7 +158,6 @@ func cmdManagerStatus(args []string) {
 		healthMetrics.MergeDiscardCount,
 		healthMetrics.IntegrationTicketCount,
 		healthMetrics.ManualInterventionCount,
-		formatNullablePercent(healthMetrics.RealAcceptancePassRate),
 	)
 }
 
@@ -195,11 +194,7 @@ func cmdManagerPauseResume(args []string, enabled bool) {
 	}
 
 	_ = mustOpenProjectWithOutput(globalOutput, *home, *proj)
-	if enabled {
-		fmt.Println("autopilot 已移除（planner loop 已清理）。队列调度由 queue consumer 自动完成。")
-	} else {
-		fmt.Println("autopilot 已移除（planner loop 已清理）。队列调度由 queue consumer 自动完成。")
-	}
+	fmt.Println("队列调度由 queue consumer 自动完成，pause/resume 不再需要。")
 }
 
 func cmdManagerTick(args []string) {
@@ -405,9 +400,3 @@ func cmdManagerRun(args []string) {
 	}
 }
 
-func formatNullablePercent(v *float64) string {
-	if v == nil {
-		return "-"
-	}
-	return fmt.Sprintf("%.2f%%", (*v)*100)
-}

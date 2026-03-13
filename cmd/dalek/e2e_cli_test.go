@@ -144,16 +144,14 @@ func TestCLI_E2E_BasicWorkflow(t *testing.T) {
 
 	// 6) manager status（确保 manager 子命令链路可用）
 	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "manager", "status")
-	if !strings.Contains(out, "autopilot=") || !strings.Contains(out, "planner_dirty=") || !strings.Contains(out, "planner_active_task_run_id=") {
+	if !strings.Contains(out, "max_running=") {
 		t.Fatalf("manager status output unexpected:\n%s", out)
 	}
 	out, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "manager", "status", "-o", "json")
 	var managerStatus struct {
-		Schema                 string `json:"schema"`
-		PlannerDirty           bool   `json:"planner_dirty"`
-		PlannerActiveTaskRunID *uint  `json:"planner_active_task_run_id"`
-		HealthMetrics          *struct {
-			PlannerTimeoutRate float64 `json:"planner_timeout_rate"`
+		Schema        string `json:"schema"`
+		HealthMetrics *struct {
+			WorkerBootstrapFailureRate float64 `json:"worker_bootstrap_failure_rate"`
 		} `json:"health_metrics"`
 	}
 	if err := json.Unmarshal([]byte(out), &managerStatus); err != nil {
@@ -161,12 +159,6 @@ func TestCLI_E2E_BasicWorkflow(t *testing.T) {
 	}
 	if managerStatus.Schema != "dalek.manager.status.v1" {
 		t.Fatalf("unexpected manager status schema: %s", managerStatus.Schema)
-	}
-	if managerStatus.PlannerDirty {
-		t.Fatalf("planner_dirty should default false")
-	}
-	if managerStatus.PlannerActiveTaskRunID != nil {
-		t.Fatalf("planner_active_task_run_id should default nil, got=%v", *managerStatus.PlannerActiveTaskRunID)
 	}
 	if managerStatus.HealthMetrics == nil {
 		t.Fatalf("manager status should include health_metrics")

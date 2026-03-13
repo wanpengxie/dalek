@@ -140,7 +140,7 @@ func (s *Service) MarkWorkerRuntimeNotAlive(ctx context.Context, w contracts.Wor
 		now = time.Now()
 	}
 
-	// 同步 worker 生命周期状态（避免 manager/autopilot 继续把它计入 running 容量）。
+	// 同步 worker 生命周期状态（避免 manager/queue consumer 继续把它计入 running 容量）。
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.WithContext(ctx).Model(&contracts.Worker{}).
 			Where("id = ? AND status = ?", w.ID, contracts.WorkerRunning).

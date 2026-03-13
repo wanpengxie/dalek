@@ -20,36 +20,7 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 	inside := now.Add(-2 * time.Hour)
 	outside := now.Add(-10 * 24 * time.Hour)
 
-	plannerTimeoutRun := createTaskRunForMetrics(t, db, contracts.TaskRun{
-		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           "pm_planner_run",
-		ProjectKey:         "demo",
-		RequestID:          "planner-timeout-in",
-		OrchestrationState: contracts.TaskFailed,
-		ErrorCode:          "planner_timeout",
-		CreatedAt:          inside,
-		UpdatedAt:          inside,
-	})
-	createTaskRunForMetrics(t, db, contracts.TaskRun{
-		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           "pm_planner_run",
-		ProjectKey:         "demo",
-		RequestID:          "planner-ok-in",
-		OrchestrationState: contracts.TaskSucceeded,
-		CreatedAt:          inside.Add(5 * time.Minute),
-		UpdatedAt:          inside.Add(5 * time.Minute),
-	})
-	createTaskRunForMetrics(t, db, contracts.TaskRun{
-		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           "pm_planner_run",
-		ProjectKey:         "demo",
-		RequestID:          "planner-timeout-out",
-		OrchestrationState: contracts.TaskFailed,
-		ErrorCode:          "planner_timeout",
-		CreatedAt:          outside,
-		UpdatedAt:          outside,
-	})
-	createTaskRunForMetrics(t, db, contracts.TaskRun{
+	dispatchFailedRun := createTaskRunForMetrics(t, db, contracts.TaskRun{
 		OwnerType:          contracts.TaskOwnerWorker,
 		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
@@ -80,7 +51,7 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 	})
 
 	createTaskEventForMetrics(t, db, contracts.TaskEvent{
-		TaskRunID: plannerTimeoutRun.ID,
+		TaskRunID: dispatchFailedRun.ID,
 		EventType: "terminal_state_overridden",
 		CreatedAt: inside,
 		FromStateJSON: contracts.JSONMap{
@@ -91,14 +62,14 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 		},
 	})
 	createTaskEventForMetrics(t, db, contracts.TaskEvent{
-		TaskRunID:     plannerTimeoutRun.ID,
+		TaskRunID:     dispatchFailedRun.ID,
 		EventType:     "duplicate_terminal_report",
 		CreatedAt:     inside.Add(1 * time.Minute),
 		FromStateJSON: contracts.JSONMap{},
 		ToStateJSON:   contracts.JSONMap{},
 	})
 	createTaskEventForMetrics(t, db, contracts.TaskEvent{
-		TaskRunID:     plannerTimeoutRun.ID,
+		TaskRunID:     dispatchFailedRun.ID,
 		EventType:     "terminal_state_overridden",
 		CreatedAt:     outside,
 		FromStateJSON: contracts.JSONMap{},
@@ -162,10 +133,6 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 		t.Fatalf("CalculateHealthMetrics failed: %v", err)
 	}
 
-	// Planner metrics are now always zero (planner loop removed).
-	if metrics.PlannerRunCount != 0 || metrics.PlannerTimeoutCount != 0 {
-		t.Fatalf("unexpected planner counts (should be zero): %+v", metrics)
-	}
 	if metrics.WorkerRunCount != 2 || metrics.WorkerBootstrapFailureCount != 1 {
 		t.Fatalf("unexpected worker-run counts: %+v", metrics)
 	}
@@ -186,9 +153,6 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 	}
 	if metrics.IntegrationTicketCount != 2 {
 		t.Fatalf("unexpected integration_ticket_count: got=%d want=2", metrics.IntegrationTicketCount)
-	}
-	if metrics.RealAcceptancePassRate != nil {
-		t.Fatalf("real_acceptance_pass_rate should be nil before T27")
 	}
 }
 

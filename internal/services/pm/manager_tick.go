@@ -95,16 +95,7 @@ func managerTickFinalizeContext(parent context.Context) (context.Context, contex
 }
 
 func (s *Service) managerWorkerRunTimeout() time.Duration {
-	p, _, err := s.require()
-	if err != nil {
-		return 0
-	}
-	cfg := p.Config.WithDefaults()
-	d := time.Duration(cfg.PMDispatchTimeoutMS) * time.Millisecond
-	if d <= 0 {
-		return 0
-	}
-	return d
+	return 0
 }
 
 func (s *Service) managerStartTimeout() time.Duration {

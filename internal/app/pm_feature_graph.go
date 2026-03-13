@@ -646,7 +646,7 @@ func normalizeFeatureNodeType(t contracts.FeatureNodeType) contracts.FeatureNode
 
 func normalizeFeatureNodeOwner(owner contracts.FeatureNodeOwner) contracts.FeatureNodeOwner {
 	switch strings.ToLower(strings.TrimSpace(string(owner))) {
-	case string(contracts.FeatureNodeOwnerPM), "planner":
+	case string(contracts.FeatureNodeOwnerPM):
 		return contracts.FeatureNodeOwnerPM
 	case string(contracts.FeatureNodeOwnerWorker), "dev", "developer":
 		return contracts.FeatureNodeOwnerWorker

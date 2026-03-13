@@ -37,12 +37,6 @@ func TestConfigWithDefaults_SetsAgentAndTimeoutDefaults(t *testing.T) {
 	if cfg.PMAgent.BypassPermissions {
 		t.Fatalf("expected pm_agent.bypass_permissions=false by default")
 	}
-	if cfg.PMDispatchTimeoutMS != 0 {
-		t.Fatalf("expected pm_dispatch_timeout_ms default=0, got=%d", cfg.PMDispatchTimeoutMS)
-	}
-	if cfg.PMPlannerTimeoutMS != 0 {
-		t.Fatalf("expected pm_planner_timeout_ms default=0, got=%d", cfg.PMPlannerTimeoutMS)
-	}
 	if cfg.WorkerAgent.Mode != "sdk" {
 		t.Fatalf("unexpected worker_agent.mode default: %q", cfg.WorkerAgent.Mode)
 	}
@@ -69,27 +63,19 @@ func TestConfigWithDefaults_SetsAgentAndTimeoutDefaults(t *testing.T) {
 	}
 }
 
-func TestMergeConfig_OverridesPMDispatchTimeoutAndPMAgent(t *testing.T) {
+func TestMergeConfig_OverridesPMAgent(t *testing.T) {
 	base := Config{}.WithDefaults()
 	got := MergeConfig(base, Config{
 		PMAgent: AgentExecConfig{
 			Provider: "codex",
 			Model:    "gpt-5-codex",
 		},
-		PMDispatchTimeoutMS: 12345,
-		PMPlannerTimeoutMS:  67890,
 	})
 	if strings.TrimSpace(got.PMAgent.Provider) != "codex" {
 		t.Fatalf("unexpected pm_agent.provider: %q", got.PMAgent.Provider)
 	}
 	if strings.TrimSpace(got.PMAgent.Model) != "gpt-5-codex" {
 		t.Fatalf("unexpected pm_agent.model: %q", got.PMAgent.Model)
-	}
-	if got.PMDispatchTimeoutMS != 12345 {
-		t.Fatalf("unexpected pm_dispatch_timeout_ms: got=%d", got.PMDispatchTimeoutMS)
-	}
-	if got.PMPlannerTimeoutMS != 67890 {
-		t.Fatalf("unexpected pm_planner_timeout_ms: got=%d", got.PMPlannerTimeoutMS)
 	}
 }
 
@@ -333,18 +319,12 @@ func TestLoadConfig_DoesNotRewriteWhenSchemaAndAgentsComplete(t *testing.T) {
 		t.Fatalf("write config failed: %v", err)
 	}
 
-	cfg, needsRewrite, err := LoadConfig(path)
+	_, needsRewrite, err := LoadConfig(path)
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 	if needsRewrite {
 		t.Fatalf("expected needsRewrite=false when schema/agents are complete")
-	}
-	if cfg.PMDispatchTimeoutMS != 0 {
-		t.Fatalf("expected pm_dispatch_timeout_ms default=0 after defaults, got=%d", cfg.PMDispatchTimeoutMS)
-	}
-	if cfg.PMPlannerTimeoutMS != 0 {
-		t.Fatalf("expected pm_planner_timeout_ms default=0 after defaults, got=%d", cfg.PMPlannerTimeoutMS)
 	}
 }
 
