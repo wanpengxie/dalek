@@ -256,7 +256,7 @@ func TestFreezeMergesForDoneTickets_NeedsMergeKeepsPlannerDirty(t *testing.T) {
 	}
 }
 
-func TestScheduleQueuedTickets_StartsAndActivatesWithSubmitter(t *testing.T) {
+func TestScheduleQueuedTickets_ActivatesWithSubmitter(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "manager-tick-schedule-queued")
@@ -275,9 +275,6 @@ func TestScheduleQueuedTickets_StartsAndActivatesWithSubmitter(t *testing.T) {
 		Capacity:         1,
 		RunningTicketIDs: runningTicketIDs,
 	})
-	if !containsTicketID(out.StartedTickets, tk.ID) {
-		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, out.StartedTickets)
-	}
 	if !containsTicketID(out.ActivatedTickets, tk.ID) {
 		t.Fatalf("expected activated ticket recorded in ActivatedTickets for t%d, got=%v", tk.ID, out.ActivatedTickets)
 	}
@@ -515,22 +512,6 @@ func TestManagerTick_SchedulesPlannerRunOnceAfterDirtyEvent(t *testing.T) {
 	}
 }
 
-type cancelingWorkerRunSubmitter struct {
-	cancel context.CancelFunc
-	called bool
-}
-
-func (s *cancelingWorkerRunSubmitter) SubmitTicketWorkerRun(_ context.Context, _ uint) (WorkerRunSubmission, error) {
-	if s == nil {
-		return WorkerRunSubmission{}, nil
-	}
-	s.called = true
-	if s.cancel != nil {
-		s.cancel()
-	}
-	return WorkerRunSubmission{TaskRunID: 1}, nil
-}
-
 func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	svc.SetAutopilotEnabled(context.Background(), true)
@@ -551,25 +532,9 @@ func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled
 		t.Fatalf("set done ticket status failed: %v", err)
 	}
 
-	queuedTicket := createTicket(t, p.DB, "manager-tick-queued-cancel-parent")
-	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", queuedTicket.ID).Updates(map[string]any{
-		"workflow_status": contracts.TicketQueued,
-		"updated_at":      time.Now(),
-	}).Error; err != nil {
-		t.Fatalf("set queued ticket status failed: %v", err)
-	}
-
-	tickCtx, cancelTick := context.WithCancel(context.Background())
-	defer cancelTick()
-	submitter := &cancelingWorkerRunSubmitter{cancel: cancelTick}
-	svc.SetWorkerRunSubmitter(submitter)
-
-	res, err := svc.ManagerTick(tickCtx, ManagerTickOptions{})
+	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{})
 	if err != nil {
 		t.Fatalf("ManagerTick failed: %v", err)
-	}
-	if !submitter.called {
-		t.Fatalf("expected worker run submitter called and parent context canceled")
 	}
 	if !containsTicketID(res.MergeFrozen, doneTicket.ID) {
 		t.Fatalf("expected merge freeze for done ticket t%d, got=%v", doneTicket.ID, res.MergeFrozen)

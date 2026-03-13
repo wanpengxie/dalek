@@ -172,6 +172,9 @@ func (h *ExecutionHost) SubmitTicketLoop(ctx context.Context, req TicketLoopSubm
 		return TicketLoopSubmitReceipt{}, err
 	}
 	receipt := h.ticketLoopReceiptFromHandle(handle)
+	// TODO(tech-debt): 这里仍偏向“submit 成功时尽快拿到 task_run_id”。
+	// 如果资源创建下沉到 queue consumer，首次消费可能要先建 worktree/runtime，
+	// 那么 accepted 与 task_run_id 绑定应解耦：submit accepted 可先返回，run_id 允许稍后观测到。
 	if receipt.TaskRunID == 0 {
 		select {
 		case <-handle.ready:

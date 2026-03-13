@@ -95,7 +95,29 @@ func (s *Service) SetMaxRunningWorkers(ctx context.Context, n int) (contracts.PM
 	if err := db.WithContext(ctx).Save(st).Error; err != nil {
 		return contracts.PMState{}, err
 	}
+	s.KickQueueConsumer()
 	return *st, nil
+}
+
+func (s *Service) persistPlannerState(ctx context.Context, db *gorm.DB, st *contracts.PMState) error {
+	if st == nil || st.ID == 0 || db == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	now := time.Now()
+	return db.WithContext(ctx).Model(&contracts.PMState{}).
+		Where("id = ?", st.ID).
+		Updates(map[string]any{
+			"planner_dirty":              st.PlannerDirty,
+			"planner_wake_version":       st.PlannerWakeVersion,
+			"planner_active_task_run_id": st.PlannerActiveTaskRunID,
+			"planner_cooldown_until":     st.PlannerCooldownUntil,
+			"planner_last_error":         strings.TrimSpace(st.PlannerLastError),
+			"planner_last_run_at":        st.PlannerLastRunAt,
+			"updated_at":                 now,
+		}).Error
 }
 
 func (s *Service) markPlannerDirty(st *contracts.PMState) {

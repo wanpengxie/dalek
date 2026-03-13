@@ -299,6 +299,9 @@ func (s *Service) convergeExecutionLost(ctx context.Context, input executionLoss
 		return result, err
 	}
 	s.emitStatusChangeHookAsync(statusEvent)
+	if result.Requeued {
+		s.notifyQueued(result.TicketID)
+	}
 	return result, nil
 }
 

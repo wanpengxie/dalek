@@ -22,6 +22,11 @@ type StartOptions struct {
 //
 // 约束：
 // - worker 只负责“资源启动”（worktree + runtime 进程）。
+//
+// TODO(tech-debt): 当前 start 仍会在入队前预建 worker 资源。
+// 这让 queued 变成“资源已预热、等待消费”的半启动状态，而不是纯排队态。
+// 目标语义应改为：start 只负责把 ticket 提交到 queued；worktree/runtime 的创建延后到
+// queue consumer 真正拿到项目级配额并开始消费时再做。
 func (s *Service) StartTicket(ctx context.Context, ticketID uint) (*contracts.Worker, error) {
 	return s.StartTicketWithOptions(ctx, ticketID, StartOptions{})
 }
@@ -42,6 +47,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return nil, err
 	}
+	shouldNotifyQueued := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) != contracts.TicketQueued
 	if !fsm.CanStartTicket(t.WorkflowStatus) {
 		switch contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) {
 		case contracts.TicketArchived:
@@ -64,6 +70,9 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 		preStartReady = ready
 	}
 
+	// TODO(tech-debt): 这一步理想上应迁移到 queue consumer 拿到项目级配额之后。
+	// 当前保留在 start 中，原因是历史语义把 start 定义成“预热执行资源”而非“纯入队”。
+	// 这也是 start/queue 边界仍不干净的核心耦合点。
 	// 1) 启动 worker 资源（worktree + runtime 进程），不做 PM bootstrap。
 	w, err := s.worker.StartTicketResourcesWithOptions(ctx, ticketID, workersvc.StartOptions{
 		BaseBranch: strings.TrimSpace(opt.BaseBranch),
@@ -88,6 +97,9 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 			if err := s.promoteTicketQueuedOnStart(ctx, db, t, *w); err != nil {
 				return nil, err
 			}
+			if shouldNotifyQueued {
+				s.notifyQueued(t.ID)
+			}
 			return w, nil
 		}
 	}
@@ -107,6 +119,9 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	}
 	if err := s.promoteTicketQueuedOnStart(ctx, db, t, *out); err != nil {
 		return nil, err
+	}
+	if shouldNotifyQueued {
+		s.notifyQueued(t.ID)
 	}
 	if err := s.ensureTicketTargetRefOnStart(ctx, t.ID, opt.BaseBranch); err != nil {
 		return nil, err

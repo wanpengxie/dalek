@@ -77,6 +77,7 @@ type scheduleOptions struct {
 	SyncWorkerRun    bool
 	WorkerRunTimeout time.Duration
 	PMState          *contracts.PMState
+	Source           string
 }
 
 type scheduleResult struct {
@@ -197,17 +198,6 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 		}
 		return res, nil
 	}
-
-	scheduleResult := s.scheduleQueuedTickets(ctx, db, scheduleOptions{
-		Capacity:         capacity,
-		RunningTicketIDs: scanResult.RunningTicketIDs,
-		DryRun:           opt.DryRun,
-		SyncWorkerRun:    opt.SyncWorkerRun,
-		WorkerRunTimeout: opt.WorkerRunTimeout,
-		PMState:          st,
-	})
-	res.applyScheduleResult(scheduleResult)
-	res.SurfaceConflicts = uniqueSurfaceConflicts(res.SurfaceConflicts)
 
 	finalizeCtx, finalizeCancel := managerTickFinalizeContext(ctx)
 	defer finalizeCancel()
@@ -828,7 +818,7 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 			out.Errors = append(out.Errors, fmt.Sprintf("读取重试退避失败：t%d: %v", t.ID, err))
 			continue
 		} else if remaining > 0 {
-			s.slog().Debug("pm manager tick defer queued retry by backoff",
+			s.slog().Debug("pm queue consumer defer queued retry by backoff",
 				"ticket_id", t.ID,
 				"worker_id", workerID,
 				"retry_after", remaining.String(),
@@ -836,53 +826,19 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 			continue
 		}
 
-		startCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.managerStartTimeout())
-		w, serr := s.StartTicket(startCtx, t.ID)
-		cancel()
-		if serr != nil {
-			_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-				Key:      inboxKeyTicketIncident(t.ID, "start_failed"),
-				Status:   contracts.InboxOpen,
-				Severity: contracts.InboxWarn,
-				Reason:   contracts.InboxIncident,
-				Title:    fmt.Sprintf("启动失败：t%d", t.ID),
-				Body:     serr.Error(),
-				TicketID: t.ID,
-			})
+		workerID := uint(0)
+		if w, werr := s.worker.LatestWorker(ctx, t.ID); werr != nil {
+			out.Errors = append(out.Errors, fmt.Sprintf("读取最新 worker 失败：t%d: %v", t.ID, werr))
 			continue
-		}
-		if w == nil || (w.Status != contracts.WorkerRunning && w.Status != contracts.WorkerStopped) {
-			workerID := uint(0)
-			workerStatus := contracts.WorkerStatus("")
-			if w != nil {
-				workerID = w.ID
-				workerStatus = w.Status
-			}
-			msg := fmt.Sprintf("start 返回后 worker 未处于可调度状态（t%d w%d status=%s）", t.ID, workerID, workerStatus)
-			_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-				Key:      inboxKeyTicketIncident(t.ID, "start_not_running"),
-				Status:   contracts.InboxOpen,
-				Severity: contracts.InboxBlocker,
-				Reason:   contracts.InboxIncident,
-				Title:    fmt.Sprintf("启动后 worker 未就绪：t%d", t.ID),
-				Body:     msg,
-				TicketID: t.ID,
-				WorkerID: workerID,
-			})
-			if derr := s.demoteTicketBlockedOnWorkerNotReady(ctx, t.ID, workerID, msg, time.Now()); derr != nil {
-				out.Errors = append(out.Errors, fmt.Sprintf("worker 未就绪降级失败：t%d w%d: %v", t.ID, workerID, derr))
-			}
-			out.Errors = append(out.Errors, msg)
-			continue
+		} else if w != nil {
+			workerID = w.ID
 		}
 
-		out.StartedTickets = append(out.StartedTickets, t.ID)
-		runningTicketIDs[t.ID] = true
-
-		dispatched, errs := s.submitScheduledWorkerRun(ctx, t.ID, w.ID, opt)
+		dispatched, errs := s.submitScheduledWorkerRun(ctx, t.ID, workerID, opt)
 		out.Errors = append(out.Errors, errs...)
 		if dispatched {
 			out.ActivatedTickets = append(out.ActivatedTickets, t.ID)
+			runningTicketIDs[t.ID] = true
 			capacity--
 		}
 	}
@@ -900,7 +856,7 @@ func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, worker
 		_, derr := s.RunTicketWorker(activationCtx, ticketID, WorkerRunOptions{})
 		cancelActivation()
 		if derr != nil {
-			return false, s.handleActivationFailure(ctx, ticketID, workerID, derr, "sync activation 失败")
+			return false, s.handleActivationFailure(ctx, ticketID, workerID, derr, "sync activation 失败", opt.Source)
 		}
 		return true, nil
 	}
@@ -908,10 +864,10 @@ func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, worker
 	if submitter := s.getWorkerRunSubmitter(); submitter != nil {
 		submission, derr := submitter.SubmitTicketWorkerRun(context.WithoutCancel(ctx), ticketID)
 		if derr != nil {
-			return false, s.handleActivationFailure(ctx, ticketID, workerID, derr, "submit worker run 失败")
+			return false, s.handleActivationFailure(ctx, ticketID, workerID, derr, "submit worker run 失败", opt.Source)
 		}
 		if submission.TaskRunID == 0 {
-			return false, s.handleActivationFailure(ctx, ticketID, workerID, fmt.Errorf("submit worker run 未返回 task_run_id"), "submit worker run 失败")
+			return false, s.handleActivationFailure(ctx, ticketID, workerID, fmt.Errorf("submit worker run 未返回 task_run_id"), "submit worker run 失败", opt.Source)
 		}
 		return true, nil
 	}
@@ -930,25 +886,35 @@ func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, worker
 	return false, []string{errMsg}
 }
 
-func (s *Service) handleActivationFailure(ctx context.Context, ticketID, workerID uint, activationErr error, prefix string) []string {
+func (s *Service) handleActivationFailure(ctx context.Context, ticketID, workerID uint, activationErr error, prefix, source string) []string {
 	if activationErr == nil {
 		return nil
 	}
 	errs := []string{}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "pm.queue_consumer"
+	}
+	inboxKey := inboxKeyTicketIncident(ticketID, "activation_failed")
+	title := fmt.Sprintf("激活失败：t%d", ticketID)
+	if workerID != 0 {
+		inboxKey = inboxKeyWorkerIncident(workerID, "activation_failed")
+		title = fmt.Sprintf("激活失败：t%d w%d", ticketID, workerID)
+	}
 
 	_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
-		Key:      inboxKeyWorkerIncident(workerID, "activation_failed"),
+		Key:      inboxKey,
 		Status:   contracts.InboxOpen,
 		Severity: contracts.InboxWarn,
 		Reason:   contracts.InboxIncident,
-		Title:    fmt.Sprintf("激活失败：t%d w%d", ticketID, workerID),
+		Title:    title,
 		Body:     activationErr.Error(),
 		TicketID: ticketID,
 		WorkerID: workerID,
 	})
 
 	if isWorkerReadyTimeout(activationErr) {
-		if berr := s.demoteTicketBlockedOnWorkerNotReady(ctx, ticketID, workerID, activationErr.Error(), time.Now()); berr != nil {
+		if berr := s.demoteTicketBlockedOnWorkerNotReady(ctx, ticketID, workerID, activationErr.Error(), source, time.Now()); berr != nil {
 			errs = append(errs, fmt.Sprintf("worker 未就绪降级失败：t%d w%d: %v", ticketID, workerID, berr))
 		}
 	}

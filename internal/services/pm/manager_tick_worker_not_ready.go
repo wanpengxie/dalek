@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticketID, workerID uint, reason string, now time.Time) error {
+func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticketID, workerID uint, reason, source string, now time.Time) error {
 	if ticketID == 0 {
 		return nil
 	}
@@ -26,6 +26,10 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		reason = "worker 未就绪，已自动降级为 blocked"
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "pm.queue_consumer"
 	}
 	if now.IsZero() {
 		now = time.Now()
@@ -44,10 +48,10 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 		lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{
 			TicketID:       ticketID,
 			EventType:      contracts.TicketLifecycleRepaired,
-			Source:         "pm.manager_tick",
+			Source:         source,
 			ActorType:      contracts.TicketLifecycleActorSystem,
 			WorkerID:       workerID,
-			IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(ticketID, "pm.manager_tick.worker_not_ready", now),
+			IdempotencyKey: ticketlifecycle.RepairedIdempotencyKey(ticketID, source+".worker_not_ready", now),
 			Payload: lifecycleRepairPayload(contracts.TicketBlocked, contracts.IntegrationNone, map[string]any{
 				"ticket_id": ticketID,
 				"worker_id": workerID,
@@ -61,14 +65,14 @@ func (s *Service) demoteTicketBlockedOnWorkerNotReady(ctx context.Context, ticke
 		if !lifecycleResult.WorkflowChanged() {
 			return nil
 		}
-		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.manager_tick", "worker 未就绪自动降级 blocked", map[string]any{
+		if err := s.appendTicketWorkflowEventTx(ctx, tx, ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, source, "worker 未就绪自动降级 blocked", map[string]any{
 			"ticket_id": ticketID,
 			"worker_id": workerID,
 			"error":     reason,
 		}, now); err != nil {
 			return err
 		}
-		statusEvent = s.buildStatusChangeEvent(ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, "pm.manager_tick", now)
+		statusEvent = s.buildStatusChangeEvent(ticketID, lifecycleResult.Before.WorkflowStatus, lifecycleResult.After.WorkflowStatus, source, now)
 		if statusEvent != nil {
 			statusEvent.WorkerID = workerID
 			statusEvent.Detail = reason

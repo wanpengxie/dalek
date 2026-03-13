@@ -34,6 +34,13 @@ type Service struct {
 	workerReadyTimeout      time.Duration
 	workerReadyPollInterval time.Duration
 
+	// queuedCh / queueWakeCh 是 queued ticket 的调度唤醒通道。
+	// ticket 进入 queued 或项目额度变化后，通过 notifyQueued/KickQueueConsumer 唤醒消费者，
+	// 由消费者按项目级配额扫描并消费 queued ticket。
+	queuedCh          chan uint
+	queueWakeCh       chan struct{}
+	queueConsumerOnce sync.Once
+
 	// sdkHandleLauncher 用于测试注入，生产环境保持 nil（使用真实的 launchWorkerSDKHandle）。
 	sdkHandleLauncher workerSDKHandleLauncherFunc
 	// workerLoopClosureFallbackApplier 用于测试注入，生产环境保持 nil（使用真实 fallback）。
@@ -52,6 +59,8 @@ func New(p *core.Project, workerSvc *worker.Service) *Service {
 		logger:                  logger,
 		workerReadyTimeout:      defaultWorkerReadyTimeout,
 		workerReadyPollInterval: defaultWorkerReadyPollInterval,
+		queuedCh:                make(chan uint, 64),
+		queueWakeCh:             make(chan struct{}, 1),
 		runner:                  sdkrunner.DefaultTaskRunner{},
 	}
 }

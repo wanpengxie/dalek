@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -217,30 +218,37 @@ type acceptingLifecycleManagerHost struct {
 	t       *testing.T
 	project *Project
 
+	mu        sync.Mutex
 	submitted []uint
 }
 
-func (h *acceptingLifecycleManagerHost) SubmitWorkerRun(ctx context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error) {
+func (h *acceptingLifecycleManagerHost) SubmitTicketLoop(ctx context.Context, req daemonsvc.TicketLoopSubmitRequest) (daemonsvc.TicketLoopSubmitReceipt, error) {
 	if h == nil || h.project == nil {
-		return daemonsvc.WorkerRunSubmitReceipt{}, fmt.Errorf("lifecycle manager host project 为空")
+		return daemonsvc.TicketLoopSubmitReceipt{}, fmt.Errorf("lifecycle manager host project 为空")
 	}
 	worker, err := h.project.LatestWorker(ctx, req.TicketID)
 	if err != nil {
-		return daemonsvc.WorkerRunSubmitReceipt{}, err
+		return daemonsvc.TicketLoopSubmitReceipt{}, err
 	}
 	if worker == nil || worker.ID == 0 {
-		return daemonsvc.WorkerRunSubmitReceipt{}, fmt.Errorf("ticket %d missing worker before submit", req.TicketID)
+		return daemonsvc.TicketLoopSubmitReceipt{}, fmt.Errorf("ticket %d missing worker before submit", req.TicketID)
 	}
-	run := createWorkerDeliverRunForLifecycleTest(h.t, h.project, req.TicketID, worker.ID, "daemon-manager-accept")
-	acceptWorkerRunForLifecycleTest(h.t, h.project, req.TicketID, worker.ID, run.ID, "test.daemon_manager.accepted")
+	workerID := worker.ID
+	h.mu.Lock()
 	h.submitted = append(h.submitted, req.TicketID)
-	return daemonsvc.WorkerRunSubmitReceipt{
+	h.mu.Unlock()
+	go func(ticketID uint) {
+		time.Sleep(20 * time.Millisecond)
+		run := createWorkerDeliverRunForLifecycleTest(h.t, h.project, ticketID, workerID, "daemon-manager-accept")
+		acceptWorkerRunForLifecycleTest(h.t, h.project, ticketID, workerID, run.ID, "test.daemon_manager.accepted")
+	}(req.TicketID)
+	return daemonsvc.TicketLoopSubmitReceipt{
 		Accepted:  true,
 		Project:   strings.TrimSpace(req.Project),
 		RequestID: strings.TrimSpace(req.RequestID),
-		TaskRunID: run.ID,
+		TaskRunID: 1,
 		TicketID:  req.TicketID,
-		WorkerID:  worker.ID,
+		WorkerID:  workerID,
 	}, nil
 }
 
@@ -254,7 +262,12 @@ func (h *acceptingLifecycleManagerHost) SubmitPlannerRun(_ context.Context, req 
 }
 
 func (h *acceptingLifecycleManagerHost) SubmittedTicketIDs() []uint {
-	if h == nil || len(h.submitted) == 0 {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.submitted) == 0 {
 		return nil
 	}
 	out := make([]uint, len(h.submitted))

@@ -283,6 +283,9 @@ func (s *Service) inspectWorkerRunTarget(ctx context.Context, ticketID uint) (co
 }
 
 func (s *Service) ensureWorkerStartedForRun(ctx context.Context, ticketID uint, baseBranch string) (*contracts.Worker, error) {
+	// TODO(tech-debt): auto-start 仍通过 pm.StartTicketWithOptions 回到“start 预建资源”语义。
+	// 当 start 收敛为纯入队后，这里应直接调用 worker.StartTicketResourcesWithOptions，
+	// 避免 worker run 路径再反向依赖 pm.start 的队列语义。
 	w, err := s.StartTicketWithOptions(ctx, ticketID, StartOptions{BaseBranch: strings.TrimSpace(baseBranch)})
 	if err != nil {
 		return nil, fmt.Errorf("auto-start 失败: %w", err)

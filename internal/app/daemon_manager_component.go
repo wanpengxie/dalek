@@ -366,6 +366,8 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 			projectName: projectName,
 			host:        m.host,
 		})
+		p.pm.StartQueueConsumer(parent)
+		p.pm.KickQueueConsumer()
 	}
 	if m.statusHookFactory != nil && p != nil && p.pm != nil {
 		p.pm.SetStatusChangeHook(m.statusHookFactory(projectName, p))

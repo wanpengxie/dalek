@@ -41,10 +41,9 @@ func (s *stubWorkerRunSubmitter) CallIDs() []uint {
 	return out
 }
 
-func TestManagerTick_UsesWorkerRunSubmitterWhenConfigured(t *testing.T) {
+func TestQueueConsumer_UsesWorkerRunSubmitterWhenConfigured(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
-	svc.SetAutopilotEnabled(context.Background(), true)
-	tk := createTicket(t, p.DB, "manager-tick-submitter")
+	tk := createTicket(t, p.DB, "queue-consumer-submitter")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
@@ -55,16 +54,7 @@ func TestManagerTick_UsesWorkerRunSubmitterWhenConfigured(t *testing.T) {
 	submitter := &stubWorkerRunSubmitter{}
 	svc.SetWorkerRunSubmitter(submitter)
 
-	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{})
-	if err != nil {
-		t.Fatalf("ManagerTick failed: %v", err)
-	}
-	if !containsTicketID(res.StartedTickets, tk.ID) {
-		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, res.StartedTickets)
-	}
-	if !containsTicketID(res.ActivatedTickets, tk.ID) {
-		t.Fatalf("expected activated ticket recorded in ActivatedTickets for t%d, got=%v", tk.ID, res.ActivatedTickets)
-	}
+	svc.consumeQueuedBacklog(context.Background())
 
 	callIDs := submitter.CallIDs()
 	if len(callIDs) != 1 || callIDs[0] != tk.ID {
@@ -72,10 +62,9 @@ func TestManagerTick_UsesWorkerRunSubmitterWhenConfigured(t *testing.T) {
 	}
 }
 
-func TestManagerTick_RejectsActivationWithoutSubmitter(t *testing.T) {
+func TestQueueConsumer_RejectsActivationWithoutSubmitter(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
-	svc.SetAutopilotEnabled(context.Background(), true)
-	tk := createTicket(t, p.DB, "manager-tick-fallback")
+	tk := createTicket(t, p.DB, "queue-consumer-no-submitter")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
@@ -83,20 +72,7 @@ func TestManagerTick_RejectsActivationWithoutSubmitter(t *testing.T) {
 		t.Fatalf("set ticket queued failed: %v", err)
 	}
 
-	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{})
-	if err != nil {
-		t.Fatalf("ManagerTick failed: %v", err)
-	}
-	if !containsTicketID(res.StartedTickets, tk.ID) {
-		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, res.StartedTickets)
-	}
-	if containsTicketID(res.ActivatedTickets, tk.ID) {
-		t.Fatalf("activation should be rejected without submitter, got=%v", res.ActivatedTickets)
-	}
-	joined := strings.Join(res.Errors, "\n")
-	if !strings.Contains(joined, "worker run submitter 未配置") {
-		t.Fatalf("expected submitter missing error, got=%v", res.Errors)
-	}
+	svc.consumeQueuedBacklog(context.Background())
 
 	var inbox contracts.InboxItem
 	if err := p.DB.Where("key = ? AND status = ?", inboxKeyTicketIncident(tk.ID, "worker_run_no_submitter"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
@@ -110,9 +86,45 @@ func TestManagerTick_RejectsActivationWithoutSubmitter(t *testing.T) {
 	}
 }
 
-func TestManagerTick_DryRunSkipsWorkerRunSubmitter(t *testing.T) {
+func TestConsumeQueuedBacklog_RespectsPMCapacity(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
-	tk := createTicket(t, p.DB, "manager-tick-dry-run")
+	if _, err := svc.SetMaxRunningWorkers(context.Background(), 1); err != nil {
+		t.Fatalf("SetMaxRunningWorkers failed: %v", err)
+	}
+
+	runningTicket := createTicket(t, p.DB, "queue-capacity-running")
+	runningWorker, err := svc.StartTicket(context.Background(), runningTicket.ID)
+	if err != nil {
+		t.Fatalf("StartTicket(running) failed: %v", err)
+	}
+	_ = createWorkerTaskRun(t, p.DB, runningTicket.ID, runningWorker.ID, "running-capacity")
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", runningWorker.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set running worker failed: %v", err)
+	}
+
+	queuedTicket := createTicket(t, p.DB, "queue-capacity-queued")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", queuedTicket.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketQueued,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set queued ticket failed: %v", err)
+	}
+
+	submitter := &stubWorkerRunSubmitter{}
+	svc.SetWorkerRunSubmitter(submitter)
+	svc.consumeQueuedBacklog(context.Background())
+
+	if len(submitter.CallIDs()) != 0 {
+		t.Fatalf("expected no dispatch under exhausted capacity, got=%v", submitter.CallIDs())
+	}
+}
+
+func TestScheduleQueuedTickets_DryRunSkipsWorkerRunSubmitter(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "queue-schedule-dry-run")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
@@ -123,22 +135,21 @@ func TestManagerTick_DryRunSkipsWorkerRunSubmitter(t *testing.T) {
 	submitter := &stubWorkerRunSubmitter{}
 	svc.SetWorkerRunSubmitter(submitter)
 
-	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{DryRun: true})
-	if err != nil {
-		t.Fatalf("ManagerTick failed: %v", err)
-	}
+	res := svc.scheduleQueuedTickets(context.Background(), p.DB, scheduleOptions{
+		Capacity: 1,
+		DryRun:   true,
+	})
 	if len(submitter.CallIDs()) != 0 {
 		t.Fatalf("dry-run should not call worker run submitter")
 	}
 	if len(res.StartedTickets) != 0 || len(res.ActivatedTickets) != 0 {
-		t.Fatalf("dry-run should not start/activate tickets, started=%v activated=%v", res.StartedTickets, res.ActivatedTickets)
+		t.Fatalf("dry-run should not activate tickets, started=%v activated=%v", res.StartedTickets, res.ActivatedTickets)
 	}
 }
 
-func TestManagerTick_SyncWorkerRunBypassesSubmitter(t *testing.T) {
+func TestScheduleQueuedTickets_SyncWorkerRunBypassesSubmitter(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
-	svc.SetAutopilotEnabled(context.Background(), true)
-	tk := createTicket(t, p.DB, "manager-tick-sync-worker-run")
+	tk := createTicket(t, p.DB, "queue-schedule-sync-worker-run")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
@@ -156,13 +167,10 @@ func TestManagerTick_SyncWorkerRunBypassesSubmitter(t *testing.T) {
 		return &fakeAgentRunHandle{runID: run.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
 	}
 
-	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{SyncWorkerRun: true})
-	if err != nil {
-		t.Fatalf("ManagerTick failed: %v", err)
-	}
-	if !containsTicketID(res.StartedTickets, tk.ID) {
-		t.Fatalf("expected started ticket contains t%d, got=%v", tk.ID, res.StartedTickets)
-	}
+	res := svc.scheduleQueuedTickets(context.Background(), p.DB, scheduleOptions{
+		Capacity:      1,
+		SyncWorkerRun: true,
+	})
 	if !containsTicketID(res.ActivatedTickets, tk.ID) {
 		t.Fatalf("expected activated ticket recorded in ActivatedTickets for t%d, got=%v", tk.ID, res.ActivatedTickets)
 	}
@@ -171,10 +179,9 @@ func TestManagerTick_SyncWorkerRunBypassesSubmitter(t *testing.T) {
 	}
 }
 
-func TestManagerTick_SyncWorkerRunHonorsTimeout(t *testing.T) {
+func TestScheduleQueuedTickets_SyncWorkerRunHonorsTimeout(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
-	svc.SetAutopilotEnabled(context.Background(), true)
-	tk := createTicket(t, p.DB, "manager-tick-sync-timeout")
+	tk := createTicket(t, p.DB, "queue-schedule-sync-timeout")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
@@ -186,18 +193,13 @@ func TestManagerTick_SyncWorkerRunHonorsTimeout(t *testing.T) {
 		return blockingAgentRunHandle{runID: run.ID}, nil
 	}
 
-	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{
+	res := svc.scheduleQueuedTickets(context.Background(), p.DB, scheduleOptions{
+		Capacity:         1,
 		SyncWorkerRun:    true,
 		WorkerRunTimeout: time.Nanosecond,
 	})
-	if err != nil {
-		t.Fatalf("ManagerTick failed: %v", err)
-	}
 	if containsTicketID(res.ActivatedTickets, tk.ID) {
 		t.Fatalf("activation should timeout when worker-run-timeout is tiny, got=%v", res.ActivatedTickets)
-	}
-	if len(res.Errors) == 0 {
-		t.Fatalf("expected sync activation timeout errors")
 	}
 	joined := strings.Join(res.Errors, "\n")
 	if !strings.Contains(joined, "sync activation 失败") {
@@ -205,10 +207,9 @@ func TestManagerTick_SyncWorkerRunHonorsTimeout(t *testing.T) {
 	}
 }
 
-func TestManagerTick_DemotesBlockedWhenActivationReportsWorkerReadyTimeout(t *testing.T) {
+func TestScheduleQueuedTickets_DemotesBlockedWhenActivationReportsWorkerReadyTimeout(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
-	svc.SetAutopilotEnabled(context.Background(), true)
-	tk := createTicket(t, p.DB, "manager-tick-worker-ready-timeout")
+	tk := createTicket(t, p.DB, "queue-schedule-worker-ready-timeout")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketQueued,
 		"updated_at":      time.Now(),
@@ -225,10 +226,9 @@ func TestManagerTick_DemotesBlockedWhenActivationReportsWorkerReadyTimeout(t *te
 	}
 	svc.SetWorkerRunSubmitter(submitter)
 
-	res, err := svc.ManagerTick(context.Background(), ManagerTickOptions{})
-	if err != nil {
-		t.Fatalf("ManagerTick failed: %v", err)
-	}
+	res := svc.scheduleQueuedTickets(context.Background(), p.DB, scheduleOptions{
+		Capacity: 1,
+	})
 	if containsTicketID(res.ActivatedTickets, tk.ID) {
 		t.Fatalf("worker ready timeout should not mark activated, got=%v", res.ActivatedTickets)
 	}
@@ -245,12 +245,8 @@ func TestManagerTick_DemotesBlockedWhenActivationReportsWorkerReadyTimeout(t *te
 		t.Fatalf("expected ticket blocked after worker ready timeout, got=%s", ticket.WorkflowStatus)
 	}
 
-	var w contracts.Worker
-	if err := p.DB.Where("ticket_id = ?", tk.ID).Order("id desc").First(&w).Error; err != nil {
-		t.Fatalf("load latest worker failed: %v", err)
-	}
 	var inbox contracts.InboxItem
-	if err := p.DB.Where("key = ? AND status = ?", inboxKeyWorkerIncident(w.ID, "worker_not_ready"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+	if err := p.DB.Where("key = ? AND status = ?", inboxKeyTicketIncident(tk.ID, "worker_not_ready"), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("expected worker_not_ready inbox, err=%v", err)
 	}
 
@@ -258,8 +254,8 @@ func TestManagerTick_DemotesBlockedWhenActivationReportsWorkerReadyTimeout(t *te
 	if err := p.DB.Where("ticket_id = ? AND to_workflow_status = ?", tk.ID, contracts.TicketBlocked).Order("id desc").First(&ev).Error; err != nil {
 		t.Fatalf("expected workflow event blocked, err=%v", err)
 	}
-	if ev.Source != "pm.manager_tick" {
-		t.Fatalf("expected workflow event source pm.manager_tick, got=%s", ev.Source)
+	if ev.Source != "pm.queue_consumer" {
+		t.Fatalf("expected workflow event source pm.queue_consumer, got=%s", ev.Source)
 	}
 }
 
