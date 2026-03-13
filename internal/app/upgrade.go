@@ -143,14 +143,14 @@ func (h *Home) UpgradeProject(ctx context.Context, opt UpgradeOptions) (UpgradeR
 	}
 	res.Changes = convertControlChanges(controlChanges)
 
-	backupSources := collectBackupSources(layout, res.Changes)
+	backupSources := collectBackupSources(layout)
 	if opt.DryRun {
-		res.Backups = previewBackupTargets(backupSources)
+		res.Backups = previewBackupTargets(layout, backupSources)
 		sort.Strings(res.Backups)
 		return res, nil
 	}
 
-	backups, err := createBackups(backupSources)
+	backups, err := createBackups(layout, backupSources)
 	if err != nil {
 		res.Backups = backups
 		return res, &UpgradeFailure{Result: res, Err: err}
@@ -328,9 +328,9 @@ func convertControlChanges(in []repo.ControlPlaneChange) []UpgradeChange {
 	return out
 }
 
-func collectBackupSources(layout repo.Layout, changes []UpgradeChange) []string {
+func collectBackupSources(layout repo.Layout) []string {
 	seen := make(map[string]struct{})
-	out := make([]string, 0, len(changes)+2)
+	var out []string
 	appendIfExists := func(path string) {
 		path = strings.TrimSpace(path)
 		if path == "" {
@@ -339,7 +339,8 @@ func collectBackupSources(layout repo.Layout, changes []UpgradeChange) []string 
 		if _, ok := seen[path]; ok {
 			return
 		}
-		if _, err := os.Stat(path); err != nil {
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
 			return
 		}
 		seen[path] = struct{}{}
@@ -347,32 +348,57 @@ func collectBackupSources(layout repo.Layout, changes []UpgradeChange) []string 
 	}
 	appendIfExists(layout.DBPath)
 	appendIfExists(layout.ConfigPath)
-	appendIfExists(layout.ProjectAgentKernelPath)
 	appendIfExists(filepath.Join(layout.RepoRoot, "CLAUDE.md"))
 	appendIfExists(filepath.Join(layout.RepoRoot, "AGENTS.md"))
-	for _, change := range changes {
-		appendIfExists(change.Path)
-	}
+	// control 目录整体备份
+	_ = filepath.Walk(layout.ControlDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		appendIfExists(path)
+		return nil
+	})
+	// PM 目录备份
+	_ = filepath.Walk(layout.PMDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		appendIfExists(path)
+		return nil
+	})
+	// 项目级 agent 文件
+	appendIfExists(layout.ProjectAgentKernelPath)
+	appendIfExists(layout.ProjectAgentUserPath)
+	appendIfExists(layout.ProjectBootstrapPath)
 	sort.Strings(out)
 	return out
 }
 
-func previewBackupTargets(sources []string) []string {
+func previewBackupTargets(layout repo.Layout, sources []string) []string {
 	if len(sources) == 0 {
 		return nil
 	}
+	dir := filepath.Join(layout.BackupDir, "<timestamp>")
 	out := make([]string, 0, len(sources))
 	for _, src := range sources {
-		out = append(out, fmt.Sprintf("%s -> %s.bak.<timestamp>", src, src))
+		rel, err := filepath.Rel(layout.RepoRoot, src)
+		if err != nil {
+			rel = filepath.Base(src)
+		}
+		out = append(out, fmt.Sprintf("%s -> %s", src, filepath.Join(dir, rel)))
 	}
 	return out
 }
 
-func createBackups(sources []string) ([]string, error) {
+func createBackups(layout repo.Layout, sources []string) ([]string, error) {
 	if len(sources) == 0 {
 		return nil, nil
 	}
 	tag := time.Now().UTC().Format("20060102-150405")
+	dir := filepath.Join(layout.BackupDir, tag)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("创建备份目录失败(%s): %w", dir, err)
+	}
 	backups := make([]string, 0, len(sources))
 	for _, src := range sources {
 		raw, err := os.ReadFile(src)
@@ -383,7 +409,14 @@ func createBackups(sources []string) ([]string, error) {
 		if err != nil {
 			return backups, fmt.Errorf("读取备份源权限失败(%s): %w", src, err)
 		}
-		dst := fmt.Sprintf("%s.bak.%s", src, tag)
+		rel, err := filepath.Rel(layout.RepoRoot, src)
+		if err != nil {
+			rel = filepath.Base(src)
+		}
+		dst := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return backups, fmt.Errorf("创建备份子目录失败(%s): %w", filepath.Dir(dst), err)
+		}
 		if err := os.WriteFile(dst, raw, info.Mode().Perm()); err != nil {
 			return backups, fmt.Errorf("写入备份失败(%s): %w", dst, err)
 		}

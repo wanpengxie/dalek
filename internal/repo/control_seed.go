@@ -24,7 +24,7 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 	if err := ensureControlPlaneDirs(layout); err != nil {
 		return err
 	}
-	if _, err := ensureControlWorkerTemplates(layout); err != nil {
+	if _, err := ensureControlWorkerTemplates(layout, false); err != nil {
 		return err
 	}
 	if _, err := seedControlSkillsTemplates(layout, false); err != nil {
@@ -45,6 +45,7 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 	}
 	for _, line := range []string{
 		"runtime/",
+		"backup/",
 		".dalek_project_name",
 		".dalek_repo_path",
 		".dalek_bin_path",
@@ -80,29 +81,27 @@ func PlanControlPlaneSeedUpdate(layout Layout, projectName string) ([]ControlPla
 	}
 	changes = append(changes, skillChanges...)
 
-	if differs, err := fileContentDiffers(layout.ProjectAgentKernelPath, defaultControlProjectAgentKernelTemplate(layout, projectName)); err != nil {
-		return nil, err
-	} else if differs {
-		action := "create"
-		if _, statErr := os.Stat(layout.ProjectAgentKernelPath); statErr == nil {
-			action = "update"
+	planSpecs := []struct {
+		path    string
+		content string
+	}{
+		{path: layout.ProjectAgentKernelPath, content: defaultControlProjectAgentKernelTemplate(layout, projectName)},
+		{path: layout.ProjectAgentUserPath, content: defaultControlProjectAgentUserTemplate(layout, projectName)},
+		{path: layout.ProjectBootstrapPath, content: defaultProjectBootstrapTemplate()},
+		{path: pmPlanPath(layout), content: defaultPMPlanTemplate()},
+	}
+	for _, spec := range planSpecs {
+		differs, err := fileContentDiffers(spec.path, spec.content)
+		if err != nil {
+			return nil, err
 		}
-		changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentKernelPath, Action: action})
-	}
-	if missing, err := fileMissing(layout.ProjectAgentUserPath); err != nil {
-		return nil, err
-	} else if missing {
-		changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentUserPath, Action: "create"})
-	}
-	if missing, err := fileMissing(layout.ProjectBootstrapPath); err != nil {
-		return nil, err
-	} else if missing {
-		changes = append(changes, ControlPlaneChange{Path: layout.ProjectBootstrapPath, Action: "create"})
-	}
-	if missing, err := fileMissing(pmPlanPath(layout)); err != nil {
-		return nil, err
-	} else if missing {
-		changes = append(changes, ControlPlaneChange{Path: pmPlanPath(layout), Action: "create"})
+		if differs {
+			action := "create"
+			if _, statErr := os.Stat(spec.path); statErr == nil {
+				action = "update"
+			}
+			changes = append(changes, ControlPlaneChange{Path: spec.path, Action: action})
+		}
 	}
 	return changes, nil
 }
@@ -114,7 +113,7 @@ func UpdateControlPlaneSeed(layout Layout, projectName string) ([]ControlPlaneCh
 	if err := ensureControlPlaneDirs(layout); err != nil {
 		return nil, err
 	}
-	changes, err := ensureControlWorkerTemplates(layout)
+	changes, err := ensureControlWorkerTemplates(layout, true)
 	if err != nil {
 		return nil, err
 	}
@@ -124,39 +123,37 @@ func UpdateControlPlaneSeed(layout Layout, projectName string) ([]ControlPlaneCh
 	}
 	changes = append(changes, skillChanges...)
 
-	{
-		kernelExisted := true
-		if _, statErr := os.Stat(layout.ProjectAgentKernelPath); statErr != nil {
-			kernelExisted = false
+	forceSpecs := []struct {
+		path    string
+		content string
+		mode    os.FileMode
+	}{
+		{path: layout.ProjectAgentKernelPath, content: defaultControlProjectAgentKernelTemplate(layout, projectName), mode: 0o644},
+		{path: layout.ProjectAgentUserPath, content: defaultControlProjectAgentUserTemplate(layout, projectName), mode: 0o644},
+		{path: layout.ProjectBootstrapPath, content: defaultProjectBootstrapTemplate(), mode: 0o755},
+		{path: pmPlanPath(layout), content: defaultPMPlanTemplate(), mode: 0o644},
+	}
+	for _, spec := range forceSpecs {
+		existed := true
+		if _, statErr := os.Stat(spec.path); statErr != nil {
+			existed = false
 		}
-		if changed, err := writeFileForce(layout.ProjectAgentKernelPath, defaultControlProjectAgentKernelTemplate(layout, projectName), 0o644); err != nil {
-			return nil, err
-		} else if changed {
+		changed, writeErr := writeFileForce(spec.path, spec.content, spec.mode)
+		if writeErr != nil {
+			return nil, writeErr
+		}
+		if changed {
 			action := "create"
-			if kernelExisted {
+			if existed {
 				action = "update"
 			}
-			changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentKernelPath, Action: action})
+			changes = append(changes, ControlPlaneChange{Path: spec.path, Action: action})
 		}
-	}
-	if created, err := writeFileIfMissing(layout.ProjectAgentUserPath, defaultControlProjectAgentUserTemplate(layout, projectName), 0o644); err != nil {
-		return nil, err
-	} else if created {
-		changes = append(changes, ControlPlaneChange{Path: layout.ProjectAgentUserPath, Action: "create"})
-	}
-	if created, err := ensureProjectBootstrap(layout); err != nil {
-		return nil, err
-	} else if created {
-		changes = append(changes, ControlPlaneChange{Path: layout.ProjectBootstrapPath, Action: "create"})
-	}
-	if created, err := writeFileIfMissing(pmPlanPath(layout), defaultPMPlanTemplate(), 0o644); err != nil {
-		return nil, err
-	} else if created {
-		changes = append(changes, ControlPlaneChange{Path: pmPlanPath(layout), Action: "create"})
 	}
 
 	for _, line := range []string{
 		"runtime/",
+		"backup/",
 		".dalek_project_name",
 		".dalek_repo_path",
 		".dalek_bin_path",

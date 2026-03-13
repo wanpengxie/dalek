@@ -198,24 +198,25 @@ func TestUpdateControlPlaneSeed_OverwriteSkillsKeepKnowledge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read pm plan failed: %v", err)
 	}
-	if string(gotPlan) != "local-plan\n" {
-		t.Fatalf("pm plan should stay untouched, got=%q", string(gotPlan))
+	wantPlan := MustReadSeedTemplate("templates/project/pm/plan.md")
+	if string(gotPlan) != wantPlan {
+		t.Fatalf("pm plan should be overwritten by template, got=%q", string(gotPlan))
 	}
 
 	foundSkillUpdate := false
-	foundPMPlanCreate := false
+	foundPMPlanUpdate := false
 	for _, change := range changes {
 		if change.Path == skillPath && change.Action == "update" {
 			foundSkillUpdate = true
 		}
-		if change.Path == planPath && change.Action == "create" {
-			foundPMPlanCreate = true
+		if change.Path == planPath && change.Action == "update" {
+			foundPMPlanUpdate = true
 		}
 	}
 	if !foundSkillUpdate {
 		t.Fatalf("expected skill update in changes, got=%+v", changes)
 	}
-	if foundPMPlanCreate {
-		t.Fatalf("pm plan should not be recreated when already exists, got=%+v", changes)
+	if !foundPMPlanUpdate {
+		t.Fatalf("expected pm plan update in changes, got=%+v", changes)
 	}
 }

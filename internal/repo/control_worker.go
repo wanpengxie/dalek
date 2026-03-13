@@ -28,7 +28,7 @@ func ReadControlWorkerStateTemplate(layout Layout) (string, error) {
 	return readControlWorkerTemplate(ControlWorkerStatePath(layout), controlWorkerStateSeedPath)
 }
 
-func ensureControlWorkerTemplates(layout Layout) ([]ControlPlaneChange, error) {
+func ensureControlWorkerTemplates(layout Layout, force bool) ([]ControlPlaneChange, error) {
 	specs := []struct {
 		path    string
 		content string
@@ -39,30 +39,51 @@ func ensureControlWorkerTemplates(layout Layout) ([]ControlPlaneChange, error) {
 
 	changes := make([]ControlPlaneChange, 0, len(specs))
 	for _, spec := range specs {
-		created, err := writeFileIfMissing(spec.path, spec.content, 0o644)
+		existed := true
+		if _, statErr := os.Stat(spec.path); statErr != nil {
+			existed = false
+		}
+		var changed bool
+		var err error
+		if force {
+			changed, err = writeFileForce(spec.path, spec.content, 0o644)
+		} else {
+			changed, err = writeFileIfMissing(spec.path, spec.content, 0o644)
+		}
 		if err != nil {
 			return nil, err
 		}
-		if created {
-			changes = append(changes, ControlPlaneChange{Path: spec.path, Action: "create"})
+		if changed {
+			action := "create"
+			if existed {
+				action = "update"
+			}
+			changes = append(changes, ControlPlaneChange{Path: spec.path, Action: action})
 		}
 	}
 	return changes, nil
 }
 
 func planControlWorkerTemplateChanges(layout Layout) ([]ControlPlaneChange, error) {
-	paths := []string{
-		ControlWorkerKernelPath(layout),
-		ControlWorkerStatePath(layout),
+	specs := []struct {
+		path    string
+		content string
+	}{
+		{path: ControlWorkerKernelPath(layout), content: defaultControlWorkerKernelTemplate()},
+		{path: ControlWorkerStatePath(layout), content: defaultControlWorkerStateTemplate()},
 	}
-	changes := make([]ControlPlaneChange, 0, len(paths))
-	for _, path := range paths {
-		missing, err := fileMissing(path)
+	changes := make([]ControlPlaneChange, 0, len(specs))
+	for _, spec := range specs {
+		differs, err := fileContentDiffers(spec.path, spec.content)
 		if err != nil {
 			return nil, err
 		}
-		if missing {
-			changes = append(changes, ControlPlaneChange{Path: path, Action: "create"})
+		if differs {
+			action := "create"
+			if _, statErr := os.Stat(spec.path); statErr == nil {
+				action = "update"
+			}
+			changes = append(changes, ControlPlaneChange{Path: spec.path, Action: action})
 		}
 	}
 	return changes, nil

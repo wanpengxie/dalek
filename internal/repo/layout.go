@@ -16,6 +16,7 @@ type Layout struct {
 	ControlToolsDir        string
 	PMDir                  string
 	PMArchiveDir           string
+	BackupDir              string
 	RuntimeDir             string
 	RuntimeWorkersDir      string
 	ConfigPath             string
@@ -44,6 +45,7 @@ func NewLayout(repoRoot string) Layout {
 
 		PMDir:        pmDir,
 		PMArchiveDir: filepath.Join(pmDir, "archive"),
+		BackupDir:    filepath.Join(projectDir, "backup"),
 
 		RuntimeDir:        runtimeDir,
 		RuntimeWorkersDir: filepath.Join(runtimeDir, "workers"),
