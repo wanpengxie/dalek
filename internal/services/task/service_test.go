@@ -182,7 +182,7 @@ func TestService_ListStatus_FilterByPMPlannerRunType(t *testing.T) {
 
 	_, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           contracts.TaskTypePMPlannerRun,
+		TaskType:           "pm_planner_run",
 		ProjectKey:         "demo",
 		TicketID:           1,
 		RequestID:          "pm-planner-run",
@@ -205,7 +205,7 @@ func TestService_ListStatus_FilterByPMPlannerRunType(t *testing.T) {
 
 	list, err := svc.ListStatus(ctx, contracts.TaskListStatusOptions{
 		OwnerType:       contracts.TaskOwnerPM,
-		TaskType:        contracts.TaskTypePMPlannerRun,
+		TaskType:        "pm_planner_run",
 		IncludeTerminal: true,
 		Limit:           10,
 	})
@@ -215,7 +215,7 @@ func TestService_ListStatus_FilterByPMPlannerRunType(t *testing.T) {
 	if len(list) != 1 {
 		t.Fatalf("expected one pm_planner_run, got=%d", len(list))
 	}
-	if list[0].TaskType != contracts.TaskTypePMPlannerRun {
+	if list[0].TaskType != "pm_planner_run" {
 		t.Fatalf("unexpected task_type=%s", list[0].TaskType)
 	}
 }

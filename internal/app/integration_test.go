@@ -374,10 +374,6 @@ func TestIntegration_DaemonRecovery_RepairsQueuedProjectionFromActiveWorkerRun(t
 	if st.LastRecoveryAt == nil || st.LastRecoveryTaskRuns == 0 {
 		t.Fatalf("recovery summary not persisted: %+v", st)
 	}
-	if st.LastRecoveryPlannerOps != 0 {
-		t.Fatalf("expected planner recovery count stays zero, got=%d", st.LastRecoveryPlannerOps)
-	}
-
 	var repaired contracts.TicketLifecycleEvent
 	if err := mustProjectDB(t, p).WithContext(ctx).
 		Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleRepaired).

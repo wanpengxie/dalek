@@ -43,7 +43,6 @@ type PMWorkspaceRuntime struct {
 type PMWorkspaceSnapshot struct {
 	TicketCounts map[string]int       `json:"ticket_counts"`
 	WorkerStats  DashboardWorkerStats `json:"worker_stats"`
-	PlannerState DashboardPlannerInfo `json:"planner_state"`
 	MergeCounts  map[string]int       `json:"merge_counts"`
 	InboxCounts  DashboardInboxCounts `json:"inbox_counts"`
 }
@@ -219,7 +218,6 @@ func (p *Project) buildPMWorkspaceState(ctx context.Context) (PMWorkspaceState, 
 		Snapshot: PMWorkspaceSnapshot{
 			TicketCounts: cloneIntMap(dashboard.TicketCounts),
 			WorkerStats:  dashboard.WorkerStats,
-			PlannerState: dashboard.PlannerState,
 			MergeCounts:  cloneIntMap(dashboard.MergeCounts),
 			InboxCounts:  dashboard.InboxCounts,
 		},

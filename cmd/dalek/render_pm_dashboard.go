@@ -44,22 +44,6 @@ func renderDashboardText(w io.Writer, result app.DashboardResult) error {
 	)
 
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "-- Planner Status --")
-	fmt.Fprintf(
-		&b,
-		"dirty=%t  wake_version=%d  active_run=%s  cooldown_until=%s  last_run=%s",
-		result.PlannerState.Dirty,
-		result.PlannerState.WakeVersion,
-		formatDashboardRunID(result.PlannerState.ActiveTaskRunID),
-		formatDashboardTime(result.PlannerState.CooldownUntil, "not_set"),
-		formatDashboardTime(result.PlannerState.LastRunAt, "never"),
-	)
-	if lastErr := strings.TrimSpace(result.PlannerState.LastError); lastErr != "" {
-		fmt.Fprintf(&b, "  last_error=%s", lastErr)
-	}
-	fmt.Fprintln(&b)
-
-	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "-- Merge Queue --")
 	fmt.Fprintf(
 		&b,

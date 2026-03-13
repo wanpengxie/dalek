@@ -252,15 +252,6 @@ func (h *acceptingLifecycleManagerHost) SubmitTicketLoop(ctx context.Context, re
 	}, nil
 }
 
-func (h *acceptingLifecycleManagerHost) SubmitPlannerRun(_ context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error) {
-	return daemonsvc.PlannerSubmitReceipt{
-		Accepted:  true,
-		Project:   strings.TrimSpace(req.Project),
-		RequestID: strings.TrimSpace(req.RequestID),
-		TaskRunID: req.TaskRunID,
-	}, nil
-}
-
 func (h *acceptingLifecycleManagerHost) SubmittedTicketIDs() []uint {
 	if h == nil {
 		return nil
@@ -748,9 +739,7 @@ func TestIntegration_Lifecycle_DaemonStartRecoveryAndTickConvergesQueuedAndActiv
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
 
-	if _, err := p.SetAutopilotEnabled(ctx, true); err != nil {
-		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
-	}
+	// autopilot removed (planner loop cleaned up)
 
 	queuedTicket, err := p.CreateTicketWithDescription(ctx, "daemon-queued", "queued ticket should activate on first tick")
 	if err != nil {

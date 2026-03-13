@@ -73,15 +73,8 @@ func (s *Service) CalculateHealthMetrics(ctx context.Context, opt HealthMetricsO
 		return out, err
 	}
 
-	out.PlannerRunCount, err = s.countTaskRunsByTypeAndStatus(ctx, db, contracts.TaskOwnerPM, contracts.TaskTypePMPlannerRun, "", window)
-	if err != nil {
-		return out, err
-	}
-	out.PlannerTimeoutCount, err = s.countTaskRunsByTypeAndStatus(ctx, db, contracts.TaskOwnerPM, contracts.TaskTypePMPlannerRun, contracts.TaskFailed, window, "error_code = ?", "planner_timeout")
-	if err != nil {
-		return out, err
-	}
-	out.PlannerTimeoutRate = safeRate(out.PlannerTimeoutCount, out.PlannerRunCount)
+	// Planner run metrics: planner loop removed; historical data remains in DB
+	// but no new planner runs are created. Keep fields zero.
 
 	out.WorkerRunCount, err = s.countTaskRunsByTypeAndStatus(ctx, db, contracts.TaskOwnerWorker, contracts.TaskTypeDeliverTicket, "", window)
 	if err != nil {

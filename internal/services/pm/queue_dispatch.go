@@ -93,13 +93,10 @@ func (s *Service) consumeQueuedBacklog(parent context.Context) {
 	maxRunning := clampMaxRunning(st.MaxRunningWorkers)
 	capacity := maxRunning - scanResult.Progressable
 	if capacity <= 0 {
-		if err := s.persistPlannerState(ctx, db, st); err != nil {
-			s.slog().Warn("queue consumer: persist planner state failed", "error", err)
-		}
 		return
 	}
 
-	// TODO(tech-debt): queue consumer 当前只负责“按项目级配额挑选 queued ticket 并提交运行”，
+	// TODO(tech-debt): queue consumer 当前只负责"按项目级配额挑选 queued ticket 并提交运行"，
 	// 但默认假设 start 可能已经提前预建了 worker 资源。等 start 收敛为纯入队后，
 	// 这里应成为唯一的资源启动入口：先拿到项目级配额，再创建 worktree/runtime，再提交 worker run。
 	result := s.scheduleQueuedTickets(ctx, db, scheduleOptions{
@@ -110,8 +107,5 @@ func (s *Service) consumeQueuedBacklog(parent context.Context) {
 	})
 	for _, msg := range result.Errors {
 		s.slog().Warn("queue consumer: consume queued backlog failed", "error", msg)
-	}
-	if err := s.persistPlannerState(ctx, db, st); err != nil {
-		s.slog().Warn("queue consumer: persist planner state failed", "error", err)
 	}
 }

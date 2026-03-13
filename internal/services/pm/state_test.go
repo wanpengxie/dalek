@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"dalek/internal/contracts"
 	"dalek/internal/infra"
 	"dalek/internal/repo"
 	"dalek/internal/services/core"
@@ -79,13 +78,10 @@ func TestPM_StateAndSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetState failed: %v", err)
 	}
-	if st.AutopilotEnabled || st.MaxRunningWorkers != 3 {
+	if st.MaxRunningWorkers != 3 {
 		t.Fatalf("unexpected default state: %+v", st)
 	}
 
-	if _, err := pmSvc.SetAutopilotEnabled(ctx, true); err != nil {
-		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
-	}
 	if _, err := pmSvc.SetMaxRunningWorkers(ctx, 5); err != nil {
 		t.Fatalf("SetMaxRunningWorkers(5) failed: %v", err)
 	}
@@ -94,134 +90,8 @@ func TestPM_StateAndSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetState failed: %v", err)
 	}
-	if !st.AutopilotEnabled {
-		t.Fatalf("expected autopilot enabled")
-	}
 	if st.MaxRunningWorkers != 5 {
 		t.Fatalf("expected max_running=5, got %d", st.MaxRunningWorkers)
-	}
-}
-
-func TestPM_StatePlannerFields_DefaultZeroAndRoundTrip(t *testing.T) {
-	pmSvc, p := newPMServiceForTest(t)
-	ctx := context.Background()
-
-	st, err := pmSvc.GetState(ctx)
-	if err != nil {
-		t.Fatalf("GetState failed: %v", err)
-	}
-	if st.PlannerDirty {
-		t.Fatalf("planner_dirty should default false")
-	}
-	if st.PlannerWakeVersion != 0 {
-		t.Fatalf("planner_wake_version should default 0, got=%d", st.PlannerWakeVersion)
-	}
-	if st.PlannerActiveTaskRunID != nil {
-		t.Fatalf("planner_active_task_run_id should default nil")
-	}
-	if st.PlannerCooldownUntil != nil {
-		t.Fatalf("planner_cooldown_until should default nil")
-	}
-	if st.PlannerLastError != "" {
-		t.Fatalf("planner_last_error should default empty, got=%q", st.PlannerLastError)
-	}
-	if st.PlannerLastRunAt != nil {
-		t.Fatalf("planner_last_run_at should default nil")
-	}
-
-	now := time.Now().UTC().Truncate(time.Second)
-	cooldown := now.Add(10 * time.Minute)
-	activeRunID := uint(42)
-	if err := p.DB.WithContext(ctx).Model(&store.PMState{}).Where("id = ?", st.ID).Updates(map[string]any{
-		"planner_dirty":              true,
-		"planner_wake_version":       7,
-		"planner_active_task_run_id": activeRunID,
-		"planner_cooldown_until":     &cooldown,
-		"planner_last_error":         "planner failed once",
-		"planner_last_run_at":        &now,
-	}).Error; err != nil {
-		t.Fatalf("update planner fields failed: %v", err)
-	}
-
-	got, err := pmSvc.GetState(ctx)
-	if err != nil {
-		t.Fatalf("GetState(2) failed: %v", err)
-	}
-	if !got.PlannerDirty {
-		t.Fatalf("planner_dirty should persist true")
-	}
-	if got.PlannerWakeVersion != 7 {
-		t.Fatalf("planner_wake_version should persist, got=%d", got.PlannerWakeVersion)
-	}
-	if got.PlannerActiveTaskRunID == nil || *got.PlannerActiveTaskRunID != activeRunID {
-		t.Fatalf("planner_active_task_run_id mismatch: got=%v want=%d", got.PlannerActiveTaskRunID, activeRunID)
-	}
-	if got.PlannerCooldownUntil == nil || got.PlannerCooldownUntil.UTC().Unix() != cooldown.Unix() {
-		t.Fatalf("planner_cooldown_until mismatch: got=%v want=%v", got.PlannerCooldownUntil, cooldown)
-	}
-	if got.PlannerLastError != "planner failed once" {
-		t.Fatalf("planner_last_error mismatch: got=%q", got.PlannerLastError)
-	}
-	if got.PlannerLastRunAt == nil || got.PlannerLastRunAt.UTC().Unix() != now.Unix() {
-		t.Fatalf("planner_last_run_at mismatch: got=%v want=%v", got.PlannerLastRunAt, now)
-	}
-}
-
-func TestPlannerRunStateHelpers_ClearPlannerRun(t *testing.T) {
-	pmSvc, _ := newPMServiceForTest(t)
-	now := time.Now().UTC().Truncate(time.Second)
-	activeRunID := uint(88)
-	st := &contracts.PMState{
-		PlannerDirty:           true,
-		PlannerActiveTaskRunID: &activeRunID,
-		PlannerLastError:       "old error",
-	}
-
-	pmSvc.clearPlannerRun(st, now)
-
-	if st.PlannerActiveTaskRunID != nil {
-		t.Fatalf("expected planner active run cleared, got=%v", st.PlannerActiveTaskRunID)
-	}
-	if st.PlannerLastError != "" {
-		t.Fatalf("expected planner_last_error cleared, got=%q", st.PlannerLastError)
-	}
-	if st.PlannerLastRunAt == nil || st.PlannerLastRunAt.UTC().Unix() != now.Unix() {
-		t.Fatalf("expected planner_last_run_at=%v, got=%v", now, st.PlannerLastRunAt)
-	}
-	if st.PlannerCooldownUntil == nil || st.PlannerCooldownUntil.UTC().Unix() != now.Add(plannerRunSuccessCooldown).Unix() {
-		t.Fatalf("expected planner cooldown=%v, got=%v", now.Add(plannerRunSuccessCooldown), st.PlannerCooldownUntil)
-	}
-	if !st.PlannerDirty {
-		t.Fatalf("clearPlannerRun should keep planner dirty flag as-is")
-	}
-}
-
-func TestPlannerRunStateHelpers_FailPlannerRun(t *testing.T) {
-	pmSvc, _ := newPMServiceForTest(t)
-	now := time.Now().UTC().Truncate(time.Second)
-	activeRunID := uint(99)
-	st := &contracts.PMState{
-		PlannerDirty:           false,
-		PlannerActiveTaskRunID: &activeRunID,
-		PlannerLastError:       "",
-	}
-
-	pmSvc.failPlannerRun(st, now, " planner failed ")
-
-	if st.PlannerActiveTaskRunID != nil {
-		t.Fatalf("expected planner active run cleared, got=%v", st.PlannerActiveTaskRunID)
-	}
-	if !st.PlannerDirty {
-		t.Fatalf("expected planner dirty set true on failure")
-	}
-	if st.PlannerLastError != "planner failed" {
-		t.Fatalf("unexpected planner_last_error: %q", st.PlannerLastError)
-	}
-	if st.PlannerLastRunAt == nil || st.PlannerLastRunAt.UTC().Unix() != now.Unix() {
-		t.Fatalf("expected planner_last_run_at=%v, got=%v", now, st.PlannerLastRunAt)
-	}
-	if st.PlannerCooldownUntil == nil || st.PlannerCooldownUntil.UTC().Unix() != now.Add(plannerRunFailureCooldown).Unix() {
-		t.Fatalf("expected planner cooldown=%v, got=%v", now.Add(plannerRunFailureCooldown), st.PlannerCooldownUntil)
 	}
 }
 
@@ -233,22 +103,6 @@ func TestManagerWorkerRunTimeout_UsesConfig(t *testing.T) {
 	want := 123456 * time.Millisecond
 	if got != want {
 		t.Fatalf("unexpected manager dispatch timeout: got=%v want=%v", got, want)
-	}
-}
-
-func TestPlannerRunTimeout_UsesConfig(t *testing.T) {
-	pmSvc, p := newPMServiceForTest(t)
-
-	if got := pmSvc.plannerRunTimeout(); got != defaultPlannerRunTimeout {
-		t.Fatalf("unexpected default planner timeout: got=%v want=%v", got, defaultPlannerRunTimeout)
-	}
-
-	p.Config.PMPlannerTimeoutMS = 234567
-
-	got := pmSvc.plannerRunTimeout()
-	want := 234567 * time.Millisecond
-	if got != want {
-		t.Fatalf("unexpected planner timeout: got=%v want=%v", got, want)
 	}
 }
 

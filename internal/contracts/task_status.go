@@ -11,7 +11,6 @@ const (
 
 const (
 	TaskTypeDeliverTicket = "deliver_ticket"
-	TaskTypePMPlannerRun  = "pm_planner_run"
 	TaskTypeSubagentRun   = "subagent_run"
 	TaskTypeChannelTurn   = "channel_turn"
 )

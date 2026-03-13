@@ -28,28 +28,30 @@ const (
 	maxHTTPBodyBytes            = 2 << 20
 )
 
+// AcceptanceOp is a minimal op descriptor for the acceptance engine.
+// It replaces the former contracts.PMOp after the planner loop removal.
+type AcceptanceOp struct {
+	Kind           string
+	IdempotencyKey string
+	Arguments      contracts.JSONMap
+}
+
+const (
+	acceptanceOpKindRunAcceptance  = "run_acceptance"
+	acceptanceOpKindSetFeatureStatus = "set_feature_status"
+	acceptanceFeatureStatusDone    = "done"
+)
+
 type runAcceptancePMOpExecutor struct {
 	s *Service
 }
 
-func (e runAcceptancePMOpExecutor) Reconcile(ctx context.Context, op contracts.PMOp) (bool, contracts.JSONMap, error) {
-	if e.s == nil {
-		return false, contracts.JSONMap{}, fmt.Errorf("pm service 为空")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if row, err := e.s.findLatestSucceededPMOpByIdempotency(ctx, contracts.PMOpRunAcceptance, strings.TrimSpace(op.IdempotencyKey)); err != nil {
-		return false, contracts.JSONMap{}, err
-	} else if row != nil {
-		res := contracts.JSONMapFromAny(row.ResultJSON)
-		res["reconcile_source"] = "idempotency_journal"
-		return true, res, nil
-	}
+func (e runAcceptancePMOpExecutor) Reconcile(ctx context.Context, op AcceptanceOp) (bool, contracts.JSONMap, error) {
+	// Journal-based idempotency removed; always return not-reconciled.
 	return false, contracts.JSONMap{}, nil
 }
 
-func (e runAcceptancePMOpExecutor) Execute(ctx context.Context, op contracts.PMOp) (contracts.JSONMap, error) {
+func (e runAcceptancePMOpExecutor) Execute(ctx context.Context, op AcceptanceOp) (contracts.JSONMap, error) {
 	if e.s == nil {
 		return contracts.JSONMap{}, fmt.Errorf("pm service 为空")
 	}
@@ -60,7 +62,7 @@ type setFeatureStatusPMOpExecutor struct {
 	s *Service
 }
 
-func (e setFeatureStatusPMOpExecutor) Reconcile(ctx context.Context, op contracts.PMOp) (bool, contracts.JSONMap, error) {
+func (e setFeatureStatusPMOpExecutor) Reconcile(ctx context.Context, op AcceptanceOp) (bool, contracts.JSONMap, error) {
 	if e.s == nil {
 		return false, contracts.JSONMap{}, fmt.Errorf("pm service 为空")
 	}
@@ -78,7 +80,7 @@ func (e setFeatureStatusPMOpExecutor) Reconcile(ctx context.Context, op contract
 	if current != status {
 		return false, contracts.JSONMap{}, nil
 	}
-	if status == contracts.PMOpSetFeatureStatusDone {
+	if status == acceptanceFeatureStatusDone {
 		gate, gerr := e.s.acceptanceGateState(ctx)
 		if gerr != nil {
 			return false, contracts.JSONMap{}, gerr
@@ -98,7 +100,7 @@ func (e setFeatureStatusPMOpExecutor) Reconcile(ctx context.Context, op contract
 	}, nil
 }
 
-func (e setFeatureStatusPMOpExecutor) Execute(ctx context.Context, op contracts.PMOp) (contracts.JSONMap, error) {
+func (e setFeatureStatusPMOpExecutor) Execute(ctx context.Context, op AcceptanceOp) (contracts.JSONMap, error) {
 	if e.s == nil {
 		return contracts.JSONMap{}, fmt.Errorf("pm service 为空")
 	}
@@ -116,7 +118,7 @@ func (e setFeatureStatusPMOpExecutor) Execute(ctx context.Context, op contracts.
 		return contracts.JSONMap{}, err
 	}
 	gate := evaluateAcceptanceGate(graph)
-	if status == contracts.PMOpSetFeatureStatusDone && !gate.Passed {
+	if status == acceptanceFeatureStatusDone && !gate.Passed {
 		return contracts.JSONMap{}, fmt.Errorf("acceptance gate 未通过：done=%d total=%d", gate.Done, gate.Total)
 	}
 
@@ -290,7 +292,7 @@ type pmWorkspaceStateUpdate struct {
 	AcceptanceEvidence []string
 }
 
-func (s *Service) executeRunAcceptance(ctx context.Context, op contracts.PMOp) (contracts.JSONMap, error) {
+func (s *Service) executeRunAcceptance(ctx context.Context, op AcceptanceOp) (contracts.JSONMap, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -1957,4 +1959,85 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// jsonMapBool extracts a bool value from a JSONMap by key.
+func jsonMapBool(m contracts.JSONMap, key string) bool {
+	if len(m) == 0 {
+		return false
+	}
+	v, ok := m[key]
+	if !ok || v == nil {
+		return false
+	}
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		s := strings.TrimSpace(strings.ToLower(t))
+		return s == "true" || s == "1" || s == "yes"
+	case float64:
+		return t != 0
+	default:
+		return false
+	}
+}
+
+// jsonMapString extracts a string value from a JSONMap by key.
+func jsonMapString(m contracts.JSONMap, key string) string {
+	if len(m) == 0 {
+		return ""
+	}
+	v, ok := m[key]
+	if !ok || v == nil {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return t
+	case fmt.Stringer:
+		return t.String()
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// jsonMapInt extracts an int value from a JSONMap by key.
+func jsonMapInt(m contracts.JSONMap, key string) int {
+	if len(m) == 0 {
+		return 0
+	}
+	v, ok := m[key]
+	if !ok || v == nil {
+		return 0
+	}
+	switch t := v.(type) {
+	case int:
+		return t
+	case int64:
+		return int(t)
+	case uint:
+		return int(t)
+	case uint64:
+		return int(t)
+	case float64:
+		return int(t)
+	case json.Number:
+		n, _ := t.Int64()
+		return int(n)
+	case string:
+		n, _ := strconv.Atoi(t)
+		return n
+	default:
+		return 0
+	}
+}
+
+// jsonMapUint extracts a uint value from a JSONMap by key.
+func jsonMapUint(m contracts.JSONMap, key string) uint {
+	n := jsonMapInt(m, key)
+	if n < 0 {
+		return 0
+	}
+	return uint(n)
 }

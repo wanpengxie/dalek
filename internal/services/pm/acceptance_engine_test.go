@@ -51,8 +51,8 @@ func TestRunAcceptancePMOpExecutor_ExecutesCasesAndWritesBackArtifacts(t *testin
 		UpdatedAt: time.Now().UTC(),
 	})
 
-	op := contracts.PMOp{
-		Kind: contracts.PMOpRunAcceptance,
+	op := AcceptanceOp{
+		Kind: acceptanceOpKindRunAcceptance,
 		Arguments: contracts.JSONMap{
 			"startup_command": "dalek serve --http :8080",
 			"url":             server.URL,
@@ -138,8 +138,8 @@ func TestRunAcceptancePMOpExecutor_FailureCreatesGapTicketAndRollsBackFeatureSta
 		UpdatedAt: time.Now().UTC(),
 	})
 
-	op := contracts.PMOp{
-		Kind: contracts.PMOpRunAcceptance,
+	op := AcceptanceOp{
+		Kind: acceptanceOpKindRunAcceptance,
 		Arguments: contracts.JSONMap{
 			"cases": []any{
 				map[string]any{
@@ -200,8 +200,8 @@ func TestRunAcceptancePMOpExecutor_FailureAutoDispatchStartsFailureTicketQueued(
 		UpdatedAt: time.Now().UTC(),
 	})
 
-	res, err := runAcceptancePMOpExecutor{s: svc}.Execute(ctx, contracts.PMOp{
-		Kind: contracts.PMOpRunAcceptance,
+	res, err := runAcceptancePMOpExecutor{s: svc}.Execute(ctx, AcceptanceOp{
+		Kind: acceptanceOpKindRunAcceptance,
 		Arguments: contracts.JSONMap{
 			"auto_dispatch_failure_ticket": true,
 			"cases": []any{
@@ -256,8 +256,8 @@ func TestSetFeatureStatusPMOpExecutor_RequiresAcceptanceGateForDone(t *testing.T
 		UpdatedAt: time.Now().UTC(),
 	})
 
-	_, err := setFeatureStatusPMOpExecutor{s: svc}.Execute(ctx, contracts.PMOp{
-		Kind:      contracts.PMOpSetFeatureStatus,
+	_, err := setFeatureStatusPMOpExecutor{s: svc}.Execute(ctx, AcceptanceOp{
+		Kind:      acceptanceOpKindSetFeatureStatus,
 		Arguments: contracts.JSONMap{"status": "done"},
 	})
 	if err == nil {
@@ -275,8 +275,8 @@ func TestSetFeatureStatusPMOpExecutor_RequiresAcceptanceGateForDone(t *testing.T
 	}
 	writeTestPlanGraph(t, p.RepoRoot, graph)
 
-	res, err := setFeatureStatusPMOpExecutor{s: svc}.Execute(ctx, contracts.PMOp{
-		Kind:      contracts.PMOpSetFeatureStatus,
+	res, err := setFeatureStatusPMOpExecutor{s: svc}.Execute(ctx, AcceptanceOp{
+		Kind:      acceptanceOpKindSetFeatureStatus,
 		Arguments: contracts.JSONMap{"status": "done"},
 	})
 	if err != nil {

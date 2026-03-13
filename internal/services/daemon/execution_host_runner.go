@@ -183,60 +183,6 @@ func (h *ExecutionHost) executeSubagentRun(handle *executionRunHandle) {
 	)
 }
 
-func (h *ExecutionHost) executePlannerRun(handle *executionRunHandle) {
-	if handle == nil {
-		return
-	}
-	defer h.wg.Done()
-	defer h.finalizeHandle(handle)
-	defer h.notifyRunSettled(handle.project)
-
-	if !h.acquireSlot(handle.ctx) {
-		if handle.ctx.Err() != nil {
-			h.logger.Info("execution host planner canceled before start",
-				"request_id", handle.requestID,
-			)
-		}
-		return
-	}
-	defer h.releaseSlot()
-
-	project, err := h.resolver.OpenProject(handle.project)
-	if err != nil {
-		h.logger.Warn("execution host planner open project failed",
-			"project", handle.project,
-			"run_id", handle.runID,
-			"error", err,
-		)
-		return
-	}
-	err = project.RunPlannerJob(handle.ctx, handle.runID, PlannerRunOptions{
-		RunnerID: handle.runnerID,
-		Prompt:   handle.entryPrompt,
-	})
-	if err != nil {
-		if handle.ctx.Err() != nil {
-			h.logger.Info("execution host planner canceled",
-				"run_id", handle.runID,
-				"project", handle.project,
-			)
-		} else {
-			h.logger.Warn("execution host planner failed",
-				"run_id", handle.runID,
-				"project", handle.project,
-				"request_id", handle.requestID,
-				"error", err,
-			)
-		}
-		return
-	}
-	h.logger.Info("execution host planner completed",
-		"run_id", handle.runID,
-		"project", handle.project,
-		"request_id", handle.requestID,
-	)
-}
-
 func (h *ExecutionHost) notifyRunSettled(project string) {
 	if h == nil || h.onRunSettled == nil {
 		return

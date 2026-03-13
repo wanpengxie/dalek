@@ -47,25 +47,6 @@ func TestIntegration_Dashboard_EmptyProjectReturnsZeroCounts(t *testing.T) {
 		t.Fatalf("unexpected worker max_running: got=%d want=%d", got.WorkerStats.MaxRunning, pmState.MaxRunningWorkers)
 	}
 
-	if got.PlannerState.Dirty != pmState.PlannerDirty {
-		t.Fatalf("unexpected planner dirty: got=%v want=%v", got.PlannerState.Dirty, pmState.PlannerDirty)
-	}
-	if got.PlannerState.WakeVersion != pmState.PlannerWakeVersion {
-		t.Fatalf("unexpected planner wake version: got=%d want=%d", got.PlannerState.WakeVersion, pmState.PlannerWakeVersion)
-	}
-	if got.PlannerState.ActiveTaskRunID != nil {
-		t.Fatalf("expected planner active task run id nil, got=%v", *got.PlannerState.ActiveTaskRunID)
-	}
-	if got.PlannerState.CooldownUntil != nil {
-		t.Fatalf("expected planner cooldown nil")
-	}
-	if got.PlannerState.LastRunAt != nil {
-		t.Fatalf("expected planner last run nil")
-	}
-	if got.PlannerState.LastError != "" {
-		t.Fatalf("expected planner last error empty, got=%q", got.PlannerState.LastError)
-	}
-
 	if got.InboxCounts.Open != 0 || got.InboxCounts.Snoozed != 0 || got.InboxCounts.Blockers != 0 {
 		t.Fatalf("unexpected inbox counts: %+v", got.InboxCounts)
 	}
@@ -127,26 +108,6 @@ func TestIntegration_Dashboard_AggregatesServiceData(t *testing.T) {
 	}
 	if err := p.ArchiveTicket(ctx, archivedTicket.ID); err != nil {
 		t.Fatalf("Archive ticket failed: %v", err)
-	}
-
-	pmState, err := p.GetPMState(ctx)
-	if err != nil {
-		t.Fatalf("GetPMState failed: %v", err)
-	}
-
-	now := time.Now().UTC().Truncate(time.Second)
-	cooldown := now.Add(15 * time.Minute)
-	activeRunID := uint(4242)
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.PMState{}).Where("id = ?", pmState.ID).Updates(map[string]any{
-		"planner_dirty":              true,
-		"planner_wake_version":       uint(9),
-		"planner_active_task_run_id": activeRunID,
-		"planner_cooldown_until":     &cooldown,
-		"planner_last_error":         "planner timeout",
-		"planner_last_run_at":        &now,
-		"updated_at":                 now,
-	}).Error; err != nil {
-		t.Fatalf("update pm state failed: %v", err)
 	}
 
 	mergeItems := []contracts.MergeItem{
@@ -220,25 +181,6 @@ func TestIntegration_Dashboard_AggregatesServiceData(t *testing.T) {
 	}
 	if got.WorkerStats.MaxRunning != 7 {
 		t.Fatalf("unexpected worker max running: got=%d want=7", got.WorkerStats.MaxRunning)
-	}
-
-	if !got.PlannerState.Dirty {
-		t.Fatalf("expected planner dirty true")
-	}
-	if got.PlannerState.WakeVersion != 9 {
-		t.Fatalf("unexpected planner wake version: got=%d want=9", got.PlannerState.WakeVersion)
-	}
-	if got.PlannerState.ActiveTaskRunID == nil || *got.PlannerState.ActiveTaskRunID != activeRunID {
-		t.Fatalf("unexpected planner active task run id: %+v", got.PlannerState.ActiveTaskRunID)
-	}
-	if got.PlannerState.CooldownUntil == nil || !got.PlannerState.CooldownUntil.Equal(cooldown) {
-		t.Fatalf("unexpected planner cooldown: got=%v want=%v", got.PlannerState.CooldownUntil, cooldown)
-	}
-	if got.PlannerState.LastRunAt == nil || !got.PlannerState.LastRunAt.Equal(now) {
-		t.Fatalf("unexpected planner last run: got=%v want=%v", got.PlannerState.LastRunAt, now)
-	}
-	if got.PlannerState.LastError != "planner timeout" {
-		t.Fatalf("unexpected planner last error: got=%q want=%q", got.PlannerState.LastError, "planner timeout")
 	}
 
 	assertDashboardCount(t, got.MergeCounts, string(contracts.MergeProposed), 1)

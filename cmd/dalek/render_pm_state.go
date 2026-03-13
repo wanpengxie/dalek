@@ -81,12 +81,6 @@ func renderPMWorkspaceStateText(w io.Writer, state app.PMWorkspaceState) error {
 		state.Snapshot.WorkerStats.MaxRunning,
 		state.Snapshot.WorkerStats.Blocked,
 	)
-	fmt.Fprintf(&b, "planner: dirty=%t wake_version=%d active_run=%s last_run=%s\n",
-		state.Snapshot.PlannerState.Dirty,
-		state.Snapshot.PlannerState.WakeVersion,
-		formatDashboardRunID(state.Snapshot.PlannerState.ActiveTaskRunID),
-		formatPMWorkspaceTime(state.Snapshot.PlannerState.LastRunAt),
-	)
 	fmt.Fprintf(&b, "merges: proposed=%d checks_running=%d ready=%d approved=%d merged=%d discarded=%d blocked=%d\n",
 		state.Snapshot.MergeCounts["proposed"],
 		state.Snapshot.MergeCounts["checks_running"],

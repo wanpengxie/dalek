@@ -276,121 +276,21 @@ func TestOpenAndMigrate_ChannelConversationAgentProviderPresent(t *testing.T) {
 	}
 }
 
-func TestOpenAndMigrate_PMStatePlannerColumnsPresent(t *testing.T) {
+func TestOpenAndMigrate_PMStatePlannerColumnsNoop(t *testing.T) {
+	// Migration v14 is now a noop (planner columns removed).
+	// Verify the migration runs without error.
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
-	db, err := OpenAndMigrate(dbPath)
-	if err != nil {
-		t.Fatalf("OpenAndMigrate failed: %v", err)
-	}
-
-	wantCols := []string{
-		"planner_dirty",
-		"planner_wake_version",
-		"planner_active_task_run_id",
-		"planner_cooldown_until",
-		"planner_last_error",
-		"planner_last_run_at",
-	}
-	for _, col := range wantCols {
-		ok, err := tableHasColumn(db, "pm_states", col)
-		if err != nil {
-			t.Fatalf("tableHasColumn(pm_states.%s) failed: %v", col, err)
-		}
-		if !ok {
-			t.Fatalf("pm_states should contain planner column: %s", col)
-		}
-	}
-
-	for _, col := range []string{"planner_wake_version", "planner_last_error"} {
-		if err := dropTableColumn(db, "pm_states", col); err != nil {
-			t.Fatalf("drop pm_states.%s failed: %v", col, err)
-		}
-	}
-	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 14;").Error; err != nil {
-		t.Fatalf("rollback schema_migrations for v14 failed: %v", err)
-	}
 	if _, err := OpenAndMigrate(dbPath); err != nil {
-		t.Fatalf("OpenAndMigrate (reapply v14) failed: %v", err)
-	}
-
-	db2, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open failed: %v", err)
-	}
-	for _, col := range wantCols {
-		ok, err := tableHasColumn(db2, "pm_states", col)
-		if err != nil {
-			t.Fatalf("tableHasColumn(pm_states.%s) after reapply failed: %v", col, err)
-		}
-		if !ok {
-			t.Fatalf("pm_states should restore planner column after reapply: %s", col)
-		}
+		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 }
 
-func TestOpenAndMigrate_PMOpsJournalCheckpointTablesPresent(t *testing.T) {
+func TestOpenAndMigrate_PMOpsJournalCheckpointTablesNoop(t *testing.T) {
+	// Migration v15 is now a noop (PMOps journal/checkpoint tables removed).
+	// Verify the migration runs without error.
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
-	db, err := OpenAndMigrate(dbPath)
-	if err != nil {
-		t.Fatalf("OpenAndMigrate failed: %v", err)
-	}
-
-	for _, col := range []string{
-		"instance_id",
-		"planner_run_id",
-		"op_id",
-		"kind",
-		"idempotency_key",
-		"status",
-		"result_json",
-	} {
-		ok, err := tableHasColumn(db, "loop_op_journal", col)
-		if err != nil {
-			t.Fatalf("tableHasColumn(loop_op_journal.%s) failed: %v", col, err)
-		}
-		if !ok {
-			t.Fatalf("loop_op_journal should contain column: %s", col)
-		}
-	}
-	for _, col := range []string{
-		"instance_id",
-		"planner_run_id",
-		"revision",
-		"graph_version",
-		"completed_ops_json",
-		"remaining_ops_json",
-		"failure_context",
-		"snapshot_json",
-	} {
-		ok, err := tableHasColumn(db, "loop_checkpoints", col)
-		if err != nil {
-			t.Fatalf("tableHasColumn(loop_checkpoints.%s) failed: %v", col, err)
-		}
-		if !ok {
-			t.Fatalf("loop_checkpoints should contain column: %s", col)
-		}
-	}
-
-	if err := dropTableColumn(db, "loop_op_journal", "idempotency_key"); err != nil {
-		t.Fatalf("drop loop_op_journal.idempotency_key failed: %v", err)
-	}
-	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 15;").Error; err != nil {
-		t.Fatalf("rollback schema_migrations for v15 failed: %v", err)
-	}
 	if _, err := OpenAndMigrate(dbPath); err != nil {
-		t.Fatalf("OpenAndMigrate (reapply v15) failed: %v", err)
-	}
-
-	db2, err := Open(dbPath)
-	if err != nil {
-		t.Fatalf("Open failed: %v", err)
-	}
-	ok, err := tableHasColumn(db2, "loop_op_journal", "idempotency_key")
-	if err != nil {
-		t.Fatalf("tableHasColumn(loop_op_journal.idempotency_key) after reapply failed: %v", err)
-	}
-	if !ok {
-		t.Fatalf("loop_op_journal should restore idempotency_key after reapply")
+		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 }
 

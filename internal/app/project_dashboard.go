@@ -14,7 +14,6 @@ const dashboardListLimit = 2000
 type DashboardResult struct {
 	TicketCounts map[string]int       `json:"ticket_counts"`
 	WorkerStats  DashboardWorkerStats `json:"worker_stats"`
-	PlannerState DashboardPlannerInfo `json:"planner_state"`
 	MergeCounts  map[string]int       `json:"merge_counts"`
 	InboxCounts  DashboardInboxCounts `json:"inbox_counts"`
 }
@@ -23,15 +22,6 @@ type DashboardWorkerStats struct {
 	Running    int `json:"running"`
 	MaxRunning int `json:"max_running"`
 	Blocked    int `json:"blocked"`
-}
-
-type DashboardPlannerInfo struct {
-	Dirty           bool       `json:"dirty"`
-	WakeVersion     uint       `json:"wake_version"`
-	ActiveTaskRunID *uint      `json:"active_task_run_id,omitempty"`
-	CooldownUntil   *time.Time `json:"cooldown_until,omitempty"`
-	LastRunAt       *time.Time `json:"last_run_at,omitempty"`
-	LastError       string     `json:"last_error,omitempty"`
 }
 
 type DashboardInboxCounts struct {
@@ -77,15 +67,6 @@ func (p *Project) Dashboard(ctx context.Context) (DashboardResult, error) {
 		MaxRunning: pmState.MaxRunningWorkers,
 		Blocked:    blockedTickets,
 	}
-	result.PlannerState = DashboardPlannerInfo{
-		Dirty:           pmState.PlannerDirty,
-		WakeVersion:     pmState.PlannerWakeVersion,
-		ActiveTaskRunID: cloneUintPtr(pmState.PlannerActiveTaskRunID),
-		CooldownUntil:   cloneTimePtr(pmState.PlannerCooldownUntil),
-		LastRunAt:       cloneTimePtr(pmState.PlannerLastRunAt),
-		LastError:       strings.TrimSpace(pmState.PlannerLastError),
-	}
-
 	mergeItems, err := p.ListMergeItems(ctx, ListMergeOptions{Limit: dashboardListLimit})
 	if err != nil {
 		return DashboardResult{}, fmt.Errorf("list merge items: %w", err)

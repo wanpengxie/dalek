@@ -88,7 +88,7 @@ func TestListActiveTaskRunIDs_ReturnsOnlyDeliverTicketRuns(t *testing.T) {
 
 	plannerRun := contracts.TaskRun{
 		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           contracts.TaskTypePMPlannerRun,
+		TaskType:           "pm_planner_run",
 		ProjectKey:         "test",
 		SubjectType:        "pm",
 		SubjectID:          "planner",

@@ -122,18 +122,6 @@ func (p *daemonProjectAdapter) RunSubagentJob(ctx context.Context, taskRunID uin
 	return p.project.RunSubagentJob(ctx, taskRunID, opt)
 }
 
-func (p *daemonProjectAdapter) RunPlannerJob(ctx context.Context, taskRunID uint, opt daemonsvc.PlannerRunOptions) error {
-	if p == nil || p.project == nil {
-		return fmt.Errorf("daemon project 为空")
-	}
-	opt.RunnerID = strings.TrimSpace(opt.RunnerID)
-	opt.Prompt = strings.TrimSpace(opt.Prompt)
-	return p.project.RunPlannerJob(ctx, taskRunID, PlannerRunOptions{
-		RunnerID: opt.RunnerID,
-		Prompt:   opt.Prompt,
-	})
-}
-
 func (p *daemonProjectAdapter) FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*daemonsvc.RunStatus, error) {
 	if p == nil || p.project == nil {
 		return nil, fmt.Errorf("daemon project 为空")
@@ -283,14 +271,6 @@ func (p *daemonProjectAdapter) Dashboard(ctx context.Context) (daemonsvc.Dashboa
 			MaxRunning: result.WorkerStats.MaxRunning,
 			Blocked:    result.WorkerStats.Blocked,
 		},
-		PlannerState: daemonsvc.DashboardPlannerInfo{
-			Dirty:           result.PlannerState.Dirty,
-			WakeVersion:     result.PlannerState.WakeVersion,
-			ActiveTaskRunID: cloneUintPtr(result.PlannerState.ActiveTaskRunID),
-			CooldownUntil:   cloneTimePtr(result.PlannerState.CooldownUntil),
-			LastRunAt:       cloneTimePtr(result.PlannerState.LastRunAt),
-			LastError:       strings.TrimSpace(result.PlannerState.LastError),
-		},
 		MergeCounts: cloneDashboardMap(result.MergeCounts),
 		InboxCounts: daemonsvc.DashboardInboxCounts{
 			Open:     result.InboxCounts.Open,
@@ -304,15 +284,7 @@ func (p *daemonProjectAdapter) GetPMState(ctx context.Context) (contracts.PMStat
 	if p == nil || p.project == nil {
 		return contracts.PMState{}, fmt.Errorf("daemon project 为空")
 	}
-	state, err := p.project.GetPMState(ctx)
-	if err != nil {
-		return contracts.PMState{}, err
-	}
-	state.PlannerLastError = strings.TrimSpace(state.PlannerLastError)
-	state.PlannerActiveTaskRunID = cloneUintPtr(state.PlannerActiveTaskRunID)
-	state.PlannerCooldownUntil = cloneTimePtr(state.PlannerCooldownUntil)
-	state.PlannerLastRunAt = cloneTimePtr(state.PlannerLastRunAt)
-	return state, nil
+	return p.project.GetPMState(ctx)
 }
 
 func (p *daemonProjectAdapter) ListMergeItems(ctx context.Context, opt daemonsvc.ListMergeItemsOptions) ([]contracts.MergeItem, error) {

@@ -22,7 +22,7 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 
 	plannerTimeoutRun := createTaskRunForMetrics(t, db, contracts.TaskRun{
 		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           contracts.TaskTypePMPlannerRun,
+		TaskType:           "pm_planner_run",
 		ProjectKey:         "demo",
 		RequestID:          "planner-timeout-in",
 		OrchestrationState: contracts.TaskFailed,
@@ -32,7 +32,7 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 	})
 	createTaskRunForMetrics(t, db, contracts.TaskRun{
 		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           contracts.TaskTypePMPlannerRun,
+		TaskType:           "pm_planner_run",
 		ProjectKey:         "demo",
 		RequestID:          "planner-ok-in",
 		OrchestrationState: contracts.TaskSucceeded,
@@ -41,7 +41,7 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 	})
 	createTaskRunForMetrics(t, db, contracts.TaskRun{
 		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           contracts.TaskTypePMPlannerRun,
+		TaskType:           "pm_planner_run",
 		ProjectKey:         "demo",
 		RequestID:          "planner-timeout-out",
 		OrchestrationState: contracts.TaskFailed,
@@ -162,11 +162,9 @@ func TestCalculateHealthMetrics_AggregatesExpectedFields(t *testing.T) {
 		t.Fatalf("CalculateHealthMetrics failed: %v", err)
 	}
 
-	if metrics.PlannerRunCount != 2 || metrics.PlannerTimeoutCount != 1 {
-		t.Fatalf("unexpected planner counts: %+v", metrics)
-	}
-	if metrics.PlannerTimeoutRate != 0.5 {
-		t.Fatalf("unexpected planner_timeout_rate: got=%v want=0.5", metrics.PlannerTimeoutRate)
+	// Planner metrics are now always zero (planner loop removed).
+	if metrics.PlannerRunCount != 0 || metrics.PlannerTimeoutCount != 0 {
+		t.Fatalf("unexpected planner counts (should be zero): %+v", metrics)
 	}
 	if metrics.WorkerRunCount != 2 || metrics.WorkerBootstrapFailureCount != 1 {
 		t.Fatalf("unexpected worker-run counts: %+v", metrics)

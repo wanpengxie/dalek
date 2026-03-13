@@ -120,7 +120,6 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/notes", s.withInternalAccess(s.handleNoteSubmit))
 	mux.HandleFunc("/api/task-runs/", s.withInternalAccess(s.handleTaskRuns))
 	mux.HandleFunc("/api/v1/overview", s.withInternalAccess(s.handleOverview))
-	mux.HandleFunc("/api/v1/planner", s.withInternalAccess(s.handlePlanner))
 	mux.HandleFunc("/api/v1/merges", s.withInternalAccess(s.handleMerges))
 	mux.HandleFunc("/api/v1/inbox", s.withInternalAccess(s.handleInbox))
 	mux.HandleFunc("/api/v1/tickets", s.withInternalAccess(s.handleTickets))
@@ -234,24 +233,6 @@ func (s *InternalAPI) handleOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, overview)
-}
-
-func (s *InternalAPI) handlePlanner(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET")
-		return
-	}
-	projectName, err := parseProjectQuery(r)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
-		return
-	}
-	planner, err := s.host.GetProjectPlannerState(r.Context(), projectName)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, planner)
 }
 
 func (s *InternalAPI) handleMerges(w http.ResponseWriter, r *http.Request) {

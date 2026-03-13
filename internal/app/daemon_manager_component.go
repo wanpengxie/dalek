@@ -2,31 +2,21 @@ package app
 
 import (
 	"context"
-	"dalek/internal/contracts"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"dalek/internal/contracts"
 	daemonsvc "dalek/internal/services/daemon"
 	pmsvc "dalek/internal/services/pm"
 )
 
 const defaultDaemonManagerTickInterval = 30 * time.Second
 
-const (
-	plannerPromptPlanMaxBytes = 24 * 1024
-	plannerPromptListLimit    = 200
-)
-
 type managerExecutionHost interface {
 	SubmitTicketLoop(ctx context.Context, req daemonsvc.TicketLoopSubmitRequest) (daemonsvc.TicketLoopSubmitReceipt, error)
-	SubmitPlannerRun(ctx context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error)
 }
 
 type managerRunProjectIndexWarmer interface {
@@ -52,7 +42,6 @@ type daemonManagerComponent struct {
 
 type recoveryProjectSummary struct {
 	ActiveRunRepairs int
-	PlannerOps       int
 	Notes            int
 	Workers          int
 }
@@ -179,11 +168,8 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			continue
 		}
 		pmState, pmErr := p.GetPMState(ctx)
-		autopilotEnabled := false
 		if pmErr != nil {
 			m.logf("recovery read pm state failed: project=%s err=%v", name, pmErr)
-		} else {
-			autopilotEnabled = pmState.AutopilotEnabled
 		}
 		summary := recoveryProjectSummary{}
 
@@ -191,11 +177,6 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			m.logf("recovery active runs failed: project=%s err=%v", name, err)
 		} else {
 			summary.ActiveRunRepairs = repaired
-		}
-		if recovered, err := p.pm.RecoverPlannerOps(ctx, now); err != nil {
-			m.logf("recovery planner ops failed: project=%s err=%v", name, err)
-		} else {
-			summary.PlannerOps = recovered
 		}
 		if rolled, err := p.RecoverStuckShapingNotes(ctx, 5*time.Minute); err != nil {
 			m.logf("recovery note shaping failed: project=%s err=%v", name, err)
@@ -211,18 +192,16 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			summary.Workers = fixed
 		}
 		if pmErr == nil && pmState.ID != 0 {
-			if err := p.pm.UpdateRecoverySummary(ctx, pmState.ID, now, summary.PlannerOps, summary.ActiveRunRepairs, summary.Notes, summary.Workers); err != nil {
+			if err := p.pm.UpdateRecoverySummary(ctx, pmState.ID, now, summary.ActiveRunRepairs, summary.Notes, summary.Workers); err != nil {
 				m.logf("recovery summary persist failed: project=%s err=%v", name, err)
 			}
 		}
 		m.logf(
-			"recovery summary: project=%s active_run_repairs=%d planner_ops=%d reopened_notes=%d fixed_workers=%d autopilot=%v",
+			"recovery summary: project=%s active_run_repairs=%d reopened_notes=%d fixed_workers=%d",
 			name,
 			summary.ActiveRunRepairs,
-			summary.PlannerOps,
 			summary.Notes,
 			summary.Workers,
-			autopilotEnabled,
 		)
 	}
 }
@@ -379,207 +358,7 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 		m.logf("manager tick failed: source=%s project=%s err=%v", strings.TrimSpace(source), projectName, err)
 		return
 	}
-	m.submitPlannerRunIfScheduled(parent, p, projectName, res)
-	m.logf("manager tick ok: source=%s project=%s running=%d blocked=%d capacity=%d started=%d activated=%d planner_scheduled=%v", strings.TrimSpace(source), projectName, res.Running, res.RunningBlocked, res.Capacity, len(res.StartedTickets), len(res.ActivatedTickets), res.PlannerRunScheduled)
-}
-
-func (m *daemonManagerComponent) submitPlannerRunIfScheduled(parent context.Context, p *Project, projectName string, res pmsvc.ManagerTickResult) {
-	if m == nil || m.host == nil || p == nil || !res.PlannerRunScheduled {
-		return
-	}
-	if parent == nil {
-		parent = context.Background()
-	}
-	submitCtx, cancel := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
-	defer cancel()
-	req, err := m.buildPlannerSubmitRequest(submitCtx, p, projectName, res)
-	if err != nil {
-		m.logf("manager planner submit skipped: project=%s err=%v", strings.TrimSpace(projectName), err)
-		return
-	}
-	if _, err := m.host.SubmitPlannerRun(submitCtx, req); err != nil {
-		m.logf("manager planner submit failed: project=%s run_id=%d request_id=%s err=%v", strings.TrimSpace(projectName), req.TaskRunID, req.RequestID, err)
-		return
-	}
-	m.logf("manager planner submit accepted: project=%s run_id=%d request_id=%s", strings.TrimSpace(projectName), req.TaskRunID, req.RequestID)
-}
-
-func (m *daemonManagerComponent) buildPlannerSubmitRequest(ctx context.Context, p *Project, projectName string, res pmsvc.ManagerTickResult) (daemonsvc.PlannerSubmitRequest, error) {
-	if p == nil || p.core == nil || p.core.DB == nil {
-		return daemonsvc.PlannerSubmitRequest{}, fmt.Errorf("project db 为空")
-	}
-	projectName = strings.TrimSpace(projectName)
-	if projectName == "" {
-		projectName = strings.TrimSpace(p.Name())
-	}
-	if projectName == "" {
-		return daemonsvc.PlannerSubmitRequest{}, fmt.Errorf("project 不能为空")
-	}
-	pmState, err := p.GetPMState(ctx)
-	if err != nil {
-		return daemonsvc.PlannerSubmitRequest{}, err
-	}
-	if pmState.PlannerActiveTaskRunID == nil || *pmState.PlannerActiveTaskRunID == 0 {
-		return daemonsvc.PlannerSubmitRequest{}, fmt.Errorf("planner active task run id 为空")
-	}
-	runID := *pmState.PlannerActiveTaskRunID
-	var run contracts.TaskRun
-	if err := p.core.DB.WithContext(ctx).
-		Select("id", "request_id", "owner_type", "task_type").
-		First(&run, runID).Error; err != nil {
-		return daemonsvc.PlannerSubmitRequest{}, err
-	}
-	if run.OwnerType != contracts.TaskOwnerPM || run.TaskType != contracts.TaskTypePMPlannerRun {
-		return daemonsvc.PlannerSubmitRequest{}, fmt.Errorf("planner active run 类型不匹配: run_id=%d owner=%s type=%s", runID, run.OwnerType, run.TaskType)
-	}
-	requestID := strings.TrimSpace(run.RequestID)
-	if requestID == "" {
-		requestID = fmt.Sprintf("pln_run_%d", runID)
-	}
-	prompt, err := m.buildPlannerPrompt(ctx, p, projectName, runID, requestID, res)
-	if err != nil {
-		return daemonsvc.PlannerSubmitRequest{}, err
-	}
-	return daemonsvc.PlannerSubmitRequest{
-		Project:   projectName,
-		RequestID: requestID,
-		TaskRunID: runID,
-		Prompt:    prompt,
-	}, nil
-}
-
-func (m *daemonManagerComponent) buildPlannerPrompt(ctx context.Context, p *Project, projectName string, runID uint, requestID string, res pmsvc.ManagerTickResult) (string, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	repoRoot := strings.TrimSpace(p.RepoRoot())
-	planPath := filepath.Join(repoRoot, ".dalek", "pm", "plan.md")
-	planText := readPlannerPlanMarkdown(planPath, plannerPromptPlanMaxBytes)
-	pmWorkspaceState, pmWorkspaceErr := p.SyncPMWorkspaceState(ctx)
-
-	ticketViews, ticketErr := p.ListTicketViews(ctx)
-	mergeItems, mergeErr := p.ListMergeItems(ctx, ListMergeOptions{Limit: plannerPromptListLimit})
-	inboxOpen, inboxOpenErr := p.ListInbox(ctx, ListInboxOptions{
-		Status: contracts.InboxOpen,
-		Limit:  plannerPromptListLimit,
-	})
-	inboxSnoozed, inboxSnoozedErr := p.ListInbox(ctx, ListInboxOptions{
-		Status: contracts.InboxSnoozed,
-		Limit:  plannerPromptListLimit,
-	})
-	plannerRecovery := contracts.JSONMap{}
-	var plannerRecoveryErr error
-	if p.pm == nil {
-		plannerRecoveryErr = fmt.Errorf("pm service 为空")
-	} else {
-		plannerRecovery, plannerRecoveryErr = p.pm.PlannerRecoverySnapshot(ctx, plannerPromptListLimit)
-	}
-
-	snapshot := map[string]any{
-		"generated_at":       time.Now().UTC().Format(time.RFC3339),
-		"project":            strings.TrimSpace(projectName),
-		"repo_root":          repoRoot,
-		"planner_task_run":   runID,
-		"planner_request_id": strings.TrimSpace(requestID),
-		"pm_state":           plannerListSnapshot("dalek pm state sync", pmWorkspaceState, pmWorkspaceErr),
-		"ticket_ls":          plannerListSnapshot("dalek ticket ls", ticketViews, ticketErr),
-		"merge_ls":           plannerListSnapshot("dalek merge ls", mergeItems, mergeErr),
-		"inbox_ls": map[string]any{
-			"open":    plannerListSnapshot("dalek inbox ls --status open", inboxOpen, inboxOpenErr),
-			"snoozed": plannerListSnapshot("dalek inbox ls --status snoozed", inboxSnoozed, inboxSnoozedErr),
-		},
-		"planner_recovery": plannerListSnapshot("pm planner recovery context", plannerRecovery, plannerRecoveryErr),
-		"surface_conflicts": map[string]any{
-			"source":          "manager_tick",
-			"items":           res.SurfaceConflicts,
-			"serial_deferred": res.SerialDeferred,
-		},
-	}
-	snapshotJSON, err := json.MarshalIndent(snapshot, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("planner prompt 构建失败: %w", err)
-	}
-
-	prompt := strings.TrimSpace(fmt.Sprintf(`你是 dalek 的 PM planner agent。请先理解项目计划和当前状态，然后仅输出结构化 PMOps 决策；实际执行由系统 executor 串行处理。
-
-		必须遵守：
-		1. 不要在本轮直接执行任何 dalek CLI 或 shell 命令；只能输出 PMOps。
-		2. 你是 PM，不是 worker。不要直接修改产品源码、测试或功能实现文件；需求实现必须通过 ticket/worker 完成。
-		3. 输出必须且仅必须包含一个 <pmops>...</pmops> JSON 块，JSON 顶层为 {"ops":[...]}。
-		4. 每个 op 必须包含：kind、idempotency_key、arguments。推荐同时给出 op_id、critical、preconditions。
-		5. 避免重复动作，优先收敛阻塞项与高优先级事项；结合 planner_recovery 上下文避免重复执行已完成 op。
-		6. 对 approval_required / needs_user / incident 先自行判断并吸收，只有确实缺少用户独有信息时才允许请求人工介入。
-		7. 如果 git merge 在产品文件上产生冲突，先执行 git merge --abort，再改为 create_integration_ticket；禁止手工解决产品文件冲突。
-		8. 可用 kind：write_requirement_doc, write_design_doc, create_ticket, start_ticket, create_integration_ticket, close_inbox, run_acceptance, set_feature_status。
-
-		输出格式示例（严格遵守）：
-		<pmops>
-		{
-		  "ops": [
-		    {
-		      "op_id": "op-1",
-		      "kind": "create_ticket",
-		      "idempotency_key": "create_ticket:feature-x:hash",
-		      "critical": true,
-		      "arguments": {
-		        "title": "实现 xxx",
-		        "description": "..."
-		      },
-		      "preconditions": ["feature_x status=planned"]
-		    }
-		  ]
-		}
-		</pmops>
-
-	【PLAN 文档：%s】
-	%s
-
-【项目快照（对应 dalek ticket/merge/inbox ls）】
-%s
-`, strings.TrimSpace(planPath), planText, strings.TrimSpace(string(snapshotJSON))))
-	if prompt == "" {
-		return "", fmt.Errorf("planner prompt 为空")
-	}
-	return prompt, nil
-}
-
-func plannerListSnapshot(command string, items any, err error) map[string]any {
-	out := map[string]any{
-		"command": strings.TrimSpace(command),
-	}
-	if err != nil {
-		out["ok"] = false
-		out["error"] = strings.TrimSpace(err.Error())
-		return out
-	}
-	out["ok"] = true
-	out["items"] = items
-	return out
-}
-
-func readPlannerPlanMarkdown(path string, maxBytes int) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "(repo_root 为空，无法读取 .dalek/pm/plan.md)"
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Sprintf("(未找到文件: %s)", path)
-		}
-		return fmt.Sprintf("(读取失败: %v)", err)
-	}
-	text := strings.TrimSpace(string(b))
-	if text == "" {
-		return fmt.Sprintf("(文件为空: %s)", path)
-	}
-	if maxBytes > 0 && len(text) > maxBytes {
-		text = text[:maxBytes] + "\n\n...(truncated)"
-	}
-	return text
+	m.logf("manager tick ok: source=%s project=%s running=%d blocked=%d capacity=%d started=%d activated=%d", strings.TrimSpace(source), projectName, res.Running, res.RunningBlocked, res.Capacity, len(res.StartedTickets), len(res.ActivatedTickets))
 }
 
 func (m *daemonManagerComponent) NotifyProject(projectName string) {

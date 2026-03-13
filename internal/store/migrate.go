@@ -381,17 +381,13 @@ WHERE label IS NULL;
 }
 
 func migrateEnsurePMStatePlannerColumns(db *gorm.DB) error {
-	if db == nil {
-		return fmt.Errorf("db 为空")
-	}
-	return db.AutoMigrate(&PMState{})
+	// noop: planner columns removed; migration kept for history.
+	return nil
 }
 
 func migrateAddPMOpsJournalCheckpointTables(db *gorm.DB) error {
-	if db == nil {
-		return fmt.Errorf("db 为空")
-	}
-	return db.AutoMigrate(&PMOpJournalEntry{}, &PMCheckpoint{})
+	// noop: PMOps journal/checkpoint tables removed; migration kept for history.
+	return nil
 }
 
 func migrateAddTicketIntegrationColumns(db *gorm.DB) error {

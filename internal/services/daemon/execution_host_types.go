@@ -57,7 +57,6 @@ type ExecutionHostProject interface {
 	RunTicketWorker(ctx context.Context, ticketID uint, opt WorkerRunOptions) (WorkerRunResult, error)
 	SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptions) (SubagentSubmission, error)
 	RunSubagentJob(ctx context.Context, taskRunID uint, opt SubagentRunOptions) error
-	RunPlannerJob(ctx context.Context, taskRunID uint, opt PlannerRunOptions) error
 	FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*RunStatus, error)
 	AddNote(ctx context.Context, rawText string) (NoteAddResult, error)
 	GetTaskStatus(ctx context.Context, runID uint) (*RunStatus, error)
@@ -70,7 +69,6 @@ type ExecutionHostProject interface {
 // 这是可选扩展接口，ExecutionHostProject 可以不实现。
 type DashboardProject interface {
 	Dashboard(ctx context.Context) (DashboardResult, error)
-	GetPMState(ctx context.Context) (contracts.PMState, error)
 	ListMergeItems(ctx context.Context, opt ListMergeItemsOptions) ([]contracts.MergeItem, error)
 	ListInbox(ctx context.Context, opt ListInboxOptions) ([]contracts.InboxItem, error)
 }
@@ -80,7 +78,6 @@ type StartTicketOptions = pmsvc.StartOptions
 type DashboardResult struct {
 	TicketCounts map[string]int       `json:"ticket_counts"`
 	WorkerStats  DashboardWorkerStats `json:"worker_stats"`
-	PlannerState DashboardPlannerInfo `json:"planner_state"`
 	MergeCounts  map[string]int       `json:"merge_counts"`
 	InboxCounts  DashboardInboxCounts `json:"inbox_counts"`
 }
@@ -89,15 +86,6 @@ type DashboardWorkerStats struct {
 	Running    int `json:"running"`
 	MaxRunning int `json:"max_running"`
 	Blocked    int `json:"blocked"`
-}
-
-type DashboardPlannerInfo struct {
-	Dirty           bool       `json:"dirty"`
-	WakeVersion     uint       `json:"wake_version"`
-	ActiveTaskRunID *uint      `json:"active_task_run_id,omitempty"`
-	CooldownUntil   *time.Time `json:"cooldown_until,omitempty"`
-	LastRunAt       *time.Time `json:"last_run_at,omitempty"`
-	LastError       string     `json:"last_error,omitempty"`
 }
 
 type DashboardInboxCounts struct {
@@ -185,27 +173,6 @@ type SubagentSubmitReceipt struct {
 	Provider   string
 	Model      string
 	RuntimeDir string
-}
-
-type PlannerSubmitRequest struct {
-	Project string
-
-	RequestID string
-	TaskRunID uint
-	Prompt    string
-}
-
-type PlannerSubmitReceipt struct {
-	Accepted bool
-
-	Project   string
-	TaskRunID uint
-	RequestID string
-}
-
-type PlannerRunOptions struct {
-	RunnerID string
-	Prompt   string
 }
 
 type NoteAddResult = notebooksvc.NoteAddResult
@@ -308,7 +275,6 @@ type executionRunKind string
 const (
 	runKindWorker   executionRunKind = "ticket_loop"
 	runKindSubagent executionRunKind = "subagent"
-	runKindPlanner  executionRunKind = "planner_run"
 )
 
 const (

@@ -104,44 +104,24 @@ func cmdManagerStatus(args []string) {
 		if st.LastTickAt != nil {
 			lastTick = st.LastTickAt.Local().Format(time.RFC3339)
 		}
-		plannerActiveTaskRunID := any(nil)
-		if st.PlannerActiveTaskRunID != nil {
-			plannerActiveTaskRunID = *st.PlannerActiveTaskRunID
-		}
-		plannerCooldownUntil := any(nil)
-		if st.PlannerCooldownUntil != nil {
-			plannerCooldownUntil = st.PlannerCooldownUntil.Local().Format(time.RFC3339)
-		}
-		plannerLastRunAt := any(nil)
-		if st.PlannerLastRunAt != nil {
-			plannerLastRunAt = st.PlannerLastRunAt.Local().Format(time.RFC3339)
-		}
 		lastRecovery := any(nil)
 		if st.LastRecoveryAt != nil {
 			lastRecovery = map[string]any{
 				"recovered_at": st.LastRecoveryAt.Local().Format(time.RFC3339),
-				"planner_ops":  st.LastRecoveryPlannerOps,
 				"task_runs":    st.LastRecoveryTaskRuns,
 				"notes":        st.LastRecoveryNotes,
 				"workers":      st.LastRecoveryWorkers,
 			}
 		}
 		printJSONOrExit(map[string]any{
-			"schema":                     "dalek.manager.status.v1",
-			"autopilot":                  st.AutopilotEnabled,
-			"max_running":                st.MaxRunningWorkers,
-			"planner_dirty":              st.PlannerDirty,
-			"planner_wake_version":       st.PlannerWakeVersion,
-			"planner_active_task_run_id": plannerActiveTaskRunID,
-			"planner_cooldown_until":     plannerCooldownUntil,
-			"planner_last_error":         strings.TrimSpace(st.PlannerLastError),
-			"planner_last_run_at":        plannerLastRunAt,
-			"last_tick_at":               lastTick,
-			"last_event_id":              st.LastEventID,
-			"last_recovery":              lastRecovery,
-			"worktree_gc_pending":        gcPending,
-			"health_metrics":             healthMetrics,
-			"updated_at":                 st.UpdatedAt.Local().Format(time.RFC3339),
+			"schema":              "dalek.manager.status.v1",
+			"max_running":         st.MaxRunningWorkers,
+			"last_tick_at":        lastTick,
+			"last_event_id":       st.LastEventID,
+			"last_recovery":       lastRecovery,
+			"worktree_gc_pending": gcPending,
+			"health_metrics":      healthMetrics,
+			"updated_at":          st.UpdatedAt.Local().Format(time.RFC3339),
 		})
 		return
 	}
@@ -150,44 +130,26 @@ func cmdManagerStatus(args []string) {
 	if st.LastTickAt != nil {
 		lastTick = st.LastTickAt.Local().Format("01-02 15:04:05")
 	}
-	plannerActiveTaskRunID := "-"
-	if st.PlannerActiveTaskRunID != nil {
-		plannerActiveTaskRunID = fmt.Sprintf("%d", *st.PlannerActiveTaskRunID)
-	}
 	fmt.Printf(
-		"autopilot=%v  max_running=%d  planner_dirty=%v  planner_active_task_run_id=%s  gc_pending=%d  last_tick=%s  last_event_id=%d\n",
-		st.AutopilotEnabled,
+		"max_running=%d  gc_pending=%d  last_tick=%s  last_event_id=%d\n",
 		st.MaxRunningWorkers,
-		st.PlannerDirty,
-		plannerActiveTaskRunID,
 		gcPending,
 		lastTick,
 		st.LastEventID,
 	)
-	fmt.Printf(
-		"planner_wake_version=%d  planner_cooldown_until=%s  planner_last_run_at=%s  planner_last_error=%s\n",
-		st.PlannerWakeVersion,
-		formatTimePtr(st.PlannerCooldownUntil),
-		formatTimePtr(st.PlannerLastRunAt),
-		emptyAsDash(strings.TrimSpace(st.PlannerLastError)),
-	)
 	if st.LastRecoveryAt != nil {
 		fmt.Printf(
-			"last_recovery=%s  planner_ops=%d  task_runs=%d  notes=%d  workers=%d\n",
+			"last_recovery=%s  task_runs=%d  notes=%d  workers=%d\n",
 			st.LastRecoveryAt.Local().Format("01-02 15:04:05"),
-			st.LastRecoveryPlannerOps,
 			st.LastRecoveryTaskRuns,
 			st.LastRecoveryNotes,
 			st.LastRecoveryWorkers,
 		)
 	}
 	fmt.Printf(
-		"health window=%s..%s  planner_timeout_rate=%.2f%%(%d/%d)  worker_bootstrap_failure_rate=%.2f%%(%d/%d)  terminal_state_conflict_count=%d  duplicate_terminal_report_count=%d  merge_discard_count=%d  integration_ticket_count=%d  manual_intervention_count=%d  real_acceptance_pass_rate=%s\n",
+		"health window=%s..%s  worker_bootstrap_failure_rate=%.2f%%(%d/%d)  terminal_state_conflict_count=%d  duplicate_terminal_report_count=%d  merge_discard_count=%d  integration_ticket_count=%d  manual_intervention_count=%d  real_acceptance_pass_rate=%s\n",
 		healthMetrics.WindowStart.Local().Format("01-02 15:04:05"),
 		healthMetrics.WindowEnd.Local().Format("01-02 15:04:05"),
-		healthMetrics.PlannerTimeoutRate*100,
-		healthMetrics.PlannerTimeoutCount,
-		healthMetrics.PlannerRunCount,
 		healthMetrics.WorkerBootstrapFailureRate*100,
 		healthMetrics.WorkerBootstrapFailureCount,
 		healthMetrics.WorkerRunCount,
@@ -232,16 +194,12 @@ func cmdManagerPauseResume(args []string, enabled bool) {
 		*proj = strings.TrimSpace(*projShort)
 	}
 
-	p := mustOpenProjectWithOutput(globalOutput, *home, *proj)
-	st, err := p.SetAutopilotEnabled(context.Background(), enabled)
-	if err != nil {
-		exitRuntimeError(globalOutput,
-			"更新 autopilot 失败",
-			err.Error(),
-			"稍后重试，或检查数据库状态",
-		)
+	_ = mustOpenProjectWithOutput(globalOutput, *home, *proj)
+	if enabled {
+		fmt.Println("autopilot 已移除（planner loop 已清理）。队列调度由 queue consumer 自动完成。")
+	} else {
+		fmt.Println("autopilot 已移除（planner loop 已清理）。队列调度由 queue consumer 自动完成。")
 	}
-	fmt.Printf("autopilot=%v  max_running=%d\n", st.AutopilotEnabled, st.MaxRunningWorkers)
 }
 
 func cmdManagerTick(args []string) {
@@ -292,7 +250,6 @@ func cmdManagerTick(args []string) {
 		printJSONOrExit(map[string]any{
 			"schema":            "dalek.manager.tick.v1",
 			"at":                res.At.Local().Format(time.RFC3339),
-			"autopilot":         res.AutopilotEnabled,
 			"max_running":       res.MaxRunning,
 			"running":           res.Running,
 			"running_blocked":   res.RunningBlocked,
@@ -313,9 +270,8 @@ func cmdManagerTick(args []string) {
 		return
 	}
 
-	fmt.Printf("%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  activated=%d  serial_deferred=%d  inbox=%d  merge_frozen=%d  surface_conflicts=%d\n",
+	fmt.Printf("%s  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  activated=%d  serial_deferred=%d  inbox=%d  merge_frozen=%d  surface_conflicts=%d\n",
 		res.At.Local().Format("01-02 15:04:05"),
-		res.AutopilotEnabled,
 		res.Running, res.RunningBlocked,
 		res.ZombieRecovered, res.ZombieBlocked, res.ZombieIllegal, res.ZombieUndefined,
 		res.Capacity,
@@ -405,7 +361,6 @@ func cmdManagerRun(args []string) {
 			"mode":               "sync_worker_run",
 			"worker_run_timeout": workerRunTimeout.String(),
 			"at":                 res.At.Local().Format(time.RFC3339),
-			"autopilot":          res.AutopilotEnabled,
 			"max_running":        res.MaxRunning,
 			"running":            res.Running,
 			"running_blocked":    res.RunningBlocked,
@@ -430,10 +385,9 @@ func cmdManagerRun(args []string) {
 	if *workerRunTimeout > 0 {
 		timeoutText = workerRunTimeout.String()
 	}
-	fmt.Printf("%s  mode=sync_worker_run  worker_run_timeout=%s  autopilot=%v  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  activated=%d  serial_deferred=%d  inbox=%d  merge_frozen=%d  surface_conflicts=%d\n",
+	fmt.Printf("%s  mode=sync_worker_run  worker_run_timeout=%s  running=%d(blocked=%d)  zombie(rec=%d blocked=%d illegal=%d undefined=%d)  cap=%d  started=%d  activated=%d  serial_deferred=%d  inbox=%d  merge_frozen=%d  surface_conflicts=%d\n",
 		res.At.Local().Format("01-02 15:04:05"),
 		timeoutText,
-		res.AutopilotEnabled,
 		res.Running, res.RunningBlocked,
 		res.ZombieRecovered, res.ZombieBlocked, res.ZombieIllegal, res.ZombieUndefined,
 		res.Capacity,

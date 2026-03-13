@@ -25,20 +25,17 @@ type ManagerTickOptions struct {
 type ManagerTickResult struct {
 	At time.Time
 
-	AutopilotEnabled bool
-	MaxRunning       int
-	Running          int
-	RunningBlocked   int
-	ZombieRecovered  int
-	ZombieBlocked    int
-	ZombieIllegal    int
-	ZombieUndefined  int
-	Capacity         int
+	MaxRunning      int
+	Running         int
+	RunningBlocked  int
+	ZombieRecovered int
+	ZombieBlocked   int
+	ZombieIllegal   int
+	ZombieUndefined int
+	Capacity        int
 
 	EventsConsumed int
 	InboxUpserts   int
-
-	PlannerRunScheduled bool
 
 	StartedTickets   []uint
 	ActivatedTickets []uint
@@ -155,16 +152,12 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	maxRunning = clampMaxRunning(maxRunning)
 
 	res := ManagerTickResult{
-		At:               now,
-		AutopilotEnabled: st.AutopilotEnabled,
-		MaxRunning:       maxRunning,
+		At:         now,
+		MaxRunning: maxRunning,
 	}
 
 	taskRuntime, err := s.taskRuntimeForDB(db)
 	if err != nil {
-		return res, err
-	}
-	if err := s.reconcilePlannerActiveRun(ctx, taskRuntime, st, now); err != nil {
 		return res, err
 	}
 
@@ -186,125 +179,17 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	}
 	res.Capacity = capacity
 
-	// merge 观测不受 autopilot 门控：只是被动检测 git 事实，不产生 start/activation 副作用。
+	// merge 观测：被动检测 git 事实，不产生 start/activation 副作用。
 	mergeResult := s.freezeMergesForDoneTickets(ctx, db, st, opt.DryRun)
 	res.applyMergeFrozenResult(mergeResult)
 
-	if !st.AutopilotEnabled {
-		finalizeCtx, finalizeCancel := managerTickFinalizeContext(ctx)
-		defer finalizeCancel()
-		if err := s.saveManagerTickState(finalizeCtx, db, st, now, lastEventID, maxRunning, opt); err != nil {
-			res.Errors = append(res.Errors, err.Error())
-		}
-		return res, nil
-	}
-
 	finalizeCtx, finalizeCancel := managerTickFinalizeContext(ctx)
 	defer finalizeCancel()
-
-	scheduled, planErr := s.maybeSchedulePlannerRun(finalizeCtx, db, st, now)
-	if planErr != nil {
-		res.Errors = append(res.Errors, planErr.Error())
-	}
-	res.PlannerRunScheduled = scheduled
-
 	if err := s.saveManagerTickState(finalizeCtx, db, st, now, lastEventID, maxRunning, opt); err != nil {
 		res.Errors = append(res.Errors, err.Error())
 	}
 
 	return res, nil
-}
-
-func (s *Service) reconcilePlannerActiveRun(ctx context.Context, taskRuntime core.TaskRuntime, st *contracts.PMState, now time.Time) error {
-	if st == nil || taskRuntime == nil || st.PlannerActiveTaskRunID == nil || *st.PlannerActiveTaskRunID == 0 {
-		return nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	runID := *st.PlannerActiveTaskRunID
-	run, err := taskRuntime.FindRunByID(ctx, runID)
-	if err != nil {
-		return err
-	}
-	if run == nil {
-		s.failPlannerRun(st, now, fmt.Sprintf("planner active task run missing: run_id=%d", runID))
-		s.slog().Warn("pm planner active run missing; clearing stale state",
-			"task_run_id", runID,
-		)
-		return nil
-	}
-	if run.OwnerType != contracts.TaskOwnerPM || run.TaskType != contracts.TaskTypePMPlannerRun {
-		s.failPlannerRun(st, plannerRunTerminalTime(run, now), fmt.Sprintf("planner active task run type mismatch: run_id=%d owner=%s type=%s", runID, run.OwnerType, run.TaskType))
-		s.slog().Warn("pm planner active run type mismatch; clearing stale state",
-			"task_run_id", runID,
-			"owner_type", run.OwnerType,
-			"task_type", run.TaskType,
-		)
-		return nil
-	}
-
-	switch run.OrchestrationState {
-	case contracts.TaskSucceeded:
-		if recovered, rerr := s.RecoverPlannerOpsForRun(ctx, runID, now); rerr != nil {
-			s.slog().Warn("pm planner reconcile recover ops failed",
-				"task_run_id", runID,
-				"error", rerr,
-			)
-		} else if recovered > 0 {
-			s.slog().Info("pm planner reconcile recovered running ops",
-				"task_run_id", runID,
-				"recovered_ops", recovered,
-			)
-		}
-		finishedAt := plannerRunTerminalTime(run, now)
-		s.clearPlannerRun(st, finishedAt)
-		s.slog().Info("pm planner reconciled succeeded terminal run",
-			"task_run_id", runID,
-			"finished_at", finishedAt,
-		)
-	case contracts.TaskFailed, contracts.TaskCanceled:
-		if recovered, rerr := s.RecoverPlannerOpsForRun(ctx, runID, now); rerr != nil {
-			s.slog().Warn("pm planner reconcile recover ops failed",
-				"task_run_id", runID,
-				"error", rerr,
-			)
-		} else if recovered > 0 {
-			s.slog().Info("pm planner reconcile recovered running ops",
-				"task_run_id", runID,
-				"recovered_ops", recovered,
-			)
-		}
-		finishedAt := plannerRunTerminalTime(run, now)
-		msg := strings.TrimSpace(run.ErrorMessage)
-		if msg == "" {
-			msg = fmt.Sprintf("planner run ended with state=%s", run.OrchestrationState)
-		}
-		s.failPlannerRun(st, finishedAt, msg)
-		s.slog().Warn("pm planner reconciled failed terminal run",
-			"task_run_id", runID,
-			"state", run.OrchestrationState,
-			"finished_at", finishedAt,
-			"error", msg,
-		)
-	}
-	return nil
-}
-
-func plannerRunTerminalTime(run *contracts.TaskRun, fallback time.Time) time.Time {
-	if run != nil {
-		if run.FinishedAt != nil && !run.FinishedAt.IsZero() {
-			return *run.FinishedAt
-		}
-		if !run.UpdatedAt.IsZero() {
-			return run.UpdatedAt
-		}
-	}
-	if fallback.IsZero() {
-		return time.Now()
-	}
-	return fallback
 }
 
 func (res *ManagerTickResult) applyConsumeEventsResult(step consumeEventsResult) uint {
@@ -355,16 +240,10 @@ func (s *Service) saveManagerTickState(ctx context.Context, db *gorm.DB, st *con
 		st.MaxRunningWorkers = maxRunning
 	}
 	updates := map[string]any{
-		"last_tick_at":               st.LastTickAt,
-		"last_event_id":              st.LastEventID,
-		"max_running_workers":        st.MaxRunningWorkers,
-		"planner_dirty":              st.PlannerDirty,
-		"planner_wake_version":       st.PlannerWakeVersion,
-		"planner_active_task_run_id": st.PlannerActiveTaskRunID,
-		"planner_cooldown_until":     st.PlannerCooldownUntil,
-		"planner_last_error":         strings.TrimSpace(st.PlannerLastError),
-		"planner_last_run_at":        st.PlannerLastRunAt,
-		"updated_at":                 now,
+		"last_tick_at":        st.LastTickAt,
+		"last_event_id":       st.LastEventID,
+		"max_running_workers": st.MaxRunningWorkers,
+		"updated_at":          now,
 	}
 	res := db.WithContext(ctx).Model(&contracts.PMState{}).
 		Where("id = ?", st.ID).
@@ -372,8 +251,6 @@ func (s *Service) saveManagerTickState(ctx context.Context, db *gorm.DB, st *con
 	if res.Error != nil {
 		s.slog().Warn("pm manager tick save state failed",
 			"pm_state_id", st.ID,
-			"planner_dirty", st.PlannerDirty,
-			"planner_wake_version", st.PlannerWakeVersion,
 			"error", res.Error,
 		)
 		return res.Error
@@ -382,15 +259,11 @@ func (s *Service) saveManagerTickState(ctx context.Context, db *gorm.DB, st *con
 		err := fmt.Errorf("pm state 保存失败：id=%d 未命中", st.ID)
 		s.slog().Warn("pm manager tick save state missed row",
 			"pm_state_id", st.ID,
-			"planner_dirty", st.PlannerDirty,
-			"planner_wake_version", st.PlannerWakeVersion,
 		)
 		return err
 	}
 	s.slog().Debug("pm manager tick state persisted",
 		"pm_state_id", st.ID,
-		"planner_dirty", st.PlannerDirty,
-		"planner_wake_version", st.PlannerWakeVersion,
 	)
 	return nil
 }
@@ -441,7 +314,6 @@ func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRu
 				out.Errors = append(out.Errors, uerr.Error())
 			} else if created {
 				out.InboxUpserts++
-				s.markPlannerDirty(st)
 			}
 
 		case "runtime_observation", "semantic_reported":
@@ -466,7 +338,6 @@ func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRu
 					out.Errors = append(out.Errors, uerr.Error())
 				} else if created {
 					out.InboxUpserts++
-					s.markPlannerDirty(st)
 				}
 			}
 		}
@@ -557,7 +428,6 @@ func (s *Service) scanRunningWorkers(ctx context.Context, db *gorm.DB, taskRunti
 				out.Errors = append(out.Errors, uerr.Error())
 			} else if created {
 				out.InboxUpserts++
-				s.markPlannerDirty(st)
 			}
 			continue
 		}
@@ -587,7 +457,6 @@ func (s *Service) freezeMergesForDoneTickets(ctx context.Context, db *gorm.DB, s
 		case contracts.IntegrationNone:
 			if dryRun {
 				out.MergeFrozen = append(out.MergeFrozen, t.ID)
-				s.markPlannerDirty(st)
 				continue
 			}
 			if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -621,7 +490,6 @@ func (s *Service) freezeMergesForDoneTickets(ctx context.Context, db *gorm.DB, s
 				continue
 			}
 			out.MergeFrozen = append(out.MergeFrozen, t.ID)
-			s.markPlannerDirty(st)
 			continue
 		case contracts.IntegrationNeedsMerge:
 			anchor := strings.TrimSpace(t.MergeAnchorSHA)
@@ -630,7 +498,6 @@ func (s *Service) freezeMergesForDoneTickets(ctx context.Context, db *gorm.DB, s
 				target = s.defaultIntegrationTargetBranch(ctx)
 			}
 			if !fsm.CanObserveTicketMerged(t.WorkflowStatus, status, anchor, target) {
-				s.markPlannerDirty(st)
 				continue
 			}
 			merged, merr := s.isAnchorMergedIntoTarget(ctx, anchor, target)
@@ -639,7 +506,6 @@ func (s *Service) freezeMergesForDoneTickets(ctx context.Context, db *gorm.DB, s
 				continue
 			}
 			if !merged {
-				s.markPlannerDirty(st)
 				continue
 			}
 			if dryRun {
@@ -678,66 +544,6 @@ func (s *Service) freezeMergesForDoneTickets(ctx context.Context, db *gorm.DB, s
 	}
 
 	return out
-}
-
-func (s *Service) maybeSchedulePlannerRun(ctx context.Context, db *gorm.DB, st *contracts.PMState, now time.Time) (bool, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if st == nil {
-		return false, nil
-	}
-	skipAutopilot := !st.AutopilotEnabled
-	skipDirty := !st.PlannerDirty
-	skipActiveRun := st.PlannerActiveTaskRunID != nil
-	skipCooldown := st.PlannerCooldownUntil != nil && !now.After(*st.PlannerCooldownUntil)
-	if skipAutopilot || skipDirty || skipActiveRun || skipCooldown {
-		s.slog().Debug("pm planner schedule skipped",
-			"skip_autopilot", skipAutopilot,
-			"skip_dirty", skipDirty,
-			"skip_active_run", skipActiveRun,
-			"skip_cooldown", skipCooldown,
-			"autopilot_enabled", st.AutopilotEnabled,
-			"planner_dirty", st.PlannerDirty,
-			"planner_active_task_run_id", st.PlannerActiveTaskRunID,
-			"planner_cooldown_until", st.PlannerCooldownUntil,
-		)
-		return false, nil
-	}
-
-	taskRuntime, err := s.taskRuntimeForDB(db)
-	if err != nil {
-		return false, err
-	}
-	requestID := newPMRequestID("pln")
-	taskRun, err := taskRuntime.CreateRun(ctx, contracts.TaskRunCreateInput{
-		OwnerType:          contracts.TaskOwnerPM,
-		TaskType:           contracts.TaskTypePMPlannerRun,
-		ProjectKey:         strings.TrimSpace(s.p.Key),
-		SubjectType:        "pm",
-		SubjectID:          "planner",
-		RequestID:          requestID,
-		OrchestrationState: contracts.TaskPending,
-		RequestPayloadJSON: marshalJSON(map[string]any{
-			"wake_version": st.PlannerWakeVersion,
-		}),
-	})
-	if err != nil {
-		s.slog().Warn("pm planner schedule create run failed",
-			"planner_wake_version", st.PlannerWakeVersion,
-			"error", err,
-		)
-		return false, err
-	}
-	runID := taskRun.ID
-	st.PlannerActiveTaskRunID = &runID
-	st.PlannerDirty = false
-	s.slog().Debug("pm planner schedule created run",
-		"task_run_id", runID,
-		"planner_wake_version", st.PlannerWakeVersion,
-		"planner_dirty_after", st.PlannerDirty,
-	)
-	return true, nil
 }
 
 func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt scheduleOptions) scheduleResult {
@@ -783,7 +589,7 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 				out.SurfaceConflicts = append(out.SurfaceConflicts, conflicts...)
 			}
 			if strategy == SurfaceConflictIntegration {
-				created, _ := s.upsertOpenInbox(ctx, contracts.InboxItem{
+				_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
 					Key:      inboxKeyTicketIncident(t.ID, "surface_conflict_integration"),
 					Status:   contracts.InboxOpen,
 					Severity: contracts.InboxWarn,
@@ -792,13 +598,10 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 					Body:     renderSurfaceConflictSummary(conflicts),
 					TicketID: t.ID,
 				})
-				if created && opt.PMState != nil {
-					s.markPlannerDirty(opt.PMState)
-				}
 			}
 			if strategy == SurfaceConflictSerial {
 				out.SerialDeferred = append(out.SerialDeferred, t.ID)
-				created, _ := s.upsertOpenInbox(ctx, contracts.InboxItem{
+				_, _ = s.upsertOpenInbox(ctx, contracts.InboxItem{
 					Key:      inboxKeyTicketIncident(t.ID, "surface_conflict_serial"),
 					Status:   contracts.InboxOpen,
 					Severity: contracts.InboxWarn,
@@ -807,9 +610,6 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 					Body:     renderSurfaceConflictSummary(conflicts),
 					TicketID: t.ID,
 				})
-				if created && opt.PMState != nil {
-					s.markPlannerDirty(opt.PMState)
-				}
 				continue
 			}
 		}

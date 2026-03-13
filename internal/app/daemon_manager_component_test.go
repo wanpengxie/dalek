@@ -4,8 +4,6 @@ import (
 	"context"
 	"dalek/internal/contracts"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -90,9 +88,8 @@ func TestDaemonManagerComponent_NotifyProject_TriggersTick(t *testing.T) {
 }
 
 type stubManagerExecutionHost struct {
-	mu           sync.Mutex
-	calls        []daemonsvc.TicketLoopSubmitRequest
-	plannerCalls []daemonsvc.PlannerSubmitRequest
+	mu    sync.Mutex
+	calls []daemonsvc.TicketLoopSubmitRequest
 }
 
 func (s *stubManagerExecutionHost) SubmitTicketLoop(_ context.Context, req daemonsvc.TicketLoopSubmitRequest) (daemonsvc.TicketLoopSubmitReceipt, error) {
@@ -107,31 +104,11 @@ func (s *stubManagerExecutionHost) SubmitTicketLoop(_ context.Context, req daemo
 	}, nil
 }
 
-func (s *stubManagerExecutionHost) SubmitPlannerRun(_ context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.plannerCalls = append(s.plannerCalls, req)
-	return daemonsvc.PlannerSubmitReceipt{
-		Accepted:  true,
-		Project:   req.Project,
-		RequestID: req.RequestID,
-		TaskRunID: req.TaskRunID,
-	}, nil
-}
-
 func (s *stubManagerExecutionHost) snapshot() []daemonsvc.TicketLoopSubmitRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := make([]daemonsvc.TicketLoopSubmitRequest, len(s.calls))
 	copy(out, s.calls)
-	return out
-}
-
-func (s *stubManagerExecutionHost) snapshotPlanner() []daemonsvc.PlannerSubmitRequest {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]daemonsvc.PlannerSubmitRequest, len(s.plannerCalls))
-	copy(out, s.plannerCalls)
 	return out
 }
 
@@ -149,14 +126,6 @@ func (s *stubWarmupExecutionHost) SubmitTicketLoop(_ context.Context, req daemon
 	}, nil
 }
 
-func (s *stubWarmupExecutionHost) SubmitPlannerRun(_ context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error) {
-	return daemonsvc.PlannerSubmitReceipt{
-		Accepted:  true,
-		Project:   req.Project,
-		RequestID: req.RequestID,
-		TaskRunID: req.TaskRunID,
-	}, nil
-}
 
 func (s *stubWarmupExecutionHost) WarmupRunProjectIndex(project string, runIDs []uint) int {
 	s.mu.Lock()
@@ -184,10 +153,6 @@ func (s *stubWarmupExecutionHost) snapshotWarmup(project string) []uint {
 func TestDaemonManagerComponent_RunTickProject_UsesWorkerRunHostSubmitter(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
-	if _, err := p.SetAutopilotEnabled(ctx, true); err != nil {
-		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
-	}
-
 	tk, err := p.CreateTicketWithDescription(ctx, "manager submitter wiring", "worker run activation should go through execution host submitter")
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
@@ -217,140 +182,6 @@ func TestDaemonManagerComponent_RunTickProject_UsesWorkerRunHostSubmitter(t *tes
 	wantPrefix := fmt.Sprintf("mgr_t%d_", tk.ID)
 	if !strings.HasPrefix(calls[0].RequestID, wantPrefix) {
 		t.Fatalf("unexpected request id prefix: got=%q want_prefix=%q", calls[0].RequestID, wantPrefix)
-	}
-}
-
-func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t *testing.T) {
-	h, p := newIntegrationHomeProject(t)
-	ctx := context.Background()
-	if _, err := p.SetAutopilotEnabled(ctx, true); err != nil {
-		t.Fatalf("SetAutopilotEnabled(true) failed: %v", err)
-	}
-	planPath := filepath.Join(p.RepoRoot(), ".dalek", "pm", "plan.md")
-	if err := os.MkdirAll(filepath.Dir(planPath), 0o755); err != nil {
-		t.Fatalf("mkdir planner plan dir failed: %v", err)
-	}
-	if err := os.WriteFile(planPath, []byte("# Planner Plan\n- prioritize blockers\n"), 0o644); err != nil {
-		t.Fatalf("write planner plan failed: %v", err)
-	}
-
-	tk, err := p.CreateTicketWithDescription(ctx, "manager planner submit wiring", "planner run should be submitted to execution host")
-	if err != nil {
-		t.Fatalf("CreateTicket failed: %v", err)
-	}
-	w, err := p.StartTicket(ctx, tk.ID)
-	if err != nil {
-		t.Fatalf("StartTicket failed: %v", err)
-	}
-	now := time.Now().UTC().Truncate(time.Second)
-	workerRun, err := p.task.CreateRun(ctx, contracts.TaskRunCreateInput{
-		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           contracts.TaskTypeDeliverTicket,
-		ProjectKey:         p.Key(),
-		TicketID:           tk.ID,
-		WorkerID:           w.ID,
-		SubjectType:        "ticket",
-		SubjectID:          fmt.Sprintf("%d", tk.ID),
-		RequestID:          fmt.Sprintf("planner-trigger-%d", now.UnixNano()),
-		OrchestrationState: contracts.TaskRunning,
-		StartedAt:          &now,
-	})
-	if err != nil {
-		t.Fatalf("create worker task run failed: %v", err)
-	}
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
-		"workflow_status": contracts.TicketActive,
-		"updated_at":      now,
-	}).Error; err != nil {
-		t.Fatalf("set ticket active failed: %v", err)
-	}
-	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
-		"status":     contracts.WorkerRunning,
-		"updated_at": now,
-	}).Error; err != nil {
-		t.Fatalf("set worker running failed: %v", err)
-	}
-	if err := p.task.AppendEvent(ctx, contracts.TaskEventInput{
-		TaskRunID: workerRun.ID,
-		EventType: "watch_error",
-		Note:      "trigger planner dirty",
-	}); err != nil {
-		t.Fatalf("append watch_error event failed: %v", err)
-	}
-
-	host := &stubManagerExecutionHost{}
-	manager := newDaemonManagerComponent(h, nil)
-	manager.setExecutionHost(host)
-	manager.runTickProject(ctx, p.Name(), "test")
-
-	if got := len(host.snapshot()); got != 0 {
-		t.Fatalf("expected no dispatch submits in this scenario, got=%d", got)
-	}
-	plannerCalls := host.snapshotPlanner()
-	if len(plannerCalls) != 1 {
-		t.Fatalf("expected one planner submit call, got=%d", len(plannerCalls))
-	}
-	call := plannerCalls[0]
-	if call.Project != p.Name() {
-		t.Fatalf("unexpected planner submit project: got=%q want=%q", call.Project, p.Name())
-	}
-	if call.TaskRunID == 0 {
-		t.Fatalf("expected planner submit task_run_id > 0")
-	}
-	if strings.TrimSpace(call.RequestID) == "" {
-		t.Fatalf("expected planner submit request_id not empty")
-	}
-	if strings.TrimSpace(call.Prompt) == "" {
-		t.Fatalf("expected planner submit prompt not empty")
-	}
-	if !strings.Contains(call.Prompt, "Planner Plan") {
-		t.Fatalf("expected prompt contains planner plan markdown")
-	}
-	if !strings.Contains(call.Prompt, "\"command\": \"dalek pm state sync\"") {
-		t.Fatalf("expected prompt contains pm state sync snapshot command")
-	}
-	if !strings.Contains(call.Prompt, "\"schema\": \"dalek.pm.state.v1\"") {
-		t.Fatalf("expected prompt contains pm workspace state snapshot")
-	}
-	if !strings.Contains(call.Prompt, "\"command\": \"dalek ticket ls\"") {
-		t.Fatalf("expected prompt contains ticket list snapshot command")
-	}
-	if !strings.Contains(call.Prompt, "\"command\": \"dalek merge ls\"") {
-		t.Fatalf("expected prompt contains merge list snapshot command")
-	}
-	if !strings.Contains(call.Prompt, "不要直接修改产品源码、测试或功能实现文件") {
-		t.Fatalf("expected prompt enforces PM no-direct-code rule")
-	}
-	if !strings.Contains(call.Prompt, "git merge --abort") {
-		t.Fatalf("expected prompt instructs planner to abort product-file merge conflicts")
-	}
-	if !strings.Contains(call.Prompt, "\"command\": \"dalek inbox ls --status open\"") {
-		t.Fatalf("expected prompt contains inbox list snapshot command")
-	}
-	if !strings.Contains(call.Prompt, "\"surface_conflicts\"") {
-		t.Fatalf("expected prompt contains surface_conflicts snapshot")
-	}
-
-	pmState, err := p.GetPMState(ctx)
-	if err != nil {
-		t.Fatalf("GetPMState failed: %v", err)
-	}
-	if pmState.PlannerActiveTaskRunID == nil {
-		t.Fatalf("expected planner active task run id set")
-	}
-	if *pmState.PlannerActiveTaskRunID != call.TaskRunID {
-		t.Fatalf("planner active run mismatch: state=%d submit=%d", *pmState.PlannerActiveTaskRunID, call.TaskRunID)
-	}
-
-	var plannerRun contracts.TaskRun
-	if err := p.core.DB.WithContext(ctx).First(&plannerRun, call.TaskRunID).Error; err != nil {
-		t.Fatalf("load planner task run failed: %v", err)
-	}
-	if plannerRun.TaskType != contracts.TaskTypePMPlannerRun {
-		t.Fatalf("expected planner task type=%s, got=%s", contracts.TaskTypePMPlannerRun, plannerRun.TaskType)
-	}
-	if strings.TrimSpace(plannerRun.RequestID) != call.RequestID {
-		t.Fatalf("planner request id mismatch: task=%q submit=%q", plannerRun.RequestID, call.RequestID)
 	}
 }
 

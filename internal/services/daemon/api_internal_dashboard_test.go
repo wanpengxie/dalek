@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"testing"
-	"time"
 
 	"dalek/internal/contracts"
 )
@@ -66,7 +65,6 @@ func decodeDashboardAPIError(t *testing.T, raw []byte) internalSubmitAPIError {
 }
 
 func TestHandleOverview_Success(t *testing.T) {
-	lastRunAt := time.Now().UTC().Round(time.Second)
 	project := &testExecutionHostProject{
 		dashboardResult: DashboardResult{
 			TicketCounts: map[string]int{
@@ -76,12 +74,6 @@ func TestHandleOverview_Success(t *testing.T) {
 				Running:    1,
 				MaxRunning: 3,
 				Blocked:    1,
-			},
-			PlannerState: DashboardPlannerInfo{
-				Dirty:       true,
-				WakeVersion: 7,
-				LastRunAt:   &lastRunAt,
-				LastError:   "planner failed once",
 			},
 			MergeCounts: map[string]int{
 				"proposed": 2,
@@ -110,56 +102,11 @@ func TestHandleOverview_Success(t *testing.T) {
 	if got.WorkerStats.Running != 1 || got.WorkerStats.MaxRunning != 3 || got.WorkerStats.Blocked != 1 {
 		t.Fatalf("unexpected worker_stats: %+v", got.WorkerStats)
 	}
-	if !got.PlannerState.Dirty || got.PlannerState.WakeVersion != 7 {
-		t.Fatalf("unexpected planner_state: %+v", got.PlannerState)
-	}
 	if got.MergeCounts["proposed"] != 2 {
 		t.Fatalf("unexpected merge_counts.proposed: %d", got.MergeCounts["proposed"])
 	}
 	if got.InboxCounts.Open != 3 || got.InboxCounts.Snoozed != 1 || got.InboxCounts.Blockers != 1 {
 		t.Fatalf("unexpected inbox_counts: %+v", got.InboxCounts)
-	}
-}
-
-func TestHandlePlanner_Success(t *testing.T) {
-	activeRunID := uint(99)
-	cooldown := time.Now().UTC().Add(10 * time.Minute).Round(time.Second)
-	lastRunAt := time.Now().UTC().Round(time.Second)
-	project := &testExecutionHostProject{
-		pmState: contracts.PMState{
-			PlannerDirty:           true,
-			PlannerWakeVersion:     11,
-			PlannerActiveTaskRunID: &activeRunID,
-			PlannerCooldownUntil:   &cooldown,
-			PlannerLastRunAt:       &lastRunAt,
-			PlannerLastError:       "planner timeout",
-		},
-	}
-	svc := startTestInternalAPIForDashboard(t, project)
-
-	status, raw := doDashboardRequest(t, svc, http.MethodGet, "/api/v1/planner?project=demo")
-	if status != http.StatusOK {
-		t.Fatalf("unexpected status=%d raw=%s", status, string(raw))
-	}
-
-	var got DashboardPlannerInfo
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("decode planner failed: %v raw=%s", err, string(raw))
-	}
-	if !got.Dirty || got.WakeVersion != 11 {
-		t.Fatalf("unexpected planner basic fields: %+v", got)
-	}
-	if got.ActiveTaskRunID == nil || *got.ActiveTaskRunID != activeRunID {
-		t.Fatalf("unexpected active_task_run_id: %+v", got.ActiveTaskRunID)
-	}
-	if got.CooldownUntil == nil || !got.CooldownUntil.Equal(cooldown) {
-		t.Fatalf("unexpected cooldown_until: %+v", got.CooldownUntil)
-	}
-	if got.LastRunAt == nil || !got.LastRunAt.Equal(lastRunAt) {
-		t.Fatalf("unexpected last_run_at: %+v", got.LastRunAt)
-	}
-	if got.LastError != "planner timeout" {
-		t.Fatalf("unexpected last_error: %q", got.LastError)
 	}
 }
 
@@ -227,7 +174,6 @@ func TestDashboardEndpoints_RequireProjectQuery(t *testing.T) {
 	svc := startTestInternalAPIForDashboard(t, &testExecutionHostProject{})
 	for _, path := range []string{
 		"/api/v1/overview",
-		"/api/v1/planner",
 		"/api/v1/merges",
 		"/api/v1/inbox",
 	} {
@@ -246,7 +192,6 @@ func TestDashboardEndpoints_MethodNotAllowed(t *testing.T) {
 	svc := startTestInternalAPIForDashboard(t, &testExecutionHostProject{})
 	for _, path := range []string{
 		"/api/v1/overview?project=demo",
-		"/api/v1/planner?project=demo",
 		"/api/v1/merges?project=demo",
 		"/api/v1/inbox?project=demo",
 	} {
