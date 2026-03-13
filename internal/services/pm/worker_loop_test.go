@@ -44,12 +44,25 @@ func makeSemanticReport(t *testing.T, svc *Service, runID uint, nextAction strin
 	if err != nil {
 		t.Fatalf("require failed: %v", err)
 	}
+	payload := contracts.JSONMap{
+		"source": "test",
+	}
+	switch strings.TrimSpace(strings.ToLower(nextAction)) {
+	case string(contracts.NextDone):
+		payload["head_sha"] = testWorkerDoneHeadSHA
+		payload["dirty"] = false
+	case string(contracts.NextWaitUser):
+		payload["blockers"] = []string{"test blocker"}
+		payload["needs_user"] = true
+	}
 	if err := db.Create(&contracts.TaskSemanticReport{
-		TaskRunID:  runID,
-		Phase:      contracts.TaskPhaseImplementing,
-		NextAction: nextAction,
-		Summary:    "test",
-		ReportedAt: time.Now(),
+		TaskRunID:         runID,
+		Phase:             contracts.TaskPhaseImplementing,
+		Milestone:         "agent_report",
+		NextAction:        nextAction,
+		Summary:           "test",
+		ReportPayloadJSON: payload,
+		ReportedAt:        time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("create semantic report failed: %v", err)
 	}
@@ -91,6 +104,14 @@ func createWorkerLoopTestFixture(t *testing.T, svc *Service, nextAction string) 
 
 	if nextAction != "" {
 		makeSemanticReport(t, svc, taskRun.ID, nextAction)
+	}
+	switch strings.TrimSpace(strings.ToLower(nextAction)) {
+	case string(contracts.NextDone):
+		writeWorkerLoopStateForTest(t, w.WorktreePath, nextAction, "test", nil, true, testWorkerDoneHeadSHA, "clean")
+	case string(contracts.NextWaitUser):
+		writeWorkerLoopStateForTest(t, w.WorktreePath, nextAction, "test", []string{"test blocker"}, false, testWorkerDoneHeadSHA, "clean")
+	default:
+		writeWorkerLoopStateForTest(t, w.WorktreePath, nextAction, "test", nil, false, testWorkerDoneHeadSHA, "clean")
 	}
 
 	return tk, w, taskRun.ID
@@ -156,6 +177,7 @@ func TestExecuteWorkerLoop_EmptyNextAction_RetrySucceeds(t *testing.T) {
 	run1 := createWorkerTaskRun(t, db, tk.ID, w.ID, "wrk_empty_retry_success_1")
 	run2 := createWorkerTaskRun(t, db, tk.ID, w.ID, "wrk_empty_retry_success_2")
 	makeSemanticReport(t, svc, run2.ID, "done")
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "test", nil, true, testWorkerDoneHeadSHA, "clean")
 
 	var prompts []string
 	var callCount atomic.Int32
@@ -171,8 +193,8 @@ func TestExecuteWorkerLoop_EmptyNextAction_RetrySucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeWorkerLoop failed: %v", err)
 	}
-	if result.Stages != 2 {
-		t.Fatalf("expected 2 stages, got=%d", result.Stages)
+	if result.Stages != 1 {
+		t.Fatalf("expected 1 stage after in-stage repair, got=%d", result.Stages)
 	}
 	if result.LastNextAction != "done" {
 		t.Fatalf("expected last_next_action=done, got=%q", result.LastNextAction)
@@ -183,7 +205,7 @@ func TestExecuteWorkerLoop_EmptyNextAction_RetrySucceeds(t *testing.T) {
 	if prompts[0] != "test prompt" {
 		t.Fatalf("unexpected first prompt: %q", prompts[0])
 	}
-	if prompts[1] != emptyReportRetryPrompt {
+	if !strings.Contains(prompts[1], "当前 stage 尚未闭合") {
 		t.Fatalf("unexpected retry prompt: %q", prompts[1])
 	}
 
@@ -196,7 +218,59 @@ func TestExecuteWorkerLoop_EmptyNextAction_RetrySucceeds(t *testing.T) {
 	}
 }
 
-func TestExecuteWorkerLoop_EmptyNextAction_RetryExhaustedMarksWorkerFailed(t *testing.T) {
+func TestExecuteWorkerLoop_DoneClosureRepairSucceedsWithinSameStage(t *testing.T) {
+	svc, _, _ := newServiceForTest(t)
+	_, db, err := svc.require()
+	if err != nil {
+		t.Fatalf("require failed: %v", err)
+	}
+
+	tk := createTicket(t, db, "worker-loop-done-closure-repair")
+	w := contracts.Worker{
+		TicketID:     tk.ID,
+		Status:       contracts.WorkerRunning,
+		WorktreePath: t.TempDir(),
+		Branch:       "ts/worker-loop-done-closure-repair",
+	}
+	if err := db.Create(&w).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+	run1 := createWorkerTaskRun(t, db, tk.ID, w.ID, "wrk_done_closure_repair_1")
+	run2 := createWorkerTaskRun(t, db, tk.ID, w.ID, "wrk_done_closure_repair_2")
+	makeSemanticReport(t, svc, run1.ID, "done")
+	makeSemanticReport(t, svc, run2.ID, "done")
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "test", nil, false, testWorkerDoneHeadSHA, "clean")
+
+	var prompts []string
+	var callCount atomic.Int32
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		prompts = append(prompts, prompt)
+		if callCount.Add(1) == 1 {
+			return &fakeAgentRunHandle{runID: run1.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+		}
+		writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "test", nil, true, testWorkerDoneHeadSHA, "clean")
+		return &fakeAgentRunHandle{runID: run2.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
+	}
+
+	result, err := svc.executeWorkerLoop(context.Background(), tk, w, "test prompt")
+	if err != nil {
+		t.Fatalf("executeWorkerLoop failed: %v", err)
+	}
+	if result.Stages != 1 {
+		t.Fatalf("expected 1 stage after closure repair, got=%d", result.Stages)
+	}
+	if result.LastNextAction != "done" {
+		t.Fatalf("expected last_next_action=done, got=%q", result.LastNextAction)
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("expected 2 prompts, got=%d", len(prompts))
+	}
+	if !strings.Contains(prompts[1], "当前 stage 尚未闭合") {
+		t.Fatalf("unexpected repair prompt: %q", prompts[1])
+	}
+}
+
+func TestExecuteWorkerLoop_EmptyNextAction_RetryExhaustedReturnsClosureFallback(t *testing.T) {
 	svc, _, _ := newServiceForTest(t)
 	_, db, err := svc.require()
 	if err != nil {
@@ -227,23 +301,23 @@ func TestExecuteWorkerLoop_EmptyNextAction_RetryExhaustedMarksWorkerFailed(t *te
 	}
 
 	result, err := svc.executeWorkerLoop(context.Background(), tk, w, "test prompt")
-	var missingErr *workerLoopMissingReportError
-	if !errors.As(err, &missingErr) {
-		t.Fatalf("expected workerLoopMissingReportError, got=%v", err)
+	var closureErr *workerLoopClosureExhaustedError
+	if !errors.As(err, &closureErr) {
+		t.Fatalf("expected workerLoopClosureExhaustedError, got=%v", err)
 	}
-	if result.Stages != 2 {
-		t.Fatalf("expected 2 stages, got=%d", result.Stages)
+	if result.Stages != 1 {
+		t.Fatalf("expected 1 stage after repair exhaustion, got=%d", result.Stages)
 	}
 	if result.LastNextAction != "" {
 		t.Fatalf("expected empty last_next_action, got=%q", result.LastNextAction)
 	}
-	if missingErr.LastRunID != run2.ID {
-		t.Fatalf("expected missing report last_run_id=%d, got=%d", run2.ID, missingErr.LastRunID)
+	if closureErr.LastRunID != run2.ID {
+		t.Fatalf("expected closure exhausted last_run_id=%d, got=%d", run2.ID, closureErr.LastRunID)
 	}
 	if len(prompts) != 2 {
 		t.Fatalf("expected 2 prompts, got=%d", len(prompts))
 	}
-	if prompts[1] != emptyReportRetryPrompt {
+	if !strings.Contains(prompts[1], "当前 stage 尚未闭合") {
 		t.Fatalf("unexpected retry prompt: %q", prompts[1])
 	}
 
@@ -251,11 +325,11 @@ func TestExecuteWorkerLoop_EmptyNextAction_RetryExhaustedMarksWorkerFailed(t *te
 	if err := db.First(&after, w.ID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
 	}
-	if after.Status != contracts.WorkerFailed {
-		t.Fatalf("expected worker failed after retry exhausted, got=%s", after.Status)
+	if after.Status != contracts.WorkerStopped {
+		t.Fatalf("expected worker stopped after retry exhausted, got=%s", after.Status)
 	}
-	if !strings.Contains(after.LastError, "连续两轮执行完成但未提交 report") {
-		t.Fatalf("unexpected worker last_error: %q", after.LastError)
+	if strings.TrimSpace(after.LastError) != "" {
+		t.Fatalf("expected closure exhaustion not mark worker failed, got last_error=%q", after.LastError)
 	}
 }
 
@@ -299,6 +373,7 @@ func TestExecuteWorkerLoop_ContinuesThenStops(t *testing.T) {
 		t.Fatalf("create run2 failed: %v", err)
 	}
 	makeSemanticReport(t, svc, run2.ID, "done")
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "test", nil, true, testWorkerDoneHeadSHA, "clean")
 
 	var callCount atomic.Int32
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
@@ -357,14 +432,14 @@ func TestExecuteWorkerLoop_WaitError(t *testing.T) {
 	}
 
 	result, err := svc.executeWorkerLoop(context.Background(), tk, w, "test prompt")
-	if err == nil {
-		t.Fatalf("expected error on wait failure")
-	}
-	if !strings.Contains(err.Error(), "wait 失败") {
-		t.Fatalf("unexpected error: %v", err)
+	if err != nil {
+		t.Fatalf("expected closure to accept valid done report after wait error, got=%v", err)
 	}
 	if result.Stages != 1 {
-		t.Fatalf("expected 1 stage (failed), got=%d", result.Stages)
+		t.Fatalf("expected 1 stage, got=%d", result.Stages)
+	}
+	if result.LastNextAction != "done" {
+		t.Fatalf("expected last_next_action=done, got=%q", result.LastNextAction)
 	}
 }
 

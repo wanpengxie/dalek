@@ -234,6 +234,7 @@ func TestApplyWorkerLoopTerminalReport_Done_EmitsHook(t *testing.T) {
 	}
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
 	svc.SetStatusChangeHook(hook)
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "开发完成，准备进入 merge 队列", nil, true, testWorkerDoneHeadSHA, "clean")
 
 	report := contracts.WorkerReport{
 		Schema:     contracts.WorkerReportSchemaV1,
@@ -241,6 +242,7 @@ func TestApplyWorkerLoopTerminalReport_Done_EmitsHook(t *testing.T) {
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
 		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
+		HeadSHA:    testWorkerDoneHeadSHA,
 		Summary:    "开发完成，准备进入 merge 队列",
 		NextAction: string(contracts.NextDone),
 	}
@@ -278,6 +280,7 @@ func TestApplyWorkerLoopTerminalReport_WaitUser_EmitsHookWithBlockers(t *testing
 	}
 	hook := &testStatusChangeHook{ch: make(chan StatusChangeEvent, 1)}
 	svc.SetStatusChangeHook(hook)
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "wait_user", "需要你确认 API 语义", []string{"是否允许破坏性变更？", "命名规范是否采用 v2？"}, false, testWorkerDoneHeadSHA, "clean")
 
 	report := contracts.WorkerReport{
 		Schema:     contracts.WorkerReportSchemaV1,

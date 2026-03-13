@@ -120,8 +120,12 @@ func (s *Service) resolveDoneIntegrationFreezeTx(ctx context.Context, tx *gorm.D
 	if targetRef == "" {
 		targetRef = s.defaultIntegrationTargetBranch(ctx)
 	}
+	anchor := strings.TrimSpace(s.tryResolveMergeAnchorSHA(ctx, &w, taskRunID, reportHeadSHA))
+	if anchor == "" {
+		return doneIntegrationFreeze{}, fmt.Errorf("done closure 缺少可冻结的 clean merge anchor: ticket=%d worker=%d run=%d", ticketID, workerID, taskRunID)
+	}
 	return doneIntegrationFreeze{
-		AnchorSHA: strings.TrimSpace(s.tryResolveMergeAnchorSHA(ctx, &w, taskRunID, reportHeadSHA)),
+		AnchorSHA: anchor,
 		TargetRef: targetRef,
 	}, nil
 }
@@ -219,6 +223,11 @@ func (s *Service) tryResolveMergeAnchorSHA(ctx context.Context, w *contracts.Wor
 	if w != nil {
 		wt := strings.TrimSpace(w.WorktreePath)
 		if wt != "" {
+			if p, _, err := s.require(); err == nil && p != nil && p.Git != nil {
+				if dirty, derr := p.Git.WorktreeDirty(wt); derr != nil || dirty {
+					return ""
+				}
+			}
 			if code, out, _, err := infra.RunExitCode(checkCtx, wt, "git", "rev-parse", "HEAD"); err == nil && code == 0 {
 				head := strings.TrimSpace(out)
 				if looksLikeGitCommit(head) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	pmsvc "dalek/internal/services/pm"
 )
 
 func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
@@ -16,9 +18,11 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 
 	runLabel := "worker run"
 	logLabel := strings.ReplaceAll(runLabel, " ", "_")
+	sink := executionTicketLoopControlSink{host: h, handle: handle}
 
 	if !h.acquireSlot(handle.ctx) {
 		if handle.ctx.Err() != nil {
+			sink.LoopCancelRequested()
 			h.logger.Info("execution host ticket run canceled before start",
 				"request_id", handle.requestID,
 				"run_kind", logLabel,
@@ -30,6 +34,7 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 
 	project, err := h.resolver.OpenProject(handle.project)
 	if err != nil {
+		sink.LoopErrored(err)
 		h.logger.Warn("execution host ticket run open project failed",
 			"project", handle.project,
 			"request_id", handle.requestID,
@@ -54,12 +59,16 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 			observedRunID = status.RunID
 		}
 		h.attachHandleRun(handle, status.RunID, status.WorkerID)
+		if strings.TrimSpace(handle.phase) == "" {
+			h.setHandlePhase(handle, pmsvc.WorkerLoopPhaseRunning)
+		}
 	}
 
 	resCh := make(chan WorkerRunResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
-		res, runErr := project.RunTicketWorker(handle.ctx, handle.ticketID, WorkerRunOptions{
+		loopCtx := pmsvc.WithWorkerLoopControlSink(handle.ctx, sink)
+		res, runErr := project.RunTicketWorker(loopCtx, handle.ticketID, WorkerRunOptions{
 			EntryPrompt: handle.entryPrompt,
 			AutoStart:   handle.autoStart,
 			BaseBranch:  handle.baseBranch,
@@ -89,6 +98,7 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 			if handle.runID == 0 {
 				attachLatestRun(context.Background())
 			}
+			h.setHandlePhase(handle, pmsvc.WorkerLoopPhaseClosing)
 			h.logger.Info("execution host ticket run completed",
 				"run_id", handle.runID,
 				"project", handle.project,
@@ -101,6 +111,7 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 				attachLatestRun(context.Background())
 			}
 			if handle.ctx.Err() != nil {
+				sink.LoopCancelRequested()
 				h.logger.Info("execution host ticket run canceled",
 					"request_id", handle.requestID,
 					"project", handle.project,
@@ -108,6 +119,7 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 				)
 				return
 			}
+			sink.LoopErrored(runErr)
 			h.logger.Warn("execution host ticket run failed",
 				"request_id", handle.requestID,
 				"project", handle.project,

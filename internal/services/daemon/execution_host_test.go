@@ -608,14 +608,14 @@ func TestExecutionHost_OnRunSettled_WorkerRun(t *testing.T) {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	_, err = host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	_, err = host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "worker-notify-test",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("SubmitWorkerRun failed: %v", err)
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
 	}
 
 	select {
@@ -628,21 +628,21 @@ func TestExecutionHost_OnRunSettled_WorkerRun(t *testing.T) {
 	}
 }
 
-func TestExecutionHost_SubmitWorkerRun_UsesRunIDFromDirectResult(t *testing.T) {
+func TestExecutionHost_SubmitTicketLoop_UsesRunIDFromDirectResult(t *testing.T) {
 	project := &testExecutionHostProject{workerRunID: 8801}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	receipt, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	receipt, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "worker-runid-from-result",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("SubmitWorkerRun failed: %v", err)
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
 	}
 	if receipt.TaskRunID != 8801 {
 		t.Fatalf("expected task_run_id from direct result, got=%d", receipt.TaskRunID)
@@ -717,26 +717,26 @@ func TestExecutionHost_OnRunSettled_PlannerRun(t *testing.T) {
 	}
 }
 
-func TestExecutionHost_SubmitWorkerRun_IdempotentByRequestID(t *testing.T) {
+func TestExecutionHost_SubmitTicketLoop_IdempotentByRequestID(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	req := WorkerRunSubmitRequest{
+	req := TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "worker-idempotent-single",
 		Prompt:    "继续执行任务",
 	}
-	first, err := host.SubmitWorkerRun(context.Background(), req)
+	first, err := host.SubmitTicketLoop(context.Background(), req)
 	if err != nil {
-		t.Fatalf("first SubmitWorkerRun failed: %v", err)
+		t.Fatalf("first SubmitTicketLoop failed: %v", err)
 	}
-	second, err := host.SubmitWorkerRun(context.Background(), req)
+	second, err := host.SubmitTicketLoop(context.Background(), req)
 	if err != nil {
-		t.Fatalf("second SubmitWorkerRun failed: %v", err)
+		t.Fatalf("second SubmitTicketLoop failed: %v", err)
 	}
 
 	if first.TaskRunID != second.TaskRunID {
@@ -750,7 +750,7 @@ func TestExecutionHost_SubmitWorkerRun_IdempotentByRequestID(t *testing.T) {
 	}
 }
 
-func TestExecutionHost_SubmitWorkerRun_ForwardsAutoStartOption(t *testing.T) {
+func TestExecutionHost_SubmitTicketLoop_ForwardsAutoStartOption(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
@@ -758,7 +758,7 @@ func TestExecutionHost_SubmitWorkerRun_ForwardsAutoStartOption(t *testing.T) {
 	}
 
 	autoStart := false
-	_, err = host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	_, err = host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:    "demo",
 		TicketID:   1,
 		RequestID:  "worker-forward-auto-start",
@@ -767,7 +767,7 @@ func TestExecutionHost_SubmitWorkerRun_ForwardsAutoStartOption(t *testing.T) {
 		BaseBranch: "release/v2",
 	})
 	if err != nil {
-		t.Fatalf("SubmitWorkerRun failed: %v", err)
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
 	}
 
 	got := project.LastDirectDispatchAutoStart()
@@ -779,7 +779,7 @@ func TestExecutionHost_SubmitWorkerRun_ForwardsAutoStartOption(t *testing.T) {
 	}
 }
 
-func TestExecutionHost_SubmitWorkerRun_IdempotentByRequestIDConcurrent(t *testing.T) {
+func TestExecutionHost_SubmitTicketLoop_IdempotentByRequestIDConcurrent(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
@@ -787,7 +787,7 @@ func TestExecutionHost_SubmitWorkerRun_IdempotentByRequestIDConcurrent(t *testin
 	}
 
 	const workers = 8
-	results := make(chan WorkerRunSubmitReceipt, workers)
+	results := make(chan TicketLoopSubmitReceipt, workers)
 	errs := make(chan error, workers)
 
 	var wg sync.WaitGroup
@@ -795,7 +795,7 @@ func TestExecutionHost_SubmitWorkerRun_IdempotentByRequestIDConcurrent(t *testin
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			receipt, submitErr := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+			receipt, submitErr := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 				Project:   "demo",
 				TicketID:  1,
 				RequestID: "worker-idempotent-concurrent",
@@ -814,7 +814,7 @@ func TestExecutionHost_SubmitWorkerRun_IdempotentByRequestIDConcurrent(t *testin
 
 	for err := range errs {
 		if err != nil {
-			t.Fatalf("concurrent SubmitWorkerRun failed: %v", err)
+			t.Fatalf("concurrent SubmitTicketLoop failed: %v", err)
 		}
 	}
 
@@ -833,31 +833,31 @@ func TestExecutionHost_SubmitWorkerRun_IdempotentByRequestIDConcurrent(t *testin
 	}
 }
 
-func TestExecutionHost_SubmitWorkerRun_EmptyRequestIDCreatesDistinctRuns(t *testing.T) {
+func TestExecutionHost_SubmitTicketLoop_EmptyRequestIDCreatesDistinctRuns(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	first, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	first, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("first SubmitWorkerRun failed: %v", err)
+		t.Fatalf("first SubmitTicketLoop failed: %v", err)
 	}
 	waitForTicketLoopGone(t, host, "demo", 1)
-	second, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	second, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("second SubmitWorkerRun failed: %v", err)
+		t.Fatalf("second SubmitTicketLoop failed: %v", err)
 	}
 
 	if first.TaskRunID == second.TaskRunID {
@@ -868,31 +868,31 @@ func TestExecutionHost_SubmitWorkerRun_EmptyRequestIDCreatesDistinctRuns(t *test
 	}
 }
 
-func TestExecutionHost_SubmitWorkerRun_DifferentRequestIDCreatesDifferentRuns(t *testing.T) {
+func TestExecutionHost_SubmitTicketLoop_DifferentRequestIDCreatesDifferentRuns(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	first, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	first, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "worker-id-a",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("first SubmitWorkerRun failed: %v", err)
+		t.Fatalf("first SubmitTicketLoop failed: %v", err)
 	}
 	waitForTicketLoopGone(t, host, "demo", 1)
-	second, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	second, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "worker-id-b",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("second SubmitWorkerRun failed: %v", err)
+		t.Fatalf("second SubmitTicketLoop failed: %v", err)
 	}
 
 	if first.TaskRunID == second.TaskRunID {
@@ -903,7 +903,7 @@ func TestExecutionHost_SubmitWorkerRun_DifferentRequestIDCreatesDifferentRuns(t 
 	}
 }
 
-func TestExecutionHost_SubmitWorkerRun_ReusesLiveTicketLoopAcrossRequestIDs(t *testing.T) {
+func TestExecutionHost_SubmitTicketLoop_ReusesLiveTicketLoopAcrossRequestIDs(t *testing.T) {
 	releaseCh := make(chan struct{})
 	project := &testExecutionHostProject{
 		directDispatchStarted: make(chan struct{}, 1),
@@ -914,14 +914,14 @@ func TestExecutionHost_SubmitWorkerRun_ReusesLiveTicketLoopAcrossRequestIDs(t *t
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	first, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	first, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "worker-live-loop-a",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("first SubmitWorkerRun failed: %v", err)
+		t.Fatalf("first SubmitTicketLoop failed: %v", err)
 	}
 	if first.TaskRunID == 0 {
 		t.Fatalf("expected live loop receipt carries task_run_id")
@@ -936,18 +936,18 @@ func TestExecutionHost_SubmitWorkerRun_ReusesLiveTicketLoopAcrossRequestIDs(t *t
 	if !probe.Found {
 		t.Fatalf("expected live ticket loop probe to succeed")
 	}
-	if probe.TaskRunID != first.TaskRunID {
-		t.Fatalf("probe task_run_id mismatch: got=%d want=%d", probe.TaskRunID, first.TaskRunID)
+	if probe.RunID != first.TaskRunID {
+		t.Fatalf("probe run_id mismatch: got=%d want=%d", probe.RunID, first.TaskRunID)
 	}
 
-	second, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	second, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "worker-live-loop-b",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("second SubmitWorkerRun failed: %v", err)
+		t.Fatalf("second SubmitTicketLoop failed: %v", err)
 	}
 	if second.TaskRunID != first.TaskRunID {
 		t.Fatalf("expected same live loop task_run_id: first=%d second=%d", first.TaskRunID, second.TaskRunID)
@@ -1049,14 +1049,14 @@ func TestExecutionHost_Stop_WaitsForWorkerRunExit(t *testing.T) {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	_, err = host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	_, err = host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "worker-stop-wait",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("SubmitWorkerRun failed: %v", err)
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
 	}
 
 	select {
@@ -1103,14 +1103,14 @@ func TestExecutionHost_Stop_TimeoutReportsPendingWorkerRun(t *testing.T) {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	_, err = host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	_, err = host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "worker-stop-timeout",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("SubmitWorkerRun failed: %v", err)
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
 	}
 
 	select {
@@ -1436,7 +1436,7 @@ func TestExecutionHost_ListRunEvents_UsesRunProjectIndex(t *testing.T) {
 	}
 }
 
-func TestExecutionHost_CancelRun_UsesRunProjectIndex(t *testing.T) {
+func TestExecutionHost_CancelTaskRun_UsesRunProjectIndex(t *testing.T) {
 	runID := uint(808)
 	beta := &testExecutionHostProject{
 		projectName: "beta",
@@ -1460,9 +1460,9 @@ func TestExecutionHost_CancelRun_UsesRunProjectIndex(t *testing.T) {
 	}
 	host.addRunProjectIndex(runID, "beta")
 
-	res, err := host.CancelRun(runID)
+	res, err := host.CancelTaskRun(runID)
 	if err != nil {
-		t.Fatalf("CancelRun failed: %v", err)
+		t.Fatalf("CancelTaskRun failed: %v", err)
 	}
 	if !res.Found || res.Canceled {
 		t.Fatalf("expected found=true and canceled=false for historical run, got=%+v", res)
@@ -1478,7 +1478,7 @@ func TestExecutionHost_CancelRun_UsesRunProjectIndex(t *testing.T) {
 	}
 }
 
-func TestExecutionHost_CancelRun_UsesProjectTaskCancelerForHistoricalRun(t *testing.T) {
+func TestExecutionHost_CancelTaskRun_UsesProjectTaskCancelerForHistoricalRun(t *testing.T) {
 	runID := uint(909)
 	beta := &testExecutionHostProject{
 		projectName: "beta",
@@ -1512,9 +1512,9 @@ func TestExecutionHost_CancelRun_UsesProjectTaskCancelerForHistoricalRun(t *test
 	}
 	host.addRunProjectIndex(runID, "beta")
 
-	res, err := host.CancelRun(runID)
+	res, err := host.CancelTaskRun(runID)
 	if err != nil {
-		t.Fatalf("CancelRun failed: %v", err)
+		t.Fatalf("CancelTaskRun failed: %v", err)
 	}
 	if !res.Found || !res.Canceled {
 		t.Fatalf("expected project canceler to cancel historical run, got=%+v", res)
@@ -1543,14 +1543,14 @@ func TestExecutionHost_CancelTicketLoop_CancelsLiveLoop(t *testing.T) {
 		t.Fatalf("NewExecutionHost failed: %v", err)
 	}
 
-	receipt, err := host.SubmitWorkerRun(context.Background(), WorkerRunSubmitRequest{
+	receipt, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
 		Project:   "demo",
 		TicketID:  1,
 		RequestID: "worker-live-cancel",
 		Prompt:    "继续执行任务",
 	})
 	if err != nil {
-		t.Fatalf("SubmitWorkerRun failed: %v", err)
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
 	}
 	if receipt.TaskRunID == 0 {
 		t.Fatalf("expected task_run_id on submit receipt")
@@ -1585,6 +1585,58 @@ func TestExecutionHost_CancelTicketLoop_CancelsLiveLoop(t *testing.T) {
 	if !cleared {
 		t.Fatalf("expected live ticket loop cleared after cancel")
 	}
+	if err := host.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+}
+
+func TestExecutionHost_ProbeTicketLoop_ReportsCancelingSnapshot(t *testing.T) {
+	releaseCh := make(chan struct{})
+	project := &testExecutionHostProject{
+		directDispatchStarted:      make(chan struct{}, 1),
+		directDispatchRelease:      releaseCh,
+		directDispatchIgnoreCancel: true,
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	_, err = host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "worker-canceling-probe",
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
+	}
+
+	select {
+	case <-project.directDispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("worker-run goroutine not started")
+	}
+
+	if _, err := host.CancelTicketLoop("demo", 1); err != nil {
+		t.Fatalf("CancelTicketLoop failed: %v", err)
+	}
+	probe := host.ProbeTicketLoop("demo", 1)
+	if !probe.Found || !probe.OwnedByCurrentDaemon {
+		t.Fatalf("unexpected probe found/owned: %+v", probe)
+	}
+	if probe.Phase != ticketLoopPhaseCancel {
+		t.Fatalf("expected canceling phase, got=%q", probe.Phase)
+	}
+	if probe.CancelRequestedAt == nil || probe.CancelRequestedAt.IsZero() {
+		t.Fatalf("expected cancel_requested_at, got=%+v", probe)
+	}
+	if probe.RunID == 0 {
+		t.Fatalf("expected run_id on canceling probe, got=%+v", probe)
+	}
+
+	close(releaseCh)
+	waitForTicketLoopGone(t, host, "demo", 1)
 	if err := host.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}

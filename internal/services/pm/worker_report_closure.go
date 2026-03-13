@@ -2,10 +2,7 @@ package pm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,38 +13,6 @@ import (
 	"gorm.io/gorm"
 )
 
-type workerLoopMissingReportError struct {
-	Stages    int
-	LastRunID uint
-}
-
-func (e *workerLoopMissingReportError) Error() string {
-	if e == nil {
-		return "worker 连续两轮执行完成但未提交 report next_action"
-	}
-	if e.LastRunID != 0 {
-		return fmt.Sprintf("worker 连续两轮执行完成但未提交 report next_action（stages=%d last_run_id=%d）", e.Stages, e.LastRunID)
-	}
-	if e.Stages > 0 {
-		return fmt.Sprintf("worker 连续两轮执行完成但未提交 report next_action（stages=%d）", e.Stages)
-	}
-	return "worker 连续两轮执行完成但未提交 report next_action"
-}
-
-type workerLoopStateSnapshot struct {
-	NextAction string
-	Summary    string
-	Blockers   []string
-}
-
-type workerLoopStateFile struct {
-	Phases struct {
-		NextAction string `json:"next_action"`
-		Summary    string `json:"summary"`
-	} `json:"phases"`
-	Blockers []string `json:"blockers"`
-}
-
 func (s *Service) applyWorkerLoopTerminalClosure(ctx context.Context, ticketID uint, w contracts.Worker, loopResult WorkerLoopResult, source string) error {
 	next := strings.TrimSpace(strings.ToLower(loopResult.LastNextAction))
 	switch next {
@@ -55,50 +20,31 @@ func (s *Service) applyWorkerLoopTerminalClosure(ctx context.Context, ticketID u
 	default:
 		return nil
 	}
-	report, err := s.loadWorkerLoopTerminalReport(ctx, ticketID, w, loopResult.LastRunID)
+	report, found, err := s.loadWorkerLoopCandidateReport(ctx, ticketID, w, loopResult.LastRunID)
 	if err != nil {
 		return err
+	}
+	if !found {
+		return fmt.Errorf("worker loop closure 缺少 agent_report: run_id=%d", loopResult.LastRunID)
 	}
 	return s.applyWorkerLoopTerminalReport(ctx, report, workerLoopClosureSource(source, next))
 }
 
-func (s *Service) applyMissingWorkerReportWaitUser(ctx context.Context, ticketID uint, w contracts.Worker, loopResult WorkerLoopResult, source string) error {
+func (s *Service) applyWorkerLoopClosureFallbackWaitUser(ctx context.Context, ticketID uint, w contracts.Worker, loopResult WorkerLoopResult, decision workerLoopStageClosureDecision, source string) error {
 	if ticketID == 0 {
 		ticketID = w.TicketID
 	}
-	state := readWorkerLoopStateSnapshot(strings.TrimSpace(w.WorktreePath))
-	stateNext := strings.TrimSpace(strings.ToLower(state.NextAction))
-	summary := "worker 连续两轮执行完成但未提交 worker report，系统已自动阻塞并请求人工介入。"
-	blockers := []string{
-		"worker 未调用 dalek worker report 或 report 中缺少 next_action，请检查最近两轮执行日志与任务状态。",
-	}
-	closureKind := "missing_report"
-	if stateNext != "" && !isValidWorkerNextAction(stateNext) {
-		closureKind = "invalid_report"
-		summary = fmt.Sprintf("worker state.json 中存在非法 next_action=%q，系统已自动阻塞并请求人工介入。", state.NextAction)
-		blockers = []string{
-			fmt.Sprintf("worker state.json phases.next_action=%q 非法，只允许 continue|done|wait_user。", state.NextAction),
-		}
-	} else if stateNext != "" {
-		blockers = append(blockers, fmt.Sprintf("state.json 中记录的 phases.next_action=%s，但未同步成合法 worker report。", stateNext))
+	summary := decision.fallbackSummary()
+	blockers := decision.fallbackBlockers()
+	closureKind := strings.TrimSpace(decision.ReasonCode)
+	if closureKind == "" {
+		closureKind = "closure_failed"
 	}
 	if loopResult.LastRunID != 0 {
 		blockers = append(blockers, fmt.Sprintf("最后一次未收口的 run_id=%d。", loopResult.LastRunID))
 	}
 	if loopResult.Stages > 0 {
-		blockers = append(blockers, fmt.Sprintf("本轮 worker loop 已执行 %d 个 stage，并在补报重试后仍未收口。", loopResult.Stages))
-	}
-	if strings.TrimSpace(state.Summary) != "" {
-		blockers = append(blockers, fmt.Sprintf("state.json summary=%q。", strings.TrimSpace(state.Summary)))
-	}
-	if len(state.Blockers) > 0 {
-		for _, blocker := range state.Blockers {
-			blocker = strings.TrimSpace(blocker)
-			if blocker == "" {
-				continue
-			}
-			blockers = append(blockers, "state.json blocker: "+blocker)
-		}
+		blockers = append(blockers, fmt.Sprintf("本轮 worker loop 已执行 %d 个 stage，并在收口补救后仍未闭合。", loopResult.Stages))
 	}
 	report := contracts.WorkerReport{
 		Schema:     contracts.WorkerReportSchemaV1,
@@ -121,9 +67,25 @@ func (s *Service) applyWorkerLoopTerminalReport(ctx context.Context, r contracts
 	if err := r.Validate(); err != nil {
 		return err
 	}
+	r.Blockers = cleanStringSlice(r.Blockers)
 	next := strings.TrimSpace(strings.ToLower(r.NextAction))
 	if next != string(contracts.NextDone) && next != string(contracts.NextWaitUser) {
 		return nil
+	}
+	switch next {
+	case string(contracts.NextDone):
+		guarded, err := s.guardWorkerLoopTerminalReport(ctx, r)
+		if err != nil {
+			return err
+		}
+		r = guarded
+	case string(contracts.NextWaitUser):
+		if !meaningfulWorkerSummary(r.Summary) {
+			return fmt.Errorf("wait_user closure 缺少能解释阻塞原因的 summary")
+		}
+		if len(r.Blockers) == 0 {
+			return fmt.Errorf("wait_user closure 缺少 blockers")
+		}
 	}
 	ticketID := r.TicketID
 	if ticketID == 0 {
@@ -135,7 +97,7 @@ func (s *Service) applyWorkerLoopTerminalReport(ctx context.Context, r contracts
 		}
 	}
 	if ticketID == 0 {
-		return nil
+		return fmt.Errorf("worker loop closure 缺少 ticket_id")
 	}
 	_, db, err := s.require()
 	if err != nil {
@@ -280,62 +242,6 @@ func (s *Service) applyWorkerLoopTerminalReport(ctx context.Context, r contracts
 	}
 	s.emitStatusChangeHookAsync(statusEvent)
 	return nil
-}
-
-func (s *Service) loadWorkerLoopTerminalReport(ctx context.Context, ticketID uint, w contracts.Worker, runID uint) (contracts.WorkerReport, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if runID == 0 {
-		return contracts.WorkerReport{}, fmt.Errorf("worker loop closure 缺少 task_run_id")
-	}
-	_, db, err := s.require()
-	if err != nil {
-		return contracts.WorkerReport{}, err
-	}
-	var row contracts.TaskSemanticReport
-	if err := db.WithContext(ctx).
-		Where("task_run_id = ?", runID).
-		Order("reported_at desc").
-		Order("id desc").
-		First(&row).Error; err != nil {
-		return contracts.WorkerReport{}, fmt.Errorf("读取 worker loop terminal report 失败: %w", err)
-	}
-	report := contracts.WorkerReport{
-		Schema:     contracts.WorkerReportSchemaV1,
-		WorkerID:   w.ID,
-		TicketID:   ticketID,
-		TaskRunID:  runID,
-		Summary:    strings.TrimSpace(row.Summary),
-		NextAction: strings.TrimSpace(row.NextAction),
-		HeadSHA:    workerClosureJSONMapString(row.ReportPayloadJSON, "head_sha"),
-		Dirty:      workerClosureJSONMapBool(row.ReportPayloadJSON, "dirty"),
-		NeedsUser:  workerClosureJSONMapBool(row.ReportPayloadJSON, "needs_user"),
-		Blockers:   workerClosureJSONMapStringSlice(row.ReportPayloadJSON, "blockers"),
-	}
-	report.Normalize()
-	return report, nil
-}
-
-func readWorkerLoopStateSnapshot(worktreePath string) workerLoopStateSnapshot {
-	worktreePath = strings.TrimSpace(worktreePath)
-	if worktreePath == "" {
-		return workerLoopStateSnapshot{}
-	}
-	statePath := filepath.Join(worktreePath, ".dalek", "state.json")
-	raw, err := os.ReadFile(statePath)
-	if err != nil {
-		return workerLoopStateSnapshot{}
-	}
-	var snapshot workerLoopStateFile
-	if err := json.Unmarshal(raw, &snapshot); err != nil {
-		return workerLoopStateSnapshot{}
-	}
-	return workerLoopStateSnapshot{
-		NextAction: strings.TrimSpace(snapshot.Phases.NextAction),
-		Summary:    strings.TrimSpace(snapshot.Phases.Summary),
-		Blockers:   cleanStringSlice(snapshot.Blockers),
-	}
 }
 
 func workerLoopClosureSource(source, kind string) string {

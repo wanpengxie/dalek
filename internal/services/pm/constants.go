@@ -26,8 +26,8 @@ const (
 )
 
 const (
-	defaultContinuePrompt  = "继续执行任务"
-	emptyReportRetryPrompt = "上一轮执行已结束，但没有提交 worker report。请先检查当前代码、测试和 worktree 状态，并在本轮结束前必须执行 dalek worker report --next <continue|done|wait_user> --summary \"...\" 完成收口；如果需要人工介入，请使用 wait_user 并明确 blockers。"
+	defaultContinuePrompt = "继续执行任务"
+	closureRepairPrompt   = "上一轮执行已经结束，但当前 stage 尚未闭合。现在只允许做收口补救：检查当前代码、测试结果、`.dalek/state.json` 与 git/worktree 事实，修正缺失或矛盾信息后再次执行 `dalek worker report`。不要扩展任务范围；如果任务未完成请用 continue，如果需要人工介入请用 wait_user 并明确 blockers，只有所有 phase 已 done 且 worktree clean 时才允许上报 done。"
 )
 
 const (
@@ -48,4 +48,6 @@ const (
 	defaultZombieMaxRetries      = 3
 	defaultZombieRetryBackoff    = 60 * time.Second
 	defaultZombieRetryBackoffMax = 10 * time.Minute
+
+	defaultWorkerLoopClosureRepairAttempts = 1
 )

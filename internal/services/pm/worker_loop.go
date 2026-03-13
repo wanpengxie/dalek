@@ -23,13 +23,18 @@ func (s *Service) launchWorkerSDK(ctx context.Context, t contracts.Ticket, w con
 
 // WorkerLoopResult 是 executeWorkerLoop 的返回结果。
 type WorkerLoopResult struct {
-	Stages         int    // 执行的 stage 数（每次 agent 启动-等待-消费 report 算一个 stage）
+	Stages         int    // 已闭合或已尝试收口的 stage 数；同一 stage 内 repair run 不额外计数
 	LastNextAction string // 最后一次 report 的 next_action
 	InjectedCmd    string // 首次启动时的 injected_cmd 标识
 	LastRunID      uint   // 最后一轮 stage 对应的 task run id
 }
 
 type workerLoopStageStartedFunc func(stage int, runID uint) error
+
+type workerLoopStageResult struct {
+	LastRunID      uint
+	LastNextAction string
+}
 
 // executeWorkerLoop 是 worker SDK 同步执行的核心循环。
 //
@@ -56,10 +61,10 @@ func (s *Service) executeWorkerLoopWithHook(ctx context.Context, t contracts.Tic
 	// worker agent 可运行数小时，不应受 dispatch 超时影响；但需要响应主动 cancel。
 	loopCtx, stopLoop := newCancelOnlyContext(ctx)
 	defer stopLoop()
+	sink := workerLoopControlSinkFromContext(loopCtx)
 
 	result := WorkerLoopResult{}
 	prompt := strings.TrimSpace(entryPrompt)
-	emptyReportRetried := false
 
 	// 推断 injected_cmd 标识
 	p, _, _ := s.require()
@@ -70,104 +75,157 @@ func (s *Service) executeWorkerLoopWithHook(ctx context.Context, t contracts.Tic
 
 	for {
 		result.Stages++
-
-		// 1) 启动 worker SDK handle
-		handle, err := s.launchWorkerSDK(loopCtx, t, w, prompt)
+		stageResult, err := s.runWorkerLoopStage(loopCtx, t, w, result.Stages, prompt, onStageStarted)
+		result.LastRunID = stageResult.LastRunID
+		result.LastNextAction = stageResult.LastNextAction
 		if err != nil {
-			if isWorkerLoopCanceledError(loopCtx, err) {
-				s.markWorkerLoopExit(loopCtx, w, "")
-				return result, fmt.Errorf("worker_loop stage %d launch 已取消: %w", result.Stages, context.Canceled)
-			}
-			s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop launch failed stage=%d: %v", result.Stages, err))
-			return result, fmt.Errorf("worker_loop stage %d launch 失败: %w", result.Stages, err)
-		}
-
-		// 记录 stage 启动事件
-		result.LastRunID = handle.RunID()
-		if onStageStarted != nil {
-			if err := onStageStarted(result.Stages, handle.RunID()); err != nil {
-				if isWorkerLoopCanceledError(loopCtx, err) {
-					s.markWorkerLoopExit(loopCtx, w, "")
-					return result, fmt.Errorf("worker_loop stage %d start 已取消: %w", result.Stages, context.Canceled)
+			var closureErr *workerLoopClosureExhaustedError
+			switch {
+			case isWorkerLoopCanceledError(loopCtx, err):
+				if sink != nil {
+					sink.LoopCancelRequested()
 				}
-				s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop stage start hook failed stage=%d: %v", result.Stages, err))
-				return result, fmt.Errorf("worker_loop stage %d start hook 失败: %w", result.Stages, err)
-			}
-		}
-		_ = s.worker.AppendWorkerTaskEvent(loopCtx, w.ID, "worker_loop_stage_start",
-			fmt.Sprintf("stage=%d run_id=%d", result.Stages, handle.RunID()),
-			map[string]any{
-				"stage":  result.Stages,
-				"run_id": handle.RunID(),
-			}, time.Now())
-
-		// 2) 等待 agent 完成（无超时）
-		runResult, waitErr := handle.Wait(loopCtx)
-		if waitErr != nil {
-			if isWorkerLoopCanceledError(loopCtx, waitErr) {
 				s.markWorkerLoopExit(loopCtx, w, "")
-				return result, fmt.Errorf("worker_loop stage %d wait 已取消: %w", result.Stages, context.Canceled)
+				return result, fmt.Errorf("worker_loop stage %d 已取消: %w", result.Stages, context.Canceled)
+			case errors.As(err, &closureErr):
+				s.markWorkerLoopExit(loopCtx, w, "")
+				return result, closureErr
+			default:
+				if sink != nil {
+					sink.LoopErrored(err)
+				}
+				s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop stage failed stage=%d: %v", result.Stages, err))
+				return result, err
 			}
-			s.markWorkerLoopExit(loopCtx, w, fmt.Sprintf("worker_loop wait failed stage=%d: %v", result.Stages, waitErr))
-			return result, fmt.Errorf("worker_loop stage %d wait 失败: %w", result.Stages, waitErr)
 		}
-
-		// 3) 读取本轮 run 在 DB 中的 next_action（由 agent 通过 worker report 上报）。
-		nextAction := s.readWorkerNextActionFromRun(loopCtx, handle.RunID())
-		result.LastNextAction = nextAction
-
-		// 记录 stage 完成事件
-		_ = s.worker.AppendWorkerTaskEvent(loopCtx, w.ID, "worker_loop_stage_done",
-			fmt.Sprintf("stage=%d exit_code=%d next_action=%s", result.Stages, runResult.ExitCode, nextAction),
-			map[string]any{
-				"stage":       result.Stages,
-				"exit_code":   runResult.ExitCode,
-				"next_action": nextAction,
-			}, time.Now())
-
-		// 4) 判断是否继续
-		normalizedAction := strings.TrimSpace(strings.ToLower(nextAction))
-		if normalizedAction == "" {
-			if !emptyReportRetried {
-				emptyReportRetried = true
-				_ = s.worker.AppendWorkerTaskEvent(loopCtx, w.ID, "worker_loop_empty_next_action_retry",
-					fmt.Sprintf("stage=%d run_id=%d 缺少 next_action，触发补报重试", result.Stages, handle.RunID()),
-					map[string]any{
-						"stage":  result.Stages,
-						"run_id": handle.RunID(),
-					}, time.Now())
-				prompt = emptyReportRetryPrompt
-				continue
-			}
+		if strings.TrimSpace(strings.ToLower(stageResult.LastNextAction)) != string(contracts.NextContinue) {
 			break
 		}
-		if normalizedAction != string(contracts.NextContinue) {
-			break
-		}
-
-		// 5) 用默认 prompt 继续下一轮
 		prompt = defaultContinuePrompt
 	}
-
-	if strings.TrimSpace(result.LastNextAction) == "" {
-		missingErr := &workerLoopMissingReportError{
-			Stages:    result.Stages,
-			LastRunID: result.LastRunID,
-		}
-		_ = s.worker.AppendWorkerTaskEvent(loopCtx, w.ID, "worker_loop_empty_next_action_exhausted",
-			missingErr.Error(),
-			map[string]any{
-				"stages":      result.Stages,
-				"last_run_id": result.LastRunID,
-			}, time.Now())
-		s.markWorkerLoopExit(loopCtx, w, missingErr.Error())
-		return result, missingErr
-	}
-
-	// 6) 退出时标记 worker 为 stopped
 	s.markWorkerLoopExit(loopCtx, w, "")
-
 	return result, nil
+}
+
+func (s *Service) runWorkerLoopStage(ctx context.Context, t contracts.Ticket, w contracts.Worker, stage int, prompt string, onStageStarted workerLoopStageStartedFunc) (workerLoopStageResult, error) {
+	if strings.TrimSpace(prompt) == "" {
+		prompt = defaultContinuePrompt
+	}
+	currentPrompt := strings.TrimSpace(prompt)
+	repairAttempts := 0
+	sink := workerLoopControlSinkFromContext(ctx)
+	for {
+		handle, err := s.launchWorkerSDK(ctx, t, w, currentPrompt)
+		if err != nil {
+			if isWorkerLoopCanceledError(ctx, err) {
+				return workerLoopStageResult{}, fmt.Errorf("worker_loop stage %d launch 已取消: %w", stage, context.Canceled)
+			}
+			return workerLoopStageResult{}, fmt.Errorf("worker_loop stage %d launch 失败: %w", stage, err)
+		}
+		runID := handle.RunID()
+		if sink != nil {
+			phase := WorkerLoopPhaseRunning
+			if repairAttempts > 0 {
+				phase = WorkerLoopPhaseRepairing
+			}
+			sink.LoopRunAttached(runID, w.ID, phase)
+		}
+		if repairAttempts == 0 && onStageStarted != nil {
+			if err := onStageStarted(stage, runID); err != nil {
+				if isWorkerLoopCanceledError(ctx, err) {
+					return workerLoopStageResult{LastRunID: runID}, fmt.Errorf("worker_loop stage %d start 已取消: %w", stage, context.Canceled)
+				}
+				return workerLoopStageResult{LastRunID: runID}, fmt.Errorf("worker_loop stage %d start hook 失败: %w", stage, err)
+			}
+		}
+		_ = s.worker.AppendWorkerTaskEvent(ctx, w.ID, "worker_loop_stage_start",
+			fmt.Sprintf("stage=%d run_id=%d repair_attempt=%d", stage, runID, repairAttempts),
+			map[string]any{
+				"stage":          stage,
+				"run_id":         runID,
+				"repair_attempt": repairAttempts,
+			}, time.Now())
+
+		runResult, waitErr := handle.Wait(ctx)
+		if waitErr != nil && isWorkerLoopCanceledError(ctx, waitErr) {
+			return workerLoopStageResult{LastRunID: runID}, fmt.Errorf("worker_loop stage %d wait 已取消: %w", stage, context.Canceled)
+		}
+
+		nextAction := ""
+		if report, found, err := s.loadWorkerLoopCandidateReport(ctx, t.ID, w, runID); err != nil {
+			return workerLoopStageResult{LastRunID: runID}, fmt.Errorf("worker_loop stage %d 读取 closure report 失败: %w", stage, err)
+		} else if found {
+			nextAction = strings.TrimSpace(strings.ToLower(report.NextAction))
+		}
+
+		donePayload := map[string]any{
+			"stage":          stage,
+			"run_id":         runID,
+			"repair_attempt": repairAttempts,
+			"next_action":    nextAction,
+		}
+		note := fmt.Sprintf("stage=%d run_id=%d repair_attempt=%d next_action=%s", stage, runID, repairAttempts, nextAction)
+		if waitErr != nil {
+			donePayload["wait_error"] = strings.TrimSpace(waitErr.Error())
+			note = fmt.Sprintf("%s wait_error=%s", note, strings.TrimSpace(waitErr.Error()))
+		} else {
+			donePayload["exit_code"] = runResult.ExitCode
+			note = fmt.Sprintf("%s exit_code=%d", note, runResult.ExitCode)
+		}
+		_ = s.worker.AppendWorkerTaskEvent(ctx, w.ID, "worker_loop_stage_done", note, donePayload, time.Now())
+
+		if waitErr == nil && nextAction == string(contracts.NextContinue) {
+			return workerLoopStageResult{
+				LastRunID:      runID,
+				LastNextAction: nextAction,
+			}, nil
+		}
+		if sink != nil {
+			sink.LoopClosing()
+		}
+
+		decision, err := s.evaluateWorkerLoopStageClosure(ctx, t.ID, w, runID, waitErr)
+		if err != nil {
+			return workerLoopStageResult{LastRunID: runID, LastNextAction: nextAction}, fmt.Errorf("worker_loop stage %d closure check 失败: %w", stage, err)
+		}
+		if decision.Accepted {
+			return workerLoopStageResult{
+				LastRunID:      runID,
+				LastNextAction: decision.NextAction,
+			}, nil
+		}
+		if repairAttempts < defaultWorkerLoopClosureRepairAttempts && decision.Repairable {
+			repairAttempts++
+			_ = s.worker.AppendWorkerTaskEvent(ctx, w.ID, "worker_loop_closure_repair_requested",
+				fmt.Sprintf("stage=%d run_id=%d reason=%s", stage, runID, decision.ReasonCode),
+				map[string]any{
+					"stage":          stage,
+					"run_id":         runID,
+					"repair_attempt": repairAttempts,
+					"reason":         decision.ReasonCode,
+					"issues":         decision.Issues,
+				}, time.Now())
+			currentPrompt = buildWorkerLoopClosureRepairPrompt(decision)
+			continue
+		}
+		_ = s.worker.AppendWorkerTaskEvent(ctx, w.ID, "worker_loop_closure_exhausted",
+			fmt.Sprintf("stage=%d run_id=%d reason=%s", stage, runID, decision.ReasonCode),
+			map[string]any{
+				"stage":          stage,
+				"run_id":         runID,
+				"repair_attempt": repairAttempts,
+				"reason":         decision.ReasonCode,
+				"issues":         decision.Issues,
+			}, time.Now())
+		return workerLoopStageResult{
+				LastRunID:      runID,
+				LastNextAction: decision.NextAction,
+			}, &workerLoopClosureExhaustedError{
+				Stage:     stage,
+				LastRunID: runID,
+				Decision:  decision,
+			}
+	}
 }
 
 func isWorkerLoopCanceledError(ctx context.Context, err error) bool {

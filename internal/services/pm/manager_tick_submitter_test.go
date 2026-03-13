@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -147,9 +148,11 @@ func TestManagerTick_SyncWorkerRunBypassesSubmitter(t *testing.T) {
 
 	submitter := &stubWorkerRunSubmitter{}
 	svc.SetWorkerRunSubmitter(submitter)
+	var launchCount atomic.Int32
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
-		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, fmt.Sprintf("sync-activation-%d", ticket.ID))
+		run := createWorkerTaskRun(t, p.DB, ticket.ID, worker.ID, fmt.Sprintf("sync-activation-%d-%d", ticket.ID, launchCount.Add(1)))
 		makeSemanticReport(t, svc, run.ID, "done")
+		writeWorkerLoopStateForTest(t, worker.WorktreePath, "done", "sync worker run done", nil, true, testWorkerDoneHeadSHA, "clean")
 		return &fakeAgentRunHandle{runID: run.ID, result: agentexec.AgentRunResult{ExitCode: 0}}, nil
 	}
 

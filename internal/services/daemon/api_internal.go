@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -113,10 +114,11 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	}, s.logger)
 	mux.HandleFunc("/health", s.withInternalAccess(s.handleHealth))
 	mux.HandleFunc("/api/tickets/start", s.withInternalAccess(s.handleTicketStart))
-	mux.HandleFunc("/api/worker-run/submit", s.withInternalAccess(s.handleWorkerRunSubmit))
+	mux.HandleFunc("/api/ticket-loops/submit", s.withInternalAccess(s.handleTicketLoopSubmit))
+	mux.HandleFunc("/api/ticket-loops/", s.withInternalAccess(s.handleTicketLoops))
 	mux.HandleFunc("/api/subagent/submit", s.withInternalAccess(s.handleSubagentSubmit))
 	mux.HandleFunc("/api/notes", s.withInternalAccess(s.handleNoteSubmit))
-	mux.HandleFunc("/api/runs/", s.withInternalAccess(s.handleRuns))
+	mux.HandleFunc("/api/task-runs/", s.withInternalAccess(s.handleTaskRuns))
 	mux.HandleFunc("/api/v1/overview", s.withInternalAccess(s.handleOverview))
 	mux.HandleFunc("/api/v1/planner", s.withInternalAccess(s.handlePlanner))
 	mux.HandleFunc("/api/v1/merges", s.withInternalAccess(s.handleMerges))
@@ -318,7 +320,7 @@ type startTicketPayload struct {
 	BaseBranch string `json:"base_branch"`
 }
 
-type workerRunSubmitPayload struct {
+type ticketLoopSubmitPayload struct {
 	RequestID  string `json:"request_id"`
 	Project    string `json:"project"`
 	TicketID   uint   `json:"ticket_id"`
@@ -375,12 +377,12 @@ func (s *InternalAPI) handleTicketStart(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func (s *InternalAPI) handleWorkerRunSubmit(w http.ResponseWriter, r *http.Request) {
+func (s *InternalAPI) handleTicketLoopSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
 		return
 	}
-	var payload workerRunSubmitPayload
+	var payload ticketLoopSubmitPayload
 	if err := decodeJSONBody(r, &payload); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
@@ -389,7 +391,7 @@ func (s *InternalAPI) handleWorkerRunSubmit(w http.ResponseWriter, r *http.Reque
 		writeAPIError(w, http.StatusBadRequest, "bad_request", "daemon submit 不支持 sync=true")
 		return
 	}
-	receipt, err := s.host.SubmitWorkerRun(r.Context(), WorkerRunSubmitRequest{
+	receipt, err := s.host.SubmitTicketLoop(r.Context(), TicketLoopSubmitRequest{
 		Project:    strings.TrimSpace(payload.Project),
 		TicketID:   payload.TicketID,
 		RequestID:  strings.TrimSpace(payload.RequestID),
@@ -402,17 +404,25 @@ func (s *InternalAPI) handleWorkerRunSubmit(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	runID := receipt.TaskRunID
+	projectName := strings.TrimSpace(receipt.Project)
+	projectQuery := url.QueryEscape(projectName)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"accepted":    true,
-		"project":     receipt.Project,
-		"request_id":  receipt.RequestID,
+		"project":     projectName,
+		"request_id":  strings.TrimSpace(receipt.RequestID),
 		"task_run_id": runID,
 		"ticket_id":   receipt.TicketID,
 		"worker_id":   receipt.WorkerID,
+		"control": map[string]string{
+			"probe":  fmt.Sprintf("/api/ticket-loops/%d?project=%s", receipt.TicketID, projectQuery),
+			"cancel": fmt.Sprintf("/api/ticket-loops/%d/cancel?project=%s", receipt.TicketID, projectQuery),
+		},
 		"query": map[string]string{
-			"show":   fmt.Sprintf("dalek task show --id %d", runID),
-			"events": fmt.Sprintf("dalek task events --id %d", runID),
-			"cancel": fmt.Sprintf("dalek task cancel --id %d", runID),
+			"ticket":      fmt.Sprintf("dalek ticket show --ticket %d", receipt.TicketID),
+			"events":      fmt.Sprintf("dalek ticket events --ticket %d", receipt.TicketID),
+			"task":        fmt.Sprintf("dalek task show --id %d", runID),
+			"task_events": fmt.Sprintf("dalek task events --id %d", runID),
+			"cancel":      fmt.Sprintf("dalek task cancel --id %d", runID),
 		},
 	})
 }
@@ -486,25 +496,41 @@ func (s *InternalAPI) handleNoteSubmit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *InternalAPI) handleRuns(w http.ResponseWriter, r *http.Request) {
-	runID, tail, ok := parseRunRoute(r.URL.Path)
+func (s *InternalAPI) handleTicketLoops(w http.ResponseWriter, r *http.Request) {
+	ticketID, tail, ok := parseTicketLoopRoute(r.URL.Path)
 	if !ok {
 		writeAPIError(w, http.StatusNotFound, "not_found", "路径不存在")
 		return
 	}
 	switch {
 	case r.Method == http.MethodGet && tail == "":
-		s.handleRunShow(w, r, runID)
-	case r.Method == http.MethodGet && tail == "events":
-		s.handleRunEvents(w, r, runID)
+		s.handleTicketLoopProbe(w, r, ticketID)
 	case r.Method == http.MethodPost && tail == "cancel":
-		s.handleRunCancel(w, r, runID)
+		s.handleTicketLoopCancel(w, r, ticketID)
 	default:
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method/path 不支持")
 	}
 }
 
-func (s *InternalAPI) handleRunShow(w http.ResponseWriter, r *http.Request, runID uint) {
+func (s *InternalAPI) handleTaskRuns(w http.ResponseWriter, r *http.Request) {
+	runID, tail, ok := parseTaskRunRoute(r.URL.Path)
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, "not_found", "路径不存在")
+		return
+	}
+	switch {
+	case r.Method == http.MethodGet && tail == "":
+		s.handleTaskRunShow(w, r, runID)
+	case r.Method == http.MethodGet && tail == "events":
+		s.handleTaskRunEvents(w, r, runID)
+	case r.Method == http.MethodPost && tail == "cancel":
+		s.handleTaskRunCancel(w, r, runID)
+	default:
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method/path 不支持")
+	}
+}
+
+func (s *InternalAPI) handleTaskRunShow(w http.ResponseWriter, r *http.Request, runID uint) {
 	status, err := s.host.GetRunStatus(r.Context(), runID)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
@@ -519,7 +545,7 @@ func (s *InternalAPI) handleRunShow(w http.ResponseWriter, r *http.Request, runI
 	})
 }
 
-func (s *InternalAPI) handleRunEvents(w http.ResponseWriter, r *http.Request, runID uint) {
+func (s *InternalAPI) handleTaskRunEvents(w http.ResponseWriter, r *http.Request, runID uint) {
 	limit := 100
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
@@ -540,8 +566,8 @@ func (s *InternalAPI) handleRunEvents(w http.ResponseWriter, r *http.Request, ru
 	})
 }
 
-func (s *InternalAPI) handleRunCancel(w http.ResponseWriter, r *http.Request, runID uint) {
-	result, err := s.host.CancelRun(runID)
+func (s *InternalAPI) handleTaskRunCancel(w http.ResponseWriter, r *http.Request, runID uint) {
+	result, err := s.host.CancelTaskRun(runID)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "cancel_failed", err.Error())
 		return
@@ -550,14 +576,81 @@ func (s *InternalAPI) handleRunCancel(w http.ResponseWriter, r *http.Request, ru
 		"run_id":     runID,
 		"found":      result.Found,
 		"canceled":   result.Canceled,
-		"project":    result.Project,
-		"request_id": result.RequestID,
-		"reason":     result.Reason,
+		"project":    strings.TrimSpace(result.Project),
+		"request_id": strings.TrimSpace(result.RequestID),
+		"reason":     strings.TrimSpace(result.Reason),
 	})
 }
 
-func parseRunRoute(path string) (uint, string, bool) {
-	const prefix = "/api/runs/"
+func (s *InternalAPI) handleTicketLoopProbe(w http.ResponseWriter, r *http.Request, ticketID uint) {
+	projectName, err := parseProjectQuery(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	probe := s.host.ProbeTicketLoop(projectName, ticketID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"found":                   probe.Found,
+		"owned_by_current_daemon": probe.OwnedByCurrentDaemon,
+		"phase":                   strings.TrimSpace(probe.Phase),
+		"project":                 strings.TrimSpace(probe.Project),
+		"ticket_id":               probe.TicketID,
+		"worker_id":               probe.WorkerID,
+		"run_id":                  probe.RunID,
+		"request_id":              strings.TrimSpace(probe.RequestID),
+		"cancel_requested_at":     probe.CancelRequestedAt,
+		"last_error":              strings.TrimSpace(probe.LastError),
+	})
+}
+
+func (s *InternalAPI) handleTicketLoopCancel(w http.ResponseWriter, r *http.Request, ticketID uint) {
+	projectName, err := parseProjectQuery(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	result, err := s.host.CancelTicketLoop(projectName, ticketID)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "cancel_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"found":      result.Found,
+		"canceled":   result.Canceled,
+		"project":    strings.TrimSpace(result.Project),
+		"ticket_id":  result.TicketID,
+		"request_id": strings.TrimSpace(result.RequestID),
+		"reason":     strings.TrimSpace(result.Reason),
+	})
+}
+
+func parseTaskRunRoute(path string) (uint, string, bool) {
+	const prefix = "/api/task-runs/"
+	if !strings.HasPrefix(path, prefix) {
+		return 0, "", false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(path, prefix))
+	rest = strings.Trim(rest, "/")
+	if rest == "" {
+		return 0, "", false
+	}
+	parts := strings.Split(rest, "/")
+	runID64, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 64)
+	if err != nil || runID64 == 0 {
+		return 0, "", false
+	}
+	tail := ""
+	if len(parts) >= 2 {
+		tail = strings.TrimSpace(parts[1])
+	}
+	if len(parts) > 2 {
+		return 0, "", false
+	}
+	return uint(runID64), tail, true
+}
+
+func parseTicketLoopRoute(path string) (uint, string, bool) {
+	const prefix = "/api/ticket-loops/"
 	if !strings.HasPrefix(path, prefix) {
 		return 0, "", false
 	}

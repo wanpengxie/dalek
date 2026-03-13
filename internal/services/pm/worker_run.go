@@ -52,6 +52,9 @@ func (s *Service) RunTicketWorker(ctx context.Context, ticketID uint, opt Worker
 	if err != nil {
 		return WorkerRunResult{}, err
 	}
+	if sink := workerLoopControlSinkFromContext(ctx); sink != nil {
+		sink.LoopClaimed(t.ID, w.ID)
+	}
 
 	entryPrompt := strings.TrimSpace(opt.EntryPrompt)
 	if entryPrompt == "" {
@@ -85,9 +88,9 @@ func (s *Service) RunTicketWorker(ctx context.Context, ticketID uint, opt Worker
 		return nil
 	})
 	if err != nil {
-		var missingErr *workerLoopMissingReportError
-		if errors.As(err, &missingErr) {
-			if applyErr := s.applyMissingWorkerReportWaitUser(ctx, t.ID, *w, loopResult, "pm.worker_run.missing_report"); applyErr == nil {
+		var closureErr *workerLoopClosureExhaustedError
+		if errors.As(err, &closureErr) {
+			if applyErr := s.applyWorkerLoopClosureFallbackWaitUser(ctx, t.ID, *w, loopResult, closureErr.Decision, "pm.worker_run.closure"); applyErr == nil {
 				return WorkerRunResult{
 					TicketID:       ticketID,
 					WorkerID:       w.ID,
@@ -96,7 +99,7 @@ func (s *Service) RunTicketWorker(ctx context.Context, ticketID uint, opt Worker
 					LastNextAction: string(contracts.NextWaitUser),
 				}, nil
 			}
-			err = fmt.Errorf("worker loop 缺少 report，自动 blocked 失败: %w", err)
+			err = fmt.Errorf("worker loop closure fallback 失败: %w", err)
 		}
 		loopErrMsg := strings.TrimSpace(err.Error())
 		if workflowPromoted {

@@ -157,7 +157,7 @@ func (h *ExecutionHost) StartTicket(ctx context.Context, req StartTicketRequest)
 	return receipt, nil
 }
 
-func (h *ExecutionHost) SubmitWorkerRun(ctx context.Context, req WorkerRunSubmitRequest) (WorkerRunSubmitReceipt, error) {
+func (h *ExecutionHost) SubmitTicketLoop(ctx context.Context, req TicketLoopSubmitRequest) (TicketLoopSubmitReceipt, error) {
 	handle, err := h.submitTicketRun(ctx, ticketRunSubmitRequest{
 		kind:          runKindWorker,
 		project:       req.Project,
@@ -169,18 +169,18 @@ func (h *ExecutionHost) SubmitWorkerRun(ctx context.Context, req WorkerRunSubmit
 		requestPrefix: "wrk",
 	})
 	if err != nil {
-		return WorkerRunSubmitReceipt{}, err
+		return TicketLoopSubmitReceipt{}, err
 	}
-	receipt := h.workerReceiptFromHandle(handle)
+	receipt := h.ticketLoopReceiptFromHandle(handle)
 	if receipt.TaskRunID == 0 {
 		select {
 		case <-handle.ready:
 		case <-time.After(workerRunReadyTimeout):
 		}
-		receipt = h.workerReceiptFromHandle(handle)
+		receipt = h.ticketLoopReceiptFromHandle(handle)
 	}
 	if receipt.TaskRunID == 0 {
-		return WorkerRunSubmitReceipt{}, fmt.Errorf("worker-run submit 未返回 task_run_id: project=%s ticket=%d request_id=%s", strings.TrimSpace(req.Project), req.TicketID, strings.TrimSpace(receipt.RequestID))
+		return TicketLoopSubmitReceipt{}, fmt.Errorf("ticket-loop submit 未返回 task_run_id: project=%s ticket=%d request_id=%s", strings.TrimSpace(req.Project), req.TicketID, strings.TrimSpace(receipt.RequestID))
 	}
 	return receipt, nil
 }
@@ -226,6 +226,7 @@ func (h *ExecutionHost) submitTicketRun(ctx context.Context, req ticketRunSubmit
 		requestID:     requestID,
 		retainRequest: retainRequest,
 		ticketID:      req.ticketID,
+		phase:         ticketLoopPhaseQueued,
 		entryPrompt:   req.prompt,
 		autoStart:     copyBoolPtr(req.autoStart),
 		baseBranch:    strings.TrimSpace(req.baseBranch),
@@ -536,7 +537,7 @@ func (h *ExecutionHost) ListRunEvents(ctx context.Context, runID uint, limit int
 	return project.ListTaskEvents(ctx, runID, limit)
 }
 
-func (h *ExecutionHost) CancelRun(runID uint) (CancelResult, error) {
+func (h *ExecutionHost) CancelTaskRun(runID uint) (CancelResult, error) {
 	if h == nil || h.resolver == nil {
 		return CancelResult{}, fmt.Errorf("execution host 未初始化")
 	}
@@ -547,6 +548,7 @@ func (h *ExecutionHost) CancelRun(runID uint) (CancelResult, error) {
 	handle := h.runs[runID]
 	h.mu.RUnlock()
 	if handle != nil {
+		executionTicketLoopControlSink{host: h, handle: handle}.LoopCancelRequested()
 		if err := h.cancelHandle(handle); err != nil {
 			return CancelResult{}, err
 		}
@@ -573,6 +575,7 @@ func (h *ExecutionHost) CancelRun(runID uint) (CancelResult, error) {
 		return CancelResult{Found: false, Canceled: false}, nil
 	}
 	if live, ok := h.lookupLiveTicketLoop(runKindWorker, projectName, status.TicketID); ok {
+		executionTicketLoopControlSink{host: h, handle: live}.LoopCancelRequested()
 		if err := h.cancelHandle(live); err != nil {
 			return CancelResult{}, err
 		}
@@ -622,12 +625,16 @@ func (h *ExecutionHost) ProbeTicketLoop(project string, ticketID uint) TicketLoo
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return TicketLoopProbeResult{
-		Found:     true,
-		Project:   handle.project,
-		TicketID:  handle.ticketID,
-		RequestID: handle.requestID,
-		TaskRunID: handle.runID,
-		WorkerID:  handle.workerID,
+		Found:                true,
+		OwnedByCurrentDaemon: true,
+		Phase:                strings.TrimSpace(handle.phase),
+		Project:              handle.project,
+		TicketID:             handle.ticketID,
+		RequestID:            handle.requestID,
+		RunID:                handle.runID,
+		WorkerID:             handle.workerID,
+		CancelRequestedAt:    cloneDashboardTime(handle.cancelRequestedAt),
+		LastError:            strings.TrimSpace(handle.lastError),
 	}
 }
 
@@ -658,6 +665,9 @@ func (h *ExecutionHost) CancelTicketLoop(project string, ticketID uint) (CancelR
 func (h *ExecutionHost) cancelHandle(handle *executionRunHandle) error {
 	if h == nil || handle == nil {
 		return nil
+	}
+	if handle.kind == runKindWorker {
+		executionTicketLoopControlSink{host: h, handle: handle}.LoopCancelRequested()
 	}
 	if handle.cancel != nil {
 		handle.cancel()

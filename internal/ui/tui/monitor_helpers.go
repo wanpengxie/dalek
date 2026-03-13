@@ -487,7 +487,7 @@ func (m model) queueRunTicketCmd(id uint) tea.Cmd {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		r, err := client.SubmitWorkerRun(ctx, app.DaemonWorkerRunSubmitRequest{
+		r, err := client.SubmitTicketLoop(ctx, app.DaemonTicketLoopSubmitRequest{
 			Project:  m.projectName,
 			TicketID: id,
 		})
@@ -506,7 +506,7 @@ func (m model) workerRunTicketCmd(id uint) tea.Cmd {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		r, err := client.SubmitWorkerRun(ctx, app.DaemonWorkerRunSubmitRequest{
+		r, err := client.SubmitTicketLoop(ctx, app.DaemonTicketLoopSubmitRequest{
 			Project:  m.projectName,
 			TicketID: id,
 			Prompt:   "根据当前状态，继续执行任务",

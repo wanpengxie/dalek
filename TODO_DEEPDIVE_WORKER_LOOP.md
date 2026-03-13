@@ -1,0 +1,5 @@
+- [in_progress] 困惑：Commit Barrier 的物理实现。在 CLI/Git 环境下，如何确保 "Control Commit" 的原子性？
+- [ ] 探索 A：Artifact 与 Control Commit 的不一致处理。如果产生了代码 Diff 但没提交 Control Commit，系统如何自愈？
+- [ ] 探索 B：Ownership 与 Loop Generation 的并发控制。在 daemon 模式下，如何防止脑裂（Split-brain）？
+- [ ] 反例验证：恢复场景下的 "Late Report"。如果迟到的报告在下一轮已经开始后到达，协议如何拒绝它？
+- [ ] 深入追问：现有代码的职责分层现状。`internal/app` 中的代码是否已经体现了 Agent/Runtime/Governance 的拆分？

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 const submitSyncRejectCause = "daemon submit 不支持 sync=true"
@@ -95,10 +96,10 @@ func assertSubmitSyncRejected(t *testing.T, status int, body internalSubmitAPIEr
 	}
 }
 
-func TestHandleWorkerRunSubmit_RejectsSyncTrue(t *testing.T) {
+func TestHandleTicketLoopSubmit_RejectsSyncTrue(t *testing.T) {
 	svc := startTestInternalAPIForSubmit(t)
 
-	status, body, _ := postSubmitSyncTrue(t, svc, "/api/worker-run/submit")
+	status, body, _ := postSubmitSyncTrue(t, svc, "/api/ticket-loops/submit")
 	assertSubmitSyncRejected(t, status, body)
 }
 
@@ -114,6 +115,22 @@ func TestHandleDispatchSubmitRouteRemoved(t *testing.T) {
 	status := postMissingRoute(t, svc, "/api/dispatch/submit")
 	if status != http.StatusNotFound {
 		t.Fatalf("expected removed dispatch route to return 404, got=%d", status)
+	}
+}
+
+func TestHandleLegacyWorkerRunSubmitRouteRemoved(t *testing.T) {
+	svc := startTestInternalAPIForSubmit(t)
+	status := postMissingRoute(t, svc, "/api/worker-run/submit")
+	if status != http.StatusNotFound {
+		t.Fatalf("expected removed worker-run submit route to return 404, got=%d", status)
+	}
+}
+
+func TestHandleLegacyRunsRouteRemoved(t *testing.T) {
+	svc := startTestInternalAPIForSubmit(t)
+	status := postMissingRoute(t, svc, "/api/runs/1/cancel")
+	if status != http.StatusNotFound {
+		t.Fatalf("expected removed runs route to return 404, got=%d", status)
 	}
 }
 
@@ -156,7 +173,7 @@ func postSubmitSyncFalse(t *testing.T, svc *InternalAPI, route, requestID string
 	return resp.StatusCode, body
 }
 
-func postWorkerRunSubmitWithAutoStart(t *testing.T, svc *InternalAPI, requestID string, autoStart *bool, baseBranch string) (int, map[string]any) {
+func postTicketLoopSubmitWithAutoStart(t *testing.T, svc *InternalAPI, requestID string, autoStart *bool, baseBranch string) (int, map[string]any) {
 	t.Helper()
 	payload := map[string]any{
 		"project":    "demo",
@@ -175,7 +192,7 @@ func postWorkerRunSubmitWithAutoStart(t *testing.T, svc *InternalAPI, requestID 
 	if err != nil {
 		t.Fatalf("marshal request failed: %v", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, "http://"+svc.listener.Addr().String()+"/api/worker-run/submit", bytes.NewReader(raw))
+	req, err := http.NewRequest(http.MethodPost, "http://"+svc.listener.Addr().String()+"/api/ticket-loops/submit", bytes.NewReader(raw))
 	if err != nil {
 		t.Fatalf("new request failed: %v", err)
 	}
@@ -309,9 +326,9 @@ func TestHandleTicketStart_ForwardsBaseBranch(t *testing.T) {
 	}
 }
 
-func TestHandleWorkerRunSubmit_QueryUsesIDFlag(t *testing.T) {
+func TestHandleTicketLoopSubmit_QueryUsesTicketAndTaskFlags(t *testing.T) {
 	svc := startTestInternalAPIForSubmit(t)
-	status, body := postSubmitSyncFalse(t, svc, "/api/worker-run/submit", "req-worker-query-id")
+	status, body := postSubmitSyncFalse(t, svc, "/api/ticket-loops/submit", "req-worker-query-id")
 	if status != http.StatusAccepted {
 		t.Fatalf("unexpected status=%d body=%+v", status, body)
 	}
@@ -323,7 +340,7 @@ func TestHandleWorkerRunSubmit_QueryUsesIDFlag(t *testing.T) {
 	if !ok {
 		t.Fatalf("query should be object, got=%T", queryAny)
 	}
-	for _, key := range []string{"show", "events", "cancel"} {
+	for _, key := range []string{"ticket", "events", "task", "task_events", "cancel"} {
 		raw, ok := query[key]
 		if !ok {
 			t.Fatalf("missing query.%s", key)
@@ -332,16 +349,44 @@ func TestHandleWorkerRunSubmit_QueryUsesIDFlag(t *testing.T) {
 		if !ok {
 			t.Fatalf("query.%s should be string, got=%T", key, raw)
 		}
-		if !strings.Contains(value, "--id ") {
-			t.Fatalf("query.%s should contain --id, got=%q", key, value)
+		switch key {
+		case "ticket", "events":
+			if !strings.Contains(value, "--ticket ") {
+				t.Fatalf("query.%s should contain --ticket, got=%q", key, value)
+			}
+		default:
+			if !strings.Contains(value, "--id ") {
+				t.Fatalf("query.%s should contain --id, got=%q", key, value)
+			}
 		}
-		if strings.Contains(value, "--run ") {
-			t.Fatalf("query.%s should not contain --run, got=%q", key, value)
+	}
+	controlAny, ok := body["control"]
+	if !ok {
+		t.Fatalf("missing control field: %+v", body)
+	}
+	control, ok := controlAny.(map[string]any)
+	if !ok {
+		t.Fatalf("control should be object, got=%T", controlAny)
+	}
+	for key, want := range map[string]string{
+		"probe":  "/api/ticket-loops/1?project=demo",
+		"cancel": "/api/ticket-loops/1/cancel?project=demo",
+	} {
+		raw, ok := control[key]
+		if !ok {
+			t.Fatalf("missing control.%s", key)
+		}
+		value, ok := raw.(string)
+		if !ok {
+			t.Fatalf("control.%s should be string, got=%T", key, raw)
+		}
+		if value != want {
+			t.Fatalf("unexpected control.%s: got=%q want=%q", key, value, want)
 		}
 	}
 }
 
-func TestHandleWorkerRunSubmit_ForwardsAutoStartFalse(t *testing.T) {
+func TestHandleTicketLoopSubmit_ForwardsAutoStartFalse(t *testing.T) {
 	project := &testExecutionHostProject{}
 	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
 	if err != nil {
@@ -361,7 +406,7 @@ func TestHandleWorkerRunSubmit_ForwardsAutoStartFalse(t *testing.T) {
 	})
 
 	autoStart := false
-	status, body := postWorkerRunSubmitWithAutoStart(t, svc, "req-worker-auto-start-false", &autoStart, "release/v2")
+	status, body := postTicketLoopSubmitWithAutoStart(t, svc, "req-worker-auto-start-false", &autoStart, "release/v2")
 	if status != http.StatusAccepted {
 		t.Fatalf("unexpected status=%d body=%+v", status, body)
 	}
@@ -408,7 +453,7 @@ func TestHandleSubagentSubmit_QueryUsesRunIDFlag(t *testing.T) {
 	}
 }
 
-func TestHandleWorkerRunSubmit_RejectsOversizedBody(t *testing.T) {
+func TestHandleTicketLoopSubmit_RejectsOversizedBody(t *testing.T) {
 	svc := startTestInternalAPIForSubmit(t)
 	oversized := map[string]any{
 		"project":    "demo",
@@ -421,11 +466,95 @@ func TestHandleWorkerRunSubmit_RejectsOversizedBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal request failed: %v", err)
 	}
-	status, body := postSubmitRaw(t, svc, "/api/worker-run/submit", bytes.NewReader(raw))
+	status, body := postSubmitRaw(t, svc, "/api/ticket-loops/submit", bytes.NewReader(raw))
 	if status != http.StatusBadRequest {
 		t.Fatalf("unexpected status: %d body=%+v", status, body)
 	}
 	if body.Error != "bad_request" || !strings.Contains(body.Cause, "request body 过大") {
 		t.Fatalf("unexpected response: %+v", body)
 	}
+}
+
+func TestHandleTicketLoopProbe_ReturnsFlatSnapshot(t *testing.T) {
+	project := &testExecutionHostProject{
+		directDispatchStarted: make(chan struct{}, 1),
+		directDispatchRelease: make(chan struct{}),
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+	svc, err := NewInternalAPI(host, InternalAPIConfig{ListenAddr: "127.0.0.1:0"}, InternalAPIOptions{})
+	if err != nil {
+		t.Fatalf("NewInternalAPI failed: %v", err)
+	}
+	if err := svc.Start(context.Background()); err != nil {
+		t.Fatalf("InternalAPI Start failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = svc.Stop(context.Background())
+		_ = host.Stop(context.Background())
+	})
+
+	receipt, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "probe-ticket-loop",
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
+	}
+	select {
+	case <-project.directDispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("ticket-loop goroutine not started")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "http://"+svc.listener.Addr().String()+"/api/ticket-loops/1?project=demo", nil)
+	if err != nil {
+		t.Fatalf("new request failed: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("http do failed: %v", err)
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Found                bool       `json:"found"`
+		OwnedByCurrentDaemon bool       `json:"owned_by_current_daemon"`
+		Phase                string     `json:"phase"`
+		Project              string     `json:"project"`
+		TicketID             uint       `json:"ticket_id"`
+		WorkerID             uint       `json:"worker_id"`
+		RunID                uint       `json:"run_id"`
+		RequestID            string     `json:"request_id"`
+		CancelRequestedAt    *time.Time `json:"cancel_requested_at"`
+		LastError            string     `json:"last_error"`
+	}
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response failed: %v", err)
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode response failed: %v raw=%s", err, string(raw))
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status=%d body=%s", resp.StatusCode, string(raw))
+	}
+	if !body.Found || !body.OwnedByCurrentDaemon {
+		t.Fatalf("unexpected probe found/owned: %+v", body)
+	}
+	if body.TicketID != 1 || body.RunID != receipt.TaskRunID || body.RequestID != "probe-ticket-loop" {
+		t.Fatalf("unexpected probe body: %+v", body)
+	}
+	if strings.TrimSpace(body.Project) != "demo" {
+		t.Fatalf("unexpected project: %+v", body)
+	}
+	if strings.TrimSpace(body.Phase) == "" {
+		t.Fatalf("expected non-empty phase: %+v", body)
+	}
+
+	close(project.directDispatchRelease)
+	waitForTicketLoopGone(t, host, "demo", 1)
 }

@@ -91,15 +91,15 @@ func TestDaemonManagerComponent_NotifyProject_TriggersTick(t *testing.T) {
 
 type stubManagerExecutionHost struct {
 	mu           sync.Mutex
-	calls        []daemonsvc.WorkerRunSubmitRequest
+	calls        []daemonsvc.TicketLoopSubmitRequest
 	plannerCalls []daemonsvc.PlannerSubmitRequest
 }
 
-func (s *stubManagerExecutionHost) SubmitWorkerRun(_ context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error) {
+func (s *stubManagerExecutionHost) SubmitTicketLoop(_ context.Context, req daemonsvc.TicketLoopSubmitRequest) (daemonsvc.TicketLoopSubmitReceipt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, req)
-	return daemonsvc.WorkerRunSubmitReceipt{
+	return daemonsvc.TicketLoopSubmitReceipt{
 		Accepted:  true,
 		Project:   req.Project,
 		RequestID: req.RequestID,
@@ -119,10 +119,10 @@ func (s *stubManagerExecutionHost) SubmitPlannerRun(_ context.Context, req daemo
 	}, nil
 }
 
-func (s *stubManagerExecutionHost) snapshot() []daemonsvc.WorkerRunSubmitRequest {
+func (s *stubManagerExecutionHost) snapshot() []daemonsvc.TicketLoopSubmitRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]daemonsvc.WorkerRunSubmitRequest, len(s.calls))
+	out := make([]daemonsvc.TicketLoopSubmitRequest, len(s.calls))
 	copy(out, s.calls)
 	return out
 }
@@ -140,8 +140,8 @@ type stubWarmupExecutionHost struct {
 	warmupCalls map[string][]uint
 }
 
-func (s *stubWarmupExecutionHost) SubmitWorkerRun(_ context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error) {
-	return daemonsvc.WorkerRunSubmitReceipt{
+func (s *stubWarmupExecutionHost) SubmitTicketLoop(_ context.Context, req daemonsvc.TicketLoopSubmitRequest) (daemonsvc.TicketLoopSubmitReceipt, error) {
+	return daemonsvc.TicketLoopSubmitReceipt{
 		Accepted:  true,
 		Project:   req.Project,
 		RequestID: req.RequestID,
@@ -206,7 +206,7 @@ func TestDaemonManagerComponent_RunTickProject_UsesWorkerRunHostSubmitter(t *tes
 
 	calls := host.snapshot()
 	if len(calls) != 1 {
-		t.Fatalf("expected one SubmitWorkerRun call, got=%d", len(calls))
+		t.Fatalf("expected one SubmitTicketLoop call, got=%d", len(calls))
 	}
 	if calls[0].TicketID != tk.ID {
 		t.Fatalf("unexpected ticket id: got=%d want=%d", calls[0].TicketID, tk.ID)

@@ -356,6 +356,7 @@ func cmdTaskCancel(args []string) {
 	p := mustOpenProjectWithOutput(out, *home, *proj)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
+	taskStatus, statusErr := p.GetTaskStatus(ctx, uint(*runID))
 
 	daemonWarning := ""
 	if _, daemonClient, derr := openDaemonClient(*home); derr != nil {
@@ -363,19 +364,32 @@ func cmdTaskCancel(args []string) {
 			"daemon cancel 调用不可用，已降级为仅标记数据库；若 daemon 仍在执行，任务可能继续运行（%s）",
 			strings.TrimSpace(derr.Error()),
 		)
-	} else {
-		cancelRes, cerr := daemonClient.CancelRun(ctx, uint(*runID))
+	} else if statusErr != nil {
+		daemonWarning = fmt.Sprintf("读取 task 状态失败，已降级为仅标记数据库（%s）", strings.TrimSpace(statusErr.Error()))
+	} else if taskStatus != nil && strings.TrimSpace(strings.ToLower(taskStatus.OwnerType)) == "worker" && taskStatus.TicketID != 0 {
+		cancelRes, cerr := daemonClient.CancelTicketLoop(ctx, strings.TrimSpace(p.Name()), taskStatus.TicketID)
 		if cerr != nil {
 			daemonWarning = fmt.Sprintf(
-				"daemon cancel 调用失败，已降级为仅标记数据库；若 daemon 仍在执行，任务可能继续运行（%s）",
+				"daemon ticket-loop cancel 调用失败，已降级为仅标记数据库；若 daemon 仍在执行，任务可能继续运行（%s）",
 				strings.TrimSpace(cerr.Error()),
 			)
 		} else if !cancelRes.Canceled {
 			reason := strings.TrimSpace(cancelRes.Reason)
 			if reason == "" {
-				reason = "run 不在当前 daemon 执行上下文中"
+				reason = "ticket loop 不在当前 daemon 执行上下文中"
 			}
-			daemonWarning = fmt.Sprintf("daemon 未确认取消信号（%s），已降级为仅标记数据库", reason)
+			daemonWarning = fmt.Sprintf("daemon 未确认 ticket loop 取消信号（%s），已降级为仅标记数据库", reason)
+		}
+	} else {
+		cancelRes, cerr := daemonClient.CancelTaskRun(ctx, uint(*runID))
+		if cerr != nil {
+			daemonWarning = fmt.Sprintf("daemon task-run cancel 调用失败，已降级为仅标记数据库；若 daemon 仍在执行，任务可能继续运行（%s）", strings.TrimSpace(cerr.Error()))
+		} else if !cancelRes.Canceled {
+			reason := strings.TrimSpace(cancelRes.Reason)
+			if reason == "" {
+				reason = "task run 不在当前 daemon 执行上下文中"
+			}
+			daemonWarning = fmt.Sprintf("daemon 未确认 task run 取消信号（%s），已降级为仅标记数据库", reason)
 		}
 	}
 

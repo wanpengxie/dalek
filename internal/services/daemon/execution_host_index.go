@@ -72,12 +72,12 @@ func (h *ExecutionHost) lookupTicketRunHandle(kind executionRunKind, project str
 	return handle, true
 }
 
-func (h *ExecutionHost) lookupWorkerRequest(project string, ticketID uint, requestID string) (WorkerRunSubmitReceipt, bool) {
+func (h *ExecutionHost) lookupTicketLoopRequest(project string, ticketID uint, requestID string) (TicketLoopSubmitReceipt, bool) {
 	handle, ok := h.lookupTicketRunHandle(runKindWorker, project, ticketID, requestID)
 	if !ok {
-		return WorkerRunSubmitReceipt{}, false
+		return TicketLoopSubmitReceipt{}, false
 	}
-	return h.workerReceiptFromHandle(handle), true
+	return h.ticketLoopReceiptFromHandle(handle), true
 }
 
 func (h *ExecutionHost) lookupSubagentRequest(project string, requestID string) (SubagentSubmitReceipt, bool) {
@@ -112,13 +112,13 @@ func (h *ExecutionHost) lookupPlannerRequest(project string, requestID string) (
 	return h.plannerReceiptFromHandle(handle), true
 }
 
-func (h *ExecutionHost) workerReceiptFromHandle(handle *executionRunHandle) WorkerRunSubmitReceipt {
+func (h *ExecutionHost) ticketLoopReceiptFromHandle(handle *executionRunHandle) TicketLoopSubmitReceipt {
 	if handle == nil {
-		return WorkerRunSubmitReceipt{}
+		return TicketLoopSubmitReceipt{}
 	}
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return WorkerRunSubmitReceipt{
+	return TicketLoopSubmitReceipt{
 		Accepted:  true,
 		Project:   handle.project,
 		RequestID: handle.requestID,
@@ -172,6 +172,10 @@ func (h *ExecutionHost) attachHandleRun(handle *executionRunHandle, runID, worke
 	handle.runID = runID
 	if workerID != 0 {
 		handle.workerID = workerID
+	}
+	switch strings.TrimSpace(handle.phase) {
+	case "", ticketLoopPhaseQueued, ticketLoopPhaseClaimed:
+		handle.phase = ticketLoopPhaseRunning
 	}
 	h.runs[runID] = handle
 	h.addRunProjectIndexLocked(runID, handle.project)

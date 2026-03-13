@@ -441,13 +441,13 @@ func cmdAgentCancel(args []string) {
 	if _, daemonClient, derr := openDaemonClient(*home); derr != nil {
 		daemonWarning = fmt.Sprintf("daemon cancel 调用不可用，已降级为仅标记数据库（%s）", strings.TrimSpace(derr.Error()))
 	} else {
-		cancelRes, cerr := daemonClient.CancelRun(ctx, uint(*runID))
+		cancelRes, cerr := daemonClient.CancelTaskRun(ctx, uint(*runID))
 		if cerr != nil {
-			daemonWarning = fmt.Sprintf("daemon cancel 调用失败，已降级为仅标记数据库（%s）", strings.TrimSpace(cerr.Error()))
+			daemonWarning = fmt.Sprintf("daemon task-run cancel 调用失败，已降级为仅标记数据库（%s）", strings.TrimSpace(cerr.Error()))
 		} else if !cancelRes.Canceled {
 			reason := strings.TrimSpace(cancelRes.Reason)
 			if reason == "" {
-				reason = "run 不在当前 daemon 执行上下文中"
+				reason = "task run 不在当前 daemon 执行上下文中"
 			}
 			daemonWarning = fmt.Sprintf("daemon 未确认取消信号（%s），已降级为仅标记数据库", reason)
 		}

@@ -21,6 +21,9 @@ type FakeGitClient struct {
 	CurrentBranchValue string
 	LastBaseBranch     string
 	PruneFn            func(repoRoot string) error
+	WorktreeDirtyFn    func(path string) (bool, error)
+	WorktreeDirtyValue bool
+	WorktreeDirtyErr   error
 	AddErr             error
 	AfterAdd           func(path string) error
 	RemoveErr          error
@@ -176,8 +179,13 @@ func (f *FakeGitClient) RemoveWorktree(repoRoot, path string, force bool) error 
 }
 
 func (f *FakeGitClient) WorktreeDirty(path string) (bool, error) {
-	_ = path
-	return false, nil
+	if f.WorktreeDirtyFn != nil {
+		return f.WorktreeDirtyFn(path)
+	}
+	if f.WorktreeDirtyErr != nil {
+		return false, f.WorktreeDirtyErr
+	}
+	return f.WorktreeDirtyValue, nil
 }
 
 func (f *FakeGitClient) HasCommit(repoRoot string) (bool, error) {

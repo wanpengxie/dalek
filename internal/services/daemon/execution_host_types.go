@@ -145,7 +145,7 @@ type WorkerRunResult struct {
 	RunID    uint
 }
 
-type WorkerRunSubmitRequest struct {
+type TicketLoopSubmitRequest struct {
 	Project    string
 	TicketID   uint
 	RequestID  string
@@ -154,7 +154,7 @@ type WorkerRunSubmitRequest struct {
 	BaseBranch string
 }
 
-type WorkerRunSubmitReceipt struct {
+type TicketLoopSubmitReceipt struct {
 	Accepted  bool
 	Project   string
 	RequestID string
@@ -271,12 +271,16 @@ type CancelResult struct {
 }
 
 type TicketLoopProbeResult struct {
-	Found     bool
-	Project   string
-	TicketID  uint
-	RequestID string
-	TaskRunID uint
-	WorkerID  uint
+	Found                bool
+	OwnedByCurrentDaemon bool
+	Phase                string
+	Project              string
+	TicketID             uint
+	RequestID            string
+	RunID                uint
+	WorkerID             uint
+	CancelRequestedAt    *time.Time
+	LastError            string
 }
 
 type TaskRunCancelResult struct {
@@ -302,9 +306,19 @@ type ExecutionHostOptions struct {
 type executionRunKind string
 
 const (
-	runKindWorker   executionRunKind = "worker_run"
+	runKindWorker   executionRunKind = "ticket_loop"
 	runKindSubagent executionRunKind = "subagent"
 	runKindPlanner  executionRunKind = "planner_run"
+)
+
+const (
+	ticketLoopPhaseQueued  = "queued"
+	ticketLoopPhaseClaimed = "claimed"
+	ticketLoopPhaseErrored = "errored"
+	ticketLoopPhaseRunning = pmsvc.WorkerLoopPhaseRunning
+	ticketLoopPhaseRepair  = pmsvc.WorkerLoopPhaseRepairing
+	ticketLoopPhaseClosing = pmsvc.WorkerLoopPhaseClosing
+	ticketLoopPhaseCancel  = pmsvc.WorkerLoopPhaseCanceling
 )
 
 type executionRunHandle struct {
@@ -327,6 +341,10 @@ type executionRunHandle struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	phase             string
+	cancelRequestedAt *time.Time
+	lastError         string
 
 	ready     chan struct{}
 	readyOnce sync.Once

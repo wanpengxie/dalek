@@ -17,6 +17,7 @@ func TestApplyWorkerReport_DoesNotAdvanceWorkflowSynchronously(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "wait_user", "缺少生产环境 API token", []string{"请提供 FEISHU_APP_ID", "请提供 FEISHU_APP_SECRET"}, false, testWorkerDoneHeadSHA, "clean")
 
 	report := contracts.WorkerReport{
 		Schema:     contracts.WorkerReportSchemaV1,
@@ -58,6 +59,7 @@ func TestApplyWorkerLoopTerminalReport_WaitUserCreatesInboxSynchronously(t *test
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "开发与测试已完成", nil, true, testWorkerDoneHeadSHA, "clean")
 
 	report := contracts.WorkerReport{
 		Schema:     contracts.WorkerReportSchemaV1,
@@ -116,10 +118,11 @@ func TestApplyWorkerLoopTerminalReport_DoneFreezesTicketIntegrationSynchronously
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
 		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
-		HeadSHA:    strings.Repeat("a", 40),
+		HeadSHA:    testWorkerDoneHeadSHA,
 		Summary:    "开发与测试已完成",
 		NextAction: string(contracts.NextDone),
 	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "开发与测试已完成", nil, true, report.HeadSHA, "clean")
 	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report, "pm.worker_loop.closure(test:done)"); err != nil {
 		t.Fatalf("applyWorkerLoopTerminalReport failed: %v", err)
 	}
@@ -150,6 +153,44 @@ func TestApplyWorkerLoopTerminalReport_DoneFreezesTicketIntegrationSynchronously
 	}
 }
 
+func TestApplyWorkerLoopTerminalReport_DoneRejectsDirtyWorktree(t *testing.T) {
+	svc, p, git := newServiceForTest(t)
+	git.WorktreeDirtyValue = true
+
+	tk := createTicket(t, p.DB, "workflow-report-done-dirty")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "开发与测试已完成", nil, true, testWorkerDoneHeadSHA, "dirty")
+
+	report := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
+		HeadSHA:    testWorkerDoneHeadSHA,
+		Summary:    "开发与测试已完成",
+		NextAction: string(contracts.NextDone),
+	}
+	err = svc.applyWorkerLoopTerminalReport(context.Background(), report, "pm.worker_loop.closure(test:done_dirty)")
+	if err == nil {
+		t.Fatalf("expected dirty done closure rejected")
+	}
+	if !strings.Contains(err.Error(), "dirty") {
+		t.Fatalf("expected dirty rejection, got=%v", err)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("query ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus == contracts.TicketDone {
+		t.Fatalf("dirty worktree should not promote ticket to done")
+	}
+}
+
 func TestApplyWorkerLoopTerminalReport_WaitUserDuplicateDoesNotDuplicateLifecycleOrInbox(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "workflow-report-wait-user-duplicate")
@@ -157,6 +198,7 @@ func TestApplyWorkerLoopTerminalReport_WaitUserDuplicateDoesNotDuplicateLifecycl
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "wait_user", "缺少审批结果", []string{"请确认发布窗口"}, false, testWorkerDoneHeadSHA, "clean")
 
 	report := contracts.WorkerReport{
 		Schema:     contracts.WorkerReportSchemaV1,
@@ -204,6 +246,7 @@ func TestApplyWorkerLoopTerminalReport_DoneDuplicateDoesNotReopenNeedsMergeAfter
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "开发完成", nil, true, testWorkerDoneHeadSHA, "clean")
 
 	report := contracts.WorkerReport{
 		Schema:     contracts.WorkerReportSchemaV1,
@@ -211,6 +254,7 @@ func TestApplyWorkerLoopTerminalReport_DoneDuplicateDoesNotReopenNeedsMergeAfter
 		WorkerID:   w.ID,
 		TicketID:   tk.ID,
 		TaskRunID:  createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID),
+		HeadSHA:    testWorkerDoneHeadSHA,
 		Summary:    "开发完成",
 		NextAction: string(contracts.NextDone),
 	}

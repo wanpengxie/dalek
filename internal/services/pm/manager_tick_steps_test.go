@@ -175,6 +175,7 @@ func TestFreezeMergesForDoneTickets_FreezeIntegrationOnce(t *testing.T) {
 	if worker == nil || worker.ID == 0 {
 		t.Fatalf("expected started worker")
 	}
+	initGitWorktreeForTest(t, worker.WorktreePath)
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketDone,
 		"updated_at":      time.Now(),
@@ -542,6 +543,7 @@ func TestManagerTick_SchedulesPlannerRunAfterMergeDirtyWhenParentContextCanceled
 	if doneWorker == nil || doneWorker.ID == 0 {
 		t.Fatalf("expected done worker created")
 	}
+	initGitWorktreeForTest(t, doneWorker.WorktreePath)
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", doneTicket.ID).Updates(map[string]any{
 		"workflow_status": contracts.TicketDone,
 		"updated_at":      time.Now(),

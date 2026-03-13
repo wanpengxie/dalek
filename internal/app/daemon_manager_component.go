@@ -25,7 +25,7 @@ const (
 )
 
 type managerExecutionHost interface {
-	SubmitWorkerRun(ctx context.Context, req daemonsvc.WorkerRunSubmitRequest) (daemonsvc.WorkerRunSubmitReceipt, error)
+	SubmitTicketLoop(ctx context.Context, req daemonsvc.TicketLoopSubmitRequest) (daemonsvc.TicketLoopSubmitReceipt, error)
 	SubmitPlannerRun(ctx context.Context, req daemonsvc.PlannerSubmitRequest) (daemonsvc.PlannerSubmitReceipt, error)
 }
 
@@ -613,7 +613,7 @@ func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Conte
 		return pmsvc.WorkerRunSubmission{}, fmt.Errorf("project 不能为空")
 	}
 	requestID := fmt.Sprintf("mgr_t%d_%s", ticketID, strings.TrimSpace(daemonsvc.NewRequestID("mgr")))
-	receipt, err := s.host.SubmitWorkerRun(ctx, daemonsvc.WorkerRunSubmitRequest{
+	receipt, err := s.host.SubmitTicketLoop(ctx, daemonsvc.TicketLoopSubmitRequest{
 		Project:   projectName,
 		TicketID:  ticketID,
 		RequestID: requestID,

@@ -41,7 +41,7 @@ type DaemonTicketStartReceipt struct {
 	LogPath        string
 }
 
-type DaemonWorkerRunSubmitRequest struct {
+type DaemonTicketLoopSubmitRequest struct {
 	Project    string
 	TicketID   uint
 	RequestID  string
@@ -50,13 +50,26 @@ type DaemonWorkerRunSubmitRequest struct {
 	BaseBranch string
 }
 
-type DaemonWorkerRunSubmitReceipt struct {
+type DaemonTicketLoopSubmitReceipt struct {
 	Accepted  bool
 	Project   string
 	RequestID string
 	TaskRunID uint
 	TicketID  uint
 	WorkerID  uint
+}
+
+type DaemonTicketLoopProbeResult struct {
+	Found                bool
+	OwnedByCurrentDaemon bool
+	Phase                string
+	Project              string
+	TicketID             uint
+	RequestID            string
+	RunID                uint
+	WorkerID             uint
+	CancelRequestedAt    *time.Time
+	LastError            string
 }
 
 type DaemonSubagentSubmitRequest struct {
@@ -116,7 +129,16 @@ type DaemonGatewaySendResponse struct {
 	Results   []DaemonGatewaySendDelivery `json:"results,omitempty"`
 }
 
-type DaemonRunCancelResult struct {
+type DaemonTicketLoopCancelResult struct {
+	TicketID  uint
+	Found     bool
+	Canceled  bool
+	Project   string
+	RequestID string
+	Reason    string
+}
+
+type DaemonTaskRunCancelResult struct {
 	RunID     uint
 	Found     bool
 	Canceled  bool
@@ -220,9 +242,9 @@ func (c *DaemonAPIClient) StartTicket(ctx context.Context, req DaemonTicketStart
 	}, nil
 }
 
-func (c *DaemonAPIClient) SubmitWorkerRun(ctx context.Context, req DaemonWorkerRunSubmitRequest) (DaemonWorkerRunSubmitReceipt, error) {
+func (c *DaemonAPIClient) SubmitTicketLoop(ctx context.Context, req DaemonTicketLoopSubmitRequest) (DaemonTicketLoopSubmitReceipt, error) {
 	if c == nil {
-		return DaemonWorkerRunSubmitReceipt{}, fmt.Errorf("daemon client 为空")
+		return DaemonTicketLoopSubmitReceipt{}, fmt.Errorf("daemon client 为空")
 	}
 	payload := map[string]any{
 		"project":    strings.TrimSpace(req.Project),
@@ -244,14 +266,14 @@ func (c *DaemonAPIClient) SubmitWorkerRun(ctx context.Context, req DaemonWorkerR
 		TicketID  uint   `json:"ticket_id"`
 		WorkerID  uint   `json:"worker_id"`
 	}
-	code, err := c.doJSON(ctx, http.MethodPost, "/api/worker-run/submit", payload, &out)
+	code, err := c.doJSON(ctx, http.MethodPost, "/api/ticket-loops/submit", payload, &out)
 	if err != nil {
-		return DaemonWorkerRunSubmitReceipt{}, err
+		return DaemonTicketLoopSubmitReceipt{}, err
 	}
 	if code != http.StatusAccepted {
-		return DaemonWorkerRunSubmitReceipt{}, fmt.Errorf("worker-run submit 响应码异常: %d", code)
+		return DaemonTicketLoopSubmitReceipt{}, fmt.Errorf("ticket-loop submit 响应码异常: %d", code)
 	}
-	return DaemonWorkerRunSubmitReceipt{
+	return DaemonTicketLoopSubmitReceipt{
 		Accepted:  out.Accepted,
 		Project:   strings.TrimSpace(out.Project),
 		RequestID: strings.TrimSpace(out.RequestID),
@@ -352,12 +374,92 @@ func (c *DaemonAPIClient) SendProjectText(ctx context.Context, req DaemonGateway
 	return out, nil
 }
 
-func (c *DaemonAPIClient) CancelRun(ctx context.Context, runID uint) (DaemonRunCancelResult, error) {
+func (c *DaemonAPIClient) ProbeTicketLoop(ctx context.Context, project string, ticketID uint) (DaemonTicketLoopProbeResult, error) {
 	if c == nil {
-		return DaemonRunCancelResult{}, fmt.Errorf("daemon client 为空")
+		return DaemonTicketLoopProbeResult{}, fmt.Errorf("daemon client 为空")
+	}
+	if strings.TrimSpace(project) == "" {
+		return DaemonTicketLoopProbeResult{}, fmt.Errorf("project 不能为空")
+	}
+	if ticketID == 0 {
+		return DaemonTicketLoopProbeResult{}, fmt.Errorf("ticket_id 不能为空")
+	}
+	var out struct {
+		Found                bool       `json:"found"`
+		OwnedByCurrentDaemon bool       `json:"owned_by_current_daemon"`
+		Phase                string     `json:"phase"`
+		Project              string     `json:"project"`
+		TicketID             uint       `json:"ticket_id"`
+		WorkerID             uint       `json:"worker_id"`
+		RunID                uint       `json:"run_id"`
+		RequestID            string     `json:"request_id"`
+		CancelRequestedAt    *time.Time `json:"cancel_requested_at"`
+		LastError            string     `json:"last_error"`
+	}
+	path := fmt.Sprintf("/api/ticket-loops/%d?project=%s", ticketID, url.QueryEscape(strings.TrimSpace(project)))
+	code, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	if err != nil {
+		return DaemonTicketLoopProbeResult{}, err
+	}
+	if code != http.StatusOK {
+		return DaemonTicketLoopProbeResult{}, fmt.Errorf("ticket-loop probe 响应码异常: %d", code)
+	}
+	return DaemonTicketLoopProbeResult{
+		Found:                out.Found,
+		OwnedByCurrentDaemon: out.OwnedByCurrentDaemon,
+		Phase:                strings.TrimSpace(out.Phase),
+		Project:              strings.TrimSpace(out.Project),
+		TicketID:             out.TicketID,
+		RequestID:            strings.TrimSpace(out.RequestID),
+		RunID:                out.RunID,
+		WorkerID:             out.WorkerID,
+		CancelRequestedAt:    out.CancelRequestedAt,
+		LastError:            strings.TrimSpace(out.LastError),
+	}, nil
+}
+
+func (c *DaemonAPIClient) CancelTicketLoop(ctx context.Context, project string, ticketID uint) (DaemonTicketLoopCancelResult, error) {
+	if c == nil {
+		return DaemonTicketLoopCancelResult{}, fmt.Errorf("daemon client 为空")
+	}
+	if strings.TrimSpace(project) == "" {
+		return DaemonTicketLoopCancelResult{}, fmt.Errorf("project 不能为空")
+	}
+	if ticketID == 0 {
+		return DaemonTicketLoopCancelResult{}, fmt.Errorf("ticket_id 不能为空")
+	}
+	var out struct {
+		TicketID  uint   `json:"ticket_id"`
+		Found     bool   `json:"found"`
+		Canceled  bool   `json:"canceled"`
+		Project   string `json:"project"`
+		RequestID string `json:"request_id"`
+		Reason    string `json:"reason"`
+	}
+	path := fmt.Sprintf("/api/ticket-loops/%d/cancel?project=%s", ticketID, url.QueryEscape(strings.TrimSpace(project)))
+	code, err := c.doJSON(ctx, http.MethodPost, path, nil, &out)
+	if err != nil {
+		return DaemonTicketLoopCancelResult{}, err
+	}
+	if code != http.StatusOK {
+		return DaemonTicketLoopCancelResult{}, fmt.Errorf("ticket-loop cancel 响应码异常: %d", code)
+	}
+	return DaemonTicketLoopCancelResult{
+		TicketID:  out.TicketID,
+		Found:     out.Found,
+		Canceled:  out.Canceled,
+		Project:   strings.TrimSpace(out.Project),
+		RequestID: strings.TrimSpace(out.RequestID),
+		Reason:    strings.TrimSpace(out.Reason),
+	}, nil
+}
+
+func (c *DaemonAPIClient) CancelTaskRun(ctx context.Context, runID uint) (DaemonTaskRunCancelResult, error) {
+	if c == nil {
+		return DaemonTaskRunCancelResult{}, fmt.Errorf("daemon client 为空")
 	}
 	if runID == 0 {
-		return DaemonRunCancelResult{}, fmt.Errorf("run_id 不能为空")
+		return DaemonTaskRunCancelResult{}, fmt.Errorf("run_id 不能为空")
 	}
 	var out struct {
 		RunID     uint   `json:"run_id"`
@@ -367,14 +469,15 @@ func (c *DaemonAPIClient) CancelRun(ctx context.Context, runID uint) (DaemonRunC
 		RequestID string `json:"request_id"`
 		Reason    string `json:"reason"`
 	}
-	code, err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/api/runs/%d/cancel", runID), nil, &out)
+	path := fmt.Sprintf("/api/task-runs/%d/cancel", runID)
+	code, err := c.doJSON(ctx, http.MethodPost, path, nil, &out)
 	if err != nil {
-		return DaemonRunCancelResult{}, err
+		return DaemonTaskRunCancelResult{}, err
 	}
 	if code != http.StatusOK {
-		return DaemonRunCancelResult{}, fmt.Errorf("run cancel 响应码异常: %d", code)
+		return DaemonTaskRunCancelResult{}, fmt.Errorf("task-run cancel 响应码异常: %d", code)
 	}
-	return DaemonRunCancelResult{
+	return DaemonTaskRunCancelResult{
 		RunID:     out.RunID,
 		Found:     out.Found,
 		Canceled:  out.Canceled,

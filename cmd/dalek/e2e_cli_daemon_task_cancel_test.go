@@ -80,11 +80,11 @@ func TestCLI_TaskCancel_UsesDaemonAPIThenMarksDB(t *testing.T) {
 
 	var cancelCalled atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/api/runs/9001/cancel" {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/ticket-loops/1/cancel" && r.URL.Query().Get("project") == "demo" {
 			cancelCalled.Store(true)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"run_id":     runID,
+				"ticket_id":  1,
 				"found":      true,
 				"canceled":   true,
 				"project":    "demo",

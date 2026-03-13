@@ -116,7 +116,7 @@ func cmdWorkerRun(args []string) {
 	_, daemonClient := mustOpenDaemonClient(out, *home)
 	ctx, cancel := projectCtx(*timeout)
 	defer cancel()
-	receipt, err := daemonClient.SubmitWorkerRun(ctx, app.DaemonWorkerRunSubmitRequest{
+	receipt, err := daemonClient.SubmitTicketLoop(ctx, app.DaemonTicketLoopSubmitRequest{
 		Project:   strings.TrimSpace(p.Name()),
 		TicketID:  uint(*ticketID),
 		RequestID: strings.TrimSpace(*requestID),
@@ -139,7 +139,7 @@ func cmdWorkerRun(args []string) {
 
 	if out == outputJSON {
 		printJSONOrExit(map[string]any{
-			"schema":      "dalek.worker.run.accepted.v1",
+			"schema":      "dalek.ticket_loop.submit.accepted.v1",
 			"mode":        "async",
 			"accepted":    receipt.Accepted,
 			"project":     strings.TrimSpace(receipt.Project),
@@ -148,18 +148,22 @@ func cmdWorkerRun(args []string) {
 			"worker_id":   receipt.WorkerID,
 			"task_run_id": receipt.TaskRunID,
 			"query": map[string]string{
-				"show":   fmt.Sprintf("dalek task show --id %d", receipt.TaskRunID),
-				"events": fmt.Sprintf("dalek task events --id %d", receipt.TaskRunID),
-				"cancel": fmt.Sprintf("dalek task cancel --id %d", receipt.TaskRunID),
+				"ticket":      fmt.Sprintf("dalek ticket show --ticket %d", receipt.TicketID),
+				"events":      fmt.Sprintf("dalek ticket events --ticket %d", receipt.TicketID),
+				"task":        fmt.Sprintf("dalek task show --id %d", receipt.TaskRunID),
+				"task_events": fmt.Sprintf("dalek task events --id %d", receipt.TaskRunID),
+				"cancel":      fmt.Sprintf("dalek task cancel --id %d", receipt.TaskRunID),
 			},
 		})
 		return
 	}
 
-	fmt.Printf("worker run accepted: ticket=%d worker=%d request=%s run=%d\n",
+	fmt.Printf("ticket-loop accepted: ticket=%d worker=%d request=%s run=%d\n",
 		receipt.TicketID, receipt.WorkerID, strings.TrimSpace(receipt.RequestID), receipt.TaskRunID)
-	fmt.Printf("query: dalek task show --id %d\n", receipt.TaskRunID)
-	fmt.Printf("events: dalek task events --id %d\n", receipt.TaskRunID)
+	fmt.Printf("ticket: dalek ticket show --ticket %d\n", receipt.TicketID)
+	fmt.Printf("events: dalek ticket events --ticket %d\n", receipt.TicketID)
+	fmt.Printf("task: dalek task show --id %d\n", receipt.TaskRunID)
+	fmt.Printf("task_events: dalek task events --id %d\n", receipt.TaskRunID)
 	fmt.Printf("cancel: dalek task cancel --id %d\n", receipt.TaskRunID)
 }
 

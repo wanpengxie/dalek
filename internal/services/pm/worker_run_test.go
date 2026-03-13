@@ -18,6 +18,7 @@ func TestRunTicketWorker_DoneClosurePromotesTicketOnLoopExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "所有实现与验证已经完成", nil, true, strings.Repeat("b", 40), "clean")
 
 	runID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
 	report := contracts.WorkerReport{
@@ -33,6 +34,7 @@ func TestRunTicketWorker_DoneClosurePromotesTicketOnLoopExit(t *testing.T) {
 	if err := svc.ApplyWorkerReport(context.Background(), report, "test-runtime"); err != nil {
 		t.Fatalf("ApplyWorkerReport failed: %v", err)
 	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "所有实现与验证已经完成", nil, true, report.HeadSHA, "clean")
 
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
 		return &fakeAgentRunHandle{
@@ -68,6 +70,7 @@ func TestRunTicketWorker_WaitUserClosureBlocksTicketOnLoopExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "wait_user", "缺少外部凭据，需要人工补充", []string{"请提供生产环境 token"}, false, testWorkerDoneHeadSHA, "clean")
 
 	runID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
 	report := contracts.WorkerReport{
@@ -84,6 +87,7 @@ func TestRunTicketWorker_WaitUserClosureBlocksTicketOnLoopExit(t *testing.T) {
 	if err := svc.ApplyWorkerReport(context.Background(), report, "test-runtime"); err != nil {
 		t.Fatalf("ApplyWorkerReport failed: %v", err)
 	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "wait_user", "缺少外部凭据，需要人工补充", []string{"请提供生产环境 token"}, false, testWorkerDoneHeadSHA, "clean")
 
 	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
 		return &fakeAgentRunHandle{
@@ -106,6 +110,67 @@ func TestRunTicketWorker_WaitUserClosureBlocksTicketOnLoopExit(t *testing.T) {
 	}
 	if ticket.WorkflowStatus != contracts.TicketBlocked {
 		t.Fatalf("expected ticket blocked after loop closure, got=%s", ticket.WorkflowStatus)
+	}
+}
+
+func TestRunTicketWorker_DirtyDoneClosureFallsBackToWaitUser(t *testing.T) {
+	svc, p, git := newServiceForTest(t)
+	git.WorktreeDirtyValue = true
+
+	tk := createTicket(t, p.DB, "worker-run-dirty-done-closure")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "本地修改尚未收口", nil, true, testWorkerDoneHeadSHA, "dirty")
+
+	runID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	report := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  runID,
+		HeadSHA:    testWorkerDoneHeadSHA,
+		Summary:    "实现看起来完成了",
+		NextAction: string(contracts.NextDone),
+	}
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test-runtime"); err != nil {
+		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	}
+
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return &fakeAgentRunHandle{
+			runID:  runID,
+			result: agentexec.AgentRunResult{ExitCode: 0},
+		}, nil
+	}
+
+	result, err := svc.RunTicketWorker(context.Background(), tk.ID, WorkerRunOptions{EntryPrompt: "继续执行任务"})
+	if err != nil {
+		t.Fatalf("RunTicketWorker failed: %v", err)
+	}
+	if result.LastNextAction != string(contracts.NextWaitUser) {
+		t.Fatalf("expected fallback next_action wait_user, got=%q", result.LastNextAction)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("query ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketBlocked {
+		t.Fatalf("expected ticket blocked after dirty done fallback, got=%s", ticket.WorkflowStatus)
+	}
+	if got := contracts.CanonicalIntegrationStatus(ticket.IntegrationStatus); got == contracts.IntegrationNeedsMerge {
+		t.Fatalf("dirty done closure should not freeze integration, got=%s", got)
+	}
+
+	var inbox contracts.InboxItem
+	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+		t.Fatalf("expected fallback inbox: %v", err)
+	}
+	if !strings.Contains(inbox.Body, "dirty") {
+		t.Fatalf("expected fallback inbox to mention dirty closure, got=%q", inbox.Body)
 	}
 }
 

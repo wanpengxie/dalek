@@ -107,13 +107,13 @@ type attachedMsg struct {
 
 type queuedRunMsg struct {
 	TicketID uint
-	Receipt  app.DaemonWorkerRunSubmitReceipt
+	Receipt  app.DaemonTicketLoopSubmitReceipt
 	Err      error
 }
 
 type workerRunMsg struct {
 	TicketID uint
-	Receipt  app.DaemonWorkerRunSubmitReceipt
+	Receipt  app.DaemonTicketLoopSubmitReceipt
 	Err      error
 }
 
