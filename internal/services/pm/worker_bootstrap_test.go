@@ -33,7 +33,7 @@ func TestEnsureWorkerBootstrap_UsesControlWorkerTemplates(t *testing.T) {
 	customKernel := strings.TrimSpace(`
 <task_context>
 <title>
-{{TICKET_TITLE：业务任务标题。用于定义本轮交付主题，回答“这轮要完成什么业务目标”。}}
+{{TICKET_TITLE}}
 </title>
 </task_context>
 <current_state>

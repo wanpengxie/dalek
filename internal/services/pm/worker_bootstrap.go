@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	workerKernelTitlePlaceholder = "{{TICKET_TITLE：业务任务标题。用于定义本轮交付主题，回答“这轮要完成什么业务目标”。}}"
-	workerKernelDescPlaceholder  = "{{TICKET_DESCRIPTION：业务需求正文。用于说明背景、目标、约束与期望结果，回答“为什么做、做到什么算有效”。}}"
+	workerKernelTitlePlaceholder = "{{TICKET_TITLE}}"
+	workerKernelDescPlaceholder  = "{{TICKET_DESCRIPTION}}"
 	// 共享占位符：kernel 和 state.json 模板复用同一套
 	placeholderTicketID          = "{{DALEK_TICKET_ID}}"
 	placeholderWorkerID          = "{{DALEK_WORKER_ID}}"
