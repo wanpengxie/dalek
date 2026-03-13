@@ -29,7 +29,7 @@ func (s *Service) gitMergeTicketBranch(ctx context.Context, workerBranch, target
 	if err == nil {
 		return mergeSuccess, nil
 	}
-	if strings.Contains(strings.ToLower(out), "conflict") || strings.Contains(strings.ToLower(out), "merge_msg") {
+	if strings.Contains(strings.ToLower(out), "conflict") {
 		return mergeConflict, nil
 	}
 	return mergeError, fmt.Errorf("git merge %s 失败: %s: %w", workerBranch, out, err)

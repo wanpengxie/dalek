@@ -3,11 +3,14 @@ package pm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"dalek/internal/contracts"
+
+	"gorm.io/gorm"
 )
 
 const defaultAgentBudget = 10
@@ -36,6 +39,9 @@ func (s *Service) CreateFocusRun(ctx context.Context, mode string, ticketIDs []u
 		First(&active).Error
 	if err == nil {
 		return nil, fmt.Errorf("已存在 active focus（id=%d status=%s），请先 stop", active.ID, active.Status)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("检查 active focus 失败: %w", err)
 	}
 
 	scopeJSON, _ := json.Marshal(ticketIDs)

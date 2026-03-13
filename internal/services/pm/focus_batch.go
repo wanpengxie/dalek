@@ -10,8 +10,10 @@ import (
 )
 
 const (
-	focusPollInterval    = 10 * time.Second
+	focusPollInterval     = 10 * time.Second
 	focusMaxConflictRetry = 3
+	focusMaxRestart       = 3
+	focusTicketTimeout    = 4 * time.Hour
 )
 
 // RunBatchFocus 执行 batch focus 主循环。阻塞直到完成/blocked/canceled。
@@ -23,7 +25,7 @@ func (s *Service) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun) 
 
 	ticketIDs, err := parseScopeTicketIDs(focus.ScopeTicketIDs)
 	if err != nil {
-		return s.finishFocusRun(ctx, focus, contracts.FocusFailed, "解析 scope 失败: "+err.Error())
+		return s.finishFocusRun(context.Background(), focus, contracts.FocusFailed, "解析 scope 失败: "+err.Error())
 	}
 
 	s.slog().Info("focus batch: starting",
@@ -34,18 +36,16 @@ func (s *Service) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun) 
 
 	for i, ticketID := range ticketIDs {
 		if ctx.Err() != nil {
-			return s.finishFocusRun(ctx, focus, contracts.FocusCanceled, "用户中断")
+			return s.finishFocusRun(context.Background(), focus, contracts.FocusCanceled, "用户中断")
 		}
 
 		focus.ActiveTicketID = &ticketID
-		if err := s.updateFocusRun(ctx, focus); err != nil {
-			s.slog().Warn("focus batch: update active ticket failed", "error", err)
-		}
+		_ = s.updateFocusRun(ctx, focus)
 
 		s.slog().Info("focus batch: processing ticket",
 			"focus_id", focus.ID,
 			"ticket_id", ticketID,
-			"progress", fmt.Sprintf("%d/%d", i, len(ticketIDs)),
+			"progress", fmt.Sprintf("%d/%d", i+1, len(ticketIDs)),
 		)
 
 		result := s.processTicket(ctx, focus, ticketID)
@@ -54,23 +54,21 @@ func (s *Service) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun) 
 			focus.CompletedCount++
 			s.slog().Info("focus batch: ticket completed", "ticket_id", ticketID)
 		case ticketResultWaitUser:
-			return s.finishFocusRun(ctx, focus, contracts.FocusBlocked,
+			return s.finishFocusRun(context.Background(), focus, contracts.FocusBlocked,
 				fmt.Sprintf("ticket T%d 需要用户介入", ticketID))
 		case ticketResultBudgetExhausted:
-			return s.finishFocusRun(ctx, focus, contracts.FocusBlocked,
+			return s.finishFocusRun(context.Background(), focus, contracts.FocusBlocked,
 				fmt.Sprintf("PM agent 预算耗尽（ticket T%d）", ticketID))
 		case ticketResultError:
-			return s.finishFocusRun(ctx, focus, contracts.FocusFailed,
+			return s.finishFocusRun(context.Background(), focus, contracts.FocusFailed,
 				fmt.Sprintf("ticket T%d 处理失败", ticketID))
 		}
 
-		if err := s.updateFocusRun(ctx, focus); err != nil {
-			s.slog().Warn("focus batch: update progress failed", "error", err)
-		}
+		_ = s.updateFocusRun(ctx, focus)
 	}
 
 	focus.ActiveTicketID = nil
-	return s.finishFocusRun(ctx, focus, contracts.FocusCompleted,
+	return s.finishFocusRun(context.Background(), focus, contracts.FocusCompleted,
 		fmt.Sprintf("batch 完成：%d/%d tickets merged", focus.CompletedCount, focus.TotalCount))
 }
 
@@ -84,60 +82,71 @@ const (
 )
 
 func (s *Service) processTicket(ctx context.Context, focus *contracts.FocusRun, ticketID uint) ticketResult {
-	// 1. Start ticket（幂等：已 queued/active 则跳过）
-	if !s.isTicketActive(ctx, ticketID) {
-		if _, err := s.StartTicket(ctx, ticketID); err != nil {
-			s.slog().Warn("focus batch: start ticket failed", "ticket_id", ticketID, "error", err)
+	restartCount := 0
+
+	for {
+		// 1. Start ticket（幂等：已 queued/active 则跳过）
+		if !s.isTicketActive(ctx, ticketID) {
+			if _, err := s.StartTicket(ctx, ticketID); err != nil {
+				s.slog().Warn("focus batch: start ticket failed", "ticket_id", ticketID, "error", err)
+				return ticketResultError
+			}
+		}
+
+		// 2. 等待 ticket 完成
+		outcome := s.waitTicketOutcome(ctx, ticketID)
+
+		// 3. 处理结果
+		switch outcome {
+		case outcomeTicketDone:
+			// 直接进入 merge
+			return s.mergeTicket(ctx, focus, ticketID)
+
+		case outcomeTicketBlocked:
+			if focus.AgentBudget <= 0 {
+				return ticketResultBudgetExhausted
+			}
+			action := s.triageBlockedTicket(ctx, focus, ticketID, outcome)
+			switch action {
+			case "restart":
+				restartCount++
+				if restartCount >= focusMaxRestart {
+					s.slog().Warn("focus batch: max restart reached", "ticket_id", ticketID, "restarts", restartCount)
+					return ticketResultError
+				}
+				s.slog().Info("focus batch: restarting ticket", "ticket_id", ticketID, "attempt", restartCount)
+				continue // 回到 for 循环顶部重新 start
+			case "skip_merge":
+				return s.mergeTicket(ctx, focus, ticketID)
+			default: // "wait_user" 或未知
+				return ticketResultWaitUser
+			}
+
+		case outcomeTicketTimeout:
+			s.slog().Warn("focus batch: ticket execution timed out", "ticket_id", ticketID)
+			return ticketResultError
+
+		case outcomeTicketCanceled:
 			return ticketResultError
 		}
 	}
-
-	// 2. 等待 ticket 完成
-	outcome := s.waitTicketOutcome(ctx, ticketID)
-
-	// 3. 处理结果
-	switch outcome {
-	case outcomeTicketDone:
-		// 直接进入 merge
-	case outcomeTicketBlocked, outcomeTicketFailed:
-		if focus.AgentBudget <= 0 {
-			return ticketResultBudgetExhausted
-		}
-		action := s.triageBlockedTicket(ctx, focus, ticketID, outcome)
-		switch action {
-		case "restart":
-			// 重新 start 并重新处理
-			return s.processTicket(ctx, focus, ticketID)
-		case "skip_merge":
-			// 跳过失败，尝试 merge 当前代码
-		case "wait_user":
-			return ticketResultWaitUser
-		}
-	case outcomeTicketCanceled:
-		return ticketResultError
-	}
-
-	// 4. 执行 merge
-	return s.mergeTicket(ctx, focus, ticketID)
 }
 
 func (s *Service) triageBlockedTicket(ctx context.Context, focus *contracts.FocusRun, ticketID uint, outcome ticketOutcome) string {
 	summary := string(outcome)
-	// 尝试获取 worker report 信息
 	if report, err := s.latestWorkerReport(ctx, ticketID); err == nil && report != "" {
 		summary = report
 	}
 
-	action, err := s.callPMAgentTriage(ctx, ticketID, string(outcome), summary)
+	action, _ := s.callPMAgentTriage(ctx, ticketID, string(outcome), summary)
 	focus.AgentBudget--
-	if err != nil {
-		s.slog().Warn("focus batch: triage agent failed", "ticket_id", ticketID, "error", err)
-		return "wait_user"
-	}
+	_ = s.updateFocusRun(ctx, focus) // 持久化 budget 变更
+
 	s.slog().Info("focus batch: triage decision",
 		"ticket_id", ticketID,
 		"action", action.Action,
 		"reason", action.Reason,
+		"budget_remaining", focus.AgentBudget,
 	)
 	return action.Action
 }
@@ -168,8 +177,10 @@ func (s *Service) mergeTicket(ctx context.Context, focus *contracts.FocusRun, ti
 		}
 	}
 
-	// 标记 merged
-	s.markTicketMerged(ctx, ticketID)
+	// 标记 merged（通过 integration 路径）
+	if err := s.markTicketIntegrationMerged(ctx, ticketID); err != nil {
+		s.slog().Warn("focus batch: mark merged failed", "ticket_id", ticketID, "error", err)
+	}
 	return ticketResultMerged
 }
 
@@ -208,16 +219,22 @@ type ticketOutcome string
 const (
 	outcomeTicketDone     ticketOutcome = "done"
 	outcomeTicketBlocked  ticketOutcome = "blocked"
-	outcomeTicketFailed   ticketOutcome = "failed"
+	outcomeTicketTimeout  ticketOutcome = "timeout"
 	outcomeTicketCanceled ticketOutcome = "canceled"
 )
 
 func (s *Service) waitTicketOutcome(ctx context.Context, ticketID uint) ticketOutcome {
+	deadline := time.Now().Add(focusTicketTimeout)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return outcomeTicketCanceled
 		default:
+		}
+
+		if time.Now().After(deadline) {
+			return outcomeTicketTimeout
 		}
 
 		t, err := s.loadTicket(ctx, ticketID)
@@ -283,13 +300,18 @@ func (s *Service) latestWorkerReport(ctx context.Context, ticketID uint) (string
 	return strings.TrimSpace(report.Summary), nil
 }
 
-func (s *Service) markTicketMerged(ctx context.Context, ticketID uint) {
+// markTicketIntegrationMerged 通过 integration 路径标记 ticket 为 merged。
+func (s *Service) markTicketIntegrationMerged(ctx context.Context, ticketID uint) error {
 	_, db, err := s.require()
 	if err != nil {
-		return
+		return err
 	}
-	db.WithContext(ctx).
+	now := time.Now()
+	return db.WithContext(ctx).
 		Model(&contracts.Ticket{}).
-		Where("id = ?", ticketID).
-		Update("integration_status", contracts.IntegrationMerged)
+		Where("id = ? AND integration_status = ?", ticketID, contracts.IntegrationNeedsMerge).
+		Updates(map[string]any{
+			"integration_status": contracts.IntegrationMerged,
+			"merged_at":          &now,
+		}).Error
 }
