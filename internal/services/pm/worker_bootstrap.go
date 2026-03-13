@@ -41,7 +41,7 @@ type bootstrapFileWriteOptions struct {
 	ForceOverwrite bool
 }
 
-func (m workerBootstrapMode) ForceOverwrite() bool {
+func (m workerBootstrapMode) forceOverwrite() bool {
 	return m == workerBootstrapModeFirstBootstrap
 }
 
@@ -85,7 +85,7 @@ func (s *Service) ensureWorkerBootstrap(ctx context.Context, t contracts.Ticket,
 		return repo.ContractPaths{}, err
 	}
 
-	forceOverwrite := mode.ForceOverwrite()
+	forceOverwrite := mode.forceOverwrite()
 	if err := ensureBootstrapFile(paths.AgentKernelMD, kernelContent, 0o644, bootstrapFileWriteOptions{
 		ForceOverwrite: forceOverwrite,
 	}); err != nil {

@@ -322,7 +322,7 @@ func createActiveDeliverRunForRecovery(t *testing.T, p *Project, ticketID uint, 
 	}
 	run, err := p.task.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         p.Key(),
 		TicketID:           ticketID,
 		WorkerID:           worker.ID,

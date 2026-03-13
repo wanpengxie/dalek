@@ -113,7 +113,7 @@ func TestRunLifecycleTracker_StartAndFinishSuccess(t *testing.T) {
 	tracker := NewRunLifecycleTracker(BaseConfig{
 		Runtime:     rt,
 		OwnerType:   contracts.TaskOwnerWorker,
-		TaskType:    "deliver_ticket",
+		TaskType:    contracts.TaskTypeDeliverTicket,
 		ProjectKey:  "demo",
 		TicketID:    12,
 		WorkerID:    34,

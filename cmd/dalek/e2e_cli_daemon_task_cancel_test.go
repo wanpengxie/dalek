@@ -31,7 +31,7 @@ func seedRunningTaskRunForCancelE2E(t *testing.T, homeDir string, runID uint, re
 	run := contracts.TaskRun{
 		ID:                 runID,
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           1,
 		WorkerID:           1,

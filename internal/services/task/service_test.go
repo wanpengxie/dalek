@@ -132,7 +132,7 @@ func TestService_WorkerActiveRunLifecycle(t *testing.T) {
 
 	_, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           7,
 		WorkerID:           99,
@@ -227,7 +227,7 @@ func TestService_MarkRunSucceeded_DoesNotOverrideCanceled(t *testing.T) {
 
 	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           17,
 		WorkerID:           27,
@@ -262,7 +262,7 @@ func TestService_MarkRunFailed_DoesNotOverrideCanceled(t *testing.T) {
 
 	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           18,
 		WorkerID:           28,
@@ -308,7 +308,7 @@ func TestService_MarkRunSucceeded_RejectsFromTerminalState(t *testing.T) {
 			requestID := "req-terminal-guard-succeed-" + tc.name
 			run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 				OwnerType:          contracts.TaskOwnerWorker,
-				TaskType:           "deliver_ticket",
+				TaskType:           contracts.TaskTypeDeliverTicket,
 				ProjectKey:         "demo",
 				TicketID:           21,
 				WorkerID:           31,
@@ -373,7 +373,7 @@ func TestService_MarkRunFailed_RejectsFromTerminalState(t *testing.T) {
 			requestID := "req-terminal-guard-fail-" + tc.name
 			run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 				OwnerType:          contracts.TaskOwnerWorker,
-				TaskType:           "deliver_ticket",
+				TaskType:           contracts.TaskTypeDeliverTicket,
 				ProjectKey:         "demo",
 				TicketID:           22,
 				WorkerID:           32,
@@ -427,7 +427,7 @@ func TestService_MarkRunCanceled_FromTerminalStateAppendsDiagnostic(t *testing.T
 
 	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           23,
 		WorkerID:           33,
@@ -477,7 +477,7 @@ func TestService_MarkRunRunning_DoesNotOverrideCanceled(t *testing.T) {
 
 	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           20,
 		WorkerID:           30,
@@ -513,7 +513,7 @@ func TestService_AppendEvent_DropsTerminalEventsAfterCanceled(t *testing.T) {
 
 	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           19,
 		WorkerID:           29,
@@ -561,7 +561,7 @@ func TestService_StatusViewContainsLatestObservationFields(t *testing.T) {
 
 	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           31,
 		WorkerID:           41,
@@ -659,7 +659,7 @@ func TestService_ListEvents_LatestNAscending(t *testing.T) {
 	base := time.Now().UTC().Truncate(time.Second)
 	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           71,
 		WorkerID:           81,
@@ -711,7 +711,7 @@ func TestService_FinishAgentRun_Succeeded(t *testing.T) {
 
 	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           91,
 		WorkerID:           101,
@@ -754,7 +754,7 @@ func TestService_FinishAgentRun_Failed(t *testing.T) {
 
 	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           92,
 		WorkerID:           102,
@@ -800,7 +800,7 @@ func TestService_CancelRun(t *testing.T) {
 
 	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "demo",
 		TicketID:           93,
 		WorkerID:           103,

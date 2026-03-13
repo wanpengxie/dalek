@@ -231,7 +231,7 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	run, err := rt.CreateRun(context.Background(), contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         p.Key,
 		TicketID:           tk.ID,
 		WorkerID:           w.ID,

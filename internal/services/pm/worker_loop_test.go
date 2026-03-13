@@ -89,7 +89,7 @@ func createWorkerLoopTestFixture(t *testing.T, svc *Service, nextAction string) 
 
 	taskRun := contracts.TaskRun{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "test",
 		TicketID:           tk.ID,
 		WorkerID:           w.ID,
@@ -353,7 +353,7 @@ func TestExecuteWorkerLoop_ContinuesThenStops(t *testing.T) {
 
 	// Create two task runs: first returns "continue", second returns "done".
 	run1 := contracts.TaskRun{
-		OwnerType: contracts.TaskOwnerWorker, TaskType: "deliver_ticket",
+		OwnerType: contracts.TaskOwnerWorker, TaskType: contracts.TaskTypeDeliverTicket,
 		ProjectKey: "test", TicketID: tk.ID, WorkerID: w.ID,
 		SubjectType: "ticket", SubjectID: fmt.Sprintf("%d", tk.ID),
 		RequestID: "wrk_multi_1", OrchestrationState: contracts.TaskRunning,
@@ -364,7 +364,7 @@ func TestExecuteWorkerLoop_ContinuesThenStops(t *testing.T) {
 	makeSemanticReport(t, svc, run1.ID, "continue")
 
 	run2 := contracts.TaskRun{
-		OwnerType: contracts.TaskOwnerWorker, TaskType: "deliver_ticket",
+		OwnerType: contracts.TaskOwnerWorker, TaskType: contracts.TaskTypeDeliverTicket,
 		ProjectKey: "test", TicketID: tk.ID, WorkerID: w.ID,
 		SubjectType: "ticket", SubjectID: fmt.Sprintf("%d", tk.ID),
 		RequestID: "wrk_multi_2", OrchestrationState: contracts.TaskRunning,

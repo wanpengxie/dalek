@@ -245,7 +245,7 @@ func TestDaemonManagerComponent_RunTickProject_SubmitsPlannerRunWhenScheduled(t 
 	now := time.Now().UTC().Truncate(time.Second)
 	workerRun, err := p.task.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         p.Key(),
 		TicketID:           tk.ID,
 		WorkerID:           w.ID,
@@ -369,7 +369,7 @@ func TestDaemonManagerComponent_WarmupRunProjectIndex_LoadsActiveRuns(t *testing
 	now := time.Now().UTC().Truncate(time.Second)
 	activeRun, err := p.task.CreateRun(ctx, contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         p.Key(),
 		TicketID:           tk.ID,
 		WorkerID:           w.ID,

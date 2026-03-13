@@ -677,7 +677,7 @@ func createWorkerRunForManagerTickTest(t *testing.T, svc *Service, p *core.Proje
 	now := time.Now().UTC().Truncate(time.Second)
 	run, err := rt.CreateRun(context.Background(), contracts.TaskRunCreateInput{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         p.Key,
 		TicketID:           ticketID,
 		WorkerID:           workerID,

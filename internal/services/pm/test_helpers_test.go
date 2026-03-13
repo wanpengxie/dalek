@@ -51,7 +51,7 @@ func createWorkerTaskRun(t *testing.T, db *gorm.DB, ticketID, workerID uint, req
 
 	taskRun := contracts.TaskRun{
 		OwnerType:          contracts.TaskOwnerWorker,
-		TaskType:           "deliver_ticket",
+		TaskType:           contracts.TaskTypeDeliverTicket,
 		ProjectKey:         "test",
 		TicketID:           ticketID,
 		WorkerID:           workerID,

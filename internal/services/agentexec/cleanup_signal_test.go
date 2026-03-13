@@ -16,7 +16,7 @@ func TestLifecycleFinish_WithCanceledParentCtx(t *testing.T) {
 	tracker := NewRunLifecycleTracker(BaseConfig{
 		Runtime:     rt,
 		OwnerType:   contracts.TaskOwnerWorker,
-		TaskType:    "deliver_ticket",
+		TaskType:    contracts.TaskTypeDeliverTicket,
 		ProjectKey:  "test",
 		TicketID:    99,
 		WorkerID:    88,
@@ -46,7 +46,7 @@ func TestLifecycleFinish_CanceledError_WithCanceledParentCtx(t *testing.T) {
 	tracker := NewRunLifecycleTracker(BaseConfig{
 		Runtime:     rt,
 		OwnerType:   contracts.TaskOwnerWorker,
-		TaskType:    "deliver_ticket",
+		TaskType:    contracts.TaskTypeDeliverTicket,
 		ProjectKey:  "test",
 		TicketID:    99,
 		WorkerID:    88,
@@ -79,7 +79,7 @@ func TestLifecycleFinish_FailedRun_WithCanceledParentCtx(t *testing.T) {
 	tracker := NewRunLifecycleTracker(BaseConfig{
 		Runtime:     rt,
 		OwnerType:   contracts.TaskOwnerWorker,
-		TaskType:    "deliver_ticket",
+		TaskType:    contracts.TaskTypeDeliverTicket,
 		ProjectKey:  "test",
 		TicketID:    99,
 		WorkerID:    88,
@@ -114,7 +114,7 @@ func TestLifecycleFinish_FailedRun_WithActiveCtx(t *testing.T) {
 	tracker := NewRunLifecycleTracker(BaseConfig{
 		Runtime:     rt,
 		OwnerType:   contracts.TaskOwnerWorker,
-		TaskType:    "deliver_ticket",
+		TaskType:    contracts.TaskTypeDeliverTicket,
 		ProjectKey:  "test",
 		TicketID:    99,
 		WorkerID:    88,
