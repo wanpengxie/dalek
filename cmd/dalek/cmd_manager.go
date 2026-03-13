@@ -24,6 +24,10 @@ func cmdManager(args []string) {
 		cmdManagerTick(args[1:])
 	case "run":
 		cmdManagerRun(args[1:])
+	case "show":
+		cmdManagerShow(args[1:])
+	case "stop":
+		cmdManagerStop(args[1:])
 	case "pause":
 		cmdManagerPauseResume(args[1:], false)
 	case "resume":
@@ -44,9 +48,11 @@ func printManagerUsage() {
 	printGroupUsage("PM 调度器控制", "dalek manager <command> [flags]", []string{
 		"status    查看 PM 状态",
 		"tick      执行一次调度循环",
-		"run       单次调试（--sync-worker-run 调试入口）",
-		"pause     暂停自动派发",
-		"resume    恢复自动派发",
+		"run       执行 focus（--mode batch）或单次调试（--sync-worker-run）",
+		"show      查看当前 focus 详情",
+		"stop      停止当前 focus",
+		"pause     暂停（已废弃）",
+		"resume    恢复（已废弃）",
 	})
 	fmt.Fprintln(os.Stderr, "Use \"dalek manager <command> --help\" for more information.")
 }
@@ -290,18 +296,19 @@ func cmdManagerRun(args []string) {
 	fs.Usage = func() {
 		printSubcommandUsage(
 			fs,
-			"执行一次调度（非 daemon 调试入口）",
-			"dalek manager run --once --sync-worker-run --worker-run-timeout 120m [--max N] [--dry-run] [--output text|json]",
+			"执行 focus 或单次调度调试",
+			"dalek manager run --mode batch [--tickets 1,2,3] [--budget 10]",
+			"dalek manager run --mode batch --tickets 12,13,14 --budget 5",
 			"dalek manager run --once --sync-worker-run --worker-run-timeout 120m",
-			"dalek manager run --once --sync-worker-run --dry-run -o json",
-			"dalek manager run",
-			"dalek daemon start",
 		)
 	}
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
 	proj := fs.String("project", globalProject, "项目名（可选）")
 	projShort := fs.String("p", globalProject, "项目名（可选）")
-	_ = fs.Duration("interval", 15*time.Second, "已废弃（manager run 前台循环已移除）")
+	mode := fs.String("mode", "", "focus 模式: batch")
+	tickets := fs.String("tickets", "", "batch scope ticket IDs，逗号分隔: 1,2,3")
+	budget := fs.Int("budget", 10, "PM agent 最大调用次数")
+	_ = fs.Duration("interval", 15*time.Second, "已废弃")
 	maxRunning := fs.Int("max", 0, "最大并发 running workers（可选；0 表示用 DB 默认）")
 	dryRun := fs.Bool("dry-run", false, "只观测/生成 inbox/merge 提案，不做 start/worker-run")
 	once := fs.Bool("once", false, "仅执行一次调度循环（sync-worker-run 模式必填）")
@@ -313,11 +320,18 @@ func cmdManagerRun(args []string) {
 		*proj = strings.TrimSpace(*projShort)
 	}
 	out := parseOutputOrExit(*output, true)
+
+	// --mode batch: 启动 batch focus
+	if strings.TrimSpace(*mode) == "batch" {
+		cmdManagerRunBatch(out, *home, *proj, *tickets, *budget)
+		return
+	}
+
 	if !*syncWorkerRun {
 		exitRuntimeError(out,
-			"manager run 已迁移到 daemon，前台循环已移除",
-			"请使用 dalek daemon start 启动常驻 manager loop（30s tick + 事件驱动）",
-			"如需非 daemon 单次调试，请使用 dalek manager run --once --sync-worker-run",
+			"请指定 --mode batch 启动 focus，或使用 --sync-worker-run 进行单次调试",
+			"示例: dalek manager run --mode batch --tickets 1,2,3",
+			"示例: dalek manager run --once --sync-worker-run --worker-run-timeout 120m",
 		)
 	}
 	if !*once {

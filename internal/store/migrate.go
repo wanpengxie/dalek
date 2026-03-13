@@ -108,6 +108,11 @@ func storeMigrations() []Migration {
 			Name:    "add_channel_conversation_agent_provider",
 			Up:      migrateAddChannelConversationAgentProvider,
 		},
+		{
+			Version: 19,
+			Name:    "add_focus_runs_table",
+			Up:      migrateAddFocusRunsTable,
+		},
 	}
 }
 
@@ -537,3 +542,11 @@ VALUES (?, ?, ?)
 ON CONFLICT(version) DO NOTHING;
 `, version, strings.TrimSpace(name), ts).Error
 }
+
+func migrateAddFocusRunsTable(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	return db.AutoMigrate(&FocusRun{})
+}
+

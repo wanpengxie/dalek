@@ -28,6 +28,34 @@ func (p *Project) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	return p.pm.ManagerTick(ctx, opt)
 }
 
+func (p *Project) CreateFocusRun(ctx context.Context, mode string, ticketIDs []uint, budget int) (*contracts.FocusRun, error) {
+	if p == nil || p.pm == nil {
+		return nil, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.CreateFocusRun(ctx, mode, ticketIDs, budget)
+}
+
+func (p *Project) ActiveFocusRun(ctx context.Context) (*contracts.FocusRun, error) {
+	if p == nil || p.pm == nil {
+		return nil, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.ActiveFocusRun(ctx)
+}
+
+func (p *Project) StopFocusRun(ctx context.Context, reason string) error {
+	if p == nil || p.pm == nil {
+		return fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.StopFocusRun(ctx, reason)
+}
+
+func (p *Project) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun) error {
+	if p == nil || p.pm == nil {
+		return fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.RunBatchFocus(ctx, focus)
+}
+
 func (p *Project) GetPMHealthMetrics(ctx context.Context, opt PMHealthMetricsOptions) (PMHealthMetrics, error) {
 	if p == nil || p.pm == nil {
 		return PMHealthMetrics{}, fmt.Errorf("project pm service 为空")

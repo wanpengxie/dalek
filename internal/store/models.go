@@ -11,6 +11,7 @@ type TicketLifecycleEvent = contracts.TicketLifecycleEvent
 type WorkerStatusEvent = contracts.WorkerStatusEvent
 
 type PMState = contracts.PMState
+type FocusRun = contracts.FocusRun
 type TaskRun = contracts.TaskRun
 type SubagentRun = contracts.SubagentRun
 type TaskRuntimeSample = contracts.TaskRuntimeSample
