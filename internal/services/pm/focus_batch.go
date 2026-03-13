@@ -17,7 +17,22 @@ const (
 )
 
 // RunBatchFocus 执行 batch focus 主循环。阻塞直到完成/blocked/canceled。
-func (s *Service) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun) error {
+// softStop 用于优雅停止：关闭该 channel 后，loop 会在当前 ticket 处理完后退出。
+func (s *Service) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun, softStop <-chan struct{}) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	s.focusCancelMu.Lock()
+	s.focusCancelFn = cancel
+	s.focusCancelMu.Unlock()
+	defer func() {
+		s.focusCancelMu.Lock()
+		s.focusCancelFn = nil
+		s.focusCancelMu.Unlock()
+	}()
+
+	s.StartQueueConsumer(ctx)
+
 	focus.Status = contracts.FocusRunning
 	if err := s.updateFocusRun(ctx, focus); err != nil {
 		return err
@@ -35,6 +50,13 @@ func (s *Service) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun) 
 	)
 
 	for i, ticketID := range ticketIDs {
+		// 检查优雅停止信号
+		select {
+		case <-softStop:
+			return s.finishFocusRun(context.Background(), focus, contracts.FocusCanceled, "graceful stop")
+		default:
+		}
+
 		if ctx.Err() != nil {
 			return s.finishFocusRun(context.Background(), focus, contracts.FocusCanceled, "用户中断")
 		}
@@ -202,7 +224,7 @@ func (s *Service) resolveConflictLoop(ctx context.Context, focus *contracts.Focu
 		focus.AgentBudget--
 		_ = s.updateFocusRun(ctx, focus)
 
-		if !s.gitHasConflicts(ctx) {
+		if s.gitMergeClean(ctx) {
 			s.slog().Info("focus batch: conflict resolved", "ticket_id", ticketID)
 			return true
 		}
@@ -252,6 +274,15 @@ func (s *Service) waitTicketOutcome(ctx context.Context, ticketID uint) ticketOu
 			return outcomeTicketBlocked
 		case contracts.TicketArchived:
 			return outcomeTicketCanceled
+		}
+
+		// 检查 worker 是否已死但 ticket 还在运行
+		if status == contracts.TicketActive || status == contracts.TicketQueued {
+			if w, werr := s.worker.LatestWorker(ctx, ticketID); werr == nil && w != nil {
+				if w.Status == contracts.WorkerFailed || w.Status == contracts.WorkerStopped {
+					return outcomeTicketBlocked // 视为 blocked，交给 triage 处理
+				}
+			}
 		}
 
 		time.Sleep(focusPollInterval)

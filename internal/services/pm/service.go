@@ -41,6 +41,10 @@ type Service struct {
 	queueWakeCh       chan struct{}
 	queueConsumerOnce sync.Once
 
+	// focusCancelMu / focusCancelFn 用于 focus run 的取消控制。
+	focusCancelMu sync.Mutex
+	focusCancelFn context.CancelFunc
+
 	// sdkHandleLauncher 用于测试注入，生产环境保持 nil（使用真实的 launchWorkerSDKHandle）。
 	sdkHandleLauncher workerSDKHandleLauncherFunc
 	// workerLoopClosureFallbackApplier 用于测试注入，生产环境保持 nil（使用真实 fallback）。

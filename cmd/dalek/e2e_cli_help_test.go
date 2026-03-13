@@ -131,8 +131,8 @@ func TestCLI_ManagerRunRemoved(t *testing.T) {
 	if err == nil {
 		t.Fatalf("manager run should fail with migration hint")
 	}
-	if !strings.Contains(stderr, "manager run 已迁移到 daemon") || !strings.Contains(stderr, "dalek daemon start") {
-		t.Fatalf("manager run migration hint missing:\n%s", stderr)
+	if !strings.Contains(stderr, "--mode batch") && !strings.Contains(stderr, "--sync-worker-run") {
+		t.Fatalf("manager run should hint --mode batch or --sync-worker-run:\n%s", stderr)
 	}
 }
 

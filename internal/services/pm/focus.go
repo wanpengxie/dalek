@@ -31,19 +31,6 @@ func (s *Service) CreateFocusRun(ctx context.Context, mode string, ticketIDs []u
 		budget = defaultAgentBudget
 	}
 
-	// 唯一性检查：不允许有未完成的 focus
-	var active contracts.FocusRun
-	err = db.WithContext(ctx).
-		Where("project_key = ? AND status NOT IN ?", strings.TrimSpace(s.p.Key),
-			[]string{contracts.FocusCompleted, contracts.FocusFailed, contracts.FocusCanceled}).
-		First(&active).Error
-	if err == nil {
-		return nil, fmt.Errorf("已存在 active focus（id=%d status=%s），请先 stop", active.ID, active.Status)
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("检查 active focus 失败: %w", err)
-	}
-
 	scopeJSON, _ := json.Marshal(ticketIDs)
 	now := time.Now()
 	focus := contracts.FocusRun{
@@ -56,7 +43,22 @@ func (s *Service) CreateFocusRun(ctx context.Context, mode string, ticketIDs []u
 		AgentBudgetMax: budget,
 		StartedAt:      &now,
 	}
-	if err := db.WithContext(ctx).Create(&focus).Error; err != nil {
+
+	// 唯一性检查 + 创建放在同一事务中，避免并发创建
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var active contracts.FocusRun
+		txErr := tx.Where("project_key = ? AND status NOT IN ?", strings.TrimSpace(s.p.Key),
+			[]string{contracts.FocusCompleted, contracts.FocusFailed, contracts.FocusCanceled}).
+			First(&active).Error
+		if txErr == nil {
+			return fmt.Errorf("已存在 active focus（id=%d status=%s），请先 stop", active.ID, active.Status)
+		}
+		if !errors.Is(txErr, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("检查 active focus 失败: %w", txErr)
+		}
+		return tx.Create(&focus).Error
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &focus, nil
@@ -88,6 +90,14 @@ func (s *Service) StopFocusRun(ctx context.Context, reason string) error {
 	if focus == nil {
 		return fmt.Errorf("当前无 active focus")
 	}
+
+	// 取消运行中的 loop
+	s.focusCancelMu.Lock()
+	if s.focusCancelFn != nil {
+		s.focusCancelFn()
+	}
+	s.focusCancelMu.Unlock()
+
 	return s.finishFocusRun(ctx, focus, contracts.FocusCanceled, strings.TrimSpace(reason))
 }
 

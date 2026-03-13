@@ -49,11 +49,11 @@ func (p *Project) StopFocusRun(ctx context.Context, reason string) error {
 	return p.pm.StopFocusRun(ctx, reason)
 }
 
-func (p *Project) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun) error {
+func (p *Project) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun, softStop <-chan struct{}) error {
 	if p == nil || p.pm == nil {
 		return fmt.Errorf("project pm service 为空")
 	}
-	return p.pm.RunBatchFocus(ctx, focus)
+	return p.pm.RunBatchFocus(ctx, focus, softStop)
 }
 
 func (p *Project) GetPMHealthMetrics(ctx context.Context, opt PMHealthMetricsOptions) (PMHealthMetrics, error) {

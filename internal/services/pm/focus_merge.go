@@ -3,7 +3,9 @@ package pm
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -15,9 +17,20 @@ const (
 	mergeError                // 其他错误
 )
 
+// stripRefsPrefix 将 refs/heads/main 格式转为 main，避免 git checkout 进入 detached HEAD。
+func stripRefsPrefix(ref string) string {
+	ref = strings.TrimSpace(ref)
+	ref = strings.TrimPrefix(ref, "refs/heads/")
+	if ref == "" {
+		return "main"
+	}
+	return ref
+}
+
 // gitMergeTicketBranch 在 repo root 上执行 git merge。
 func (s *Service) gitMergeTicketBranch(ctx context.Context, workerBranch, targetBranch string) (mergeResult, error) {
 	repoRoot := s.p.RepoRoot
+	targetBranch = stripRefsPrefix(targetBranch)
 
 	// 确保在 target 分支上
 	if out, err := runGit(ctx, repoRoot, "checkout", targetBranch); err != nil {
@@ -48,6 +61,23 @@ func (s *Service) gitHasConflicts(ctx context.Context) bool {
 	return strings.TrimSpace(out) != ""
 }
 
+// gitMergeClean 检查 merge 是否完全完成：无冲突 + MERGE_HEAD 消失 + 工作区 clean。
+func (s *Service) gitMergeClean(ctx context.Context) bool {
+	repoRoot := s.p.RepoRoot
+	// 1. 无 unmerged files
+	if s.gitHasConflicts(ctx) {
+		return false
+	}
+	// 2. MERGE_HEAD 不存在（说明 commit 已完成）
+	mergeHead := filepath.Join(repoRoot, ".git", "MERGE_HEAD")
+	if _, err := os.Stat(mergeHead); err == nil {
+		return false // MERGE_HEAD 还在，说明 commit 未完成
+	}
+	// 3. 工作区 clean
+	out, _ := runGit(ctx, repoRoot, "status", "--porcelain")
+	return strings.TrimSpace(out) == ""
+}
+
 // gitConflictFiles 返回冲突文件列表。
 func (s *Service) gitConflictFiles(ctx context.Context) []string {
 	repoRoot := s.p.RepoRoot
@@ -66,11 +96,11 @@ func (s *Service) workerBranchForTicket(ctx context.Context, ticketID uint) (str
 		return "", err
 	}
 	var w struct {
-		GitBranch string
+		Branch string
 	}
 	err = db.WithContext(ctx).
 		Table("workers").
-		Select("git_branch").
+		Select("branch").
 		Where("ticket_id = ?", ticketID).
 		Order("id desc").
 		Limit(1).
@@ -78,10 +108,10 @@ func (s *Service) workerBranchForTicket(ctx context.Context, ticketID uint) (str
 	if err != nil {
 		return "", fmt.Errorf("查询 ticket %d worker 分支失败: %w", ticketID, err)
 	}
-	if strings.TrimSpace(w.GitBranch) == "" {
+	if strings.TrimSpace(w.Branch) == "" {
 		return "", fmt.Errorf("ticket %d 无 worker 分支", ticketID)
 	}
-	return strings.TrimSpace(w.GitBranch), nil
+	return strings.TrimSpace(w.Branch), nil
 }
 
 // targetBranchForTicket 返回 ticket 的目标分支（默认 main）。
@@ -101,7 +131,7 @@ func (s *Service) targetBranchForTicket(ctx context.Context, ticketID uint) stri
 	if err != nil || strings.TrimSpace(t.TargetBranch) == "" {
 		return "main"
 	}
-	return strings.TrimSpace(t.TargetBranch)
+	return stripRefsPrefix(t.TargetBranch)
 }
 
 func runGit(ctx context.Context, dir string, args ...string) (string, error) {

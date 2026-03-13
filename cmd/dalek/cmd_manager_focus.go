@@ -34,11 +34,15 @@ func cmdManagerRunBatch(out cliOutputFormat, home, proj, ticketsFlag string, bud
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	softStop := make(chan struct{})
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
 		fmt.Fprintln(os.Stderr, "\n收到中断信号，完成当前 ticket 后停止...")
+		close(softStop)
+		<-sig // 第二次信号
+		fmt.Fprintln(os.Stderr, "\n强制停止...")
 		cancel()
 	}()
 
@@ -48,7 +52,7 @@ func cmdManagerRunBatch(out cliOutputFormat, home, proj, ticketsFlag string, bud
 	}
 	fmt.Printf("focus batch 已创建: id=%d scope=%v budget=%d\n", focus.ID, ticketIDs, budget)
 
-	if err := p.RunBatchFocus(ctx, focus); err != nil {
+	if err := p.RunBatchFocus(ctx, focus, softStop); err != nil {
 		fmt.Fprintf(os.Stderr, "focus batch 结束: %v\n", err)
 	}
 	fmt.Printf("focus batch 完成: status=%s progress=%d/%d summary=%s\n",
