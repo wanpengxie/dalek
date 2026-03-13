@@ -937,6 +937,7 @@ func TestResetPeerConversationSession_ClearsSessionAndClosesRunner(t *testing.T)
 	conv := contracts.ChannelConversation{
 		BindingID:          binding.ID,
 		PeerConversationID: "chat-reset-1",
+		AgentProvider:      "gemini",
 		AgentSessionID:     "sess-old",
 	}
 	if err := db.Create(&conv).Error; err != nil {
@@ -966,6 +967,9 @@ func TestResetPeerConversationSession_ClearsSessionAndClosesRunner(t *testing.T)
 	}
 	if strings.TrimSpace(got.AgentSessionID) != "" {
 		t.Fatalf("agent_session_id should be cleared, got=%q", got.AgentSessionID)
+	}
+	if strings.TrimSpace(got.AgentProvider) != "" {
+		t.Fatalf("agent_provider should be cleared, got=%q", got.AgentProvider)
 	}
 }
 
@@ -997,6 +1001,7 @@ func TestHardResetPeerConversationSession_ForceCloseAndClearSession(t *testing.T
 	conv := contracts.ChannelConversation{
 		BindingID:          binding.ID,
 		PeerConversationID: "chat-hard-reset-1",
+		AgentProvider:      "gemini",
 		AgentSessionID:     "sess-old",
 	}
 	if err := db.Create(&conv).Error; err != nil {
@@ -1031,6 +1036,137 @@ func TestHardResetPeerConversationSession_ForceCloseAndClearSession(t *testing.T
 	}
 	if strings.TrimSpace(got.AgentSessionID) != "" {
 		t.Fatalf("agent_session_id should be cleared, got=%q", got.AgentSessionID)
+	}
+	if strings.TrimSpace(got.AgentProvider) != "" {
+		t.Fatalf("agent_provider should be cleared, got=%q", got.AgentProvider)
+	}
+}
+
+func TestReconcileConversationAgentSession_SwitchProviderClearsSession(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+	repoRoot := t.TempDir()
+	svc := newChannelServiceForTestProject(&core.Project{
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		DB:       db,
+	})
+
+	binding := contracts.ChannelBinding{
+		ProjectName:    "demo",
+		ChannelType:    contracts.ChannelTypeIM,
+		Adapter:        "im.feishu",
+		PeerProjectKey: "",
+		RolePolicyJSON: contracts.JSONMap{},
+		Enabled:        true,
+	}
+	if err := db.Create(&binding).Error; err != nil {
+		t.Fatalf("create binding failed: %v", err)
+	}
+	conv := contracts.ChannelConversation{
+		BindingID:          binding.ID,
+		PeerConversationID: "chat-provider-switch-1",
+		AgentProvider:      "gemini",
+		AgentSessionID:     "sess-old",
+	}
+	if err := db.Create(&conv).Error; err != nil {
+		t.Fatalf("create conversation failed: %v", err)
+	}
+
+	manager := &stubInterruptChatRunnerManager{}
+	svc.chatRunners = manager
+	canceled := false
+	svc.setRunningTurn(11, conv.ID, "sess-old", func() { canceled = true })
+
+	if err := svc.reconcileConversationAgentSession(context.Background(), &conv, "claude"); err != nil {
+		t.Fatalf("reconcileConversationAgentSession failed: %v", err)
+	}
+	if !canceled {
+		t.Fatalf("expected running turn canceled")
+	}
+	if manager.closeCalls != 1 {
+		t.Fatalf("close conversation should be called once, got=%d", manager.closeCalls)
+	}
+	if manager.lastClosedConversationID != fmt.Sprintf("%d", conv.ID) {
+		t.Fatalf("unexpected closed conversation id: %q", manager.lastClosedConversationID)
+	}
+	if strings.TrimSpace(conv.AgentSessionID) != "" {
+		t.Fatalf("in-memory session should be cleared, got=%q", conv.AgentSessionID)
+	}
+	if strings.TrimSpace(conv.AgentProvider) != "claude" {
+		t.Fatalf("in-memory provider should update to claude, got=%q", conv.AgentProvider)
+	}
+
+	var got contracts.ChannelConversation
+	if err := db.First(&got, conv.ID).Error; err != nil {
+		t.Fatalf("query conversation failed: %v", err)
+	}
+	if strings.TrimSpace(got.AgentSessionID) != "" {
+		t.Fatalf("agent_session_id should be cleared, got=%q", got.AgentSessionID)
+	}
+	if strings.TrimSpace(got.AgentProvider) != "claude" {
+		t.Fatalf("agent_provider should switch to claude, got=%q", got.AgentProvider)
+	}
+}
+
+func TestReconcileConversationAgentSession_LegacySessionWithoutProviderClearsSession(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+	repoRoot := t.TempDir()
+	svc := newChannelServiceForTestProject(&core.Project{
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		DB:       db,
+	})
+
+	binding := contracts.ChannelBinding{
+		ProjectName:    "demo",
+		ChannelType:    contracts.ChannelTypeIM,
+		Adapter:        "im.feishu",
+		PeerProjectKey: "",
+		RolePolicyJSON: contracts.JSONMap{},
+		Enabled:        true,
+	}
+	if err := db.Create(&binding).Error; err != nil {
+		t.Fatalf("create binding failed: %v", err)
+	}
+	conv := contracts.ChannelConversation{
+		BindingID:          binding.ID,
+		PeerConversationID: "chat-provider-switch-legacy",
+		AgentProvider:      "",
+		AgentSessionID:     "sess-old",
+	}
+	if err := db.Create(&conv).Error; err != nil {
+		t.Fatalf("create conversation failed: %v", err)
+	}
+
+	if err := svc.reconcileConversationAgentSession(context.Background(), &conv, "claude"); err != nil {
+		t.Fatalf("reconcileConversationAgentSession failed: %v", err)
+	}
+	if strings.TrimSpace(conv.AgentSessionID) != "" {
+		t.Fatalf("in-memory session should be cleared, got=%q", conv.AgentSessionID)
+	}
+	if strings.TrimSpace(conv.AgentProvider) != "claude" {
+		t.Fatalf("in-memory provider should update to claude, got=%q", conv.AgentProvider)
+	}
+
+	var got contracts.ChannelConversation
+	if err := db.First(&got, conv.ID).Error; err != nil {
+		t.Fatalf("query conversation failed: %v", err)
+	}
+	if strings.TrimSpace(got.AgentSessionID) != "" {
+		t.Fatalf("agent_session_id should be cleared, got=%q", got.AgentSessionID)
+	}
+	if strings.TrimSpace(got.AgentProvider) != "claude" {
+		t.Fatalf("agent_provider should switch to claude, got=%q", got.AgentProvider)
 	}
 }
 

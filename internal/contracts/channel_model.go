@@ -28,6 +28,7 @@ type ChannelConversation struct {
 
 	Title          string     `gorm:"type:text;not null;default:''"`
 	Summary        string     `gorm:"type:text;not null;default:''"`
+	AgentProvider  string     `gorm:"type:text;not null;default:''"`
 	AgentSessionID string     `gorm:"type:text;not null;default:''"`
 	LastMessageAt  *time.Time `gorm:""`
 }

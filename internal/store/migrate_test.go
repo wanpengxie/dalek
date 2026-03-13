@@ -238,6 +238,44 @@ func TestOpenAndMigrate_TicketLifecycleTablePresent(t *testing.T) {
 	}
 }
 
+func TestOpenAndMigrate_ChannelConversationAgentProviderPresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	ok, err := tableHasColumn(db, "channel_conversations", "agent_provider")
+	if err != nil {
+		t.Fatalf("tableHasColumn(channel_conversations.agent_provider) failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("channel_conversations should contain agent_provider column")
+	}
+
+	if err := dropTableColumn(db, "channel_conversations", "agent_provider"); err != nil {
+		t.Fatalf("drop channel_conversations.agent_provider failed: %v", err)
+	}
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 18;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations for v18 failed: %v", err)
+	}
+	if _, err := OpenAndMigrate(dbPath); err != nil {
+		t.Fatalf("OpenAndMigrate (reapply v18) failed: %v", err)
+	}
+
+	db2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	ok, err = tableHasColumn(db2, "channel_conversations", "agent_provider")
+	if err != nil {
+		t.Fatalf("tableHasColumn(channel_conversations.agent_provider) after reapply failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("channel_conversations should restore agent_provider after reapply")
+	}
+}
+
 func TestOpenAndMigrate_PMStatePlannerColumnsPresent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)

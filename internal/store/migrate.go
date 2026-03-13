@@ -103,6 +103,11 @@ func storeMigrations() []Migration {
 			Name:    "add_ticket_lifecycle_events",
 			Up:      migrateAddTicketLifecycleEvents,
 		},
+		{
+			Version: 18,
+			Name:    "add_channel_conversation_agent_provider",
+			Up:      migrateAddChannelConversationAgentProvider,
+		},
 	}
 }
 
@@ -451,6 +456,27 @@ func migrateAddTicketLifecycleEvents(db *gorm.DB) error {
 		return err
 	}
 	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_ticket_lifecycle_task_run_id ON ticket_lifecycle_events(task_run_id);`).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func migrateAddChannelConversationAgentProvider(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	has, err := tableHasColumn(db, "channel_conversations", "agent_provider")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	if err := db.Exec(`ALTER TABLE channel_conversations ADD COLUMN agent_provider TEXT NOT NULL DEFAULT '';`).Error; err != nil {
+		msg := strings.ToLower(strings.TrimSpace(err.Error()))
+		if strings.Contains(msg, "duplicate column name") {
+			return nil
+		}
 		return err
 	}
 	return nil

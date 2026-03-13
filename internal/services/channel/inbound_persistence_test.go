@@ -261,6 +261,9 @@ func TestPersistTurnResultTx_FinalizeSucceededAndFailure(t *testing.T) {
 	if strings.TrimSpace(gotConv.AgentSessionID) != "sess-1" {
 		t.Fatalf("conversation agent_session_id mismatch: %q", gotConv.AgentSessionID)
 	}
+	if strings.TrimSpace(gotConv.AgentProvider) != "fake" {
+		t.Fatalf("conversation agent_provider mismatch: %q", gotConv.AgentProvider)
+	}
 
 	var gotOutbox contracts.ChannelOutbox
 	if err := db.First(&gotOutbox, successOut.Persisted.OutboxID).Error; err != nil {

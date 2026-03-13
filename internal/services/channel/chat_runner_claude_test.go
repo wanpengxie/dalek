@@ -220,6 +220,20 @@ func TestClaudeChatRunner_CanUseTool_LowRiskBypassesManualApproval(t *testing.T)
 	}
 }
 
+func TestDecorateClaudeRunnerError_AppendsStderr(t *testing.T) {
+	err := decorateClaudeRunnerError(errors.New("exit code 1"), "line-1\nline-2")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "exit code 1") {
+		t.Fatalf("missing original error: %q", msg)
+	}
+	if !strings.Contains(msg, "stderr: line-1\nline-2") {
+		t.Fatalf("missing stderr detail: %q", msg)
+	}
+}
+
 func TestClaudeChatRunner_CanUseTool_HighRiskRequiresManualApproval(t *testing.T) {
 	r := &claudeChatRunner{}
 	called := false

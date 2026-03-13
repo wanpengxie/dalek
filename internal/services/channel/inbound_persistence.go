@@ -403,6 +403,9 @@ func PersistTurnResultTx(ctx context.Context, tx *gorm.DB, p PersistTurnResultPa
 	convUpdates := map[string]any{
 		"updated_at": now,
 	}
+	if payload.AgentProvider != "" {
+		convUpdates["agent_provider"] = payload.AgentProvider
+	}
 	if payload.AgentSessionID != "" {
 		convUpdates["agent_session_id"] = payload.AgentSessionID
 	}

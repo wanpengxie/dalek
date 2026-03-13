@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"dalek/internal/agent/eventlog"
@@ -178,6 +179,9 @@ func (s *Service) executeTurnAgent(ctx context.Context, tctx *turnContext) (pmAg
 		return pmAgentTurnResponse{}, fmt.Errorf("turn context 不能为空")
 	}
 
+	if err := s.reconcileConversationAgentSession(ctx, &tctx.conv, tctx.provider); err != nil {
+		return pmAgentTurnResponse{}, err
+	}
 	s.cancelConflictingTurn(tctx.conv.AgentSessionID, tctx.job.ID)
 	if err := s.acquireTurnSlot(ctx); err != nil {
 		return pmAgentTurnResponse{}, err
@@ -225,6 +229,7 @@ func (s *Service) executeTurnAgent(ctx context.Context, tctx *turnContext) (pmAg
 			DurationMS: time.Since(tctx.startedAt).Milliseconds(),
 			ReplyText:  replyForLog,
 			Error:      errForLog,
+			Stderr:     strings.TrimSpace(agentResp.Stderr),
 			SessionID:  agentResp.SessionID,
 		})
 	}

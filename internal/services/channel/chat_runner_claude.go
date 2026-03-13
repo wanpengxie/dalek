@@ -38,6 +38,9 @@ type claudeChatRunner struct {
 	// Per-turn tool approval callback, set by RunTurn, read by canUseTool.
 	toolApprovalMu sync.Mutex
 	toolApprovalFn func(ctx context.Context, toolName string, input map[string]any) (bool, error)
+
+	stderrMu    sync.Mutex
+	stderrLines []string
 }
 
 var highRiskBashCommandPatterns = []*regexp.Regexp{
@@ -86,7 +89,10 @@ func newClaudeChatRunner(ctx context.Context, req ChatRunRequest) (ChatRunner, e
 		opts = append(opts, claude.WithSettings(settings))
 	}
 	opts = append(opts, claude.WithIncludePartialMessages())
-	opts = append(opts, claude.WithSettingSources(claude.SettingSourceProject))
+	opts = append(opts, claude.WithStderr(runner.appendStderr))
+	opts = append(opts, claude.WithExtraArgs(map[string]*string{
+		"debug-to-stderr": nil,
+	}))
 
 	// Register CanUseTool callback that delegates to per-turn handler.
 	// This ensures Claude CLI's ask-mode permission requests are handled
@@ -160,6 +166,46 @@ func (r *claudeChatRunner) setToolApproval(fn func(ctx context.Context, toolName
 	r.toolApprovalFn = fn
 }
 
+func (r *claudeChatRunner) appendStderr(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	r.stderrMu.Lock()
+	defer r.stderrMu.Unlock()
+	r.stderrLines = append(r.stderrLines, line)
+}
+
+func (r *claudeChatRunner) resetStderr() {
+	r.stderrMu.Lock()
+	defer r.stderrMu.Unlock()
+	r.stderrLines = nil
+}
+
+func (r *claudeChatRunner) collectedStderr() string {
+	r.stderrMu.Lock()
+	defer r.stderrMu.Unlock()
+	if len(r.stderrLines) == 0 {
+		return ""
+	}
+	return strings.Join(r.stderrLines, "\n")
+}
+
+func decorateClaudeRunnerError(err error, stderr string) error {
+	if err == nil {
+		return nil
+	}
+	stderr = strings.TrimSpace(stderr)
+	if stderr == "" {
+		return err
+	}
+	const maxLen = 2000
+	if len(stderr) > maxLen {
+		stderr = stderr[:maxLen] + "...(truncated)"
+	}
+	return fmt.Errorf("%w\nstderr: %s", err, stderr)
+}
+
 func (r *claudeChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEvent ChatEventHandler) (ChatRunResult, error) {
 	r.runMu.Lock()
 	defer r.runMu.Unlock()
@@ -168,9 +214,19 @@ func (r *claudeChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 	r.setToolApproval(req.OnToolApproval)
 	defer r.setToolApproval(nil)
 
+	r.resetStderr()
+	out := ChatRunResult{
+		Command:    req.Command,
+		OutputMode: agentcli.OutputJSON,
+	}
+	if out.Command == "" {
+		out.Command = "claude(sdk)"
+	}
+
 	client, err := r.ensureClientConnected(ctx)
 	if err != nil {
-		return ChatRunResult{}, err
+		out.Stderr = r.collectedStderr()
+		return out, decorateClaudeRunnerError(err, out.Stderr)
 	}
 
 	sessionID := req.SessionID
@@ -179,20 +235,15 @@ func (r *claudeChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 	}
 	if err := client.QueryWithSession(ctx, req.Prompt, sessionID); err != nil {
 		r.resetClientIfSame(client)
-		return ChatRunResult{}, err
+		out.SessionID = sessionID
+		out.Stderr = r.collectedStderr()
+		return out, decorateClaudeRunnerError(err, out.Stderr)
 	}
 
 	msgs, errs := client.ReceiveResponseWithErrors(ctx)
 	lines := make([]string, 0, 128)
 	texts := make([]string, 0, 16)
 	events := make([]agentcli.Event, 0, 64)
-	out := ChatRunResult{
-		Command:    req.Command,
-		OutputMode: agentcli.OutputJSON,
-	}
-	if out.Command == "" {
-		out.Command = "claude(sdk)"
-	}
 
 	for msg := range msgs {
 		ev, sid, text := convertClaudeMessageToAgentCLIEvent(msg)
@@ -219,9 +270,10 @@ func (r *claudeChatRunner) RunTurn(ctx context.Context, req ChatRunRequest, onEv
 	if out.Text == "" {
 		out.Text = lastAgentCLIEventText(events)
 	}
+	out.Stderr = r.collectedStderr()
 	if err, ok := <-errs; ok && err != nil {
 		r.resetClientIfSame(client)
-		return out, err
+		return out, decorateClaudeRunnerError(err, out.Stderr)
 	}
 	return out, nil
 }

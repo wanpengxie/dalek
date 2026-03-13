@@ -102,6 +102,7 @@ func TestWriteFooter(t *testing.T) {
 	err = logger.WriteFooter(RunFooter{
 		RunID:      "run-f",
 		ReplyText:  "done",
+		Stderr:     "boom",
 		DurationMS: 12345,
 		SessionID:  "sess-1",
 	})
@@ -115,6 +116,7 @@ func TestWriteFooter(t *testing.T) {
 	assertEqual(t, rec["phase"], "end")
 	assertEqual(t, rec["run_id"], "run-f")
 	assertEqual(t, rec["reply_text"], "done")
+	assertEqual(t, rec["stderr"], "boom")
 	assertEqual(t, rec["session_id"], "sess-1")
 	if dur, ok := rec["duration_ms"].(float64); !ok || dur != 12345 {
 		t.Fatalf("expected duration_ms=12345, got %v", rec["duration_ms"])

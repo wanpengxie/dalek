@@ -304,6 +304,7 @@ func (s *Service) ResetPeerConversationSession(ctx context.Context, channelType 
 	if err := db.WithContext(ctx).Model(&contracts.ChannelConversation{}).
 		Where("id = ?", conv.ID).
 		Updates(map[string]any{
+			"agent_provider":   "",
 			"agent_session_id": "",
 			"updated_at":       now,
 		}).Error; err != nil {
@@ -389,6 +390,7 @@ func (s *Service) HardResetPeerConversation(ctx context.Context, channelType con
 	if err := db.WithContext(ctx).Model(&contracts.ChannelConversation{}).
 		Where("id = ?", conv.ID).
 		Updates(map[string]any{
+			"agent_provider":   "",
 			"agent_session_id": "",
 			"updated_at":       now,
 		}).Error; err != nil {
@@ -474,6 +476,65 @@ func (s *Service) resolvePeerConversation(ctx context.Context, channelType contr
 		return contracts.ChannelConversation{}, false, err
 	}
 	return conv, true, nil
+}
+
+func (s *Service) reconcileConversationAgentSession(ctx context.Context, conv *contracts.ChannelConversation, provider string) error {
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		return fmt.Errorf("context 不能为空")
+	}
+	if conv == nil {
+		return fmt.Errorf("conversation 不能为空")
+	}
+	if conv.ID == 0 {
+		return fmt.Errorf("conversation id 不能为空")
+	}
+
+	normalizedProvider := strings.ToLower(strings.TrimSpace(provider))
+	storedProvider := strings.ToLower(strings.TrimSpace(conv.AgentProvider))
+	sessionID := strings.TrimSpace(conv.AgentSessionID)
+	if normalizedProvider == "" {
+		return nil
+	}
+
+	now := time.Now()
+	switch {
+	case sessionID == "" && storedProvider == normalizedProvider:
+		return nil
+	case sessionID == "":
+		if err := db.WithContext(ctx).Model(&contracts.ChannelConversation{}).
+			Where("id = ?", conv.ID).
+			Updates(map[string]any{
+				"agent_provider": normalizedProvider,
+				"updated_at":     now,
+			}).Error; err != nil {
+			return err
+		}
+		conv.AgentProvider = normalizedProvider
+		return nil
+	case storedProvider == normalizedProvider:
+		return nil
+	}
+
+	if err := db.WithContext(ctx).Model(&contracts.ChannelConversation{}).
+		Where("id = ?", conv.ID).
+		Updates(map[string]any{
+			"agent_provider":   normalizedProvider,
+			"agent_session_id": "",
+			"updated_at":       now,
+		}).Error; err != nil {
+		return err
+	}
+	s.cancelRunningTurnByConversation(conv.ID)
+	if manager := s.chatRunnerManagerSnapshot(); manager != nil {
+		manager.CloseConversation(fmt.Sprintf("%d", conv.ID))
+	}
+	conv.AgentProvider = normalizedProvider
+	conv.AgentSessionID = ""
+	return nil
 }
 
 func (s *Service) gatewayTurnTimeout() time.Duration {

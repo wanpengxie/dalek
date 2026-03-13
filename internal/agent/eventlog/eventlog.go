@@ -29,6 +29,7 @@ type RunFooter struct {
 	RunID      string `json:"run_id"`
 	ReplyText  string `json:"reply_text,omitempty"`
 	Error      string `json:"error,omitempty"`
+	Stderr     string `json:"stderr,omitempty"`
 	SessionID  string `json:"session_id,omitempty"`
 	DurationMS int64  `json:"duration_ms"`
 }
@@ -122,6 +123,9 @@ func (l *RunLogger) WriteFooter(footer RunFooter) error {
 	}
 	if footer.Error != "" {
 		rec["error"] = footer.Error
+	}
+	if footer.Stderr != "" {
+		rec["stderr"] = footer.Stderr
 	}
 	if footer.SessionID != "" {
 		rec["session_id"] = footer.SessionID

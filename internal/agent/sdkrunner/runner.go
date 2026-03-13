@@ -280,6 +280,7 @@ func Run(ctx context.Context, req Request, onEvent EventHandler) (out Result, ru
 				DurationMS: time.Since(startedAt).Milliseconds(),
 				ReplyText:  strings.TrimSpace(out.Text),
 				Error:      errString(runErr),
+				Stderr:     strings.TrimSpace(out.Stderr),
 				SessionID:  strings.TrimSpace(out.SessionID),
 			})
 			_ = evLogger.Close()
