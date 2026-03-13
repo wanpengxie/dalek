@@ -85,8 +85,9 @@ type startedMsg struct {
 	Err      error
 }
 
-type stoppedMsg struct {
+type ticketLoopCanceledMsg struct {
 	TicketID uint
+	Result   app.DaemonTicketLoopCancelResult
 	Err      error
 }
 
@@ -114,12 +115,6 @@ type queuedRunMsg struct {
 type workerRunMsg struct {
 	TicketID uint
 	Receipt  app.DaemonTicketLoopSubmitReceipt
-	Err      error
-}
-
-type interruptedMsg struct {
-	TicketID uint
-	Result   app.InterruptResult
 	Err      error
 }
 
@@ -301,7 +296,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		archivedTickets: nil,
 		showArchiveRows: false,
 		archiveErr:      "",
-		helpMsg:         "g 管理员  n notebook  c 新建  Enter tmux  s 启动  p 排队执行  i 中断  a 日志  k 停止  d 归档  r 重新跑  e 编辑  v 事件  Shift+K/J backlog排序  +/- 优先级  0-4 状态  t 配色  q 退出",
+		helpMsg:         "g 管理员  n notebook  c 新建  Enter tmux  s 启动  p 排队执行  a 日志  k 取消worker loop  d 归档  r 重新跑  e 编辑  v 事件  Shift+K/J backlog排序  +/- 优先级  0-4 状态  t 配色  q 退出",
 		status:          "就绪",
 		errMsg:          "",
 		titleInput:      ti,
@@ -610,13 +605,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshStarted = time.Now()
 		return m, m.refreshCmd()
 
-	case stoppedMsg:
+	case ticketLoopCanceledMsg:
 		if msg.Err != nil {
 			m.errMsg = msg.Err.Error()
+			m.status = fmt.Sprintf("取消 worker loop 失败 t%d：%v", msg.TicketID, msg.Err)
+			return m, nil
+		}
+		if !msg.Result.Canceled {
+			reason := strings.TrimSpace(msg.Result.Reason)
+			if reason == "" {
+				reason = "worker loop 不存在或不在当前 daemon 中"
+			}
+			m.errMsg = reason
+			m.status = fmt.Sprintf("取消 worker loop 失败 t%d：%s", msg.TicketID, reason)
 			return m, nil
 		}
 		m.errMsg = ""
-		m.status = fmt.Sprintf("已停止 ticket #%d", msg.TicketID)
+		m.status = fmt.Sprintf("已请求取消 worker loop t%d", msg.TicketID)
 		m.refreshInFlight = true
 		m.refreshManual = false
 		m.refreshTicketID = 0
@@ -684,20 +689,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				worker = fmt.Sprintf("w%d", msg.Receipt.WorkerID)
 			}
 			m.status = fmt.Sprintf("重新跑已提交 t%d（worker=%s stages=待回传 next_action=待回传）", msg.TicketID, worker)
-		}
-		m.refreshInFlight = true
-		m.refreshManual = false
-		m.refreshTicketID = 0
-		m.refreshStarted = time.Now()
-		return m, m.refreshCmd()
-
-	case interruptedMsg:
-		if msg.Err != nil {
-			m.errMsg = msg.Err.Error()
-			m.status = fmt.Sprintf("中断失败 t%d：%v", msg.TicketID, msg.Err)
-		} else {
-			m.errMsg = ""
-			m.status = fmt.Sprintf("已中断 t%d（Ctrl+C）", msg.TicketID)
 		}
 		m.refreshInFlight = true
 		m.refreshManual = false
@@ -833,7 +824,7 @@ func (m *model) applyViews(views []app.TicketView) {
 		switch {
 		case v.DerivedStatus == contracts.TicketDone:
 			done = append(done, v)
-		case v.RuntimeNeedsUser || v.DerivedStatus == contracts.TicketBlocked || v.DerivedStatus == contracts.TicketQueued:
+		case v.DerivedStatus == contracts.TicketBlocked || v.DerivedStatus == contracts.TicketQueued:
 			waiting = append(waiting, v)
 		case v.DerivedStatus == contracts.TicketActive:
 			running = append(running, v)

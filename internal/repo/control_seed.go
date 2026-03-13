@@ -54,6 +54,11 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 			return err
 		}
 	}
+	// 将 .dalek/ 添加到 repo 根目录 .gitignore，防止 worktree checkout 带入 PM kernel
+	repoGitignore := filepath.Join(layout.RepoRoot, ".gitignore")
+	if err := infra.EnsureLineInFile(repoGitignore, ".dalek/"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -160,6 +165,11 @@ func UpdateControlPlaneSeed(layout Layout, projectName string) ([]ControlPlaneCh
 		if err := infra.EnsureLineInFile(layout.ProjectGitignorePath, line); err != nil {
 			return nil, err
 		}
+	}
+	// 将 .dalek/ 添加到 repo 根目录 .gitignore，防止 worktree checkout 带入 PM kernel
+	repoGitignore := filepath.Join(layout.RepoRoot, ".gitignore")
+	if err := infra.EnsureLineInFile(repoGitignore, ".dalek/"); err != nil {
+		return nil, err
 	}
 	return changes, nil
 }

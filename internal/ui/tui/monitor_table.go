@@ -83,17 +83,6 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("排队执行中 t%d...", id)
 		m.errMsg = ""
 		return m, m.queueRunTicketCmd(id)
-	case "i":
-		id, ok, denied := m.selectedTicketForAction(ticketActionInterrupt)
-		if !ok {
-			if denied != "" {
-				m.status = denied
-				m.errMsg = ""
-			}
-			return m, nil
-		}
-		m.status = fmt.Sprintf("中断中 t%d...", id)
-		return m, m.interruptTicketCmd(id)
 	case "k":
 		id, ok, denied := m.selectedTicketForAction(ticketActionStop)
 		if !ok {
@@ -103,6 +92,7 @@ func (m model) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		m.status = fmt.Sprintf("取消中 t%d...", id)
 		return m, m.stopTicketCmd(id)
 	case "K":
 		plan, ok, denied := m.planBacklogReorder(-1)

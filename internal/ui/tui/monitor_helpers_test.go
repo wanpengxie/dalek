@@ -1,6 +1,11 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+
+	"dalek/internal/app"
+	"dalek/internal/contracts"
+)
 
 func TestTailTail(t *testing.T) {
 	got := tailTail([]string{"1", "2", "3", "4"}, 2)
@@ -111,5 +116,31 @@ func TestTmuxSessionForWorktree_DifferentPathDifferentSession(t *testing.T) {
 	b := tmuxSessionForWorktree("/tmp/ticket-t71-demo-fedcba10")
 	if a == b {
 		t.Fatalf("different path should map to different session, got=%q", a)
+	}
+}
+
+func TestFormatExecutionState_ActiveNeedsUserKeepsRuntimeState(t *testing.T) {
+	v := app.TicketView{
+		Ticket:             contracts.Ticket{ID: 1},
+		LatestWorker:       &contracts.Worker{ID: 1, Status: contracts.WorkerRunning},
+		DerivedStatus:      contracts.TicketActive,
+		RuntimeHealthState: contracts.TaskHealthBusy,
+		RuntimeNeedsUser:   true,
+	}
+	if got := formatExecutionState(v); got != "运行中" {
+		t.Fatalf("formatExecutionState(active+needs_user)=%q, want 运行中", got)
+	}
+}
+
+func TestFormatExecutionState_WaitingUserHealthWins(t *testing.T) {
+	v := app.TicketView{
+		Ticket:             contracts.Ticket{ID: 1},
+		LatestWorker:       &contracts.Worker{ID: 1, Status: contracts.WorkerRunning},
+		DerivedStatus:      contracts.TicketActive,
+		RuntimeHealthState: contracts.TaskHealthWaitingUser,
+		RuntimeNeedsUser:   true,
+	}
+	if got := formatExecutionState(v); got != "等待输入" {
+		t.Fatalf("formatExecutionState(waiting_user)=%q, want 等待输入", got)
 	}
 }

@@ -53,12 +53,12 @@ func TestUpdateTable_AllowedActionReturnsCommand(t *testing.T) {
 	v.Capability.CanStop = true
 	m.viewsByID[10] = v
 
-	gotModel, cmd := m.updateTable(keyRune('i')) // running 分区允许 interrupt
+	gotModel, cmd := m.updateTable(keyRune('k')) // running 分区允许 cancel loop
 	if cmd == nil {
 		t.Fatalf("allowed action should return cmd")
 	}
 	got := gotModel.(model)
-	if !strings.Contains(got.status, "中断中 t10") {
+	if !strings.Contains(got.status, "取消中 t10") {
 		t.Fatalf("unexpected status: %q", got.status)
 	}
 }

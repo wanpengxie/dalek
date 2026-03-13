@@ -56,6 +56,31 @@ func TestApplyViews_GroupOrderAndNoHeaderRows(t *testing.T) {
 	}
 }
 
+func TestApplyViews_ActiveNeedsUserStaysInRunningSection(t *testing.T) {
+	m := newModel(nil, nil, "")
+	m.applyViews([]app.TicketView{
+		{
+			Ticket:             contracts.Ticket{ID: 10, Title: "需要确认但仍在运行"},
+			DerivedStatus:      contracts.TicketActive,
+			RuntimeHealthState: contracts.TaskHealthBusy,
+			RuntimeNeedsUser:   true,
+		},
+	})
+
+	found := false
+	for _, r := range m.rowRefs {
+		if r.kind == rowTicket && r.ticketID == 10 {
+			found = true
+			if r.section != "running" {
+				t.Fatalf("active+needs_user should stay in running section, got=%s", r.section)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("ticket row not found")
+	}
+}
+
 func TestManagerInspectorLeftView_ShowsPendingIssuePreview(t *testing.T) {
 	m := newModel(nil, nil, "")
 	m.applyViews([]app.TicketView{

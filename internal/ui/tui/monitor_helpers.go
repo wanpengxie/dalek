@@ -192,7 +192,6 @@ const (
 	ticketActionStart     ticketAction = "start"
 	ticketActionQueueRun  ticketAction = "queue_run"
 	ticketActionWorkerRun ticketAction = "worker_run"
-	ticketActionInterrupt ticketAction = "interrupt"
 	ticketActionStop      ticketAction = "stop"
 	ticketActionAttach    ticketAction = "attach"
 	ticketActionArchive   ticketAction = "archive"
@@ -210,10 +209,8 @@ func actionLabel(action ticketAction) string {
 		return "排队执行(p)"
 	case ticketActionWorkerRun:
 		return "重新跑(r)"
-	case ticketActionInterrupt:
-		return "中断(i)"
 	case ticketActionStop:
-		return "停止(k)"
+		return "取消(k)"
 	case ticketActionAttach:
 		return "日志(a)"
 	case ticketActionArchive:
@@ -255,9 +252,6 @@ func (m model) selectedTicketForAction(action ticketAction) (uint, bool, string)
 			allowed = cap.CanQueueRun
 		case ticketActionWorkerRun:
 			allowed = cap.CanQueueRun
-		case ticketActionInterrupt:
-			// interrupt 需要 session 可用，复用 stop 的 capability。
-			allowed = cap.CanStop
 		case ticketActionStop:
 			allowed = cap.CanStop
 		case ticketActionAttach:
@@ -518,21 +512,16 @@ func (m model) workerRunTicketCmd(id uint) tea.Cmd {
 	}
 }
 
-func (m model) interruptTicketCmd(id uint) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		r, err := m.p.InterruptTicket(ctx, id)
-		return interruptedMsg{TicketID: id, Result: r, Err: err}
-	}
-}
-
 func (m model) stopTicketCmd(id uint) tea.Cmd {
 	return func() tea.Msg {
+		client, err := app.NewDaemonAPIClientFromHome(m.home)
+		if err != nil {
+			return ticketLoopCanceledMsg{TicketID: id, Err: fmt.Errorf("daemon 不在线: %w", err)}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		err := m.p.StopTicket(ctx, id)
-		return stoppedMsg{TicketID: id, Err: err}
+		r, err := client.CancelTicketLoop(ctx, m.projectName, id)
+		return ticketLoopCanceledMsg{TicketID: id, Result: r, Err: err}
 	}
 }
 
@@ -835,7 +824,7 @@ func formatRuntimeState(v app.TicketView) string {
 }
 
 func formatExecutionState(v app.TicketView) string {
-	if v.RuntimeNeedsUser || v.RuntimeHealthState == contracts.TaskHealthWaitingUser {
+	if v.RuntimeHealthState == contracts.TaskHealthWaitingUser {
 		return "等待输入"
 	}
 	if v.LatestWorker == nil {
