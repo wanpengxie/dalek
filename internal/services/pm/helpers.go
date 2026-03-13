@@ -28,3 +28,12 @@ func marshalJSON(v any) string {
 	}
 	return strings.TrimSpace(string(b))
 }
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
+}
