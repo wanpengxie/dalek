@@ -89,7 +89,7 @@ attachments={{OTHER_DOCUMENTS：需求相关的附属资料与上下文集合。
 		t.Fatalf("create worker failed: %v", err)
 	}
 
-	paths, err := svc.ensureWorkerBootstrap(context.Background(), ticket, worker, "入口提示")
+	paths, err := svc.ensureWorkerBootstrap(context.Background(), ticket, worker, "入口提示", workerBootstrapModeFirstBootstrap)
 	if err != nil {
 		t.Fatalf("ensureWorkerBootstrap failed: %v", err)
 	}
@@ -102,17 +102,13 @@ attachments={{OTHER_DOCUMENTS：需求相关的附属资料与上下文集合。
 	if !strings.Contains(kernel, "<title>\nbootstrap title\n</title>") {
 		t.Fatalf("agent-kernel should come from control worker template, got=%q", kernel)
 	}
-	if !strings.Contains(kernel, "attachments=Ticket 事实（self-driven bootstrap）：") {
-		t.Fatalf("agent-kernel attachments placeholder should be replaced, got=%q", kernel)
-	}
-
 	stateRaw, err := os.ReadFile(paths.StateJSON)
 	if err != nil {
 		t.Fatalf("read state failed: %v", err)
 	}
 	state := string(stateRaw)
-	if strings.Contains(state, "{{") {
-		t.Fatalf("state placeholders should be replaced, got=%q", state)
+	if !strings.Contains(state, "\"head_sha\":") {
+		t.Fatalf("state should contain rendered code facts, got=%q", state)
 	}
 	if !strings.Contains(state, "\"id\": \""+strconv.FormatUint(uint64(ticket.ID), 10)+"\"") {
 		t.Fatalf("state should include ticket id, got=%q", state)
@@ -134,6 +130,92 @@ attachments={{OTHER_DOCUMENTS：需求相关的附属资料与上下文集合。
 	if !seen["agent-kernel.md"] || !seen["state.json"] {
 		t.Fatalf("worker bootstrap output mismatch, got=%v", seen)
 	}
+}
+
+func TestDetermineWorkerBootstrapMode_UsesWorkerDeliverTicketHistory(t *testing.T) {
+	svc, project, _ := newServiceForTest(t)
+	ticketWithHistory := createTicket(t, project.DB, "bootstrap-mode-history")
+	workerWithHistory := contracts.Worker{
+		TicketID:     ticketWithHistory.ID,
+		Status:       contracts.WorkerStopped,
+		WorktreePath: filepath.Join(t.TempDir(), "worker-with-history"),
+		Branch:       "ticket-history",
+		LogPath:      filepath.Join(t.TempDir(), "worker-with-history.log"),
+	}
+	if err := project.DB.Create(&workerWithHistory).Error; err != nil {
+		t.Fatalf("create workerWithHistory failed: %v", err)
+	}
+	createWorkerTaskRun(t, project.DB, ticketWithHistory.ID, workerWithHistory.ID, "bootstrap_mode_worker_1")
+
+	ticketWithoutHistory := createTicket(t, project.DB, "bootstrap-mode-fresh")
+	workerWithoutHistory := contracts.Worker{
+		TicketID:     ticketWithoutHistory.ID,
+		Status:       contracts.WorkerStopped,
+		WorktreePath: filepath.Join(t.TempDir(), "worker-without-history"),
+		Branch:       "ticket-fresh",
+		LogPath:      filepath.Join(t.TempDir(), "worker-without-history.log"),
+	}
+	if err := project.DB.Create(&workerWithoutHistory).Error; err != nil {
+		t.Fatalf("create workerWithoutHistory failed: %v", err)
+	}
+
+	mode1, err := svc.determineWorkerBootstrapMode(context.Background(), workerWithHistory.ID)
+	if err != nil {
+		t.Fatalf("determineWorkerBootstrapMode(workerWithHistory) failed: %v", err)
+	}
+	if mode1 != workerBootstrapModeRecoveryRepair {
+		t.Fatalf("expected workerWithHistory recovery mode, got=%s", mode1)
+	}
+
+	mode2, err := svc.determineWorkerBootstrapMode(context.Background(), workerWithoutHistory.ID)
+	if err != nil {
+		t.Fatalf("determineWorkerBootstrapMode(workerWithoutHistory) failed: %v", err)
+	}
+	if mode2 != workerBootstrapModeFirstBootstrap {
+		t.Fatalf("expected workerWithoutHistory first bootstrap mode, got=%s", mode2)
+	}
+}
+
+func writeControlWorkerTemplatesForTest(t *testing.T, layout repo.Layout, kernelTemplate, stateTemplate string) {
+	t.Helper()
+	if err := os.WriteFile(repo.ControlWorkerKernelPath(layout), []byte(strings.TrimSpace(kernelTemplate)+"\n"), 0o644); err != nil {
+		t.Fatalf("write custom worker-kernel failed: %v", err)
+	}
+	if err := os.WriteFile(repo.ControlWorkerStatePath(layout), []byte(strings.TrimSpace(stateTemplate)+"\n"), 0o644); err != nil {
+		t.Fatalf("write custom worker state failed: %v", err)
+	}
+}
+
+func primeWorkerBootstrapFilesForTest(t *testing.T, worktreePath, kernel, state string) repo.ContractPaths {
+	t.Helper()
+	paths, err := repo.EnsureWorktreeContract(worktreePath)
+	if err != nil {
+		t.Fatalf("ensure worktree contract failed: %v", err)
+	}
+	if err := os.WriteFile(paths.AgentKernelMD, []byte(kernel), 0o644); err != nil {
+		t.Fatalf("write agent-kernel failed: %v", err)
+	}
+	if err := os.WriteFile(paths.StateJSON, []byte(state), 0o644); err != nil {
+		t.Fatalf("write state.json failed: %v", err)
+	}
+	return paths
+}
+
+func readWorkerBootstrapFilesForTest(t *testing.T, worktreePath string) (string, string) {
+	t.Helper()
+	paths, err := repo.EnsureWorktreeContract(worktreePath)
+	if err != nil {
+		t.Fatalf("ensure worktree contract failed: %v", err)
+	}
+	kernel, err := os.ReadFile(paths.AgentKernelMD)
+	if err != nil {
+		t.Fatalf("read agent-kernel failed: %v", err)
+	}
+	state, err := os.ReadFile(paths.StateJSON)
+	if err != nil {
+		t.Fatalf("read state.json failed: %v", err)
+	}
+	return string(kernel), string(state)
 }
 
 func mustRun(t *testing.T, dir string, name string, args ...string) {

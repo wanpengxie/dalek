@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	workerKernelTitlePlaceholder       = "{{TICKET_TITLE：业务任务标题。用于定义本轮交付主题，回答“这轮要完成什么业务目标”。}}"
-	workerKernelDescPlaceholder        = "{{TICKET_DESCRIPTION：业务需求正文。用于说明背景、目标、约束与期望结果，回答“为什么做、做到什么算有效”。}}"
+	workerKernelTitlePlaceholder = "{{TICKET_TITLE：业务任务标题。用于定义本轮交付主题，回答“这轮要完成什么业务目标”。}}"
+	workerKernelDescPlaceholder  = "{{TICKET_DESCRIPTION：业务需求正文。用于说明背景、目标、约束与期望结果，回答“为什么做、做到什么算有效”。}}"
 	// 共享占位符：kernel 和 state.json 模板复用同一套
 	placeholderTicketID          = "{{DALEK_TICKET_ID}}"
 	placeholderWorkerID          = "{{DALEK_WORKER_ID}}"
@@ -29,7 +29,23 @@ const (
 
 type bootstrapGitFacts = repo.WorktreeGitBaseline
 
-func (s *Service) ensureWorkerBootstrap(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (repo.ContractPaths, error) {
+type workerBootstrapMode string
+
+const (
+	workerBootstrapModeFirstBootstrap workerBootstrapMode = "first_bootstrap"
+	workerBootstrapModeRecoveryRepair workerBootstrapMode = "recovery_repair"
+)
+
+type bootstrapFileWriteOptions struct {
+	JSONStrict     bool
+	ForceOverwrite bool
+}
+
+func (m workerBootstrapMode) ForceOverwrite() bool {
+	return m == workerBootstrapModeFirstBootstrap
+}
+
+func (s *Service) ensureWorkerBootstrap(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string, mode workerBootstrapMode) (repo.ContractPaths, error) {
 	p, db, err := s.require()
 	if err != nil {
 		return repo.ContractPaths{}, err
@@ -69,13 +85,44 @@ func (s *Service) ensureWorkerBootstrap(ctx context.Context, t contracts.Ticket,
 		return repo.ContractPaths{}, err
 	}
 
-	if err := ensureBootstrapFile(paths.AgentKernelMD, kernelContent, 0o644, false); err != nil {
+	forceOverwrite := mode.ForceOverwrite()
+	if err := ensureBootstrapFile(paths.AgentKernelMD, kernelContent, 0o644, bootstrapFileWriteOptions{
+		ForceOverwrite: forceOverwrite,
+	}); err != nil {
 		return repo.ContractPaths{}, err
 	}
-	if err := ensureBootstrapFile(paths.StateJSON, stateContent, 0o644, true); err != nil {
+	if err := ensureBootstrapFile(paths.StateJSON, stateContent, 0o644, bootstrapFileWriteOptions{
+		JSONStrict:     true,
+		ForceOverwrite: forceOverwrite,
+	}); err != nil {
 		return repo.ContractPaths{}, err
 	}
 	return paths, nil
+}
+
+func (s *Service) determineWorkerBootstrapMode(ctx context.Context, workerID uint) (workerBootstrapMode, error) {
+	_, db, err := s.require()
+	if err != nil {
+		return "", err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if workerID == 0 {
+		return "", fmt.Errorf("worker_id 不能为空")
+	}
+
+	var existing int64
+	if err := db.WithContext(ctx).
+		Model(&contracts.TaskRun{}).
+		Where("owner_type = ? AND task_type = ? AND worker_id = ?", contracts.TaskOwnerWorker, contracts.TaskTypeDeliverTicket, workerID).
+		Count(&existing).Error; err != nil {
+		return "", fmt.Errorf("查询 worker 历史 deliver_ticket runs 失败（w%d）: %w", workerID, err)
+	}
+	if existing == 0 {
+		return workerBootstrapModeFirstBootstrap, nil
+	}
+	return workerBootstrapModeRecoveryRepair, nil
 }
 
 func renderWorkerKernelBootstrap(layout repo.Layout, t contracts.Ticket, w contracts.Worker, facts bootstrapGitFacts, now time.Time) (string, error) {
@@ -136,8 +183,6 @@ func buildWorkerEntrypointPrompt(entryPrompt string) string {
 	return strings.TrimSpace(fmt.Sprintf(prompt, supplemental))
 }
 
-
-
 func bootstrapTicketTitle(t contracts.Ticket) string {
 	title := strings.TrimSpace(t.Title)
 	if title == "" {
@@ -181,14 +226,15 @@ func bootstrapWorkingTreeStatus(v string) string {
 	}
 }
 
-
-func ensureBootstrapFile(path, content string, mode os.FileMode, jsonStrict bool) error {
-	existing, err := os.ReadFile(path)
-	if err == nil && !bootstrapFileNeedsRefresh(existing, jsonStrict) {
-		return nil
-	}
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("读取 bootstrap 文件失败(%s): %w", path, err)
+func ensureBootstrapFile(path, content string, mode os.FileMode, opt bootstrapFileWriteOptions) error {
+	if !opt.ForceOverwrite {
+		existing, err := os.ReadFile(path)
+		if err == nil && !bootstrapFileNeedsRefresh(existing, opt.JSONStrict) {
+			return nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("读取 bootstrap 文件失败(%s): %w", path, err)
+		}
 	}
 	if err := os.WriteFile(path, []byte(content), mode); err != nil {
 		return fmt.Errorf("写入 bootstrap 文件失败(%s): %w", path, err)

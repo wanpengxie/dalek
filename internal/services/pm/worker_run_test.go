@@ -2,7 +2,9 @@ package pm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -346,5 +348,145 @@ func TestRunTicketWorker_CanceledLoopSkipsExecutionLostClosure(t *testing.T) {
 	}
 	if afterRun.OrchestrationState != contracts.TaskCanceled {
 		t.Fatalf("expected task run canceled, got=%s", afterRun.OrchestrationState)
+	}
+}
+
+func TestRunTicketWorker_FirstBootstrapForceOverwritesPreexistingFiles(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	writeControlWorkerTemplatesForTest(t, p.Layout,
+		`
+<identity>worker-template</identity>
+<ticket>{{DALEK_TICKET_ID}}</ticket>
+<worker>{{DALEK_WORKER_ID}}</worker>
+`,
+		`
+{
+  "ticket": {
+    "id": "{{DALEK_TICKET_ID}}",
+    "worker_id": "{{DALEK_WORKER_ID}}"
+  },
+  "code": {
+    "head_sha": "{{HEAD_SHA}}"
+  },
+  "updated_at": "{{NOW_RFC3339}}"
+}
+`)
+
+	tk := createTicket(t, p.DB, "worker-run-bootstrap-force")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	primeWorkerBootstrapFilesForTest(t, w.WorktreePath, "PM KERNEL SHOULD BE OVERWRITTEN\n", "{\n  \"owner\": \"pm\"\n}\n")
+
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return nil, errors.New("stop after bootstrap")
+	}
+
+	_, err = svc.RunTicketWorker(context.Background(), tk.ID, WorkerRunOptions{EntryPrompt: "继续执行任务"})
+	if err == nil || !strings.Contains(err.Error(), "stop after bootstrap") {
+		t.Fatalf("expected stop-after-bootstrap error, got=%v", err)
+	}
+
+	kernel, state := readWorkerBootstrapFilesForTest(t, w.WorktreePath)
+	if strings.Contains(kernel, "PM KERNEL SHOULD BE OVERWRITTEN") {
+		t.Fatalf("expected first bootstrap to overwrite preexisting kernel, got=%q", kernel)
+	}
+	if !strings.Contains(kernel, "<identity>worker-template</identity>") {
+		t.Fatalf("expected worker template kernel, got=%q", kernel)
+	}
+	if strings.Contains(state, "\"owner\": \"pm\"") {
+		t.Fatalf("expected first bootstrap to overwrite preexisting state, got=%q", state)
+	}
+	if !strings.Contains(state, "\"worker_id\": \""+strconv.FormatUint(uint64(w.ID), 10)+"\"") {
+		t.Fatalf("expected state to contain worker id, got=%q", state)
+	}
+}
+
+func TestRunTicketWorker_RecoveryKeepsExistingValidBootstrapFiles(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	writeControlWorkerTemplatesForTest(t, p.Layout,
+		`
+<identity>worker-template</identity>
+<ticket>{{DALEK_TICKET_ID}}</ticket>
+`,
+		`
+{
+  "ticket": {
+    "id": "{{DALEK_TICKET_ID}}"
+  },
+  "updated_at": "{{NOW_RFC3339}}"
+}
+`)
+
+	tk := createTicket(t, p.DB, "worker-run-bootstrap-recovery-keep")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "bootstrap_recovery_keep")
+	primeWorkerBootstrapFilesForTest(t, w.WorktreePath, "KEEP EXISTING WORKER KERNEL\n", "{\n  \"mode\": \"keep\"\n}\n")
+
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return nil, errors.New("stop after bootstrap")
+	}
+
+	_, err = svc.RunTicketWorker(context.Background(), tk.ID, WorkerRunOptions{EntryPrompt: "继续执行任务"})
+	if err == nil || !strings.Contains(err.Error(), "stop after bootstrap") {
+		t.Fatalf("expected stop-after-bootstrap error, got=%v", err)
+	}
+
+	kernel, state := readWorkerBootstrapFilesForTest(t, w.WorktreePath)
+	if kernel != "KEEP EXISTING WORKER KERNEL\n" {
+		t.Fatalf("expected recovery to preserve valid kernel, got=%q", kernel)
+	}
+	if state != "{\n  \"mode\": \"keep\"\n}\n" {
+		t.Fatalf("expected recovery to preserve valid state, got=%q", state)
+	}
+}
+
+func TestRunTicketWorker_RecoveryRepairsDamagedBootstrapFiles(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	writeControlWorkerTemplatesForTest(t, p.Layout,
+		`
+<identity>worker-template</identity>
+<ticket>{{DALEK_TICKET_ID}}</ticket>
+`,
+		`
+{
+  "ticket": {
+    "id": "{{DALEK_TICKET_ID}}",
+    "worker_id": "{{DALEK_WORKER_ID}}"
+  },
+  "updated_at": "{{NOW_RFC3339}}"
+}
+`)
+
+	tk := createTicket(t, p.DB, "worker-run-bootstrap-recovery-repair")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "bootstrap_recovery_repair")
+	primeWorkerBootstrapFilesForTest(t, w.WorktreePath, "", "{invalid json")
+
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return nil, errors.New("stop after bootstrap")
+	}
+
+	_, err = svc.RunTicketWorker(context.Background(), tk.ID, WorkerRunOptions{EntryPrompt: "继续执行任务"})
+	if err == nil || !strings.Contains(err.Error(), "stop after bootstrap") {
+		t.Fatalf("expected stop-after-bootstrap error, got=%v", err)
+	}
+
+	kernel, state := readWorkerBootstrapFilesForTest(t, w.WorktreePath)
+	if !strings.Contains(kernel, "<identity>worker-template</identity>") {
+		t.Fatalf("expected recovery to repair kernel from template, got=%q", kernel)
+	}
+	if !json.Valid([]byte(state)) {
+		t.Fatalf("expected recovery to repair state into valid JSON, got=%q", state)
+	}
+	if !strings.Contains(state, "\"worker_id\": \""+strconv.FormatUint(uint64(w.ID), 10)+"\"") {
+		t.Fatalf("expected repaired state to contain worker id, got=%q", state)
 	}
 }

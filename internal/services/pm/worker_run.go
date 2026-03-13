@@ -60,7 +60,11 @@ func (s *Service) RunTicketWorker(ctx context.Context, ticketID uint, opt Worker
 	if entryPrompt == "" {
 		entryPrompt = defaultContinuePrompt
 	}
-	if _, err := s.ensureWorkerBootstrap(ctx, t, *w, entryPrompt); err != nil {
+	bootstrapMode, err := s.determineWorkerBootstrapMode(ctx, w.ID)
+	if err != nil {
+		return WorkerRunResult{}, fmt.Errorf("判定 worker bootstrap 模式失败（w%d）：%w", w.ID, err)
+	}
+	if _, err := s.ensureWorkerBootstrap(ctx, t, *w, entryPrompt, bootstrapMode); err != nil {
 		return WorkerRunResult{}, err
 	}
 
