@@ -90,7 +90,7 @@ func (s *Service) RunTicketWorker(ctx context.Context, ticketID uint, opt Worker
 	if err != nil {
 		var closureErr *workerLoopClosureExhaustedError
 		if errors.As(err, &closureErr) {
-			if applyErr := s.applyWorkerLoopClosureFallbackWaitUser(ctx, t.ID, *w, loopResult, closureErr.Decision, "pm.worker_run.closure"); applyErr == nil {
+			if applyErr := s.applyWorkerLoopClosureFallback(ctx, t.ID, *w, loopResult, closureErr.Decision, "pm.worker_run.closure"); applyErr == nil {
 				return WorkerRunResult{
 					TicketID:       ticketID,
 					WorkerID:       w.ID,
@@ -98,8 +98,9 @@ func (s *Service) RunTicketWorker(ctx context.Context, ticketID uint, opt Worker
 					Stages:         loopResult.Stages,
 					LastNextAction: string(contracts.NextWaitUser),
 				}, nil
+			} else {
+				return WorkerRunResult{}, fmt.Errorf("worker loop closure fallback 失败（closure=%s）: %w", strings.TrimSpace(closureErr.Error()), applyErr)
 			}
-			err = fmt.Errorf("worker loop closure fallback 失败: %w", err)
 		}
 		loopErrMsg := strings.TrimSpace(err.Error())
 		if workflowPromoted {
@@ -138,6 +139,13 @@ func (s *Service) RunTicketWorker(ctx context.Context, ticketID uint, opt Worker
 		Stages:         loopResult.Stages,
 		LastNextAction: strings.TrimSpace(loopResult.LastNextAction),
 	}, nil
+}
+
+func (s *Service) applyWorkerLoopClosureFallback(ctx context.Context, ticketID uint, w contracts.Worker, loopResult WorkerLoopResult, decision workerLoopStageClosureDecision, source string) error {
+	if s != nil && s.workerLoopClosureFallbackApplier != nil {
+		return s.workerLoopClosureFallbackApplier(ctx, ticketID, w, loopResult, decision, source)
+	}
+	return s.applyWorkerLoopClosureFallbackWaitUser(ctx, ticketID, w, loopResult, decision, source)
 }
 
 func workerRunAutoStartEnabled(v *bool) bool {

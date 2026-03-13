@@ -617,7 +617,7 @@ func cmdAgentLogs(args []string) {
 				grew = true
 			}
 		}
-		status, _ := p.GetTaskStatus(context.Background(), uint(*runID))
+		status, _ := p.GetTaskStatus(followCtx, uint(*runID))
 		if status != nil && isTaskTerminal(status.OrchestrationState) && !grew {
 			return
 		}

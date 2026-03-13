@@ -932,7 +932,7 @@ func TestExecutionHost_SubmitTicketLoop_ReusesLiveTicketLoopAcrossRequestIDs(t *
 		t.Fatalf("worker-run goroutine not started")
 	}
 
-	probe := host.ProbeTicketLoop("demo", 1)
+	probe := host.ProbeTicketLoop(context.Background(), "demo", 1)
 	if !probe.Found {
 		t.Fatalf("expected live ticket loop probe to succeed")
 	}
@@ -1460,7 +1460,7 @@ func TestExecutionHost_CancelTaskRun_UsesRunProjectIndex(t *testing.T) {
 	}
 	host.addRunProjectIndex(runID, "beta")
 
-	res, err := host.CancelTaskRun(runID)
+	res, err := host.CancelTaskRun(context.Background(), runID)
 	if err != nil {
 		t.Fatalf("CancelTaskRun failed: %v", err)
 	}
@@ -1512,7 +1512,7 @@ func TestExecutionHost_CancelTaskRun_UsesProjectTaskCancelerForHistoricalRun(t *
 	}
 	host.addRunProjectIndex(runID, "beta")
 
-	res, err := host.CancelTaskRun(runID)
+	res, err := host.CancelTaskRun(context.Background(), runID)
 	if err != nil {
 		t.Fatalf("CancelTaskRun failed: %v", err)
 	}
@@ -1562,7 +1562,7 @@ func TestExecutionHost_CancelTicketLoop_CancelsLiveLoop(t *testing.T) {
 		t.Fatalf("worker-run goroutine not started")
 	}
 
-	res, err := host.CancelTicketLoop("demo", 1)
+	res, err := host.CancelTicketLoop(context.Background(), "demo", 1)
 	if err != nil {
 		t.Fatalf("CancelTicketLoop failed: %v", err)
 	}
@@ -1576,7 +1576,7 @@ func TestExecutionHost_CancelTicketLoop_CancelsLiveLoop(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	cleared := false
 	for time.Now().Before(deadline) {
-		if !host.ProbeTicketLoop("demo", 1).Found {
+		if !host.ProbeTicketLoop(context.Background(), "demo", 1).Found {
 			cleared = true
 			break
 		}
@@ -1618,10 +1618,10 @@ func TestExecutionHost_ProbeTicketLoop_ReportsCancelingSnapshot(t *testing.T) {
 		t.Fatalf("worker-run goroutine not started")
 	}
 
-	if _, err := host.CancelTicketLoop("demo", 1); err != nil {
+	if _, err := host.CancelTicketLoop(context.Background(), "demo", 1); err != nil {
 		t.Fatalf("CancelTicketLoop failed: %v", err)
 	}
-	probe := host.ProbeTicketLoop("demo", 1)
+	probe := host.ProbeTicketLoop(context.Background(), "demo", 1)
 	if !probe.Found || !probe.OwnedByCurrentDaemon {
 		t.Fatalf("unexpected probe found/owned: %+v", probe)
 	}
@@ -1656,7 +1656,7 @@ func waitForTicketLoopGone(t *testing.T, host *ExecutionHost, project string, ti
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if !host.ProbeTicketLoop(project, ticketID).Found {
+		if !host.ProbeTicketLoop(context.Background(), project, ticketID).Found {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

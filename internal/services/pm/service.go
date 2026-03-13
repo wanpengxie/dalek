@@ -19,6 +19,9 @@ import (
 // workerSDKHandleLauncherFunc 是 launchWorkerSDKHandle 的函数签名，用于测试注入。
 type workerSDKHandleLauncherFunc func(ctx context.Context, t contracts.Ticket, w contracts.Worker, entryPrompt string) (agentexec.AgentRunHandle, error)
 
+// workerLoopClosureFallbackApplierFunc 是 closure fallback 的函数签名，用于测试注入。
+type workerLoopClosureFallbackApplierFunc func(ctx context.Context, ticketID uint, w contracts.Worker, loopResult WorkerLoopResult, decision workerLoopStageClosureDecision, source string) error
+
 type Service struct {
 	p                  *core.Project
 	worker             *worker.Service
@@ -33,7 +36,9 @@ type Service struct {
 
 	// sdkHandleLauncher 用于测试注入，生产环境保持 nil（使用真实的 launchWorkerSDKHandle）。
 	sdkHandleLauncher workerSDKHandleLauncherFunc
-	runner            sdkrunner.TaskRunner
+	// workerLoopClosureFallbackApplier 用于测试注入，生产环境保持 nil（使用真实 fallback）。
+	workerLoopClosureFallbackApplier workerLoopClosureFallbackApplierFunc
+	runner                           sdkrunner.TaskRunner
 }
 
 func New(p *core.Project, workerSvc *worker.Service) *Service {

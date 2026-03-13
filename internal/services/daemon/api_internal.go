@@ -567,7 +567,7 @@ func (s *InternalAPI) handleTaskRunEvents(w http.ResponseWriter, r *http.Request
 }
 
 func (s *InternalAPI) handleTaskRunCancel(w http.ResponseWriter, r *http.Request, runID uint) {
-	result, err := s.host.CancelTaskRun(runID)
+	result, err := s.host.CancelTaskRun(r.Context(), runID)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "cancel_failed", err.Error())
 		return
@@ -588,7 +588,7 @@ func (s *InternalAPI) handleTicketLoopProbe(w http.ResponseWriter, r *http.Reque
 		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	probe := s.host.ProbeTicketLoop(projectName, ticketID)
+	probe := s.host.ProbeTicketLoop(r.Context(), projectName, ticketID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"found":                   probe.Found,
 		"owned_by_current_daemon": probe.OwnedByCurrentDaemon,
@@ -609,7 +609,7 @@ func (s *InternalAPI) handleTicketLoopCancel(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	result, err := s.host.CancelTicketLoop(projectName, ticketID)
+	result, err := s.host.CancelTicketLoop(r.Context(), projectName, ticketID)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "cancel_failed", err.Error())
 		return

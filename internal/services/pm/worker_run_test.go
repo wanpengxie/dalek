@@ -223,6 +223,72 @@ func TestRunTicketWorker_DirtyDoneClosureFallsBackToWaitUser(t *testing.T) {
 	}
 }
 
+func TestRunTicketWorker_ClosureFallbackFailureSkipsExecutionLost(t *testing.T) {
+	svc, p, git := newServiceForTest(t)
+	git.WorktreeDirtyValue = true
+	svc.workerLoopClosureFallbackApplier = func(ctx context.Context, ticketID uint, w contracts.Worker, loopResult WorkerLoopResult, decision workerLoopStageClosureDecision, source string) error {
+		return errors.New("forced fallback failure")
+	}
+
+	tk := createTicket(t, p.DB, "worker-run-closure-fallback-failed")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "本地修改尚未收口", nil, true, testWorkerDoneHeadSHA, "dirty")
+
+	runID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	report := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  runID,
+		HeadSHA:    testWorkerDoneHeadSHA,
+		Summary:    "实现看起来完成了",
+		NextAction: string(contracts.NextDone),
+	}
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test-runtime"); err != nil {
+		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	}
+
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return &fakeAgentRunHandle{
+			runID:  runID,
+			result: agentexec.AgentRunResult{ExitCode: 0},
+		}, nil
+	}
+
+	_, err = svc.RunTicketWorker(context.Background(), tk.ID, WorkerRunOptions{EntryPrompt: "继续执行任务"})
+	if err == nil {
+		t.Fatalf("expected closure fallback failure")
+	}
+	if !strings.Contains(err.Error(), "worker loop closure fallback 失败") {
+		t.Fatalf("expected fallback failure in error, got=%v", err)
+	}
+	if !strings.Contains(err.Error(), "forced fallback failure") {
+		t.Fatalf("expected wrapped fallback cause, got=%v", err)
+	}
+
+	var lifecycleCount int64
+	if err := p.DB.Model(&contracts.TicketLifecycleEvent{}).
+		Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionLost).
+		Count(&lifecycleCount).Error; err != nil {
+		t.Fatalf("count execution_lost lifecycle failed: %v", err)
+	}
+	if lifecycleCount != 0 {
+		t.Fatalf("expected no execution_lost lifecycle after closure fallback failure, got=%d", lifecycleCount)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("query ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketActive {
+		t.Fatalf("expected ticket remain active after closure fallback failure, got=%s", ticket.WorkflowStatus)
+	}
+}
+
 func TestRunTicketWorker_CanceledLoopSkipsExecutionLostClosure(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "worker-run-canceled-loop")

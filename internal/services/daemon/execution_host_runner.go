@@ -59,9 +59,6 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 			observedRunID = status.RunID
 		}
 		h.attachHandleRun(handle, status.RunID, status.WorkerID)
-		if strings.TrimSpace(handle.phase) == "" {
-			h.setHandlePhase(handle, pmsvc.WorkerLoopPhaseRunning)
-		}
 	}
 
 	resCh := make(chan WorkerRunResult, 1)

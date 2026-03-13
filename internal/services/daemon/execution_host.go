@@ -537,9 +537,12 @@ func (h *ExecutionHost) ListRunEvents(ctx context.Context, runID uint, limit int
 	return project.ListTaskEvents(ctx, runID, limit)
 }
 
-func (h *ExecutionHost) CancelTaskRun(runID uint) (CancelResult, error) {
+func (h *ExecutionHost) CancelTaskRun(ctx context.Context, runID uint) (CancelResult, error) {
 	if h == nil || h.resolver == nil {
 		return CancelResult{}, fmt.Errorf("execution host 未初始化")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if runID == 0 {
 		return CancelResult{}, fmt.Errorf("run_id 不能为空")
@@ -548,8 +551,7 @@ func (h *ExecutionHost) CancelTaskRun(runID uint) (CancelResult, error) {
 	handle := h.runs[runID]
 	h.mu.RUnlock()
 	if handle != nil {
-		executionTicketLoopControlSink{host: h, handle: handle}.LoopCancelRequested()
-		if err := h.cancelHandle(handle); err != nil {
+		if err := h.cancelHandle(ctx, handle); err != nil {
 			return CancelResult{}, err
 		}
 		return CancelResult{
@@ -561,12 +563,12 @@ func (h *ExecutionHost) CancelTaskRun(runID uint) (CancelResult, error) {
 			Reason:    "cancel signal sent",
 		}, nil
 	}
-	status, projectName, err := h.findRunStatusByIndex(context.Background(), runID)
+	status, projectName, err := h.findRunStatusByIndex(ctx, runID)
 	if err != nil {
 		return CancelResult{}, err
 	}
 	if status == nil {
-		status, projectName, err = h.findRunStatusByScan(context.Background(), runID)
+		status, projectName, err = h.findRunStatusByScan(ctx, runID)
 	}
 	if err != nil {
 		return CancelResult{}, err
@@ -575,8 +577,7 @@ func (h *ExecutionHost) CancelTaskRun(runID uint) (CancelResult, error) {
 		return CancelResult{Found: false, Canceled: false}, nil
 	}
 	if live, ok := h.lookupLiveTicketLoop(runKindWorker, projectName, status.TicketID); ok {
-		executionTicketLoopControlSink{host: h, handle: live}.LoopCancelRequested()
-		if err := h.cancelHandle(live); err != nil {
+		if err := h.cancelHandle(ctx, live); err != nil {
 			return CancelResult{}, err
 		}
 		return CancelResult{
@@ -588,7 +589,7 @@ func (h *ExecutionHost) CancelTaskRun(runID uint) (CancelResult, error) {
 			Reason:    "ticket loop cancel signal sent",
 		}, nil
 	}
-	if canceled, ok, err := h.cancelTaskRunInProject(projectName, runID); err != nil {
+	if canceled, ok, err := h.cancelTaskRunInProject(ctx, projectName, runID); err != nil {
 		return CancelResult{}, err
 	} else if ok {
 		return CancelResult{
@@ -610,8 +611,11 @@ func (h *ExecutionHost) CancelTaskRun(runID uint) (CancelResult, error) {
 	}, nil
 }
 
-func (h *ExecutionHost) ProbeTicketLoop(project string, ticketID uint) TicketLoopProbeResult {
+func (h *ExecutionHost) ProbeTicketLoop(ctx context.Context, project string, ticketID uint) TicketLoopProbeResult {
 	if h == nil {
+		return TicketLoopProbeResult{}
+	}
+	if ctx != nil && ctx.Err() != nil {
 		return TicketLoopProbeResult{}
 	}
 	project = strings.TrimSpace(project)
@@ -638,7 +642,10 @@ func (h *ExecutionHost) ProbeTicketLoop(project string, ticketID uint) TicketLoo
 	}
 }
 
-func (h *ExecutionHost) CancelTicketLoop(project string, ticketID uint) (CancelResult, error) {
+func (h *ExecutionHost) CancelTicketLoop(ctx context.Context, project string, ticketID uint) (CancelResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	handle, ok := h.lookupLiveTicketLoop(runKindWorker, strings.TrimSpace(project), ticketID)
 	if !ok || handle == nil {
 		return CancelResult{
@@ -649,7 +656,7 @@ func (h *ExecutionHost) CancelTicketLoop(project string, ticketID uint) (CancelR
 			Reason:   "ticket loop 不存在",
 		}, nil
 	}
-	if err := h.cancelHandle(handle); err != nil {
+	if err := h.cancelHandle(ctx, handle); err != nil {
 		return CancelResult{}, err
 	}
 	return CancelResult{
@@ -662,9 +669,12 @@ func (h *ExecutionHost) CancelTicketLoop(project string, ticketID uint) (CancelR
 	}, nil
 }
 
-func (h *ExecutionHost) cancelHandle(handle *executionRunHandle) error {
+func (h *ExecutionHost) cancelHandle(ctx context.Context, handle *executionRunHandle) error {
 	if h == nil || handle == nil {
 		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if handle.kind == runKindWorker {
 		executionTicketLoopControlSink{host: h, handle: handle}.LoopCancelRequested()
@@ -673,16 +683,19 @@ func (h *ExecutionHost) cancelHandle(handle *executionRunHandle) error {
 		handle.cancel()
 	}
 	if handle.runID != 0 {
-		if _, _, err := h.cancelTaskRunInProject(handle.project, handle.runID); err != nil {
+		if _, _, err := h.cancelTaskRunInProject(ctx, handle.project, handle.runID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (h *ExecutionHost) cancelTaskRunInProject(projectName string, runID uint) (TaskRunCancelResult, bool, error) {
+func (h *ExecutionHost) cancelTaskRunInProject(ctx context.Context, projectName string, runID uint) (TaskRunCancelResult, bool, error) {
 	if h == nil || h.resolver == nil || runID == 0 {
 		return TaskRunCancelResult{}, false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	project, err := h.resolver.OpenProject(strings.TrimSpace(projectName))
 	if err != nil {
@@ -692,7 +705,7 @@ func (h *ExecutionHost) cancelTaskRunInProject(projectName string, runID uint) (
 	if !ok || canceler == nil {
 		return TaskRunCancelResult{}, false, nil
 	}
-	result, err := canceler.CancelTaskRun(context.Background(), runID)
+	result, err := canceler.CancelTaskRun(ctx, runID)
 	if err != nil {
 		return TaskRunCancelResult{}, true, err
 	}
