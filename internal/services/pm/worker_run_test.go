@@ -63,6 +63,55 @@ func TestRunTicketWorker_DoneClosurePromotesTicketOnLoopExit(t *testing.T) {
 	}
 }
 
+func TestRunTicketWorker_DoneClosureAllowsEmptyPhaseList(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "worker-run-done-empty-phases")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	writeWorkerLoopStateWithItemsForTest(t, w.WorktreePath, "done", "单阶段任务已完成", nil, "done", []map[string]any{}, strings.Repeat("c", 40), "clean")
+
+	runID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	report := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  runID,
+		HeadSHA:    strings.Repeat("c", 40),
+		Summary:    "单阶段任务已完成",
+		NextAction: string(contracts.NextDone),
+	}
+	if err := svc.ApplyWorkerReport(context.Background(), report, "test-runtime"); err != nil {
+		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	}
+	writeWorkerLoopStateWithItemsForTest(t, w.WorktreePath, "done", "单阶段任务已完成", nil, "done", []map[string]any{}, report.HeadSHA, "clean")
+
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return &fakeAgentRunHandle{
+			runID:  runID,
+			result: agentexec.AgentRunResult{ExitCode: 0},
+		}, nil
+	}
+
+	result, err := svc.RunTicketWorker(context.Background(), tk.ID, WorkerRunOptions{EntryPrompt: "继续执行任务"})
+	if err != nil {
+		t.Fatalf("RunTicketWorker failed: %v", err)
+	}
+	if result.LastNextAction != string(contracts.NextDone) {
+		t.Fatalf("unexpected last next_action: %q", result.LastNextAction)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("query ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketDone {
+		t.Fatalf("expected ticket done after empty phase closure, got=%s", ticket.WorkflowStatus)
+	}
+}
+
 func TestRunTicketWorker_WaitUserClosureBlocksTicketOnLoopExit(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "worker-run-wait-user-closure")

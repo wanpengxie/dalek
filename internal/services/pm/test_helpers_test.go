@@ -68,10 +68,6 @@ func createWorkerTaskRun(t *testing.T, db *gorm.DB, ticketID, workerID uint, req
 
 func writeWorkerLoopStateForTest(t *testing.T, worktreePath, nextAction, summary string, blockers []string, allDone bool, headSHA, workingTree string) {
 	t.Helper()
-	statePath := filepath.Join(worktreePath, ".dalek", "state.json")
-	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
-		t.Fatalf("mkdir state dir failed: %v", err)
-	}
 	items := []map[string]any{
 		{"id": "phase-understanding", "status": "done"},
 		{"id": "phase-implementation", "status": "done"},
@@ -88,6 +84,15 @@ func writeWorkerLoopStateForTest(t *testing.T, worktreePath, nextAction, summary
 		}
 		currentStatus = "running"
 	}
+	writeWorkerLoopStateWithItemsForTest(t, worktreePath, nextAction, summary, blockers, currentStatus, items, headSHA, workingTree)
+}
+
+func writeWorkerLoopStateWithItemsForTest(t *testing.T, worktreePath, nextAction, summary string, blockers []string, currentStatus string, items []map[string]any, headSHA, workingTree string) {
+	t.Helper()
+	statePath := filepath.Join(worktreePath, ".dalek", "state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("mkdir state dir failed: %v", err)
+	}
 	payload := map[string]any{
 		"ticket": map[string]any{
 			"id":        1,
@@ -95,7 +100,7 @@ func writeWorkerLoopStateForTest(t *testing.T, worktreePath, nextAction, summary
 		},
 		"phases": map[string]any{
 			"current_id":     "phase-handoff",
-			"current_status": currentStatus,
+			"current_status": strings.TrimSpace(currentStatus),
 			"next_action":    strings.TrimSpace(nextAction),
 			"summary":        strings.TrimSpace(summary),
 			"items":          items,

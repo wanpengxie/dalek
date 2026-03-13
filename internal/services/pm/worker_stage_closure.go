@@ -479,6 +479,7 @@ func readWorkerLoopStateSnapshot(worktreePath string) workerLoopStateSnapshot {
 	snapshot.CodeHeadSHA = strings.TrimSpace(state.Code.HeadSHA)
 	snapshot.CodeWorkingTree = strings.TrimSpace(state.Code.WorkingTree)
 	snapshot.LastCommitSubject = strings.TrimSpace(state.Code.LastCommitSubject)
+	snapshot.AllPhasesDone = true
 	if len(state.Phases.Items) > 0 {
 		phaseStatuses := make([]string, 0, len(state.Phases.Items))
 		allDone := true
