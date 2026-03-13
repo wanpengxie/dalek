@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -78,6 +79,58 @@ branch refs/heads/ts/demo-ticket-1
 	}
 	if ok || wt != "" {
 		t.Fatalf("unexpected not-found result: ok=%v wt=%q", ok, wt)
+	}
+}
+
+func TestGitExecClient_WorktreeDirty_IgnoresDalekControlPlane(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git 不可用，跳过真实 worktree dirty 测试: %v", err)
+	}
+
+	repoRoot := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoRoot
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v stderr=%s", args, err, string(out))
+		}
+	}
+	run("init")
+	run("config", "user.email", "dalek-test@example.com")
+	run("config", "user.name", "dalek-test")
+	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write README failed: %v", err)
+	}
+	run("add", "README.md")
+	run("commit", "-m", "init")
+
+	git := NewGitExecClient()
+
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".dalek"), 0o755); err != nil {
+		t.Fatalf("mkdir .dalek failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, ".dalek", "state.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write .dalek/state.json failed: %v", err)
+	}
+	dirty, err := git.WorktreeDirty(repoRoot)
+	if err != nil {
+		t.Fatalf("WorktreeDirty failed: %v", err)
+	}
+	if dirty {
+		t.Fatalf(".dalek control-plane files should be ignored by WorktreeDirty")
+	}
+
+	if err := os.WriteFile(filepath.Join(repoRoot, "feature.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write feature.txt failed: %v", err)
+	}
+	dirty, err = git.WorktreeDirty(repoRoot)
+	if err != nil {
+		t.Fatalf("WorktreeDirty failed after feature.txt: %v", err)
+	}
+	if !dirty {
+		t.Fatalf("product file changes should still mark worktree dirty")
 	}
 }
 

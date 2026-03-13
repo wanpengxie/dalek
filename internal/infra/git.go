@@ -89,7 +89,16 @@ func (g *GitExecClient) RemoveWorktree(repoRoot, path string, force bool) error 
 func (g *GitExecClient) WorktreeDirty(path string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := g.runner.Run(ctx, "", "git", "-C", strings.TrimSpace(path), "status", "--porcelain")
+	out, err := g.runner.Run(
+		ctx,
+		"",
+		"git",
+		"-C", strings.TrimSpace(path),
+		"status", "--porcelain",
+		"--", ".",
+		":(exclude).dalek",
+		":(exclude).dalek/**",
+	)
 	if err != nil {
 		return false, err
 	}
