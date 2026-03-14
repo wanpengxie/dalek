@@ -4,6 +4,7 @@ import (
 	"context"
 	"dalek/internal/contracts"
 	"dalek/internal/services/ticketlifecycle"
+	"dalek/internal/ticketatomic"
 	"fmt"
 	"strings"
 	"time"
@@ -51,6 +52,13 @@ func (s *Service) CreateWithDescriptionAndLabelAndPriorityAndTarget(ctx context.
 	if title == "" {
 		return nil, fmt.Errorf("title 不能为空")
 	}
+	targetRef, err := ticketatomic.NormalizeTargetRefInput(targetBranch)
+	if err != nil {
+		if strings.TrimSpace(targetBranch) == "" {
+			return nil, fmt.Errorf("ticket service 创建被拒绝：target_ref 不能为空。请通过 app.Project facade 创建 ticket，或显式提供规范化后的 target_ref。")
+		}
+		return nil, fmt.Errorf("ticket service 创建被拒绝：target_ref 非法: %w", err)
+	}
 	description = strings.TrimSpace(description)
 	label = normalizeLabel(label)
 	t := contracts.Ticket{
@@ -59,7 +67,7 @@ func (s *Service) CreateWithDescriptionAndLabelAndPriorityAndTarget(ctx context.
 		Label:          label,
 		WorkflowStatus: contracts.TicketBacklog,
 		Priority:       priority,
-		TargetBranch:   strings.TrimSpace(targetBranch),
+		TargetBranch:   targetRef,
 	}
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.WithContext(ctx).Create(&t).Error; err != nil {
