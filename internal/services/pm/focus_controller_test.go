@@ -2,10 +2,13 @@ package pm
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"dalek/internal/contracts"
+	"dalek/internal/services/core"
 )
 
 func TestAdvanceFocusController_AdoptsActiveTicket(t *testing.T) {
@@ -286,6 +289,224 @@ func TestAdvanceFocusController_BlocksAfterRestartExhausted(t *testing.T) {
 	if item.CurrentAttempt != 2 {
 		t.Fatalf("expected current_attempt=2 after second accept, got=%d", item.CurrentAttempt)
 	}
+}
+
+func TestAdvanceFocusController_BlocksMergeConflictWithoutCreatingIntegrationTicket(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, p.DB, "focus-merge-conflict")
+	tk2 := createTicket(t, p.DB, "focus-merge-conflict-next")
+	targetBranch := prepareFocusMergeConflictTicket(t, svc, p, tk1, "")
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID, tk2.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController select failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController merge failed: %v", err)
+	}
+
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	if view.Run.Status != contracts.FocusBlocked {
+		t.Fatalf("expected focus blocked, got=%s", view.Run.Status)
+	}
+	item1 := focusItemByTicketID(view.Items, tk1.ID)
+	if item1 == nil || item1.Status != contracts.FocusItemBlocked {
+		t.Fatalf("expected t%d blocked, got=%+v", tk1.ID, item1)
+	}
+	if item1.BlockedReason != focusBlockedReasonMergeFailed {
+		t.Fatalf("expected blocked_reason=%s, got=%s", focusBlockedReasonMergeFailed, item1.BlockedReason)
+	}
+	if item1.HandoffTicketID != nil {
+		t.Fatalf("expected no handoff ticket created, got=%v", item1.HandoffTicketID)
+	}
+	if got := focusItemByTicketID(view.Items, tk2.ID); got == nil || got.Status != contracts.FocusItemPending {
+		t.Fatalf("expected t%d stays pending while t%d is blocked, got=%+v", tk2.ID, tk1.ID, got)
+	}
+
+	var ticketCount int64
+	if err := p.DB.Model(&contracts.Ticket{}).Count(&ticketCount).Error; err != nil {
+		t.Fatalf("count tickets failed: %v", err)
+	}
+	if ticketCount != 2 {
+		t.Fatalf("expected no extra integration ticket, got count=%d", ticketCount)
+	}
+
+	if svc.gitHasConflicts(ctx) {
+		t.Fatalf("expected no unresolved conflicts after merge abort on %s", targetBranch)
+	}
+	if _, err := os.Stat(filepath.Join(p.RepoRoot, ".git", "MERGE_HEAD")); err == nil {
+		t.Fatalf("expected MERGE_HEAD removed after merge abort on %s", targetBranch)
+	}
+}
+
+func TestAdvanceFocusController_BlocksIntegrationTicketMergeConflictAsHandoffRequiresUser(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "focus-integration-merge-conflict")
+	prepareFocusMergeConflictTicket(t, svc, p, tk, "integration")
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController select failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController merge failed: %v", err)
+	}
+
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	if view.Run.Status != contracts.FocusBlocked {
+		t.Fatalf("expected focus blocked, got=%s", view.Run.Status)
+	}
+	item := focusItemByTicketID(view.Items, tk.ID)
+	if item == nil || item.Status != contracts.FocusItemBlocked {
+		t.Fatalf("expected ticket blocked, got=%+v", item)
+	}
+	if item.BlockedReason != focusBlockedReasonHandoffRecursionRequiresUser {
+		t.Fatalf("expected blocked_reason=%s, got=%s", focusBlockedReasonHandoffRecursionRequiresUser, item.BlockedReason)
+	}
+	if item.HandoffTicketID != nil {
+		t.Fatalf("expected no recursive handoff ticket created, got=%v", item.HandoffTicketID)
+	}
+}
+
+func TestAdvanceFocusController_DoesNotAutoResolveHandoffBlockedItem(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	source := createTicket(t, p.DB, "focus-handoff-source")
+	replacement := createTicket(t, p.DB, "focus-handoff-replacement")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", source.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare source ticket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", replacement.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationMerged,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare replacement ticket failed: %v", err)
+	}
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{source.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	item := focusItemByTicketID(view.Items, source.ID)
+	if item == nil {
+		t.Fatalf("expected focus item for t%d", source.ID)
+	}
+	if err := p.DB.Model(&contracts.FocusRun{}).Where("id = ?", res.FocusID).Updates(map[string]any{
+		"status":     contracts.FocusBlocked,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set focus blocked failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.FocusRunItem{}).Where("id = ?", item.ID).Updates(map[string]any{
+		"status":            contracts.FocusItemBlocked,
+		"blocked_reason":    focusBlockedReasonHandoffWaitingMerge,
+		"handoff_ticket_id": replacement.ID,
+		"updated_at":        time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set item handoff blocked failed: %v", err)
+	}
+
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController failed: %v", err)
+	}
+
+	after, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet after blocked tick failed: %v", err)
+	}
+	afterItem := focusItemByTicketID(after.Items, source.ID)
+	if after.Run.Status != contracts.FocusBlocked {
+		t.Fatalf("expected focus stays blocked, got=%s", after.Run.Status)
+	}
+	if afterItem == nil || afterItem.Status != contracts.FocusItemBlocked {
+		t.Fatalf("expected item stays blocked, got=%+v", afterItem)
+	}
+	if afterItem.BlockedReason != focusBlockedReasonHandoffWaitingMerge {
+		t.Fatalf("expected blocked_reason stays %s, got=%s", focusBlockedReasonHandoffWaitingMerge, afterItem.BlockedReason)
+	}
+
+	var sourceAfter contracts.Ticket
+	if err := p.DB.First(&sourceAfter, source.ID).Error; err != nil {
+		t.Fatalf("reload source ticket failed: %v", err)
+	}
+	if sourceAfter.SupersededByTicketID != nil {
+		t.Fatalf("expected source ticket not auto-superseded, got=%v", *sourceAfter.SupersededByTicketID)
+	}
+	if contracts.CanonicalIntegrationStatus(sourceAfter.IntegrationStatus) != contracts.IntegrationNeedsMerge {
+		t.Fatalf("expected source integration_status stays needs_merge, got=%s", sourceAfter.IntegrationStatus)
+	}
+}
+
+func prepareFocusMergeConflictTicket(t *testing.T, svc *Service, p *core.Project, tk contracts.Ticket, label string) string {
+	t.Helper()
+
+	targetBranch, _ := initGitRepoForIntegrationObserveTest(t, p.RepoRoot)
+	workerRef, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	workerBranch := workerRef.Branch
+	conflictFile := filepath.Join(p.RepoRoot, "conflict.txt")
+
+	mustRunGit(t, p.RepoRoot, "checkout", "-b", workerBranch)
+	if err := os.WriteFile(conflictFile, []byte("worker change\n"), 0o644); err != nil {
+		t.Fatalf("write worker conflict file failed: %v", err)
+	}
+	mustRunGit(t, p.RepoRoot, "add", "conflict.txt")
+	mustRunGit(t, p.RepoRoot, "commit", "-m", "worker conflict change")
+
+	mustRunGit(t, p.RepoRoot, "checkout", targetBranch)
+	if err := os.WriteFile(conflictFile, []byte("target change\n"), 0o644); err != nil {
+		t.Fatalf("write target conflict file failed: %v", err)
+	}
+	mustRunGit(t, p.RepoRoot, "add", "conflict.txt")
+	mustRunGit(t, p.RepoRoot, "commit", "-m", "target conflict change")
+
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"label":              label,
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"target_branch":      "refs/heads/" + targetBranch,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare merge conflict ticket failed: %v", err)
+	}
+	return targetBranch
 }
 
 func focusItemByTicketID(items []contracts.FocusRunItem, ticketID uint) *contracts.FocusRunItem {

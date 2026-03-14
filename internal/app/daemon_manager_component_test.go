@@ -47,6 +47,19 @@ func waitForMergeItemCount(t *testing.T, p *Project, ticketID uint, want int64, 
 	t.Fatalf("merge item count not reached: want=%d", want)
 }
 
+func waitForSubmitTicketLoopCalls(t *testing.T, host *stubManagerExecutionHost, want int, timeout time.Duration) []daemonsvc.TicketLoopSubmitRequest {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		calls := host.snapshot()
+		if len(calls) >= want {
+			return calls
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return host.snapshot()
+}
+
 func TestDaemonManagerComponent_NotifyProject_TriggersTick(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 
@@ -142,7 +155,6 @@ func (s *stubWarmupExecutionHost) CancelTicketLoop(_ context.Context, project st
 	return daemonsvc.CancelResult{Found: strings.TrimSpace(project) != "" && ticketID != 0, Canceled: ticketID != 0}, nil
 }
 
-
 func (s *stubWarmupExecutionHost) WarmupRunProjectIndex(project string, runIDs []uint) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -185,7 +197,7 @@ func TestDaemonManagerComponent_RunTickProject_UsesWorkerRunHostSubmitter(t *tes
 	manager.setExecutionHost(host)
 	manager.runTickProject(ctx, p.Name(), "test")
 
-	calls := host.snapshot()
+	calls := waitForSubmitTicketLoopCalls(t, host, 1, 3*time.Second)
 	if len(calls) != 1 {
 		t.Fatalf("expected one SubmitTicketLoop call, got=%d", len(calls))
 	}

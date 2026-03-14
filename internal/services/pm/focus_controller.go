@@ -248,52 +248,23 @@ func (s *Service) focusTickMergingItem(ctx context.Context, run contracts.FocusR
 	case mergeConflict:
 		conflictFiles := s.gitConflictFiles(ctx)
 		s.gitMergeAbort(context.WithoutCancel(ctx))
+		blockedReason := focusBlockedReasonMergeFailed
+		lastError := "merge conflict"
+		summary := "focus merge conflict aborted"
 		if strings.EqualFold(strings.TrimSpace(snapshot.Ticket.Label), "integration") {
-			if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventMergeAborted, "integration merge conflict requires user", map[string]any{
-				"ticket_id":      item.TicketID,
-				"conflict_files": conflictFiles,
-				"target_ref":     targetRef,
-				"blocked_reason": focusBlockedReasonHandoffRecursionRequiresUser,
-			}); err != nil {
-				return err
-			}
-			return s.focusBlockItem(ctx, run, item, focusBlockedReasonHandoffRecursionRequiresUser, "integration ticket merge conflict requires user")
+			blockedReason = focusBlockedReasonHandoffRecursionRequiresUser
+			lastError = "integration ticket merge conflict requires user"
+			summary = "integration merge conflict requires user"
 		}
-		targetHead, _ := s.resolveRefCommit(ctx, targetRef)
-		integration, err := s.CreateIntegrationTicket(ctx, contracts.CreateIntegrationTicketInput{
-			SourceTicketIDs:       []uint{item.TicketID},
-			TargetRef:             targetRef,
-			ConflictTargetHeadSHA: targetHead,
-			SourceAnchorSHAs:      trimNonEmptyStrings([]string{strings.TrimSpace(snapshot.Ticket.MergeAnchorSHA)}),
-			ConflictFiles:         conflictFiles,
-			MergeSummary:          "focus merge conflict",
-		})
-		if err != nil {
-			return s.focusBlockItem(ctx, run, item, focusBlockedReasonMergeFailed, err.Error())
-		}
-		now := time.Now()
-		if err := s.focusUpdateRunAndItem(ctx, run.ID, &item.ID, map[string]any{
-			"status": contracts.FocusBlocked,
-		}, map[string]any{
-			"status":            contracts.FocusItemBlocked,
-			"handoff_ticket_id": integration.TicketID,
-			"blocked_reason":    focusBlockedReasonHandoffWaitingMerge,
-			"last_error":        "merge conflict",
-			"updated_at":        now,
-		}, contracts.FocusEventIntegrationCreated, "integration ticket created", map[string]any{
-			"ticket_id":             item.TicketID,
-			"integration_ticket_id": integration.TicketID,
-			"conflict_files":        conflictFiles,
-			"target_ref":            targetRef,
-			"blocked_reason":        focusBlockedReasonHandoffWaitingMerge,
-		}); err != nil {
-			return err
-		}
-		return s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventMergeAborted, "focus merge conflict aborted", map[string]any{
+		if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventMergeAborted, summary, map[string]any{
 			"ticket_id":      item.TicketID,
 			"conflict_files": conflictFiles,
 			"target_ref":     targetRef,
-		})
+			"blocked_reason": blockedReason,
+		}); err != nil {
+			return err
+		}
+		return s.focusBlockItem(ctx, run, item, blockedReason, lastError)
 	default:
 		return s.focusBlockItem(ctx, run, item, focusBlockedReasonMergeFailed, "merge result unknown")
 	}
@@ -338,26 +309,7 @@ func (s *Service) focusTickBlockedItem(ctx context.Context, run contracts.FocusR
 	case contracts.FocusDesiredCanceling:
 		return s.focusTerminalizeItem(ctx, run.ID, item.ID, contracts.FocusCanceled, contracts.FocusItemCanceled)
 	}
-	if strings.TrimSpace(item.BlockedReason) != focusBlockedReasonHandoffWaitingMerge || item.HandoffTicketID == nil || *item.HandoffTicketID == 0 {
-		return nil
-	}
-	replacement, err := s.focusLoadTicketOnly(ctx, *item.HandoffTicketID)
-	if err != nil {
-		return err
-	}
-	if contracts.CanonicalIntegrationStatus(replacement.IntegrationStatus) != contracts.IntegrationMerged {
-		return nil
-	}
-	if err := s.FinalizeTicketSuperseded(ctx, item.TicketID, *item.HandoffTicketID, ""); err != nil {
-		return err
-	}
-	if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventHandoffResolved, "focus handoff resolved", map[string]any{
-		"ticket_id":             item.TicketID,
-		"replacement_ticket_id": *item.HandoffTicketID,
-	}); err != nil {
-		return err
-	}
-	return s.focusCompleteItem(ctx, run, item, "")
+	return nil
 }
 
 func (s *Service) focusHandleBlockedExecution(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, snapshot focusTicketSnapshot) error {
