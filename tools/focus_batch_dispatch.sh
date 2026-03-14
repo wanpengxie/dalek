@@ -32,12 +32,16 @@ log() {
 
 json_get() {
   local path="$1"
-  python3 - "$path" <<'PY'
+  local raw_json
+  raw_json="$(cat)"
+  JSON_INPUT="$raw_json" python3 - "$path" <<'PY'
 import json
+import os
 import sys
 
 path = [p for p in sys.argv[1].split(".") if p]
-obj = json.load(sys.stdin)
+raw = os.environ.get("JSON_INPUT", "")
+obj = json.loads(raw) if raw else {}
 value = obj
 for part in path:
     if isinstance(value, dict):
