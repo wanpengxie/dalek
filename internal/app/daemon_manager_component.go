@@ -399,7 +399,7 @@ type daemonManagerFocusLoopControl struct {
 	host        managerExecutionHost
 }
 
-func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Context, ticketID uint) (pmsvc.WorkerRunSubmission, error) {
+func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Context, ticketID uint, opt pmsvc.WorkerRunSubmitOptions) (pmsvc.WorkerRunSubmission, error) {
 	if s.host == nil {
 		return pmsvc.WorkerRunSubmission{}, fmt.Errorf("worker run host 未初始化")
 	}
@@ -409,9 +409,10 @@ func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Conte
 	}
 	requestID := fmt.Sprintf("mgr_t%d_%s", ticketID, strings.TrimSpace(daemonsvc.NewRequestID("mgr")))
 	receipt, err := s.host.SubmitTicketLoop(ctx, daemonsvc.TicketLoopSubmitRequest{
-		Project:   projectName,
-		TicketID:  ticketID,
-		RequestID: requestID,
+		Project:    projectName,
+		TicketID:   ticketID,
+		RequestID:  requestID,
+		BaseBranch: strings.TrimSpace(opt.BaseBranch),
 	})
 	if err != nil {
 		return pmsvc.WorkerRunSubmission{}, err

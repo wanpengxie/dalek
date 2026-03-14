@@ -634,6 +634,32 @@ func TestExecutionHost_StartTicket_ForwardsBaseBranch(t *testing.T) {
 	}
 }
 
+func TestExecutionHost_StartTicket_IntegrationRequiresBaseBranch(t *testing.T) {
+	project := &testExecutionHostProject{
+		ticketViews: []TicketView{
+			{
+				Ticket: contracts.Ticket{
+					ID:           9,
+					Label:        "integration",
+					TargetBranch: "refs/heads/main",
+				},
+			},
+		},
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	_, err = host.StartTicket(context.Background(), StartTicketRequest{
+		Project:  "demo",
+		TicketID: 9,
+	})
+	if err == nil || !strings.Contains(err.Error(), "base_branch") {
+		t.Fatalf("expected integration start require base_branch, got=%v", err)
+	}
+}
+
 func TestExecutionHost_OnRunSettled_WorkerRun(t *testing.T) {
 	resolver := &testExecutionHostResolver{project: &testExecutionHostProject{}}
 	notifyCh := make(chan string, 1)
@@ -782,6 +808,34 @@ func TestExecutionHost_SubmitTicketLoop_ForwardsAutoStartOption(t *testing.T) {
 	}
 	if got := project.LastDirectDispatchBaseBranch(); got != "release/v2" {
 		t.Fatalf("expected forwarded base_branch=release/v2, got=%q", got)
+	}
+}
+
+func TestExecutionHost_SubmitTicketLoop_IntegrationRequiresBaseBranch(t *testing.T) {
+	project := &testExecutionHostProject{
+		ticketViews: []TicketView{
+			{
+				Ticket: contracts.Ticket{
+					ID:           11,
+					Label:        "integration",
+					TargetBranch: "refs/heads/main",
+				},
+			},
+		},
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	_, err = host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
+		Project:   "demo",
+		TicketID:  11,
+		RequestID: "worker-integration-missing-base",
+		Prompt:    "继续执行任务",
+	})
+	if err == nil || !strings.Contains(err.Error(), "base_branch") {
+		t.Fatalf("expected integration submit require base_branch, got=%v", err)
 	}
 }
 

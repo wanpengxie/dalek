@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
+
+	"gorm.io/gorm"
 )
 
 type ExecutionHost struct {
@@ -134,8 +137,12 @@ func (h *ExecutionHost) StartTicket(ctx context.Context, req StartTicketRequest)
 	if err != nil {
 		return StartTicketReceipt{}, err
 	}
+	baseBranch, err := validateIntegrationBaseBranch(project, ctx, req.TicketID, req.BaseBranch)
+	if err != nil {
+		return StartTicketReceipt{}, err
+	}
 	worker, err := project.StartTicket(ctx, req.TicketID, StartTicketOptions{
-		BaseBranch: strings.TrimSpace(req.BaseBranch),
+		BaseBranch: baseBranch,
 	})
 	if err != nil {
 		return StartTicketReceipt{}, err
@@ -211,6 +218,14 @@ func (h *ExecutionHost) submitTicketRun(ctx context.Context, req ticketRunSubmit
 	if req.ticketID == 0 {
 		return nil, fmt.Errorf("ticket_id 不能为空")
 	}
+	project, err := h.resolver.OpenProject(projectName)
+	if err != nil {
+		return nil, err
+	}
+	baseBranch, err := validateIntegrationBaseBranch(project, context.Background(), req.ticketID, req.baseBranch)
+	if err != nil {
+		return nil, err
+	}
 	requestID := strings.TrimSpace(req.requestID)
 	retainRequest := requestID != ""
 	if requestID != "" {
@@ -232,7 +247,7 @@ func (h *ExecutionHost) submitTicketRun(ctx context.Context, req ticketRunSubmit
 		phase:         ticketLoopPhaseQueued,
 		entryPrompt:   req.prompt,
 		autoStart:     copyBoolPtr(req.autoStart),
-		baseBranch:    strings.TrimSpace(req.baseBranch),
+		baseBranch:    baseBranch,
 		ctx:           runCtx,
 		cancel:        cancel,
 		ready:         make(chan struct{}),
@@ -282,6 +297,57 @@ func copyBoolPtr(v *bool) *bool {
 	}
 	b := *v
 	return &b
+}
+
+func validateIntegrationBaseBranch(project ExecutionHostProject, ctx context.Context, ticketID uint, baseBranch string) (string, error) {
+	if project == nil {
+		return "", fmt.Errorf("project 不能为空")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	view, err := project.GetTicketViewByID(ctx, ticketID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) || strings.Contains(strings.ToLower(err.Error()), "record not found") {
+			return strings.TrimSpace(baseBranch), nil
+		}
+		return "", err
+	}
+	if view == nil || !strings.EqualFold(strings.TrimSpace(view.Ticket.Label), "integration") {
+		return strings.TrimSpace(baseBranch), nil
+	}
+	targetRef, err := normalizeExecutionHostTargetRef(strings.TrimSpace(view.Ticket.TargetBranch))
+	if err != nil {
+		return "", fmt.Errorf("integration ticket t%d 缺少有效 target_ref: %w", ticketID, err)
+	}
+	if strings.TrimSpace(baseBranch) == "" {
+		return "", fmt.Errorf("integration ticket t%d 缺少 base_branch；期望 %s", ticketID, targetRef)
+	}
+	normalizedBase, err := normalizeExecutionHostTargetRef(baseBranch)
+	if err != nil {
+		return "", fmt.Errorf("integration ticket t%d base_branch 非法: %w", ticketID, err)
+	}
+	if normalizedBase != targetRef {
+		return "", fmt.Errorf("integration ticket t%d base_branch=%s 与 target_ref=%s 不一致", ticketID, normalizedBase, targetRef)
+	}
+	return targetRef, nil
+}
+
+func normalizeExecutionHostTargetRef(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("target_ref 不能为空")
+	}
+	if strings.HasPrefix(raw, "refs/heads/") {
+		if strings.TrimPrefix(raw, "refs/heads/") == "" {
+			return "", fmt.Errorf("target_ref 非法: %s", raw)
+		}
+		return raw, nil
+	}
+	if strings.Contains(raw, " ") {
+		return "", fmt.Errorf("target_ref 非法: %s", raw)
+	}
+	return "refs/heads/" + raw, nil
 }
 
 func (h *ExecutionHost) SubmitSubagentRun(ctx context.Context, req SubagentSubmitRequest) (SubagentSubmitReceipt, error) {

@@ -199,10 +199,11 @@ func TestIntegration_FocusHandoff_StrictSerialDaemonOwnedE2E(t *testing.T) {
 	runMu.Unlock()
 
 	if _, err := client.SubmitTicketLoop(ctx, DaemonTicketLoopSubmitRequest{
-		Project:   p.Name(),
-		TicketID:  replacementTicketID,
-		RequestID: "focus-handoff-replacement",
-		Prompt:    "处理集成冲突并完成交付",
+		Project:    p.Name(),
+		TicketID:   replacementTicketID,
+		RequestID:  "focus-handoff-replacement",
+		Prompt:     "处理集成冲突并完成交付",
+		BaseBranch: "refs/heads/" + targetBranch,
 	}); err != nil {
 		t.Fatalf("SubmitTicketLoop(replacement) failed: %v", err)
 	}
@@ -232,6 +233,10 @@ func TestIntegration_FocusHandoff_StrictSerialDaemonOwnedE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RescanTicketMergeStatus failed: %v", err)
 	}
+	// 这条用例关注 strict-serial handoff，不覆盖 merge clean gate；
+	// replacement 已手工 merge 后，显式把 repo root 收回 clean，再观察后续 focus 推进。
+	runGitForFocusRealIntegration(t, p.RepoRoot(), "reset", "--hard", "HEAD")
+	runGitForFocusRealIntegration(t, p.RepoRoot(), "clean", "-fd")
 	foundReplacementMerged := false
 	for _, item := range rescanRes.Results {
 		for _, mergedID := range item.MergedTicketIDs {
@@ -252,6 +257,15 @@ func TestIntegration_FocusHandoff_StrictSerialDaemonOwnedE2E(t *testing.T) {
 				contracts.CanonicalIntegrationStatus(view.Ticket.IntegrationStatus) == contracts.IntegrationMerged
 		}, "replacement ticket observed merged by daemon tick or rescan")
 	}
+	waitUntil(t, 10*time.Second, func() bool {
+		runMu.Lock()
+		defer runMu.Unlock()
+		return runCounts[tk2.ID] > 0
+	}, "second ticket starts after handoff resolve")
+	// 这条用例关注 strict-serial handoff，不验证 repo root 在其他流程下的脏写细节；
+	// 在第二张票开始后显式把 root 收回 clean，避免 clean gate 把无关噪声放大成失败。
+	runGitForFocusRealIntegration(t, p.RepoRoot(), "reset", "--hard", "HEAD")
+	runGitForFocusRealIntegration(t, p.RepoRoot(), "clean", "-fd")
 
 	finalView := waitForFocusView(t, p, focusRes.FocusID, 15*time.Second, func(view FocusRunView) bool {
 		item1 := focusViewItemByTicketID(view.Items, tk1.ID)

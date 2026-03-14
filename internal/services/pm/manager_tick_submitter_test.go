@@ -13,16 +13,18 @@ import (
 )
 
 type stubWorkerRunSubmitter struct {
-	mu    sync.Mutex
-	calls []uint
-	err   error
-	runID uint
+	mu           sync.Mutex
+	calls        []uint
+	baseBranches []string
+	err          error
+	runID        uint
 }
 
-func (s *stubWorkerRunSubmitter) SubmitTicketWorkerRun(_ context.Context, ticketID uint) (WorkerRunSubmission, error) {
+func (s *stubWorkerRunSubmitter) SubmitTicketWorkerRun(_ context.Context, ticketID uint, opt WorkerRunSubmitOptions) (WorkerRunSubmission, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, ticketID)
+	s.baseBranches = append(s.baseBranches, strings.TrimSpace(opt.BaseBranch))
 	if s.err != nil {
 		return WorkerRunSubmission{}, s.err
 	}
@@ -38,6 +40,14 @@ func (s *stubWorkerRunSubmitter) CallIDs() []uint {
 	defer s.mu.Unlock()
 	out := make([]uint, len(s.calls))
 	copy(out, s.calls)
+	return out
+}
+
+func (s *stubWorkerRunSubmitter) BaseBranches() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.baseBranches))
+	copy(out, s.baseBranches)
 	return out
 }
 
@@ -59,6 +69,28 @@ func TestQueueConsumer_UsesWorkerRunSubmitterWhenConfigured(t *testing.T) {
 	callIDs := submitter.CallIDs()
 	if len(callIDs) != 1 || callIDs[0] != tk.ID {
 		t.Fatalf("expected submitter called once with t%d, got=%v", tk.ID, callIDs)
+	}
+}
+
+func TestQueueConsumer_IntegrationTicketPassesTargetRefAsBaseBranch(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "queue-consumer-integration-base")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"label":           "integration",
+		"target_branch":   "refs/heads/main",
+		"workflow_status": contracts.TicketQueued,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare integration ticket failed: %v", err)
+	}
+
+	submitter := &stubWorkerRunSubmitter{}
+	svc.SetWorkerRunSubmitter(submitter)
+
+	svc.consumeQueuedBacklog(context.Background())
+
+	if branches := submitter.BaseBranches(); len(branches) != 1 || branches[0] != "refs/heads/main" {
+		t.Fatalf("expected submitter receive refs/heads/main, got=%v", branches)
 	}
 }
 

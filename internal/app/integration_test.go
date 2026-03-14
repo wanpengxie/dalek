@@ -41,6 +41,12 @@ func newIntegrationHomeProject(t *testing.T) (*Home, *Project) {
 	if err != nil {
 		t.Fatalf("InitProjectFromDir failed: %v", err)
 	}
+	if stdout, _, err := testutil.RunCmd(t, repoRoot, nil, "git", "status", "--porcelain"); err == nil && strings.TrimSpace(stdout) != "" {
+		testutil.RunCmdOK(t, repoRoot, nil, "git", "add", ".gitignore")
+		if _, stderr, cerr := testutil.RunCmd(t, repoRoot, nil, "git", "commit", "-m", "track project gitignore"); cerr != nil && !strings.Contains(stderr, "nothing to commit") {
+			t.Fatalf("commit project gitignore failed: %v\nstderr:\n%s", cerr, stderr)
+		}
+	}
 	return h, p
 }
 

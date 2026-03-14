@@ -664,13 +664,17 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 }
 
 func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, workerID uint, opt scheduleOptions) (bool, []string) {
+	baseBranch, berr := s.workerBaseBranchForTicket(ctx, ticketID, "")
+	if berr != nil {
+		return false, s.handleActivationFailure(ctx, ticketID, workerID, berr, "resolve worker base branch 失败", opt.Source)
+	}
 	if opt.SyncWorkerRun {
 		activationCtx := ctx
 		cancelActivation := func() {}
 		if opt.WorkerRunTimeout > 0 {
 			activationCtx, cancelActivation = context.WithTimeout(ctx, opt.WorkerRunTimeout)
 		}
-		_, derr := s.RunTicketWorker(activationCtx, ticketID, WorkerRunOptions{})
+		_, derr := s.RunTicketWorker(activationCtx, ticketID, WorkerRunOptions{BaseBranch: baseBranch})
 		cancelActivation()
 		if derr != nil {
 			return false, s.handleActivationFailure(ctx, ticketID, workerID, derr, "sync activation 失败", opt.Source)
@@ -679,7 +683,9 @@ func (s *Service) submitScheduledWorkerRun(ctx context.Context, ticketID, worker
 	}
 
 	if submitter := s.getWorkerRunSubmitter(); submitter != nil {
-		submission, derr := submitter.SubmitTicketWorkerRun(context.WithoutCancel(ctx), ticketID)
+		submission, derr := submitter.SubmitTicketWorkerRun(context.WithoutCancel(ctx), ticketID, WorkerRunSubmitOptions{
+			BaseBranch: baseBranch,
+		})
 		if derr != nil {
 			return false, s.handleActivationFailure(ctx, ticketID, workerID, derr, "submit worker run 失败", opt.Source)
 		}

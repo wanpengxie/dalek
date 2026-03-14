@@ -6,12 +6,49 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"dalek/internal/contracts"
 	"dalek/internal/services/core"
 )
+
+type stubFocusLoopControl struct {
+	mu              sync.Mutex
+	cancelRunIDs    []uint
+	cancelTicketIDs []uint
+}
+
+func (s *stubFocusLoopControl) CancelTaskRun(ctx context.Context, runID uint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cancelRunIDs = append(s.cancelRunIDs, runID)
+	return nil
+}
+
+func (s *stubFocusLoopControl) CancelTicketLoop(ctx context.Context, ticketID uint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cancelTicketIDs = append(s.cancelTicketIDs, ticketID)
+	return nil
+}
+
+func (s *stubFocusLoopControl) RunIDs() []uint {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]uint, len(s.cancelRunIDs))
+	copy(out, s.cancelRunIDs)
+	return out
+}
+
+func (s *stubFocusLoopControl) TicketIDs() []uint {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]uint, len(s.cancelTicketIDs))
+	copy(out, s.cancelTicketIDs)
+	return out
+}
 
 func TestAdvanceFocusController_AdoptsActiveTicket(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
@@ -153,6 +190,8 @@ func TestAdvanceFocusController_CompletesMergedItemAndAdvances(t *testing.T) {
 func TestAdvanceFocusController_CancelingStopsActiveTicket(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
+	ctrl := &stubFocusLoopControl{}
+	svc.SetFocusLoopControl(ctrl)
 
 	tk := createTicket(t, p.DB, "focus-cancel-active")
 	w, err := svc.StartTicket(ctx, tk.ID)
@@ -185,27 +224,104 @@ func TestAdvanceFocusController_CancelingStopsActiveTicket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FocusGet failed: %v", err)
 	}
-	if view.Run.Status != contracts.FocusCanceled {
-		t.Fatalf("expected focus canceled, got=%s", view.Run.Status)
+	if view.Run.Status != contracts.FocusRunning {
+		t.Fatalf("expected focus still running until execution terminal, got=%s", view.Run.Status)
 	}
 	item := focusItemByTicketID(view.Items, tk.ID)
-	if item == nil || item.Status != contracts.FocusItemCanceled {
-		t.Fatalf("expected item canceled, got=%+v", item)
+	if item == nil || item.Status != contracts.FocusItemExecuting {
+		t.Fatalf("expected item still executing before execution terminal, got=%+v", item)
 	}
-
 	var afterRun contracts.TaskRun
 	if err := p.DB.First(&afterRun, run.ID).Error; err != nil {
 		t.Fatalf("load task run failed: %v", err)
 	}
-	if afterRun.OrchestrationState != contracts.TaskCanceled {
-		t.Fatalf("expected task run canceled, got=%s", afterRun.OrchestrationState)
+	if afterRun.OrchestrationState != contracts.TaskRunning {
+		t.Fatalf("expected task run remain running before execution terminal, got=%s", afterRun.OrchestrationState)
+	}
+	if got := ctrl.RunIDs(); len(got) != 1 || got[0] != run.ID {
+		t.Fatalf("expected cancel task request for run %d, got=%v", run.ID, got)
+	}
+	if got := ctrl.TicketIDs(); len(got) != 1 || got[0] != tk.ID {
+		t.Fatalf("expected cancel ticket request for t%d, got=%v", tk.ID, got)
 	}
 	var afterTicket contracts.Ticket
 	if err := p.DB.First(&afterTicket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if afterTicket.WorkflowStatus != contracts.TicketBacklog {
-		t.Fatalf("expected ticket workflow backlog after cancel stop, got=%s", afterTicket.WorkflowStatus)
+	if afterTicket.WorkflowStatus == contracts.TicketBacklog {
+		t.Fatalf("ticket workflow should not be repaired to backlog before execution terminal")
+	}
+	if err := p.DB.Model(&contracts.TaskRun{}).Where("id = ?", run.ID).Updates(map[string]any{
+		"orchestration_state": contracts.TaskCanceled,
+		"finished_at":         time.Now(),
+		"updated_at":          time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set task run canceled failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerStopped,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set worker stopped failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController terminalize failed: %v", err)
+	}
+	view, err = svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet terminalized failed: %v", err)
+	}
+	if view.Run.Status != contracts.FocusCanceled {
+		t.Fatalf("expected focus canceled after execution terminal, got=%s", view.Run.Status)
+	}
+	item = focusItemByTicketID(view.Items, tk.ID)
+	if item == nil || item.Status != contracts.FocusItemCanceled {
+		t.Fatalf("expected item canceled after execution terminal, got=%+v", item)
+	}
+}
+
+func TestFocusStop_PreservesRunRequestIDAndTerminalizesPendingItems(t *testing.T) {
+	svc, _, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, svc.p.DB, "focus-stop-pending-1")
+	tk2 := createTicket(t, svc.p.DB, "focus-stop-pending-2")
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID, tk2.ID},
+		RequestID:      "focus-start-req",
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	if err := svc.FocusStop(ctx, res.FocusID, "focus-stop-req"); err != nil {
+		t.Fatalf("FocusStop failed: %v", err)
+	}
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	if view.Run.RequestID != "focus-start-req" {
+		t.Fatalf("expected start request_id preserved, got=%q", view.Run.RequestID)
+	}
+	if view.Run.DesiredState != contracts.FocusDesiredStopping {
+		t.Fatalf("expected desired_state=stopping, got=%s", view.Run.DesiredState)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController failed: %v", err)
+	}
+	view, err = svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet after stop failed: %v", err)
+	}
+	if view.Run.Status != contracts.FocusStopped {
+		t.Fatalf("expected focus stopped, got=%s", view.Run.Status)
+	}
+	for _, ticketID := range []uint{tk1.ID, tk2.ID} {
+		item := focusItemByTicketID(view.Items, ticketID)
+		if item == nil || item.Status != contracts.FocusItemStopped {
+			t.Fatalf("expected t%d stopped, got=%+v", ticketID, item)
+		}
 	}
 }
 
@@ -433,6 +549,100 @@ func TestAdvanceFocusController_BlocksIntegrationTicketMergeConflictAsHandoffReq
 	}
 }
 
+func TestAdvanceFocusController_BlocksIntegrationTicketWithoutTargetRef(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "focus-integration-missing-target")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"label":           "integration",
+		"target_branch":   "",
+		"workflow_status": contracts.TicketBacklog,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare integration ticket failed: %v", err)
+	}
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController failed: %v", err)
+	}
+
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	if view.Run.Status != contracts.FocusBlocked {
+		t.Fatalf("expected focus blocked, got=%s", view.Run.Status)
+	}
+	item := focusItemByTicketID(view.Items, tk.ID)
+	if item == nil || item.Status != contracts.FocusItemBlocked {
+		t.Fatalf("expected item blocked, got=%+v", item)
+	}
+	if item.BlockedReason != focusBlockedReasonStartFailed {
+		t.Fatalf("expected blocked_reason=%s, got=%s", focusBlockedReasonStartFailed, item.BlockedReason)
+	}
+	if !strings.Contains(item.LastError, "target_ref") {
+		t.Fatalf("expected last_error mention target_ref, got=%q", item.LastError)
+	}
+}
+
+func TestAdvanceFocusController_BlocksMergeSuccessWhenRepoDirty(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "focus-merge-dirty-root")
+	targetBranch := prepareFocusMergeSuccessTicket(t, svc, p, tk)
+	dirtyPath := filepath.Join(p.RepoRoot, "dirty.txt")
+	if err := os.WriteFile(dirtyPath, []byte("dirty\n"), 0o644); err != nil {
+		t.Fatalf("write dirty file failed: %v", err)
+	}
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController select failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController merge failed: %v", err)
+	}
+
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	if view.Run.Status != contracts.FocusBlocked {
+		t.Fatalf("expected focus blocked, got=%s", view.Run.Status)
+	}
+	item := focusItemByTicketID(view.Items, tk.ID)
+	if item == nil || item.Status != contracts.FocusItemBlocked {
+		t.Fatalf("expected item blocked, got=%+v", item)
+	}
+	if item.BlockedReason != focusBlockedReasonMergeFailed {
+		t.Fatalf("expected blocked_reason=%s, got=%s", focusBlockedReasonMergeFailed, item.BlockedReason)
+	}
+	if item.Status == contracts.FocusItemAwaitingMergeObservation {
+		t.Fatalf("dirty merge must not enter awaiting_merge_observation")
+	}
+	if !strings.Contains(item.LastError, "clean gate") {
+		t.Fatalf("expected last_error mention clean gate, got=%q", item.LastError)
+	}
+	if branch := strings.TrimSpace(mustRunGit(t, p.RepoRoot, "branch", "--show-current")); branch != targetBranch {
+		t.Fatalf("expected repo stay on target branch %s, got=%s", targetBranch, branch)
+	}
+}
+
 func TestAdvanceFocusController_ResolvesHandoffBlockedItemAndAdvances(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
@@ -640,6 +850,36 @@ func prepareFocusMergeConflictTicket(t *testing.T, svc *Service, p *core.Project
 		"updated_at":         time.Now(),
 	}).Error; err != nil {
 		t.Fatalf("prepare merge conflict ticket failed: %v", err)
+	}
+	return targetBranch
+}
+
+func prepareFocusMergeSuccessTicket(t *testing.T, svc *Service, p *core.Project, tk contracts.Ticket) string {
+	t.Helper()
+
+	targetBranch, _ := initGitRepoForIntegrationObserveTest(t, p.RepoRoot)
+	workerRef, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	workerBranch := workerRef.Branch
+	featureFile := filepath.Join(p.RepoRoot, "feature.txt")
+
+	mustRunGit(t, p.RepoRoot, "checkout", "-b", workerBranch)
+	if err := os.WriteFile(featureFile, []byte("worker change\n"), 0o644); err != nil {
+		t.Fatalf("write worker feature file failed: %v", err)
+	}
+	mustRunGit(t, p.RepoRoot, "add", "feature.txt")
+	mustRunGit(t, p.RepoRoot, "commit", "-m", "worker feature change")
+	mustRunGit(t, p.RepoRoot, "checkout", targetBranch)
+
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"target_branch":      "refs/heads/" + targetBranch,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare merge success ticket failed: %v", err)
 	}
 	return targetBranch
 }

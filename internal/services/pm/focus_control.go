@@ -387,17 +387,7 @@ func (s *Service) updateFocusDesiredState(ctx context.Context, focusID uint, des
 		now := time.Now()
 		updates := map[string]any{
 			"desired_state": desiredState,
-			"request_id":    requestID,
 			"updated_at":    now,
-		}
-		switch run.Status {
-		case contracts.FocusQueued, contracts.FocusBlocked:
-			if desiredState == contracts.FocusDesiredCanceling {
-				updates["status"] = contracts.FocusCanceled
-			} else {
-				updates["status"] = contracts.FocusStopped
-			}
-			updates["finished_at"] = &now
 		}
 		if err := tx.WithContext(ctx).
 			Model(&contracts.FocusRun{}).

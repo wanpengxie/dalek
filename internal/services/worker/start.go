@@ -105,6 +105,23 @@ type StartOptions struct {
 	BaseBranch string
 }
 
+func normalizeTargetRef(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("target_ref 不能为空")
+	}
+	if strings.HasPrefix(raw, "refs/heads/") {
+		if strings.TrimPrefix(raw, "refs/heads/") == "" {
+			return "", fmt.Errorf("target_ref 非法: %s", raw)
+		}
+		return raw, nil
+	}
+	if strings.Contains(raw, " ") {
+		return "", fmt.Errorf("target_ref 非法: %s", raw)
+	}
+	return "refs/heads/" + raw, nil
+}
+
 // StartTicketResources 启动一个 ticket 的执行资源（当前默认为 worktree + worker runtime 进程）。
 //
 // 注意：
@@ -145,6 +162,24 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 	t, err := ticketSvc.GetByID(ctx, ticketID)
 	if err != nil {
 		return nil, err
+	}
+	baseBranch := strings.TrimSpace(opt.BaseBranch)
+	if strings.EqualFold(strings.TrimSpace(t.Label), "integration") {
+		targetRef, terr := normalizeTargetRef(strings.TrimSpace(t.TargetBranch))
+		if terr != nil {
+			return nil, fmt.Errorf("integration ticket t%d 缺少有效 target_ref: %w", t.ID, terr)
+		}
+		if baseBranch == "" {
+			return nil, fmt.Errorf("integration ticket t%d 缺少 base_branch；期望 %s", t.ID, targetRef)
+		}
+		normalizedBase, berr := normalizeTargetRef(baseBranch)
+		if berr != nil {
+			return nil, fmt.Errorf("integration ticket t%d base_branch 非法: %w", t.ID, berr)
+		}
+		if normalizedBase != targetRef {
+			return nil, fmt.Errorf("integration ticket t%d base_branch=%s 与 target_ref=%s 不一致", t.ID, normalizedBase, targetRef)
+		}
+		baseBranch = targetRef
 	}
 
 	w, err = s.LatestWorker(ctx, ticketID)
@@ -227,7 +262,7 @@ func (s *Service) StartTicketResourcesWithOptions(ctx context.Context, ticketID 
 		}
 
 	addWorktree:
-		baseRef := strings.TrimSpace(opt.BaseBranch)
+		baseRef := strings.TrimSpace(baseBranch)
 		if baseRef == "" {
 			baseRef = "HEAD"
 			if cur, cerr := p.Git.CurrentBranch(p.RepoRoot); cerr == nil && strings.TrimSpace(cur) != "" {

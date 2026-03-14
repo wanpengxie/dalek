@@ -67,9 +67,32 @@ type daemonProjectAdapter struct {
 	project *Project
 }
 
+func (p *daemonProjectAdapter) requireExecutionBaseBranch(ctx context.Context, ticketID uint, baseBranch string) error {
+	if p == nil || p.project == nil {
+		return fmt.Errorf("daemon project 为空")
+	}
+	view, err := p.project.GetTicketViewByID(ctx, ticketID)
+	if err != nil {
+		return err
+	}
+	if view == nil || !strings.EqualFold(strings.TrimSpace(view.Ticket.Label), "integration") {
+		return nil
+	}
+	if strings.TrimSpace(view.Ticket.TargetBranch) == "" {
+		return fmt.Errorf("integration ticket t%d 缺少 target_ref", ticketID)
+	}
+	if strings.TrimSpace(baseBranch) == "" {
+		return fmt.Errorf("integration ticket t%d 缺少 base_branch", ticketID)
+	}
+	return nil
+}
+
 func (p *daemonProjectAdapter) StartTicket(ctx context.Context, ticketID uint, opt daemonsvc.StartTicketOptions) (*contracts.Worker, error) {
 	if p == nil || p.project == nil {
 		return nil, fmt.Errorf("daemon project 为空")
+	}
+	if err := p.requireExecutionBaseBranch(ctx, ticketID, opt.BaseBranch); err != nil {
+		return nil, err
 	}
 	return p.project.StartTicketWithOptions(ctx, ticketID, StartOptions{
 		BaseBranch: strings.TrimSpace(opt.BaseBranch),
@@ -79,6 +102,9 @@ func (p *daemonProjectAdapter) StartTicket(ctx context.Context, ticketID uint, o
 func (p *daemonProjectAdapter) RunTicketWorker(ctx context.Context, ticketID uint, opt daemonsvc.WorkerRunOptions) (daemonsvc.WorkerRunResult, error) {
 	if p == nil || p.project == nil {
 		return daemonsvc.WorkerRunResult{}, fmt.Errorf("daemon project 为空")
+	}
+	if err := p.requireExecutionBaseBranch(ctx, ticketID, opt.BaseBranch); err != nil {
+		return daemonsvc.WorkerRunResult{}, err
 	}
 	res, err := p.project.RunTicketWorker(ctx, ticketID, pmsvc.WorkerRunOptions{
 		EntryPrompt: strings.TrimSpace(opt.EntryPrompt),

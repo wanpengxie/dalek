@@ -64,19 +64,26 @@ func (s *Service) gitHasConflicts(ctx context.Context) bool {
 
 // gitMergeClean 检查 merge 是否完全完成：无冲突 + MERGE_HEAD 消失 + 工作区 clean。
 func (s *Service) gitMergeClean(ctx context.Context) bool {
+	return s.gitMergeCleanError(ctx) == nil
+}
+
+func (s *Service) gitMergeCleanError(ctx context.Context) error {
 	repoRoot := s.p.RepoRoot
 	// 1. 无 unmerged files
 	if s.gitHasConflicts(ctx) {
-		return false
+		return fmt.Errorf("merge clean gate 失败：存在 unresolved conflicts")
 	}
 	// 2. MERGE_HEAD 不存在（说明 commit 已完成）
 	mergeHead := filepath.Join(repoRoot, ".git", "MERGE_HEAD")
 	if _, err := os.Stat(mergeHead); err == nil {
-		return false // MERGE_HEAD 还在，说明 commit 未完成
+		return fmt.Errorf("merge clean gate 失败：MERGE_HEAD 仍存在")
 	}
 	// 3. 工作区 clean
 	out, _ := runGit(ctx, repoRoot, "status", "--porcelain")
-	return strings.TrimSpace(out) == ""
+	if strings.TrimSpace(out) != "" {
+		return fmt.Errorf("merge clean gate 失败：repo root 不是 clean 状态: %s", summarizeMergeOutput(out))
+	}
+	return nil
 }
 
 // gitConflictFiles 返回冲突文件列表。

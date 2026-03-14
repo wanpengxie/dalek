@@ -47,6 +47,15 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return nil, err
 	}
+	baseBranch := strings.TrimSpace(opt.BaseBranch)
+	if baseBranch == "" {
+		baseBranch, err = requiredWorkerBaseBranch(t)
+	} else {
+		baseBranch, err = resolveWorkerBaseBranch(t, baseBranch)
+	}
+	if err != nil {
+		return nil, err
+	}
 	shouldNotifyQueued := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) != contracts.TicketQueued
 	if !fsm.CanStartTicket(t.WorkflowStatus) {
 		switch contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus) {
@@ -75,7 +84,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	// 这也是 start/queue 边界仍不干净的核心耦合点。
 	// 1) 启动 worker 资源（worktree + runtime 进程），不做 PM bootstrap。
 	w, err := s.worker.StartTicketResourcesWithOptions(ctx, ticketID, workersvc.StartOptions{
-		BaseBranch: strings.TrimSpace(opt.BaseBranch),
+		BaseBranch: baseBranch,
 	})
 	if err != nil {
 		return nil, err
@@ -91,7 +100,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 			return nil, rerr
 		}
 		if ready {
-			if err := s.ensureTicketTargetRefOnStart(ctx, t.ID, opt.BaseBranch); err != nil {
+			if err := s.ensureTicketTargetRefOnStart(ctx, t.ID, baseBranch); err != nil {
 				return nil, err
 			}
 			if err := s.promoteTicketQueuedOnStart(ctx, db, t, *w); err != nil {
@@ -123,7 +132,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	if shouldNotifyQueued {
 		s.notifyQueued(t.ID)
 	}
-	if err := s.ensureTicketTargetRefOnStart(ctx, t.ID, opt.BaseBranch); err != nil {
+	if err := s.ensureTicketTargetRefOnStart(ctx, t.ID, baseBranch); err != nil {
 		return nil, err
 	}
 	return out, nil
