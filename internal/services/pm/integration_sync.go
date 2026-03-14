@@ -141,32 +141,16 @@ func (s *Service) RetargetTicketIntegration(ctx context.Context, ticketID uint, 
 		return RetargetResult{}, err
 	}
 
-	out := RetargetResult{TicketID: ticketID, TargetRef: targetRef}
-	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var tk contracts.Ticket
-		if err := tx.WithContext(ctx).First(&tk, ticketID).Error; err != nil {
-			return err
-		}
-		if contracts.CanonicalTicketWorkflowStatus(tk.WorkflowStatus) != contracts.TicketDone {
-			return fmt.Errorf("ticket t%d workflow=%s，不允许 retarget", ticketID, contracts.CanonicalTicketWorkflowStatus(tk.WorkflowStatus))
-		}
-		if contracts.CanonicalIntegrationStatus(tk.IntegrationStatus) != contracts.IntegrationNeedsMerge {
-			return fmt.Errorf("ticket t%d integration=%s，不允许 retarget", ticketID, contracts.CanonicalIntegrationStatus(tk.IntegrationStatus))
-		}
-		out.PreviousRef = normalizeIntegrationTargetRef(tk.TargetBranch)
-		now := time.Now()
-		return tx.WithContext(ctx).
-			Model(&contracts.Ticket{}).
-			Where("id = ? AND workflow_status = ? AND integration_status = ?", ticketID, contracts.TicketDone, contracts.IntegrationNeedsMerge).
-			Updates(map[string]any{
-				"target_branch": targetRef,
-				"updated_at":    now,
-			}).Error
-	})
+	var tk contracts.Ticket
+	err = db.WithContext(ctx).First(&tk, ticketID).Error
 	if err != nil {
 		return RetargetResult{}, err
 	}
-	return out, nil
+	currentRef := normalizeIntegrationTargetRef(tk.TargetBranch)
+	if currentRef == "" {
+		currentRef = "(unset)"
+	}
+	return RetargetResult{}, fmt.Errorf("merge retarget 被拒绝：ticket t%d 是单 ref 原子任务，当前 target_ref=%s，收到新 ref=%s。done 后不能改写 target_ref；如需交付到新的 ref，请创建一张新的 ticket（例如 integration ticket 或 backport ticket）。", ticketID, currentRef, targetRef)
 }
 
 func (s *Service) RescanMergeStatus(ctx context.Context, ref string) (RescanResult, error) {

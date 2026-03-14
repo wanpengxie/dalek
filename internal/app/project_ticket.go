@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"dalek/internal/contracts"
+	"dalek/internal/ticketatomic"
 )
 
 func (p *Project) ListTicketViews(ctx context.Context) ([]TicketView, error) {
@@ -49,12 +50,14 @@ func (p *Project) CreateTicketWithDescriptionAndLabelAndPriorityAndTarget(ctx co
 	if p == nil || p.ticket == nil {
 		return nil, fmt.Errorf("project ticket service 为空")
 	}
-	normalized, err := normalizeTicketTargetRef(targetRef)
+	currentBranch := ""
+	var currentErr error
+	if strings.TrimSpace(targetRef) == "" && p != nil && p.core != nil && p.core.Git != nil {
+		currentBranch, currentErr = p.core.Git.CurrentBranch(p.core.RepoRoot)
+	}
+	normalized, err := ticketatomic.ResolveCreateTargetRef(targetRef, currentBranch, currentErr)
 	if err != nil {
 		return nil, err
-	}
-	if normalized == "" {
-		normalized = p.defaultTicketTargetRef()
 	}
 	return p.ticket.CreateWithDescriptionAndLabelAndPriorityAndTarget(ctx, title, description, label, priority, normalized)
 }
@@ -182,36 +185,4 @@ func (p *Project) WaitStatusChangeHooks(ctx context.Context) error {
 		return nil
 	}
 	return p.pm.WaitStatusChangeHooks(ctx)
-}
-
-func (p *Project) defaultTicketTargetRef() string {
-	if p == nil || p.core == nil || p.core.Git == nil {
-		return ""
-	}
-	branch, err := p.core.Git.CurrentBranch(p.core.RepoRoot)
-	if err != nil {
-		return ""
-	}
-	ref, _ := normalizeTicketTargetRef(branch)
-	return ref
-}
-
-func normalizeTicketTargetRef(raw string) (string, error) {
-	ref := strings.TrimSpace(raw)
-	if ref == "" {
-		return "", nil
-	}
-	if strings.HasPrefix(ref, "refs/heads/") {
-		if strings.TrimSpace(strings.TrimPrefix(ref, "refs/heads/")) == "" {
-			return "", fmt.Errorf("target_ref 非法: %s", raw)
-		}
-		return ref, nil
-	}
-	if strings.HasPrefix(ref, "refs/") {
-		return "", fmt.Errorf("target_ref 仅支持 refs/heads/*: %s", raw)
-	}
-	if strings.TrimSpace(strings.TrimPrefix(ref, "heads/")) == "" {
-		return "", fmt.Errorf("target_ref 非法: %s", raw)
-	}
-	return "refs/heads/" + strings.TrimPrefix(ref, "heads/"), nil
 }

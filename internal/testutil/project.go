@@ -19,6 +19,7 @@ import (
 type FakeGitClient struct {
 	AddCalls           int
 	CurrentBranchValue string
+	CurrentBranchErr   error
 	LastBaseBranch     string
 	PruneFn            func(repoRoot string) error
 	WorktreeDirtyFn    func(path string) (bool, error)
@@ -140,6 +141,9 @@ func (f *FakeWorkerRuntime) AttachCmd(handle infra.WorkerProcessHandle) *exec.Cm
 
 func (f *FakeGitClient) CurrentBranch(repoRoot string) (string, error) {
 	_ = repoRoot
+	if f.CurrentBranchErr != nil {
+		return "", f.CurrentBranchErr
+	}
 	cur := strings.TrimSpace(f.CurrentBranchValue)
 	if cur == "" {
 		cur = "main"

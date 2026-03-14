@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"dalek/internal/contracts"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -118,23 +119,60 @@ func TestStartTicket_DefaultBaseUsesCurrentBranch(t *testing.T) {
 	if _, err := svc.StartTicketResources(context.Background(), tk.ID); err != nil {
 		t.Fatalf("StartTicketResources failed: %v", err)
 	}
-	if got := strings.TrimSpace(fGit.LastBaseBranch); got != "feature/current" {
+	if got := strings.TrimSpace(fGit.LastBaseBranch); got != "refs/heads/feature/current" {
 		t.Fatalf("expected base branch from current branch, got=%q", got)
 	}
 }
 
-func TestStartTicket_BaseOverrideTakesPrecedence(t *testing.T) {
+func TestStartTicket_UsesFrozenTargetRefWhenBaseOmitted(t *testing.T) {
 	svc, p, fGit := newServiceForTest(t)
 	fGit.CurrentBranchValue = "feature/current"
 
-	tk := createTicket(t, p.DB, "base-override")
+	tk := createTicket(t, p.DB, "base-frozen-target")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"target_branch": "refs/heads/release/v1",
+	}).Error; err != nil {
+		t.Fatalf("freeze target_branch failed: %v", err)
+	}
+	if _, err := svc.StartTicketResources(context.Background(), tk.ID); err != nil {
+		t.Fatalf("StartTicketResources failed: %v", err)
+	}
+	if got := strings.TrimSpace(fGit.LastBaseBranch); got != "refs/heads/release/v1" {
+		t.Fatalf("expected frozen target ref release/v1, got=%q", got)
+	}
+}
+
+func TestStartTicket_RejectsBaseMismatchForFrozenTicket(t *testing.T) {
+	svc, p, fGit := newServiceForTest(t)
+	fGit.CurrentBranchValue = "feature/current"
+
+	tk := createTicket(t, p.DB, "base-mismatch")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"target_branch": "refs/heads/main",
+	}).Error; err != nil {
+		t.Fatalf("freeze target_branch failed: %v", err)
+	}
 	if _, err := svc.StartTicketResourcesWithOptions(context.Background(), tk.ID, StartOptions{
 		BaseBranch: "release/v1",
-	}); err != nil {
-		t.Fatalf("StartTicketResourcesWithOptions failed: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "与 ticket.target_ref=refs/heads/main 不一致") {
+		t.Fatalf("expected target_ref mismatch error, got=%v", err)
 	}
-	if got := strings.TrimSpace(fGit.LastBaseBranch); got != "release/v1" {
-		t.Fatalf("expected base override release/v1, got=%q", got)
+	if fGit.AddCalls != 0 {
+		t.Fatalf("worktree should not be created on mismatch, got add_calls=%d", fGit.AddCalls)
+	}
+}
+
+func TestStartTicket_LegacyEmptyTargetRejectedOnDetachedHead(t *testing.T) {
+	svc, p, fGit := newServiceForTest(t)
+	fGit.CurrentBranchValue = ""
+	fGit.CurrentBranchErr = errors.New("detached HEAD")
+
+	tk := createTicket(t, p.DB, "base-detached")
+	if _, err := svc.StartTicketResources(context.Background(), tk.ID); err == nil || !strings.Contains(err.Error(), "当前仓库不在明确分支上") {
+		t.Fatalf("expected detached head rejection, got=%v", err)
+	}
+	if fGit.AddCalls != 0 {
+		t.Fatalf("worktree should not be created on detached HEAD, got add_calls=%d", fGit.AddCalls)
 	}
 }
 

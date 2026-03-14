@@ -3,6 +3,7 @@ package pm
 import (
 	"context"
 	"dalek/internal/contracts"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,20 +60,33 @@ func TestStartTicketWithOptions_PassesBaseBranch(t *testing.T) {
 	svc, p, fGit := newServiceForTest(t)
 
 	tk := createTicket(t, p.DB, "start-options-base")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"target_branch": "refs/heads/main",
+		"updated_at":    time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("freeze target_branch failed: %v", err)
+	}
 	if _, err := svc.StartTicketWithOptions(context.Background(), tk.ID, StartOptions{
 		BaseBranch: "release/v2",
-	}); err != nil {
-		t.Fatalf("StartTicketWithOptions failed: %v", err)
+	}); err == nil || !strings.Contains(err.Error(), "与 ticket.target_ref=refs/heads/main 不一致") {
+		t.Fatalf("expected target_ref mismatch error, got=%v", err)
 	}
-	if got := strings.TrimSpace(fGit.LastBaseBranch); got != "release/v2" {
-		t.Fatalf("expected base branch override release/v2, got=%q", got)
+	if fGit.AddCalls != 0 {
+		t.Fatalf("worktree should not be created on mismatch, got add_calls=%d", fGit.AddCalls)
 	}
-	var updated contracts.Ticket
-	if err := p.DB.First(&updated, tk.ID).Error; err != nil {
-		t.Fatalf("load ticket failed: %v", err)
+}
+
+func TestStartTicket_LegacyEmptyTargetRejectedOnDetachedHead(t *testing.T) {
+	svc, p, fGit := newServiceForTest(t)
+	fGit.CurrentBranchValue = ""
+	fGit.CurrentBranchErr = errors.New("detached HEAD")
+
+	tk := createTicket(t, p.DB, "start-legacy-detached")
+	if _, err := svc.StartTicket(context.Background(), tk.ID); err == nil || !strings.Contains(err.Error(), "当前仓库不在明确分支上") {
+		t.Fatalf("expected detached head rejection, got=%v", err)
 	}
-	if strings.TrimSpace(updated.TargetBranch) != "refs/heads/release/v2" {
-		t.Fatalf("expected target_branch from base branch override, got=%q", updated.TargetBranch)
+	if fGit.AddCalls != 0 {
+		t.Fatalf("worktree should not be created on detached HEAD, got add_calls=%d", fGit.AddCalls)
 	}
 }
 

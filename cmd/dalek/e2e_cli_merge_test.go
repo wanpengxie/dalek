@@ -284,7 +284,7 @@ func TestCLI_MergeSyncRefAndRescanAndRetarget_E2E(t *testing.T) {
 		t.Fatalf("sync-ref should merge ticket t%d, got=%v", syncTicket.ID, syncPayload.MergedTicketIDs)
 	}
 
-	retargetOut, _ := runCLIOK(
+	_, retargetErr, err := runCLI(
 		t,
 		bin,
 		repo,
@@ -295,23 +295,11 @@ func TestCLI_MergeSyncRefAndRescanAndRetarget_E2E(t *testing.T) {
 		"--ref", "release/v1",
 		"-o", "json",
 	)
-	var retargetPayload struct {
-		Schema      string `json:"schema"`
-		TicketID    uint   `json:"ticket_id"`
-		PreviousRef string `json:"previous_ref"`
-		TargetRef   string `json:"target_ref"`
+	if err == nil {
+		t.Fatalf("merge retarget should fail under atomicity guard")
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(retargetOut)), &retargetPayload); err != nil {
-		t.Fatalf("decode merge retarget json failed: %v\nraw=%s", err, retargetOut)
-	}
-	if retargetPayload.Schema != "dalek.merge.retarget.v1" {
-		t.Fatalf("unexpected retarget schema: %q", retargetPayload.Schema)
-	}
-	if retargetPayload.TicketID != retargetTicket.ID {
-		t.Fatalf("unexpected retarget ticket_id: %d", retargetPayload.TicketID)
-	}
-	if retargetPayload.TargetRef != "refs/heads/release/v1" {
-		t.Fatalf("unexpected retarget target_ref: %q", retargetPayload.TargetRef)
+	if !strings.Contains(retargetErr, "merge retarget 被拒绝") {
+		t.Fatalf("expected atomicity rejection, stderr:\n%s", retargetErr)
 	}
 
 	rescanTicket := seedMergeTicketForE2E(t, p, "rescan ticket", contracts.IntegrationNeedsMerge, mergeTicketSeedOptions{

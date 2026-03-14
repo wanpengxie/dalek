@@ -373,7 +373,7 @@ func cmdMergeRetarget(args []string) {
 	fs.Usage = func() {
 		printSubcommandUsage(
 			fs,
-			"修改 ticket 的 target_ref（仅 done+needs_merge）",
+			"保留命令；普通跨 ref 交付默认拒绝，请改为创建新 ticket",
 			"dalek merge retarget --ticket <id> --ref refs/heads/main [--timeout 5s] [--output text|json]",
 			"dalek merge retarget --ticket 1 --ref refs/heads/release",
 			"dalek merge retarget --ticket 1 --ref main -o json",
@@ -422,7 +422,7 @@ func cmdMergeRetarget(args []string) {
 		exitRuntimeError(out,
 			"retarget 失败",
 			err.Error(),
-			"确认 ticket 为 done+needs_merge，并检查 --ref",
+			"如需交付到新的 ref，请创建新的 integration/backport ticket",
 		)
 	}
 	if out == outputJSON {
