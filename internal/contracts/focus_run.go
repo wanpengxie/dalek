@@ -138,7 +138,6 @@ const (
 	FocusEventItemSelected           = "item.selected"
 	FocusEventItemStartRequested     = "item.start_requested"
 	FocusEventItemAdopted            = "item.adopted"
-	FocusEventItemAccepted           = "item.accepted"
 	FocusEventItemRestarted          = "item.restarted"
 	FocusEventItemBlocked            = "item.blocked"
 	FocusEventItemCompleted          = "item.completed"
@@ -147,7 +146,6 @@ const (
 	FocusEventMergeObserved          = "merge.observed"
 	FocusEventIntegrationCreated     = "integration_ticket.created"
 	FocusEventHandoffResolved        = "handoff.resolved"
-	FocusEventRecoveryResumed        = "recovery.resumed"
 )
 
 // IsTerminal 判断 focus run 是否已终结。

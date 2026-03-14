@@ -488,10 +488,19 @@ func TestAdvanceFocusController_CreatesIntegrationTicketAndBlocksHandoffOnMergeC
 	if !strings.Contains(replacement.Description, "merge stderr/log:") {
 		t.Fatalf("replacement description should include merge summary, got:\n%s", replacement.Description)
 	}
+	if !strings.Contains(replacement.Description, "docs/architecture/focus-run-batch-v1-lean-spec.md") ||
+		!strings.Contains(replacement.Description, "docs/architecture/focus-run-batch-v1-remediation-spec.md") {
+		t.Fatalf("replacement description should include evidence refs, got:\n%s", replacement.Description)
+	}
 
 	var createdEvent contracts.FocusEvent
 	if err := p.DB.Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?", res.FocusID, item1.ID, contracts.FocusEventIntegrationCreated).First(&createdEvent).Error; err != nil {
 		t.Fatalf("expected integration created event, got err=%v", err)
+	}
+	if !strings.Contains(createdEvent.PayloadJSON, "source_anchor_shas") ||
+		!strings.Contains(createdEvent.PayloadJSON, "evidence_refs") ||
+		!strings.Contains(createdEvent.PayloadJSON, "docs/architecture/focus-run-batch-v1-remediation-spec.md") {
+		t.Fatalf("integration created payload should include full evidence, got=%s", createdEvent.PayloadJSON)
 	}
 
 	if svc.gitHasConflicts(ctx) {
@@ -834,6 +843,7 @@ func prepareFocusMergeConflictTicket(t *testing.T, svc *Service, p *core.Project
 	}
 	mustRunGit(t, p.RepoRoot, "add", "conflict.txt")
 	mustRunGit(t, p.RepoRoot, "commit", "-m", "worker conflict change")
+	workerAnchor := mustRunGit(t, p.RepoRoot, "rev-parse", "HEAD")
 
 	mustRunGit(t, p.RepoRoot, "checkout", targetBranch)
 	if err := os.WriteFile(conflictFile, []byte("target change\n"), 0o644); err != nil {
@@ -846,6 +856,7 @@ func prepareFocusMergeConflictTicket(t *testing.T, svc *Service, p *core.Project
 		"label":              label,
 		"workflow_status":    contracts.TicketDone,
 		"integration_status": contracts.IntegrationNeedsMerge,
+		"merge_anchor_sha":   workerAnchor,
 		"target_branch":      "refs/heads/" + targetBranch,
 		"updated_at":         time.Now(),
 	}).Error; err != nil {
@@ -871,11 +882,13 @@ func prepareFocusMergeSuccessTicket(t *testing.T, svc *Service, p *core.Project,
 	}
 	mustRunGit(t, p.RepoRoot, "add", "feature.txt")
 	mustRunGit(t, p.RepoRoot, "commit", "-m", "worker feature change")
+	workerAnchor := mustRunGit(t, p.RepoRoot, "rev-parse", "HEAD")
 	mustRunGit(t, p.RepoRoot, "checkout", targetBranch)
 
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status":    contracts.TicketDone,
 		"integration_status": contracts.IntegrationNeedsMerge,
+		"merge_anchor_sha":   workerAnchor,
 		"target_branch":      "refs/heads/" + targetBranch,
 		"updated_at":         time.Now(),
 	}).Error; err != nil {

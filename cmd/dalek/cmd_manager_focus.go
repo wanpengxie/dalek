@@ -66,15 +66,15 @@ func cmdManagerShow(args []string) {
 		}
 	}
 
-	focus, err := p.ActiveFocusRun(context.Background())
+	view, err := p.FocusGet(context.Background(), 0)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			fmt.Println("当前无 active focus (idle)")
+			return
+		}
 		exitRuntimeError(out, "查询 focus 失败", err.Error(), "检查 DB 状态")
 	}
-	if focus == nil {
-		fmt.Println("当前无 active focus (idle)")
-		return
-	}
-	printLegacyFocus(out, focus, true)
+	printFocusView(out, view, true)
 }
 
 func cmdManagerStop(args []string) {
@@ -244,6 +244,9 @@ func renderFocusStatusLine(view app.FocusRunView) string {
 }
 
 func printFocusView(out cliOutputFormat, view app.FocusRunView, readonlyStale bool) {
+	if readonlyStale {
+		view.ReadonlyStale = true
+	}
 	if out == outputJSON {
 		printJSONOrExit(map[string]any{
 			"readonly_stale": readonlyStale,
@@ -257,40 +260,6 @@ func printFocusView(out cliOutputFormat, view app.FocusRunView, readonlyStale bo
 	}
 	fmt.Print(prefix)
 	fmt.Println(renderFocusStatusLine(view))
-}
-
-func printLegacyFocus(out cliOutputFormat, focus *app.FocusRun, readonlyStale bool) {
-	if focus == nil {
-		fmt.Println("当前无 active focus (idle)")
-		return
-	}
-	if out == outputJSON {
-		printJSONOrExit(map[string]any{
-			"readonly_stale": readonlyStale,
-			"focus":          focus,
-		})
-		return
-	}
-	prefix := ""
-	if readonlyStale {
-		prefix = "[readonly-stale] "
-	}
-	fmt.Printf("%sfocus_id=%d  mode=%s  status=%s  progress=%d/%d  budget=%d/%d\n",
-		prefix,
-		focus.ID,
-		focus.Mode,
-		focus.Status,
-		focus.CompletedCount,
-		focus.TotalCount,
-		focus.AgentBudget,
-		focus.AgentBudgetMax,
-	)
-	if focus.ActiveTicketID != nil {
-		fmt.Printf("%sactive_ticket=t%d\n", prefix, *focus.ActiveTicketID)
-	}
-	if focus.Summary != "" {
-		fmt.Printf("%ssummary: %s\n", prefix, focus.Summary)
-	}
 }
 
 func exitManagerFocusDaemonError(out cliOutputFormat, action string, err error) {

@@ -268,13 +268,17 @@ func (s *Service) focusTickMergingItem(ctx context.Context, run contracts.FocusR
 		}, "", "", nil)
 	case mergeConflict:
 		conflictFiles := s.gitConflictFiles(ctx)
+		sourceAnchorSHAs := trimNonEmptyStrings([]string{strings.TrimSpace(snapshot.Ticket.MergeAnchorSHA)})
+		evidenceRefs := s.focusConflictEvidenceRefs()
 		s.gitMergeAbort(context.WithoutCancel(ctx))
 		mergePayload := map[string]any{
 			"ticket_id":                item.TicketID,
 			"conflict_files":           conflictFiles,
 			"target_ref":               normalizedTargetRef,
 			"conflict_target_head_sha": strings.TrimSpace(conflictTargetHeadSHA),
+			"source_anchor_shas":       sourceAnchorSHAs,
 			"merge_summary":            strings.TrimSpace(mergeSummary),
+			"evidence_refs":            evidenceRefs,
 		}
 		if strings.EqualFold(strings.TrimSpace(snapshot.Ticket.Label), "integration") {
 			mergePayload["blocked_reason"] = focusBlockedReasonHandoffRecursionRequiresUser
@@ -287,9 +291,10 @@ func (s *Service) focusTickMergingItem(ctx context.Context, run contracts.FocusR
 			SourceTicketIDs:       []uint{item.TicketID},
 			TargetRef:             normalizedTargetRef,
 			ConflictTargetHeadSHA: strings.TrimSpace(conflictTargetHeadSHA),
-			SourceAnchorSHAs:      trimNonEmptyStrings([]string{strings.TrimSpace(snapshot.Ticket.MergeAnchorSHA)}),
+			SourceAnchorSHAs:      sourceAnchorSHAs,
 			ConflictFiles:         conflictFiles,
 			MergeSummary:          mergeSummary,
+			EvidenceRefs:          evidenceRefs,
 		})
 		if createErr != nil {
 			mergePayload["blocked_reason"] = focusBlockedReasonMergeFailed
@@ -307,9 +312,11 @@ func (s *Service) focusTickMergingItem(ctx context.Context, run contracts.FocusR
 			"integration_ticket_id":    replacement.TicketID,
 			"handoff_ticket_id":        replacement.TicketID,
 			"target_ref":               normalizedTargetRef,
+			"source_anchor_shas":       sourceAnchorSHAs,
 			"conflict_files":           conflictFiles,
 			"conflict_target_head_sha": strings.TrimSpace(conflictTargetHeadSHA),
 			"merge_summary":            mergeSummary,
+			"evidence_refs":            evidenceRefs,
 		}
 		return s.focusBlockItemWithHandoff(
 			ctx,

@@ -267,7 +267,6 @@ type FocusEvent struct {
 - `item.selected`
 - `item.start_requested`
 - `item.adopted`
-- `item.accepted`
 - `item.restarted`
 - `item.blocked`
 - `item.completed`
@@ -276,7 +275,6 @@ type FocusEvent struct {
 - `merge.observed`
 - `integration_ticket.created`
 - `handoff.resolved`
-- `recovery.resumed`
 
 ### 6.4 约束
 
