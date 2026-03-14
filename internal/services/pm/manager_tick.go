@@ -363,7 +363,7 @@ func (s *Service) scanRunningWorkers(ctx context.Context, db *gorm.DB, taskRunti
 
 	taskViews, err := taskRuntime.ListStatus(ctx, contracts.TaskListStatusOptions{
 		OwnerType:       contracts.TaskOwnerWorker,
-		IncludeTerminal: true,
+		IncludeTerminal: false,
 		Limit:           5000,
 	})
 	if err != nil {
@@ -381,14 +381,16 @@ func (s *Service) scanRunningWorkers(ctx context.Context, db *gorm.DB, taskRunti
 	}
 
 	for _, w := range running {
-		out.RunningTicketIDs[w.TicketID] = true
-		out.Running++
-
 		tv, hasTV := runtimeByWorker[w.ID]
 		if !hasTV {
-			out.Progressable++
+			// 不再把裸 worker.status=running 视为执行真相。
+			// 没有可信 active task run 时，这个 worker 不能占用 queued capacity，
+			// 也不能阻止同 ticket 再次被 queue consumer 激活。
 			continue
 		}
+
+		out.RunningTicketIDs[w.TicketID] = true
+		out.Running++
 		if workerBlocksAutopilot(&tv) {
 			out.RunningBlocked++
 			key := inboxKeyNeedsUser(w.ID)

@@ -164,6 +164,34 @@ func TestConsumeQueuedBacklog_RespectsPMCapacity(t *testing.T) {
 	}
 }
 
+func TestConsumeQueuedBacklog_DoesNotLetStaleRunningWorkerBlockItsQueuedTicket(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	if _, err := svc.SetMaxRunningWorkers(context.Background(), 1); err != nil {
+		t.Fatalf("SetMaxRunningWorkers failed: %v", err)
+	}
+
+	tk := createTicket(t, p.DB, "queue-stale-running-worker")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set worker running failed: %v", err)
+	}
+
+	submitter := &stubWorkerRunSubmitter{}
+	svc.SetWorkerRunSubmitter(submitter)
+	svc.consumeQueuedBacklog(context.Background())
+
+	callIDs := submitter.CallIDs()
+	if len(callIDs) != 1 || callIDs[0] != tk.ID {
+		t.Fatalf("expected stale queued ticket t%d to be dispatched once, got=%v", tk.ID, callIDs)
+	}
+}
+
 func TestScheduleQueuedTickets_DryRunSkipsWorkerRunSubmitter(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "queue-schedule-dry-run")
