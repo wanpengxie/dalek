@@ -191,36 +191,31 @@ func (s *Service) CreateIntegrationTicket(ctx context.Context, in contracts.Crea
 		ctx = context.Background()
 	}
 
-	sourceTicketIDs := normalizeFocusTicketIDs(in.SourceTicketIDs)
-	if len(sourceTicketIDs) == 0 {
-		return contracts.CreateIntegrationTicketResult{}, fmt.Errorf("source tickets 不能为空")
-	}
-	targetRef, err := normalizeIntegrationTargetRefInput(in.TargetRef)
+	normalized, err := normalizeCreateIntegrationTicketInput(in)
 	if err != nil {
 		return contracts.CreateIntegrationTicketResult{}, err
 	}
-	if err := verifyTicketsExist(ctx, db, sourceTicketIDs); err != nil {
+	if err := validateIntegrationTicketEvidence(normalized); err != nil {
+		return contracts.CreateIntegrationTicketResult{}, err
+	}
+	sourceTickets, err := loadIntegrationSourceTickets(ctx, db, normalized.SourceTicketIDs)
+	if err != nil {
+		return contracts.CreateIntegrationTicketResult{}, err
+	}
+	if err := validateIntegrationSourceTickets(sourceTickets, normalized.TargetRef); err != nil {
 		return contracts.CreateIntegrationTicketResult{}, err
 	}
 
 	ticketService := ticketsvc.New(db)
-	title := buildIntegrationTicketTitle(sourceTicketIDs, targetRef)
-	description := buildIntegrationTicketDescription(contracts.CreateIntegrationTicketInput{
-		SourceTicketIDs:       sourceTicketIDs,
-		TargetRef:             targetRef,
-		ConflictTargetHeadSHA: strings.TrimSpace(in.ConflictTargetHeadSHA),
-		SourceAnchorSHAs:      trimNonEmptyStrings(in.SourceAnchorSHAs),
-		ConflictFiles:         trimNonEmptyStrings(in.ConflictFiles),
-		MergeSummary:          strings.TrimSpace(in.MergeSummary),
-		EvidenceRefs:          trimNonEmptyStrings(in.EvidenceRefs),
-	})
+	title := buildIntegrationTicketTitle(normalized.SourceTicketIDs, normalized.TargetRef)
+	description := buildIntegrationTicketDescription(normalized)
 	ticket, err := ticketService.CreateWithDescriptionAndLabelAndPriorityAndTarget(
 		ctx,
 		title,
 		description,
 		"integration",
 		contracts.TicketPriorityHigh,
-		targetRef,
+		normalized.TargetRef,
 	)
 	if err != nil {
 		return contracts.CreateIntegrationTicketResult{}, err
@@ -468,33 +463,6 @@ func trimNonEmptyStrings(values []string) []string {
 	return out
 }
 
-func verifyTicketsExist(ctx context.Context, db *gorm.DB, ticketIDs []uint) error {
-	if len(ticketIDs) == 0 {
-		return fmt.Errorf("ticket_ids 不能为空")
-	}
-	type row struct {
-		ID uint `gorm:"column:id"`
-	}
-	var rows []row
-	if err := db.WithContext(ctx).
-		Model(&contracts.Ticket{}).
-		Select("id").
-		Where("id IN ?", ticketIDs).
-		Find(&rows).Error; err != nil {
-		return err
-	}
-	seen := make(map[uint]struct{}, len(rows))
-	for _, row := range rows {
-		seen[row.ID] = struct{}{}
-	}
-	for _, id := range ticketIDs {
-		if _, ok := seen[id]; !ok {
-			return fmt.Errorf("ticket t%d 不存在", id)
-		}
-	}
-	return nil
-}
-
 func buildIntegrationTicketTitle(sourceTicketIDs []uint, targetRef string) string {
 	shortTarget := shortIntegrationTargetRef(targetRef)
 	if shortTarget == "" {
@@ -522,20 +490,12 @@ func buildIntegrationTicketDescription(in contracts.CreateIntegrationTicketInput
 		fmt.Sprintf("- target_ref: %s", strings.TrimSpace(in.TargetRef)),
 		"",
 		"## 现场",
-		fmt.Sprintf("- conflict_target_head_sha: %s", firstNonEmpty(strings.TrimSpace(in.ConflictTargetHeadSHA), "(unknown)")),
-	}
-	if len(in.SourceAnchorSHAs) > 0 {
-		lines = append(lines, fmt.Sprintf("- source_anchor_shas: %s", strings.Join(in.SourceAnchorSHAs, ", ")))
-	} else {
-		lines = append(lines, "- source_anchor_shas: (none)")
+		fmt.Sprintf("- conflict_target_head_sha: %s", strings.TrimSpace(in.ConflictTargetHeadSHA)),
+		fmt.Sprintf("- source_anchor_shas: %s", strings.Join(in.SourceAnchorSHAs, ", ")),
 	}
 	lines = append(lines, "- conflict_files:")
-	if len(in.ConflictFiles) == 0 {
-		lines = append(lines, "  - (none)")
-	} else {
-		for _, file := range in.ConflictFiles {
-			lines = append(lines, "  - "+file)
-		}
+	for _, file := range in.ConflictFiles {
+		lines = append(lines, "  - "+file)
 	}
 	lines = append(lines,
 		"",
@@ -549,18 +509,11 @@ func buildIntegrationTicketDescription(in contracts.CreateIntegrationTicketInput
 		"- 不得依赖 repo root 的冲突现场",
 		"",
 		"## 输入证据",
-		fmt.Sprintf("- merge stderr/log: %s", firstNonEmpty(strings.TrimSpace(in.MergeSummary), "(none)")),
+		fmt.Sprintf("- merge stderr/log: %s", strings.TrimSpace(in.MergeSummary)),
+		"- docs:",
 	)
-	if len(in.EvidenceRefs) == 0 {
-		lines = append(lines, "- docs: (none)")
-	} else {
-		for i, ref := range in.EvidenceRefs {
-			prefix := "- docs: "
-			if i > 0 {
-				prefix = "  "
-			}
-			lines = append(lines, prefix+ref)
-		}
+	for _, ref := range in.EvidenceRefs {
+		lines = append(lines, "  - "+ref)
 	}
 	lines = append(lines,
 		"",
