@@ -77,10 +77,10 @@ func (r *testExecutionHostResolver) ListProjectsCount() int64 {
 type testExecutionHostProject struct {
 	mu sync.Mutex
 
-	startCalls                   int
-	directDispatchCalls          int
-	subagentCalls                int
-	runSubagentCalls             int
+	startCalls          int
+	directDispatchCalls int
+	subagentCalls       int
+	runSubagentCalls    int
 	// planner fields removed
 	lastStartBaseBranch          string
 	lastDirectDispatchAutoStart  *bool
@@ -94,6 +94,8 @@ type testExecutionHostProject struct {
 	statusByRun       map[uint]*RunStatus
 	eventsByRun       map[uint][]RunEvent
 	ticketViews       []TicketView
+	focusView         contracts.FocusRunView
+	focusEvents       []contracts.FocusEvent
 	statusCalls       int
 	eventCalls        int
 	dashboardResult   DashboardResult
@@ -119,7 +121,6 @@ type testExecutionHostProject struct {
 	runSubagentStarted      chan struct{}
 	runSubagentRelease      chan struct{}
 	runSubagentIgnoreCancel bool
-
 }
 
 func (p *testExecutionHostProject) StartTicket(ctx context.Context, ticketID uint, opt StartTicketOptions) (*contracts.Worker, error) {
@@ -219,7 +220,6 @@ func (p *testExecutionHostProject) RunSubagentJob(ctx context.Context, taskRunID
 	notifyExecutionStarted(started)
 	return waitExecutionRelease(ctx, delay, release, ignoreCancel)
 }
-
 
 func notifyExecutionStarted(ch chan struct{}) {
 	if ch == nil {
@@ -446,6 +446,79 @@ func (p *testExecutionHostProject) GetTicketViewByID(ctx context.Context, ticket
 	return nil, gorm.ErrRecordNotFound
 }
 
+func (p *testExecutionHostProject) FocusStart(ctx context.Context, in contracts.FocusStartInput) (contracts.FocusStartResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.focusView.Run.ID == 0 {
+		p.focusView.Run = contracts.FocusRun{
+			Model:        gorm.Model{ID: 901},
+			ProjectKey:   "demo",
+			Mode:         contracts.FocusModeBatch,
+			RequestID:    strings.TrimSpace(in.RequestID),
+			DesiredState: contracts.FocusDesiredRunning,
+			Status:       contracts.FocusQueued,
+		}
+	}
+	if p.focusView.Run.RequestID == "" {
+		p.focusView.Run.RequestID = strings.TrimSpace(in.RequestID)
+	}
+	return contracts.FocusStartResult{
+		Created:   true,
+		FocusID:   p.focusView.Run.ID,
+		RequestID: p.focusView.Run.RequestID,
+		View:      p.focusView,
+	}, nil
+}
+
+func (p *testExecutionHostProject) FocusGet(ctx context.Context, focusID uint) (contracts.FocusRunView, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.focusView.Run.ID == 0 {
+		return contracts.FocusRunView{}, gorm.ErrRecordNotFound
+	}
+	return p.focusView, nil
+}
+
+func (p *testExecutionHostProject) FocusPoll(ctx context.Context, focusID, sinceEventID uint) (contracts.FocusPollResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.focusView.Run.ID == 0 {
+		return contracts.FocusPollResult{}, gorm.ErrRecordNotFound
+	}
+	events := make([]contracts.FocusEvent, 0, len(p.focusEvents))
+	for _, ev := range p.focusEvents {
+		if ev.ID > sinceEventID {
+			events = append(events, ev)
+		}
+	}
+	return contracts.FocusPollResult{
+		View:   p.focusView,
+		Events: events,
+	}, nil
+}
+
+func (p *testExecutionHostProject) FocusStop(ctx context.Context, focusID uint, requestID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.focusView.Run.ID == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	p.focusView.Run.DesiredState = contracts.FocusDesiredStopping
+	p.focusView.Run.Status = contracts.FocusStopped
+	return nil
+}
+
+func (p *testExecutionHostProject) FocusCancel(ctx context.Context, focusID uint, requestID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.focusView.Run.ID == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	p.focusView.Run.DesiredState = contracts.FocusDesiredCanceling
+	p.focusView.Run.Status = contracts.FocusCanceled
+	return nil
+}
+
 func copyDashboardMap(src map[string]int) map[string]int {
 	if len(src) == 0 {
 		return map[string]int{}
@@ -498,7 +571,6 @@ func (p *testExecutionHostProject) RunSubagentCount() int {
 	defer p.mu.Unlock()
 	return p.runSubagentCalls
 }
-
 
 func (p *testExecutionHostProject) GetTaskStatusCount() int {
 	p.mu.Lock()

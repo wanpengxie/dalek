@@ -677,6 +677,76 @@ func (h *ExecutionHost) ListProjectInbox(ctx context.Context, projectName string
 	})
 }
 
+func (h *ExecutionHost) FocusStart(ctx context.Context, projectName string, in contracts.FocusStartInput) (contracts.FocusStartResult, error) {
+	if h == nil || h.resolver == nil {
+		return contracts.FocusStartResult{}, fmt.Errorf("execution host 未初始化")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	project, err := h.resolver.OpenProject(strings.TrimSpace(projectName))
+	if err != nil {
+		return contracts.FocusStartResult{}, err
+	}
+	return project.FocusStart(ctx, in)
+}
+
+func (h *ExecutionHost) FocusGet(ctx context.Context, projectName string, focusID uint) (contracts.FocusRunView, error) {
+	if h == nil || h.resolver == nil {
+		return contracts.FocusRunView{}, fmt.Errorf("execution host 未初始化")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	project, err := h.resolver.OpenProject(strings.TrimSpace(projectName))
+	if err != nil {
+		return contracts.FocusRunView{}, err
+	}
+	return project.FocusGet(ctx, focusID)
+}
+
+func (h *ExecutionHost) FocusPoll(ctx context.Context, projectName string, focusID, sinceEventID uint) (contracts.FocusPollResult, error) {
+	if h == nil || h.resolver == nil {
+		return contracts.FocusPollResult{}, fmt.Errorf("execution host 未初始化")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	project, err := h.resolver.OpenProject(strings.TrimSpace(projectName))
+	if err != nil {
+		return contracts.FocusPollResult{}, err
+	}
+	return project.FocusPoll(ctx, focusID, sinceEventID)
+}
+
+func (h *ExecutionHost) FocusStop(ctx context.Context, projectName string, focusID uint, requestID string) error {
+	if h == nil || h.resolver == nil {
+		return fmt.Errorf("execution host 未初始化")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	project, err := h.resolver.OpenProject(strings.TrimSpace(projectName))
+	if err != nil {
+		return err
+	}
+	return project.FocusStop(ctx, focusID, requestID)
+}
+
+func (h *ExecutionHost) FocusCancel(ctx context.Context, projectName string, focusID uint, requestID string) error {
+	if h == nil || h.resolver == nil {
+		return fmt.Errorf("execution host 未初始化")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	project, err := h.resolver.OpenProject(strings.TrimSpace(projectName))
+	if err != nil {
+		return err
+	}
+	return project.FocusCancel(ctx, focusID, requestID)
+}
+
 func (h *ExecutionHost) openDashboardProject(projectName string) (DashboardProject, error) {
 	if h == nil || h.resolver == nil {
 		return nil, fmt.Errorf("execution host 未初始化")

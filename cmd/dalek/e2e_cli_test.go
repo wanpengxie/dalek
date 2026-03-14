@@ -169,7 +169,6 @@ func TestCLI_E2E_BasicWorkflow(t *testing.T) {
 	if !strings.Contains(out, "=== Project Dashboard ===") ||
 		!strings.Contains(out, "-- Ticket Overview --") ||
 		!strings.Contains(out, "-- Worker Utilization --") ||
-		!strings.Contains(out, "-- Planner Status --") ||
 		!strings.Contains(out, "-- Merge Queue --") ||
 		!strings.Contains(out, "-- Inbox Todo --") {
 		t.Fatalf("pm dashboard text output unexpected:\n%s", out)

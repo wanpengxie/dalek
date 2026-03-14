@@ -285,7 +285,7 @@ func cmdWorkerReport(args []string) {
 		r.Blockers = b
 	}
 
-	if err := p.ApplyWorkerReport(ctx, r, "cli"); err != nil {
+	if err := p.ApplyWorkerLoopReport(ctx, r, "cli"); err != nil {
 		exitRuntimeError(out,
 			"worker report 写入失败",
 			err.Error(),

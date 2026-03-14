@@ -119,6 +119,8 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/subagent/submit", s.withInternalAccess(s.handleSubagentSubmit))
 	mux.HandleFunc("/api/notes", s.withInternalAccess(s.handleNoteSubmit))
 	mux.HandleFunc("/api/task-runs/", s.withInternalAccess(s.handleTaskRuns))
+	mux.HandleFunc("/api/v1/focus", s.withInternalAccess(s.handleFocus))
+	mux.HandleFunc("/api/v1/focus/", s.withInternalAccess(s.handleFocus))
 	mux.HandleFunc("/api/v1/overview", s.withInternalAccess(s.handleOverview))
 	mux.HandleFunc("/api/v1/merges", s.withInternalAccess(s.handleMerges))
 	mux.HandleFunc("/api/v1/inbox", s.withInternalAccess(s.handleInbox))

@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 var ErrDaemonUnavailable = errors.New("daemon unavailable")
@@ -70,6 +72,23 @@ type DaemonTicketLoopProbeResult struct {
 	WorkerID             uint
 	CancelRequestedAt    *time.Time
 	LastError            string
+}
+
+type DaemonFocusStartRequest struct {
+	Project string
+	FocusStartInput
+}
+
+type DaemonFocusStopRequest struct {
+	Project   string
+	FocusID   uint
+	RequestID string
+}
+
+type DaemonFocusCancelRequest struct {
+	Project   string
+	FocusID   uint
+	RequestID string
 }
 
 type DaemonSubagentSubmitRequest struct {
@@ -198,6 +217,128 @@ func (c *DaemonAPIClient) Health(ctx context.Context) error {
 	var out map[string]any
 	if _, err := c.doJSON(ctx, http.MethodGet, "/health", nil, &out); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (c *DaemonAPIClient) FocusStart(ctx context.Context, req DaemonFocusStartRequest) (FocusStartResult, error) {
+	if c == nil {
+		return FocusStartResult{}, fmt.Errorf("daemon client 为空")
+	}
+	payload := map[string]any{
+		"project":          strings.TrimSpace(req.Project),
+		"mode":             strings.TrimSpace(req.Mode),
+		"scope_ticket_ids": append([]uint(nil), req.ScopeTicketIDs...),
+		"agent_budget":     req.AgentBudget,
+		"request_id":       strings.TrimSpace(req.RequestID),
+	}
+	var out FocusStartResult
+	code, err := c.doJSON(ctx, http.MethodPost, "/api/v1/focus/start", payload, &out)
+	if err != nil {
+		return FocusStartResult{}, err
+	}
+	if code != http.StatusAccepted && code != http.StatusOK {
+		return FocusStartResult{}, fmt.Errorf("focus start 响应码异常: %d", code)
+	}
+	return out, nil
+}
+
+func (c *DaemonAPIClient) FocusGet(ctx context.Context, project string, focusID uint, active bool) (FocusRunView, error) {
+	if c == nil {
+		return FocusRunView{}, fmt.Errorf("daemon client 为空")
+	}
+	project = strings.TrimSpace(project)
+	var path string
+	switch {
+	case focusID > 0:
+		path = fmt.Sprintf("/api/v1/focus/%d?project=%s", focusID, url.QueryEscape(project))
+	case active:
+		path = fmt.Sprintf("/api/v1/focus?project=%s&active=true", url.QueryEscape(project))
+	default:
+		return FocusRunView{}, fmt.Errorf("focus_id 不能为空")
+	}
+	var out struct {
+		Focus FocusRunView `json:"focus"`
+	}
+	code, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	if err != nil {
+		if code == http.StatusNotFound {
+			return FocusRunView{}, gorm.ErrRecordNotFound
+		}
+		return FocusRunView{}, err
+	}
+	if code != http.StatusOK {
+		return FocusRunView{}, fmt.Errorf("focus get 响应码异常: %d", code)
+	}
+	return out.Focus, nil
+}
+
+func (c *DaemonAPIClient) FocusGetCurrent(ctx context.Context, project string) (FocusRunView, error) {
+	return c.FocusGet(ctx, project, 0, true)
+}
+
+func (c *DaemonAPIClient) FocusPoll(ctx context.Context, project string, focusID uint, sinceEventID uint) (FocusPollResult, error) {
+	if c == nil {
+		return FocusPollResult{}, fmt.Errorf("daemon client 为空")
+	}
+	if focusID == 0 {
+		return FocusPollResult{}, fmt.Errorf("focus_id 不能为空")
+	}
+	path := fmt.Sprintf("/api/v1/focus/%d/poll?project=%s&since_event_id=%d", focusID, url.QueryEscape(strings.TrimSpace(project)), sinceEventID)
+	var out FocusPollResult
+	code, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	if err != nil {
+		if code == http.StatusNotFound {
+			return FocusPollResult{}, gorm.ErrRecordNotFound
+		}
+		return FocusPollResult{}, err
+	}
+	if code != http.StatusOK {
+		return FocusPollResult{}, fmt.Errorf("focus poll 响应码异常: %d", code)
+	}
+	return out, nil
+}
+
+func (c *DaemonAPIClient) FocusStop(ctx context.Context, req DaemonFocusStopRequest) error {
+	if c == nil {
+		return fmt.Errorf("daemon client 为空")
+	}
+	if req.FocusID == 0 {
+		return fmt.Errorf("focus_id 不能为空")
+	}
+	path := fmt.Sprintf("/api/v1/focus/%d/stop?project=%s", req.FocusID, url.QueryEscape(strings.TrimSpace(req.Project)))
+	payload := map[string]any{"request_id": strings.TrimSpace(req.RequestID)}
+	code, err := c.doJSON(ctx, http.MethodPost, path, payload, nil)
+	if err != nil {
+		if code == http.StatusNotFound {
+			return gorm.ErrRecordNotFound
+		}
+		return err
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("focus stop 响应码异常: %d", code)
+	}
+	return nil
+}
+
+func (c *DaemonAPIClient) FocusCancel(ctx context.Context, req DaemonFocusCancelRequest) error {
+	if c == nil {
+		return fmt.Errorf("daemon client 为空")
+	}
+	if req.FocusID == 0 {
+		return fmt.Errorf("focus_id 不能为空")
+	}
+	path := fmt.Sprintf("/api/v1/focus/%d/cancel?project=%s", req.FocusID, url.QueryEscape(strings.TrimSpace(req.Project)))
+	payload := map[string]any{"request_id": strings.TrimSpace(req.RequestID)}
+	code, err := c.doJSON(ctx, http.MethodPost, path, payload, nil)
+	if err != nil {
+		if code == http.StatusNotFound {
+			return gorm.ErrRecordNotFound
+		}
+		return err
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("focus cancel 响应码异常: %d", code)
 	}
 	return nil
 }

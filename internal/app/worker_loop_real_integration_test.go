@@ -171,7 +171,9 @@ func applyWorkerReportForIntegration(
 		Dirty:      dirty,
 		NextAction: strings.TrimSpace(nextAction),
 	}
-	if err := p.ApplyWorkerReport(context.Background(), report, "integration.real_worker_loop"); err != nil {
+	// 这里模拟真实 worker loop 内部的 report 上报阶段，只写 runtime 观测；
+	// terminal closure 由外层 RunTicketWorker 在 stage 结束时统一执行。
+	if err := p.pm.ApplyWorkerReport(context.Background(), report, "integration.real_worker_loop"); err != nil {
 		t.Fatalf("ApplyWorkerReport failed: %v", err)
 	}
 }

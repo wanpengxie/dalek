@@ -30,6 +30,33 @@ func (s *Service) applyWorkerLoopTerminalClosure(ctx context.Context, ticketID u
 	return s.applyWorkerLoopTerminalReport(ctx, report, workerLoopClosureSource(source, next))
 }
 
+// ApplyWorkerLoopTerminalClosure 在真实 worker loop 收口时推进 ticket 生命周期。
+// 这里保留严格的 `.dalek/state.json` 与 git 事实校验。
+func (s *Service) ApplyWorkerLoopTerminalClosure(ctx context.Context, r contracts.WorkerReport, source string) error {
+	return s.applyWorkerLoopTerminalReport(ctx, r, workerLoopClosureSource(source, "api"))
+}
+
+// ApplyWorkerReportTerminalClosure 用于 API/app facade 直接提交 terminal report 的场景。
+// 它保留 task_run/git anchor 等关键约束，但不强依赖 `.dalek/state.json`。
+func (s *Service) ApplyWorkerReportTerminalClosure(ctx context.Context, r contracts.WorkerReport, source string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	r.Normalize()
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	next := strings.TrimSpace(strings.ToLower(r.NextAction))
+	if next != string(contracts.NextDone) && next != string(contracts.NextWaitUser) {
+		return nil
+	}
+	guarded, err := s.guardDirectWorkerTerminalReport(ctx, r)
+	if err != nil {
+		return err
+	}
+	return s.applyWorkerLoopTerminalReportCore(ctx, guarded, workerLoopClosureSource(source, "api"))
+}
+
 func (s *Service) applyWorkerLoopClosureFallbackWaitUser(ctx context.Context, ticketID uint, w contracts.Worker, loopResult WorkerLoopResult, decision workerLoopStageClosureDecision, source string) error {
 	if ticketID == 0 {
 		ticketID = w.TicketID
@@ -87,6 +114,26 @@ func (s *Service) applyWorkerLoopTerminalReport(ctx context.Context, r contracts
 			return fmt.Errorf("wait_user closure 缺少 blockers")
 		}
 	}
+	ticketID := r.TicketID
+	if ticketID == 0 {
+		if w, err := s.worker.WorkerByID(ctx, r.WorkerID); err == nil && w != nil {
+			ticketID = w.TicketID
+			if r.WorkerID == 0 {
+				r.WorkerID = w.ID
+			}
+		}
+	}
+	if ticketID == 0 {
+		return fmt.Errorf("worker loop closure 缺少 ticket_id")
+	}
+	return s.applyWorkerLoopTerminalReportCore(ctx, r, source)
+}
+
+func (s *Service) applyWorkerLoopTerminalReportCore(ctx context.Context, r contracts.WorkerReport, source string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	next := strings.TrimSpace(strings.ToLower(r.NextAction))
 	ticketID := r.TicketID
 	if ticketID == 0 {
 		if w, err := s.worker.WorkerByID(ctx, r.WorkerID); err == nil && w != nil {

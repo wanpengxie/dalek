@@ -171,6 +171,41 @@ func (p *daemonProjectAdapter) GetTicketViewByID(ctx context.Context, ticketID u
 	return p.project.GetTicketViewByID(ctx, ticketID)
 }
 
+func (p *daemonProjectAdapter) FocusStart(ctx context.Context, in contracts.FocusStartInput) (contracts.FocusStartResult, error) {
+	if p == nil || p.project == nil {
+		return contracts.FocusStartResult{}, fmt.Errorf("daemon project 为空")
+	}
+	return p.project.FocusStart(ctx, in)
+}
+
+func (p *daemonProjectAdapter) FocusGet(ctx context.Context, focusID uint) (contracts.FocusRunView, error) {
+	if p == nil || p.project == nil {
+		return contracts.FocusRunView{}, fmt.Errorf("daemon project 为空")
+	}
+	return p.project.FocusGet(ctx, focusID)
+}
+
+func (p *daemonProjectAdapter) FocusPoll(ctx context.Context, focusID, sinceEventID uint) (contracts.FocusPollResult, error) {
+	if p == nil || p.project == nil {
+		return contracts.FocusPollResult{}, fmt.Errorf("daemon project 为空")
+	}
+	return p.project.FocusPoll(ctx, focusID, sinceEventID)
+}
+
+func (p *daemonProjectAdapter) FocusStop(ctx context.Context, focusID uint, requestID string) error {
+	if p == nil || p.project == nil {
+		return fmt.Errorf("daemon project 为空")
+	}
+	return p.project.FocusStop(ctx, focusID, requestID)
+}
+
+func (p *daemonProjectAdapter) FocusCancel(ctx context.Context, focusID uint, requestID string) error {
+	if p == nil || p.project == nil {
+		return fmt.Errorf("daemon project 为空")
+	}
+	return p.project.FocusCancel(ctx, focusID, requestID)
+}
+
 func (p *daemonProjectAdapter) AddNote(ctx context.Context, rawText string) (daemonsvc.NoteAddResult, error) {
 	if p == nil || p.project == nil {
 		return daemonsvc.NoteAddResult{}, fmt.Errorf("daemon project 为空")

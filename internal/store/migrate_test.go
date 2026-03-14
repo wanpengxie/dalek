@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -399,6 +400,88 @@ CREATE TABLE IF NOT EXISTS dag_plans (
 	}
 	if row.N != 0 {
 		t.Fatalf("dag_plans should be dropped after migrate")
+	}
+}
+
+func TestOpenAndMigrate_LeanFocusControlPlanePresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	for _, tc := range []struct {
+		table  string
+		column string
+	}{
+		{table: "focus_runs", column: "desired_state"},
+		{table: "focus_runs", column: "request_id"},
+		{table: "focus_run_items", column: "handoff_ticket_id"},
+		{table: "focus_events", column: "payload_json"},
+		{table: "tickets", column: "superseded_by_ticket_id"},
+	} {
+		ok, err := tableHasColumn(db, tc.table, tc.column)
+		if err != nil {
+			t.Fatalf("tableHasColumn(%s.%s) failed: %v", tc.table, tc.column, err)
+		}
+		if !ok {
+			t.Fatalf("%s should contain column %s", tc.table, tc.column)
+		}
+	}
+
+	var idx struct {
+		SQL string `gorm:"column:sql"`
+	}
+	if err := db.Raw("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", "idx_focus_runs_active_project").Scan(&idx).Error; err != nil {
+		t.Fatalf("query idx_focus_runs_active_project failed: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(idx.SQL), "where status in ('queued','running','blocked')") {
+		t.Fatalf("unexpected focus active index sql: %q", idx.SQL)
+	}
+}
+
+func TestOpenAndMigrate_LeanFocusControlPlaneReapply(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	if err := db.Exec(`DROP TABLE IF EXISTS focus_run_items;`).Error; err != nil {
+		t.Fatalf("drop focus_run_items failed: %v", err)
+	}
+	if err := db.Exec(`DROP TABLE IF EXISTS focus_events;`).Error; err != nil {
+		t.Fatalf("drop focus_events failed: %v", err)
+	}
+	if err := dropTableColumn(db, "tickets", "superseded_by_ticket_id"); err != nil {
+		t.Fatalf("drop tickets.superseded_by_ticket_id failed: %v", err)
+	}
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 20;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations for v20 failed: %v", err)
+	}
+	if _, err := OpenAndMigrate(dbPath); err != nil {
+		t.Fatalf("OpenAndMigrate (reapply v20) failed: %v", err)
+	}
+
+	db2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	for _, tc := range []struct {
+		table  string
+		column string
+	}{
+		{table: "focus_run_items", column: "handoff_ticket_id"},
+		{table: "focus_events", column: "payload_json"},
+		{table: "tickets", column: "superseded_by_ticket_id"},
+	} {
+		ok, err := tableHasColumn(db2, tc.table, tc.column)
+		if err != nil {
+			t.Fatalf("tableHasColumn(%s.%s) after reapply failed: %v", tc.table, tc.column, err)
+		}
+		if !ok {
+			t.Fatalf("%s should restore column %s after reapply", tc.table, tc.column)
+		}
 	}
 }
 

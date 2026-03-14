@@ -161,7 +161,20 @@ func (p *Project) ApplyWorkerReport(ctx context.Context, r contracts.WorkerRepor
 	if p == nil || p.pm == nil {
 		return fmt.Errorf("project pm service 为空")
 	}
-	return p.pm.ApplyWorkerReport(ctx, r, source)
+	if err := p.pm.ApplyWorkerReport(ctx, r, source); err != nil {
+		return err
+	}
+	return p.pm.ApplyWorkerReportTerminalClosure(ctx, r, source)
+}
+
+func (p *Project) ApplyWorkerLoopReport(ctx context.Context, r contracts.WorkerReport, source string) error {
+	if p == nil || p.pm == nil {
+		return fmt.Errorf("project pm service 为空")
+	}
+	if err := p.pm.ApplyWorkerReport(ctx, r, source); err != nil {
+		return err
+	}
+	return p.pm.ApplyWorkerLoopTerminalClosure(ctx, r, source)
 }
 
 func (p *Project) WaitStatusChangeHooks(ctx context.Context) error {

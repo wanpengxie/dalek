@@ -113,6 +113,11 @@ func storeMigrations() []Migration {
 			Name:    "add_focus_runs_table",
 			Up:      migrateAddFocusRunsTable,
 		},
+		{
+			Version: 20,
+			Name:    "lean_focus_v1_control_plane",
+			Up:      migrateLeanFocusControlPlane,
+		},
 	}
 }
 
@@ -550,3 +555,50 @@ func migrateAddFocusRunsTable(db *gorm.DB) error {
 	return db.AutoMigrate(&FocusRun{})
 }
 
+func migrateLeanFocusControlPlane(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	if err := db.AutoMigrate(&FocusRun{}, &FocusRunItem{}, &FocusEvent{}); err != nil {
+		return err
+	}
+	addTicketColumnIfMissing := func(col, ddl string) error {
+		has, err := tableHasColumn(db, "tickets", col)
+		if err != nil {
+			return err
+		}
+		if has {
+			return nil
+		}
+		if err := db.Exec(ddl).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if strings.Contains(msg, "duplicate column name") {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
+	if err := addTicketColumnIfMissing("superseded_by_ticket_id", `ALTER TABLE tickets ADD COLUMN superseded_by_ticket_id INTEGER;`); err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_tickets_superseded_by_ticket_id ON tickets(superseded_by_ticket_id);`).Error; err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_focus_runs_active_project ON focus_runs(project_key) WHERE status IN ('queued','running','blocked');`).Error; err != nil {
+		return err
+	}
+	if err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_focus_events_run_id_id ON focus_events(focus_run_id, id);`).Error; err != nil {
+		return err
+	}
+	if err := db.Exec(`UPDATE focus_runs SET desired_state = 'running' WHERE COALESCE(TRIM(desired_state), '') = '';`).Error; err != nil {
+		return err
+	}
+	if err := db.Exec(`UPDATE focus_runs SET request_id = '' WHERE request_id IS NULL;`).Error; err != nil {
+		return err
+	}
+	if err := db.Exec(`UPDATE focus_runs SET scope_ticket_ids = '[]' WHERE COALESCE(TRIM(scope_ticket_ids), '') = '';`).Error; err != nil {
+		return err
+	}
+	return nil
+}

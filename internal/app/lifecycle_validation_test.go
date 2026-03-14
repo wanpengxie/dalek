@@ -10,13 +10,19 @@ import (
 	"testing"
 	"time"
 
+	"dalek/internal/agent/sdkrunner"
 	"dalek/internal/contracts"
 	daemonsvc "dalek/internal/services/daemon"
+	pmsvc "dalek/internal/services/pm"
 	"dalek/internal/services/ticketlifecycle"
 	workersvc "dalek/internal/services/worker"
 
 	"gorm.io/gorm"
 )
+
+func boolPtr(v bool) *bool {
+	return &v
+}
 
 func gitCurrentBranchForLifecycleTest(t *testing.T, repoRoot string) string {
 	t.Helper()
@@ -290,6 +296,26 @@ func TestIntegration_Lifecycle_MainlineBlockedResumeDoneMergeArchive(t *testing.
 	targetBranch := gitCurrentBranchForLifecycleTest(t, p.RepoRoot())
 	targetRef := "refs/heads/" + targetBranch
 	headSHA := gitHeadSHAForLifecycleTest(t, p.RepoRoot())
+	runCount := 0
+	p.pm.SetTaskRunner(integrationTaskRunnerFunc(func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+		runCount++
+		worktreePath := strings.TrimSpace(req.WorkDir)
+		workerID := requiredEnvUint(t, req.Env, "DALEK_WORKER_ID")
+		ticketID := requiredEnvUint(t, req.Env, "DALEK_TICKET_ID")
+		switch runCount {
+		case 1:
+			writeWorkerLoopStateForIntegration(t, ticketID, workerID, worktreePath, "wait_user", "需要用户补充配置", []string{"请提供生产环境 API token"}, false, headSHA, "clean")
+			applyWorkerReportForIntegration(t, p, req, "wait_user", "需要用户补充配置", []string{"请提供生产环境 API token"}, true, false, headSHA)
+			return sdkrunner.Result{Provider: "test", OutputMode: sdkrunner.OutputModeJSONL, Text: "wait_user"}, nil
+		case 2:
+			writeWorkerLoopStateForIntegration(t, ticketID, workerID, worktreePath, "done", "实现与验证已完成", nil, true, headSHA, "clean")
+			applyWorkerReportForIntegration(t, p, req, "done", "实现与验证已完成", nil, false, false, headSHA)
+			return sdkrunner.Result{Provider: "test", OutputMode: sdkrunner.OutputModeJSONL, Text: "done"}, nil
+		default:
+			t.Fatalf("unexpected runner call=%d", runCount)
+			return sdkrunner.Result{}, nil
+		}
+	}))
 
 	tk, err := p.CreateTicketWithDescription(ctx, "lifecycle-mainline", "mainline lifecycle validation")
 	if err != nil {
@@ -316,23 +342,15 @@ func TestIntegration_Lifecycle_MainlineBlockedResumeDoneMergeArchive(t *testing.
 		t.Fatalf("expected exactly 1 start_requested event, got=%d", got)
 	}
 
-	waitUserRun := createWorkerDeliverRunForLifecycleTest(t, p, tk.ID, w.ID, "wait-user")
-	waitUserReport := contracts.WorkerReport{
-		Schema:     contracts.WorkerReportSchemaV1,
-		ProjectKey: p.Key(),
-		TicketID:   tk.ID,
-		WorkerID:   w.ID,
-		TaskRunID:  waitUserRun.ID,
-		Summary:    "需要用户补充配置",
-		NeedsUser:  true,
-		Blockers:   []string{"请提供生产环境 API token"},
-		NextAction: string(contracts.NextWaitUser),
+	waitUserResult, err := p.RunTicketWorker(ctx, tk.ID, pmsvc.WorkerRunOptions{
+		EntryPrompt: "继续执行任务",
+		AutoStart:   boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("RunTicketWorker(wait_user) failed: %v", err)
 	}
-	if err := p.ApplyWorkerReport(ctx, waitUserReport, "integration.mainline.wait_user"); err != nil {
-		t.Fatalf("ApplyWorkerReport(wait_user) failed: %v", err)
-	}
-	if err := p.ApplyWorkerReport(ctx, waitUserReport, "integration.mainline.wait_user.duplicate"); err != nil {
-		t.Fatalf("ApplyWorkerReport(wait_user duplicate) failed: %v", err)
+	if waitUserResult.LastNextAction != string(contracts.NextWaitUser) {
+		t.Fatalf("expected wait_user next_action, got=%q", waitUserResult.LastNextAction)
 	}
 	blocked := loadTicketForLifecycleTest(t, p, tk.ID)
 	if blocked.WorkflowStatus != contracts.TicketBlocked {
@@ -341,7 +359,6 @@ func TestIntegration_Lifecycle_MainlineBlockedResumeDoneMergeArchive(t *testing.
 	if got := countLifecycleEventsForLifecycleTest(t, p, tk.ID, contracts.TicketLifecycleWaitUserReported); got != 1 {
 		t.Fatalf("expected exactly 1 wait_user_reported event, got=%d", got)
 	}
-	markRunCanceledForLifecycleTest(t, p, waitUserRun.ID, "wait_user round closed before resume")
 
 	resumedWorker, err := p.StartTicket(ctx, tk.ID)
 	if err != nil {
@@ -355,22 +372,18 @@ func TestIntegration_Lifecycle_MainlineBlockedResumeDoneMergeArchive(t *testing.
 		t.Fatalf("expected exactly 2 start_requested events after restart, got=%d", got)
 	}
 
-	doneRun := createWorkerDeliverRunForLifecycleTest(t, p, tk.ID, resumedWorker.ID, "done")
-	doneReport := contracts.WorkerReport{
-		Schema:     contracts.WorkerReportSchemaV1,
-		ProjectKey: p.Key(),
-		TicketID:   tk.ID,
-		WorkerID:   resumedWorker.ID,
-		TaskRunID:  doneRun.ID,
-		HeadSHA:    headSHA,
-		Summary:    "实现与验证已完成",
-		NextAction: string(contracts.NextDone),
+	doneResult, err := p.RunTicketWorker(ctx, tk.ID, pmsvc.WorkerRunOptions{
+		EntryPrompt: "继续执行任务",
+		AutoStart:   boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("RunTicketWorker(done) failed: %v", err)
 	}
-	if err := p.ApplyWorkerReport(ctx, doneReport, "integration.mainline.done"); err != nil {
-		t.Fatalf("ApplyWorkerReport(done) failed: %v", err)
+	if doneResult.WorkerID != resumedWorker.ID {
+		t.Fatalf("expected done run reuse resumed worker=%d, got=%d", resumedWorker.ID, doneResult.WorkerID)
 	}
-	if err := p.ApplyWorkerReport(ctx, doneReport, "integration.mainline.done.duplicate"); err != nil {
-		t.Fatalf("ApplyWorkerReport(done duplicate) failed: %v", err)
+	if doneResult.LastNextAction != string(contracts.NextDone) {
+		t.Fatalf("expected done next_action, got=%q", doneResult.LastNextAction)
 	}
 
 	doneTicket := loadTicketForLifecycleTest(t, p, tk.ID)
@@ -641,6 +654,14 @@ func TestIntegration_Lifecycle_ArchiveRejectedWhileNeedsMerge(t *testing.T) {
 	p := newIntegrationProject(t)
 	ctx := context.Background()
 	headSHA := gitHeadSHAForLifecycleTest(t, p.RepoRoot())
+	p.pm.SetTaskRunner(integrationTaskRunnerFunc(func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+		worktreePath := strings.TrimSpace(req.WorkDir)
+		workerID := requiredEnvUint(t, req.Env, "DALEK_WORKER_ID")
+		ticketID := requiredEnvUint(t, req.Env, "DALEK_TICKET_ID")
+		writeWorkerLoopStateForIntegration(t, ticketID, workerID, worktreePath, "done", "done but waiting merge", nil, true, headSHA, "clean")
+		applyWorkerReportForIntegration(t, p, req, "done", "done but waiting merge", nil, false, false, headSHA)
+		return sdkrunner.Result{Provider: "test", OutputMode: sdkrunner.OutputModeJSONL, Text: "done"}, nil
+	}))
 
 	tk, err := p.CreateTicketWithDescription(ctx, "archive-needs-merge", "done ticket should not archive before merge")
 	if err != nil {
@@ -650,19 +671,18 @@ func TestIntegration_Lifecycle_ArchiveRejectedWhileNeedsMerge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
 	}
-	doneRun := createWorkerDeliverRunForLifecycleTest(t, p, tk.ID, w.ID, "archive-needs-merge")
-	doneReport := contracts.WorkerReport{
-		Schema:     contracts.WorkerReportSchemaV1,
-		ProjectKey: p.Key(),
-		TicketID:   tk.ID,
-		WorkerID:   w.ID,
-		TaskRunID:  doneRun.ID,
-		HeadSHA:    headSHA,
-		Summary:    "done but waiting merge",
-		NextAction: string(contracts.NextDone),
+	runResult, err := p.RunTicketWorker(ctx, tk.ID, pmsvc.WorkerRunOptions{
+		EntryPrompt: "继续执行任务",
+		AutoStart:   boolPtr(false),
+	})
+	if err != nil {
+		t.Fatalf("RunTicketWorker(done) failed: %v", err)
 	}
-	if err := p.ApplyWorkerReport(ctx, doneReport, "integration.archive.needs_merge"); err != nil {
-		t.Fatalf("ApplyWorkerReport(done) failed: %v", err)
+	if runResult.WorkerID != w.ID {
+		t.Fatalf("expected done run reuse started worker=%d, got=%d", w.ID, runResult.WorkerID)
+	}
+	if runResult.LastNextAction != string(contracts.NextDone) {
+		t.Fatalf("expected done next_action, got=%q", runResult.LastNextAction)
 	}
 
 	err = p.ArchiveTicket(ctx, tk.ID)

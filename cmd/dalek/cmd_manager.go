@@ -28,6 +28,8 @@ func cmdManager(args []string) {
 		cmdManagerShow(args[1:])
 	case "stop":
 		cmdManagerStop(args[1:])
+	case "tail":
+		cmdManagerTail(args[1:])
 	case "pause":
 		cmdManagerPauseResume(args[1:], false)
 	case "resume":
@@ -51,6 +53,7 @@ func printManagerUsage() {
 		"run       执行 focus（--mode batch）或单次调试（--sync-worker-run）",
 		"show      查看当前 focus 详情",
 		"stop      停止当前 focus",
+		"tail      查看 daemon focus 状态与事件",
 		"pause     暂停（已废弃）",
 		"resume    恢复（已废弃）",
 	})
@@ -413,4 +416,3 @@ func cmdManagerRun(args []string) {
 		}
 	}
 }
-

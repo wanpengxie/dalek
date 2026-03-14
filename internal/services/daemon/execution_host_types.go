@@ -63,6 +63,11 @@ type ExecutionHostProject interface {
 	ListTaskEvents(ctx context.Context, runID uint, limit int) ([]RunEvent, error)
 	ListTicketViews(ctx context.Context) ([]TicketView, error)
 	GetTicketViewByID(ctx context.Context, ticketID uint) (*TicketView, error)
+	FocusStart(ctx context.Context, in contracts.FocusStartInput) (contracts.FocusStartResult, error)
+	FocusGet(ctx context.Context, focusID uint) (contracts.FocusRunView, error)
+	FocusPoll(ctx context.Context, focusID, sinceEventID uint) (contracts.FocusPollResult, error)
+	FocusStop(ctx context.Context, focusID uint, requestID string) error
+	FocusCancel(ctx context.Context, focusID uint, requestID string) error
 }
 
 // DashboardProject 暴露 web dashboard 聚合查询能力。

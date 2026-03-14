@@ -51,6 +51,11 @@ func daemonUnavailableWorkerRunFix(ticketID uint) string {
 		"当前命令属于长时任务，预计耗时：P50=28m, P90=96m（无历史时默认 20~120m）"
 }
 
+func daemonUnavailableFocusFix() string {
+	return "`dalek daemon start`\n" +
+		"focus 控制面已切到 daemon-owned 模式；run/stop/tail 需要 daemon 在线。"
+}
+
 func daemonUnavailableAgentRunFix() string {
 	return "`dalek daemon start`\n" +
 		"当前命令属于长时任务，建议使用异步模式；如需同步执行可改用：\n" +

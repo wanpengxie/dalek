@@ -36,6 +36,7 @@ func (s *Service) CreateFocusRun(ctx context.Context, mode string, ticketIDs []u
 	focus := contracts.FocusRun{
 		ProjectKey:     strings.TrimSpace(s.p.Key),
 		Mode:           mode,
+		DesiredState:   contracts.FocusDesiredRunning,
 		Status:         contracts.FocusQueued,
 		ScopeTicketIDs: string(scopeJSON),
 		TotalCount:     len(ticketIDs),
@@ -48,7 +49,7 @@ func (s *Service) CreateFocusRun(ctx context.Context, mode string, ticketIDs []u
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var active contracts.FocusRun
 		txErr := tx.Where("project_key = ? AND status NOT IN ?", strings.TrimSpace(s.p.Key),
-			[]string{contracts.FocusCompleted, contracts.FocusFailed, contracts.FocusCanceled}).
+			[]string{contracts.FocusCompleted, contracts.FocusStopped, contracts.FocusFailed, contracts.FocusCanceled}).
 			First(&active).Error
 		if txErr == nil {
 			return fmt.Errorf("已存在 active focus（id=%d status=%s），请先 stop", active.ID, active.Status)
@@ -73,7 +74,7 @@ func (s *Service) ActiveFocusRun(ctx context.Context) (*contracts.FocusRun, erro
 	var focus contracts.FocusRun
 	err = db.WithContext(ctx).
 		Where("project_key = ? AND status NOT IN ?", strings.TrimSpace(s.p.Key),
-			[]string{contracts.FocusCompleted, contracts.FocusFailed, contracts.FocusCanceled}).
+			[]string{contracts.FocusCompleted, contracts.FocusStopped, contracts.FocusFailed, contracts.FocusCanceled}).
 		First(&focus).Error
 	if err != nil {
 		return nil, nil // 无 active focus

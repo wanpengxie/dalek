@@ -41,6 +41,13 @@ type ManagerTickOptions = pmsvc.ManagerTickOptions
 type ManagerTickResult = pmsvc.ManagerTickResult
 type PMHealthMetricsOptions = pmsvc.HealthMetricsOptions
 type PMHealthMetrics = pmsvc.HealthMetrics
+type FocusRun = contracts.FocusRun
+type FocusStartInput = contracts.FocusStartInput
+type FocusStartResult = contracts.FocusStartResult
+type FocusRunView = contracts.FocusRunView
+type FocusPollResult = contracts.FocusPollResult
+type CreateIntegrationTicketInput = contracts.CreateIntegrationTicketInput
+type CreateIntegrationTicketResult = contracts.CreateIntegrationTicketResult
 
 type ListTaskOptions struct {
 	OwnerType       contracts.TaskOwnerType
