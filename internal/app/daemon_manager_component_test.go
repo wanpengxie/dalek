@@ -232,11 +232,13 @@ func (s *stubManagerExecutionHost) SubmitTicketLoop(_ context.Context, req daemo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, req)
+	taskRunID := uint(len(s.calls))
 	return daemonsvc.TicketLoopSubmitReceipt{
 		Accepted:  true,
 		Project:   req.Project,
 		RequestID: req.RequestID,
 		TicketID:  req.TicketID,
+		TaskRunID: taskRunID,
 	}, nil
 }
 
