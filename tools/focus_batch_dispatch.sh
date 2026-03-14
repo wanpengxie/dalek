@@ -81,23 +81,23 @@ ensure_daemon_running() {
 
 ticket_show_json() {
   local ticket_id="$1"
-  dalek ticket show "${COMMON_ARGS[@]}" --ticket "$ticket_id" -o json
+  dalek ticket show "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" --ticket "$ticket_id" -o json
 }
 
 merge_status_json() {
   local ticket_id="$1"
-  dalek merge status "${COMMON_ARGS[@]}" --ticket "$ticket_id" -o json
+  dalek merge status "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" --ticket "$ticket_id" -o json
 }
 
 start_ticket() {
   local ticket_id="$1"
   log "启动 t${ticket_id}"
-  dalek ticket start "${COMMON_ARGS[@]}" --ticket "$ticket_id" -o json >/dev/null
+  dalek ticket start "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" --ticket "$ticket_id" -o json >/dev/null
 }
 
 rescan_merge_ref() {
   local target_ref="$1"
-  dalek merge rescan "${COMMON_ARGS[@]}" --ref "$target_ref" -o json >/dev/null
+  dalek merge rescan "${COMMON_ARGS[@]+"${COMMON_ARGS[@]}"}" --ref "$target_ref" -o json >/dev/null
 }
 
 auto_merge_ticket() {
