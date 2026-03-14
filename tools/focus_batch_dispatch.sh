@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_NAME="$(basename "$0")"
 POLL_SECONDS=15
 AUTO_MERGE=1
-TICKETS=(110 111 112 113)
+TICKETS=()
 COMMON_ARGS=()
 
 usage() {
@@ -198,6 +198,12 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ ${#TICKETS[@]} -eq 0 ]]; then
+  echo "错误: 必须通过 --tickets 指定 ticket IDs" >&2
+  echo "示例: $SCRIPT_NAME --tickets 110,111,112" >&2
+  exit 2
+fi
 
 ensure_daemon_running
 log "开始严格串行调度: ${TICKETS[*]}"
