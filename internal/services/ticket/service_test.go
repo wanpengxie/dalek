@@ -5,6 +5,7 @@ import (
 	"dalek/internal/contracts"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,24 @@ import (
 
 	"gorm.io/gorm"
 )
+
+const testTargetRef = "refs/heads/main"
+
+func mustCreateTicket(t *testing.T, svc *Service, title, description, label string, priority int) *contracts.Ticket {
+	t.Helper()
+	tk, err := svc.CreateWithDescriptionAndLabelAndPriorityAndTarget(
+		context.Background(),
+		title,
+		description,
+		label,
+		priority,
+		testTargetRef,
+	)
+	if err != nil {
+		t.Fatalf("create ticket failed: %v", err)
+	}
+	return tk
+}
 
 func TestService_CreateAndList(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
@@ -21,7 +40,7 @@ func TestService_CreateAndList(t *testing.T) {
 	}
 
 	svc := New(db)
-	if _, err := svc.CreateWithDescription(context.Background(), "hello", "desc"); err != nil {
+	if _, err := svc.CreateWithDescriptionAndLabelAndPriorityAndTarget(context.Background(), "hello", "desc", "", contracts.TicketPriorityNone, testTargetRef); err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
 	items, err := svc.List(context.Background(), false)
@@ -47,7 +66,7 @@ func TestService_CreateAndList(t *testing.T) {
 	}
 }
 
-func TestService_Create_AllowsEmptyDescription(t *testing.T) {
+func TestService_Create_RejectsMissingTargetRef(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
 	db, err := store.OpenAndMigrate(dbPath)
 	if err != nil {
@@ -55,7 +74,27 @@ func TestService_Create_AllowsEmptyDescription(t *testing.T) {
 	}
 
 	svc := New(db)
-	tk, err := svc.Create(context.Background(), "hello")
+	if _, err := svc.Create(context.Background(), "hello"); err == nil {
+		t.Fatalf("expected create without target_ref to fail")
+	} else if !strings.Contains(err.Error(), "target_ref 不能为空") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := svc.CreateWithDescription(context.Background(), "world", "   "); err == nil {
+		t.Fatalf("expected create with description without target_ref to fail")
+	} else if !strings.Contains(err.Error(), "target_ref 不能为空") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestService_CreateWithTarget_AllowsEmptyDescription(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("open db failed: %v", err)
+	}
+
+	svc := New(db)
+	tk, err := svc.CreateWithDescriptionAndLabelAndPriorityAndTarget(context.Background(), "hello", "", "", contracts.TicketPriorityNone, testTargetRef)
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -63,7 +102,7 @@ func TestService_Create_AllowsEmptyDescription(t *testing.T) {
 		t.Fatalf("expected empty description, got %q", tk.Description)
 	}
 
-	tk2, err := svc.CreateWithDescription(context.Background(), "world", "   ")
+	tk2, err := svc.CreateWithDescriptionAndLabelAndPriorityAndTarget(context.Background(), "world", "   ", "", contracts.TicketPriorityNone, testTargetRef)
 	if err != nil {
 		t.Fatalf("create with empty description failed: %v", err)
 	}
@@ -81,7 +120,7 @@ func TestService_CreateWithDescription(t *testing.T) {
 
 	svc := New(db)
 	desc := "实现 gateway\n参考 docs/CHANNEL_GATEWAY_PM_DESIGN.md"
-	tk, err := svc.CreateWithDescription(context.Background(), "gateway", desc)
+	tk, err := svc.CreateWithDescriptionAndLabelAndPriorityAndTarget(context.Background(), "gateway", desc, "", contracts.TicketPriorityNone, testTargetRef)
 	if err != nil {
 		t.Fatalf("create with description failed: %v", err)
 	}
@@ -101,7 +140,7 @@ func TestService_CreateWithDescriptionAndLabel(t *testing.T) {
 	}
 
 	svc := New(db)
-	tk, err := svc.CreateWithDescriptionAndLabel(context.Background(), "gateway", "desc", "  backend/api  ")
+	tk, err := svc.CreateWithDescriptionAndLabelAndPriorityAndTarget(context.Background(), "gateway", "desc", "  backend/api  ", contracts.TicketPriorityNone, testTargetRef)
 	if err != nil {
 		t.Fatalf("create with label failed: %v", err)
 	}
@@ -129,7 +168,7 @@ func TestService_CreateWithDescriptionAndLabelAndPriority(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tk, err := svc.CreateWithDescriptionAndLabelAndPriority(context.Background(), "ticket-"+tc.name, "desc-"+tc.name, "", tc.priority)
+		tk, err := svc.CreateWithDescriptionAndLabelAndPriorityAndTarget(context.Background(), "ticket-"+tc.name, "desc-"+tc.name, "", tc.priority, testTargetRef)
 		if err != nil {
 			t.Fatalf("create %s failed: %v", tc.name, err)
 		}
@@ -154,10 +193,7 @@ func TestService_UpdateText_RequiresDescription(t *testing.T) {
 	}
 
 	svc := New(db)
-	tk, err := svc.CreateWithDescription(context.Background(), "hello", "desc")
-	if err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
+	tk := mustCreateTicket(t, svc, "hello", "desc", "", contracts.TicketPriorityNone)
 
 	if err := svc.UpdateText(context.Background(), tk.ID, "new title", "   "); err == nil {
 		t.Fatalf("expected error when description is empty")
@@ -172,10 +208,7 @@ func TestService_UpdateTextAndLabel(t *testing.T) {
 	}
 
 	svc := New(db)
-	tk, err := svc.CreateWithDescriptionAndLabel(context.Background(), "hello", "desc", "ops")
-	if err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
+	tk := mustCreateTicket(t, svc, "hello", "desc", "ops", contracts.TicketPriorityNone)
 
 	if err := svc.UpdateTextAndLabel(context.Background(), tk.ID, "new title", "new desc", "platform"); err != nil {
 		t.Fatalf("update text and label failed: %v", err)
@@ -198,10 +231,7 @@ func TestService_UpdateTextAndLabelAndPriority(t *testing.T) {
 	}
 
 	svc := New(db)
-	tk, err := svc.CreateWithDescriptionAndLabelAndPriority(context.Background(), "hello", "desc", "ops", contracts.TicketPriorityLow)
-	if err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
+	tk := mustCreateTicket(t, svc, "hello", "desc", "ops", contracts.TicketPriorityLow)
 
 	if err := svc.UpdateTextAndLabelAndPriority(context.Background(), tk.ID, "new title", "new desc", "platform", contracts.TicketPriorityHigh); err != nil {
 		t.Fatalf("update text/label/priority failed: %v", err)
@@ -227,10 +257,7 @@ func TestService_UpdateText_DoesNotChangeLabel(t *testing.T) {
 	}
 
 	svc := New(db)
-	tk, err := svc.CreateWithDescriptionAndLabel(context.Background(), "hello", "desc", "backend")
-	if err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
+	tk := mustCreateTicket(t, svc, "hello", "desc", "backend", contracts.TicketPriorityNone)
 
 	if err := svc.UpdateText(context.Background(), tk.ID, "new title", "new desc"); err != nil {
 		t.Fatalf("update text failed: %v", err)
@@ -253,10 +280,7 @@ func TestService_UpdateTextAndPriority_DoesNotChangeLabel(t *testing.T) {
 	}
 
 	svc := New(db)
-	tk, err := svc.CreateWithDescriptionAndLabelAndPriority(context.Background(), "hello", "desc", "backend", contracts.TicketPriorityLow)
-	if err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
+	tk := mustCreateTicket(t, svc, "hello", "desc", "backend", contracts.TicketPriorityLow)
 
 	if err := svc.UpdateTextAndPriority(context.Background(), tk.ID, "new title", "new desc", contracts.TicketPriorityMedium); err != nil {
 		t.Fatalf("update text and priority failed: %v", err)
@@ -282,10 +306,7 @@ func TestService_GetByID(t *testing.T) {
 	}
 
 	svc := New(db)
-	created, err := svc.CreateWithDescription(context.Background(), "hello", "desc")
-	if err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
+	created := mustCreateTicket(t, svc, "hello", "desc", "", contracts.TicketPriorityNone)
 
 	got, err := svc.GetByID(context.Background(), created.ID)
 	if err != nil {
@@ -311,18 +332,9 @@ func TestService_List_SortsByPriorityThenCreatedAtThenID(t *testing.T) {
 	}
 
 	svc := New(db)
-	t1, err := svc.CreateWithDescription(context.Background(), "t1", "d1")
-	if err != nil {
-		t.Fatalf("create t1 failed: %v", err)
-	}
-	t2, err := svc.CreateWithDescription(context.Background(), "t2", "d2")
-	if err != nil {
-		t.Fatalf("create t2 failed: %v", err)
-	}
-	t3, err := svc.CreateWithDescription(context.Background(), "t3", "d3")
-	if err != nil {
-		t.Fatalf("create t3 failed: %v", err)
-	}
+	t1 := mustCreateTicket(t, svc, "t1", "d1", "", contracts.TicketPriorityNone)
+	t2 := mustCreateTicket(t, svc, "t2", "d2", "", contracts.TicketPriorityNone)
+	t3 := mustCreateTicket(t, svc, "t3", "d3", "", contracts.TicketPriorityNone)
 
 	if err := svc.SetPriority(context.Background(), t1.ID, 1); err != nil {
 		t.Fatalf("set t1 priority failed: %v", err)
@@ -379,10 +391,7 @@ func TestService_SetPriority_UpdatesTicket(t *testing.T) {
 	}
 
 	svc := New(db)
-	tk, err := svc.CreateWithDescription(context.Background(), "hello", "desc")
-	if err != nil {
-		t.Fatalf("create failed: %v", err)
-	}
+	tk := mustCreateTicket(t, svc, "hello", "desc", "", contracts.TicketPriorityNone)
 	if err := svc.SetPriority(context.Background(), tk.ID, contracts.TicketPriorityHigh); err != nil {
 		t.Fatalf("set priority failed: %v", err)
 	}

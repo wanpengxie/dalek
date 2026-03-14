@@ -511,8 +511,7 @@ func assembleProject(cp *core.Project) *Project {
 	taskSvc := task.New(cp.DB)
 	subagentSvc := subagentsvc.New(cp, taskSvc, cp.Logger)
 	channelSvc := channelsvc.New(cp)
-	channelSvc.SetActionExecutor(newChannelActionExecutor(ticketSvc, pmSvc, workerSvc))
-	return &Project{
+	project := &Project{
 		core:        cp,
 		ticket:      ticketSvc,
 		ticketQuery: ticketQuerySvc,
@@ -524,6 +523,8 @@ func assembleProject(cp *core.Project) *Project {
 		task:        taskSvc,
 		channel:     channelSvc,
 	}
+	channelSvc.SetActionExecutor(newChannelActionExecutor(project, pmSvc, workerSvc))
+	return project
 }
 
 func (h *Home) ensureReferenceTransactionHookBestEffort(repoRoot, projectName string) error {

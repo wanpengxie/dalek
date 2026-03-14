@@ -2,28 +2,37 @@ package app
 
 import (
 	"context"
+	"fmt"
 
 	"dalek/internal/contracts"
 	channelsvc "dalek/internal/services/channel"
 	pmsvc "dalek/internal/services/pm"
-	ticketsvc "dalek/internal/services/ticket"
 	workersvc "dalek/internal/services/worker"
 )
 
 type channelTicketActionAdapter struct {
-	svc *ticketsvc.Service
+	project *Project
 }
 
 func (a channelTicketActionAdapter) List(ctx context.Context, includeArchived bool) ([]contracts.Ticket, error) {
-	return a.svc.List(ctx, includeArchived)
+	if a.project == nil {
+		return nil, fmt.Errorf("channel ticket adapter project 为空")
+	}
+	return a.project.ListTickets(ctx, includeArchived)
 }
 
 func (a channelTicketActionAdapter) GetByID(ctx context.Context, ticketID uint) (*contracts.Ticket, error) {
-	return a.svc.GetByID(ctx, ticketID)
+	if a.project == nil {
+		return nil, fmt.Errorf("channel ticket adapter project 为空")
+	}
+	return a.project.ticket.GetByID(ctx, ticketID)
 }
 
 func (a channelTicketActionAdapter) CreateWithDescriptionAndLabel(ctx context.Context, title, description, label string) (*contracts.Ticket, error) {
-	return a.svc.CreateWithDescriptionAndLabel(ctx, title, description, label)
+	if a.project == nil {
+		return nil, fmt.Errorf("channel ticket adapter project 为空")
+	}
+	return a.project.CreateTicketWithDescriptionAndLabel(ctx, title, description, label)
 }
 
 type channelPMActionAdapter struct {
@@ -67,9 +76,9 @@ func (a channelWorkerActionAdapter) StopTicket(ctx context.Context, ticketID uin
 	return a.svc.StopTicket(ctx, ticketID)
 }
 
-func newChannelActionExecutor(ticketSvc *ticketsvc.Service, pmSvc *pmsvc.Service, workerSvc *workersvc.Service) *channelsvc.ActionExecutor {
+func newChannelActionExecutor(project *Project, pmSvc *pmsvc.Service, workerSvc *workersvc.Service) *channelsvc.ActionExecutor {
 	return channelsvc.NewActionExecutor(
-		channelTicketActionAdapter{svc: ticketSvc},
+		channelTicketActionAdapter{project: project},
 		channelPMActionAdapter{svc: pmSvc},
 		channelWorkerActionAdapter{svc: workerSvc},
 	)
