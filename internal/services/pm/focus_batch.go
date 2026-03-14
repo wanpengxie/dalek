@@ -184,7 +184,7 @@ func (s *Service) mergeTicket(ctx context.Context, focus *contracts.FocusRun, ti
 	}
 	targetBranch := s.targetBranchForTicket(ctx, ticketID)
 
-	result, err := s.gitMergeTicketBranch(ctx, workerBranch, targetBranch)
+	result, _, err := s.gitMergeTicketBranch(ctx, workerBranch, targetBranch)
 	if err != nil {
 		s.slog().Warn("focus batch: git merge failed", "ticket_id", ticketID, "error", err)
 		s.gitMergeAbort(ctx)

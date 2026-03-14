@@ -213,17 +213,29 @@ func (s *Service) focusTickMergingItem(ctx context.Context, run contracts.FocusR
 	if err != nil {
 		return s.focusBlockItem(ctx, run, item, focusBlockedReasonMergeFailed, err.Error())
 	}
-	targetRef := s.targetBranchForTicket(ctx, item.TicketID)
-	result, err := s.gitMergeTicketBranch(ctx, workerBranch, targetRef)
+	targetRef := strings.TrimSpace(snapshot.Ticket.TargetBranch)
+	if targetRef == "" {
+		targetRef = s.targetBranchForTicket(ctx, item.TicketID)
+	}
+	normalizedTargetRef, err := normalizeIntegrationTargetRefInput(targetRef)
+	if err != nil {
+		return s.focusBlockItem(ctx, run, item, focusBlockedReasonMergeFailed, err.Error())
+	}
+	conflictTargetHeadSHA, err := s.resolveRefCommit(ctx, normalizedTargetRef)
+	if err != nil {
+		return s.focusBlockItem(ctx, run, item, focusBlockedReasonMergeFailed, err.Error())
+	}
+	result, mergeSummary, err := s.gitMergeTicketBranch(ctx, workerBranch, normalizedTargetRef)
 	if err != nil {
 		s.gitMergeAbort(context.WithoutCancel(ctx))
 		return s.focusBlockItem(ctx, run, item, focusBlockedReasonMergeFailed, err.Error())
 	}
+	mergeSummary = focusSummarizeMergeOutput(mergeSummary)
 	switch result {
 	case mergeSuccess:
-		newSHA, err := s.resolveRefCommit(ctx, targetRef)
+		newSHA, err := s.resolveRefCommit(ctx, normalizedTargetRef)
 		if err == nil {
-			_, _ = s.SyncRef(ctx, targetRef, "", newSHA)
+			_, _ = s.SyncRef(ctx, normalizedTargetRef, "", newSHA)
 		}
 		snapshot, err = s.focusLoadTicketSnapshot(ctx, item.TicketID)
 		if err != nil {
@@ -232,7 +244,7 @@ func (s *Service) focusTickMergingItem(ctx context.Context, run contracts.FocusR
 		if contracts.CanonicalIntegrationStatus(snapshot.Ticket.IntegrationStatus) == contracts.IntegrationMerged {
 			if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventMergeObserved, "focus merge observed", map[string]any{
 				"ticket_id":  item.TicketID,
-				"target_ref": targetRef,
+				"target_ref": normalizedTargetRef,
 			}); err != nil {
 				return err
 			}
@@ -248,23 +260,57 @@ func (s *Service) focusTickMergingItem(ctx context.Context, run contracts.FocusR
 	case mergeConflict:
 		conflictFiles := s.gitConflictFiles(ctx)
 		s.gitMergeAbort(context.WithoutCancel(ctx))
-		blockedReason := focusBlockedReasonMergeFailed
-		lastError := "merge conflict"
-		summary := "focus merge conflict aborted"
+		mergePayload := map[string]any{
+			"ticket_id":                item.TicketID,
+			"conflict_files":           conflictFiles,
+			"target_ref":               normalizedTargetRef,
+			"conflict_target_head_sha": strings.TrimSpace(conflictTargetHeadSHA),
+			"merge_summary":            strings.TrimSpace(mergeSummary),
+		}
 		if strings.EqualFold(strings.TrimSpace(snapshot.Ticket.Label), "integration") {
-			blockedReason = focusBlockedReasonHandoffRecursionRequiresUser
-			lastError = "integration ticket merge conflict requires user"
-			summary = "integration merge conflict requires user"
+			mergePayload["blocked_reason"] = focusBlockedReasonHandoffRecursionRequiresUser
+			if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventMergeAborted, "integration merge conflict requires user", mergePayload); err != nil {
+				return err
+			}
+			return s.focusBlockItem(ctx, run, item, focusBlockedReasonHandoffRecursionRequiresUser, "integration ticket merge conflict requires user")
 		}
-		if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventMergeAborted, summary, map[string]any{
-			"ticket_id":      item.TicketID,
-			"conflict_files": conflictFiles,
-			"target_ref":     targetRef,
-			"blocked_reason": blockedReason,
-		}); err != nil {
-			return err
+		replacement, createErr := s.CreateIntegrationTicket(ctx, contracts.CreateIntegrationTicketInput{
+			SourceTicketIDs:       []uint{item.TicketID},
+			TargetRef:             normalizedTargetRef,
+			ConflictTargetHeadSHA: strings.TrimSpace(conflictTargetHeadSHA),
+			SourceAnchorSHAs:      trimNonEmptyStrings([]string{strings.TrimSpace(snapshot.Ticket.MergeAnchorSHA)}),
+			ConflictFiles:         conflictFiles,
+			MergeSummary:          mergeSummary,
+		})
+		if createErr != nil {
+			mergePayload["blocked_reason"] = focusBlockedReasonMergeFailed
+			mergePayload["integration_ticket_error"] = createErr.Error()
+			if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventMergeAborted, "focus merge conflict aborted", mergePayload); err != nil {
+				return err
+			}
+			return s.focusBlockItem(ctx, run, item, focusBlockedReasonMergeFailed, fmt.Sprintf("create integration ticket failed: %v", createErr))
 		}
-		return s.focusBlockItem(ctx, run, item, blockedReason, lastError)
+		mergePayload["blocked_reason"] = focusBlockedReasonHandoffWaitingMerge
+		mergePayload["handoff_ticket_id"] = replacement.TicketID
+		integrationPayload := map[string]any{
+			"ticket_id":                item.TicketID,
+			"source_ticket_ids":        []uint{item.TicketID},
+			"integration_ticket_id":    replacement.TicketID,
+			"handoff_ticket_id":        replacement.TicketID,
+			"target_ref":               normalizedTargetRef,
+			"conflict_files":           conflictFiles,
+			"conflict_target_head_sha": strings.TrimSpace(conflictTargetHeadSHA),
+			"merge_summary":            mergeSummary,
+		}
+		return s.focusBlockItemWithHandoff(
+			ctx,
+			run,
+			item,
+			replacement.TicketID,
+			fmt.Sprintf("merge conflict handed off to integration ticket t%d", replacement.TicketID),
+			mergePayload,
+			integrationPayload,
+		)
 	default:
 		return s.focusBlockItem(ctx, run, item, focusBlockedReasonMergeFailed, "merge result unknown")
 	}
@@ -480,6 +526,58 @@ func (s *Service) focusBlockItem(ctx context.Context, run contracts.FocusRun, it
 		"blocked_reason": strings.TrimSpace(reason),
 		"error":          strings.TrimSpace(lastError),
 	})
+}
+
+func (s *Service) focusBlockItemWithHandoff(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, replacementTicketID uint, lastError string, mergePayload, integrationPayload map[string]any) error {
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if replacementTicketID == 0 {
+		return fmt.Errorf("replacement ticket_id 不能为空")
+	}
+	now := time.Now()
+	itemID := item.ID
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Model(&contracts.FocusRun{}).Where("id = ?", run.ID).Updates(map[string]any{
+			"status":     contracts.FocusBlocked,
+			"updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.WithContext(ctx).Model(&contracts.FocusRunItem{}).Where("id = ? AND focus_run_id = ?", item.ID, run.ID).Updates(map[string]any{
+			"status":            contracts.FocusItemBlocked,
+			"blocked_reason":    focusBlockedReasonHandoffWaitingMerge,
+			"last_error":        strings.TrimSpace(lastError),
+			"handoff_ticket_id": replacementTicketID,
+			"updated_at":        now,
+		}).Error; err != nil {
+			return err
+		}
+		if _, err := appendFocusEventTx(ctx, tx, run.ID, &itemID, contracts.FocusEventMergeAborted, "focus merge conflict handed off", mergePayload, now); err != nil {
+			return err
+		}
+		if _, err := appendFocusEventTx(ctx, tx, run.ID, &itemID, contracts.FocusEventIntegrationCreated, "focus integration ticket created", integrationPayload, now); err != nil {
+			return err
+		}
+		if _, err := appendFocusEventTx(ctx, tx, run.ID, &itemID, contracts.FocusEventItemBlocked, "focus item blocked", map[string]any{
+			"ticket_id":         item.TicketID,
+			"blocked_reason":    focusBlockedReasonHandoffWaitingMerge,
+			"error":             strings.TrimSpace(lastError),
+			"handoff_ticket_id": replacementTicketID,
+		}, now); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	s.projectWake()
+	return nil
 }
 
 func (s *Service) focusTerminalizeItem(ctx context.Context, runID, itemID uint, runStatus, itemStatus string) error {
@@ -900,6 +998,18 @@ func focusFirstPendingItem(items []contracts.FocusRunItem) *contracts.FocusRunIt
 		}
 	}
 	return nil
+}
+
+func focusSummarizeMergeOutput(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	compact := strings.Join(strings.Fields(raw), " ")
+	if len(compact) <= 240 {
+		return compact
+	}
+	return compact[:237] + "..."
 }
 
 func focusNextAttempt(current int) int {

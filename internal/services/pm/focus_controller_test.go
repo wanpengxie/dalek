@@ -2,8 +2,10 @@ package pm
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,7 +293,7 @@ func TestAdvanceFocusController_BlocksAfterRestartExhausted(t *testing.T) {
 	}
 }
 
-func TestAdvanceFocusController_BlocksMergeConflictWithoutCreatingIntegrationTicket(t *testing.T) {
+func TestAdvanceFocusController_CreatesIntegrationTicketAndBlocksHandoffOnMergeConflict(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
 
@@ -324,11 +326,11 @@ func TestAdvanceFocusController_BlocksMergeConflictWithoutCreatingIntegrationTic
 	if item1 == nil || item1.Status != contracts.FocusItemBlocked {
 		t.Fatalf("expected t%d blocked, got=%+v", tk1.ID, item1)
 	}
-	if item1.BlockedReason != focusBlockedReasonMergeFailed {
-		t.Fatalf("expected blocked_reason=%s, got=%s", focusBlockedReasonMergeFailed, item1.BlockedReason)
+	if item1.BlockedReason != focusBlockedReasonHandoffWaitingMerge {
+		t.Fatalf("expected blocked_reason=%s, got=%s", focusBlockedReasonHandoffWaitingMerge, item1.BlockedReason)
 	}
-	if item1.HandoffTicketID != nil {
-		t.Fatalf("expected no handoff ticket created, got=%v", item1.HandoffTicketID)
+	if item1.HandoffTicketID == nil || *item1.HandoffTicketID == 0 {
+		t.Fatalf("expected handoff ticket created, got=%v", item1.HandoffTicketID)
 	}
 	if got := focusItemByTicketID(view.Items, tk2.ID); got == nil || got.Status != contracts.FocusItemPending {
 		t.Fatalf("expected t%d stays pending while t%d is blocked, got=%+v", tk2.ID, tk1.ID, got)
@@ -338,8 +340,42 @@ func TestAdvanceFocusController_BlocksMergeConflictWithoutCreatingIntegrationTic
 	if err := p.DB.Model(&contracts.Ticket{}).Count(&ticketCount).Error; err != nil {
 		t.Fatalf("count tickets failed: %v", err)
 	}
-	if ticketCount != 2 {
-		t.Fatalf("expected no extra integration ticket, got count=%d", ticketCount)
+	if ticketCount != 3 {
+		t.Fatalf("expected replacement integration ticket, got count=%d", ticketCount)
+	}
+
+	var replacement contracts.Ticket
+	if err := p.DB.First(&replacement, *item1.HandoffTicketID).Error; err != nil {
+		t.Fatalf("load replacement ticket failed: %v", err)
+	}
+	if replacement.Label != "integration" {
+		t.Fatalf("expected replacement label=integration, got=%q", replacement.Label)
+	}
+	if replacement.Priority != contracts.TicketPriorityHigh {
+		t.Fatalf("expected replacement priority=%d, got=%d", contracts.TicketPriorityHigh, replacement.Priority)
+	}
+	if replacement.TargetBranch != "refs/heads/"+targetBranch {
+		t.Fatalf("expected replacement target_ref=refs/heads/%s, got=%q", targetBranch, replacement.TargetBranch)
+	}
+	if replacement.Title != fmt.Sprintf("集成 t%d 到 %s", tk1.ID, targetBranch) {
+		t.Fatalf("unexpected replacement title: %q", replacement.Title)
+	}
+	if !strings.Contains(replacement.Description, fmt.Sprintf("source_tickets: t%d", tk1.ID)) {
+		t.Fatalf("replacement description should include source_tickets, got:\n%s", replacement.Description)
+	}
+	if !strings.Contains(replacement.Description, "target_ref: refs/heads/"+targetBranch) {
+		t.Fatalf("replacement description should include target_ref, got:\n%s", replacement.Description)
+	}
+	if !strings.Contains(replacement.Description, "conflict_files:") || !strings.Contains(replacement.Description, "conflict.txt") {
+		t.Fatalf("replacement description should include conflict files, got:\n%s", replacement.Description)
+	}
+	if !strings.Contains(replacement.Description, "merge stderr/log:") {
+		t.Fatalf("replacement description should include merge summary, got:\n%s", replacement.Description)
+	}
+
+	var createdEvent contracts.FocusEvent
+	if err := p.DB.Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?", res.FocusID, item1.ID, contracts.FocusEventIntegrationCreated).First(&createdEvent).Error; err != nil {
+		t.Fatalf("expected integration created event, got err=%v", err)
 	}
 
 	if svc.gitHasConflicts(ctx) {
@@ -387,6 +423,13 @@ func TestAdvanceFocusController_BlocksIntegrationTicketMergeConflictAsHandoffReq
 	}
 	if item.HandoffTicketID != nil {
 		t.Fatalf("expected no recursive handoff ticket created, got=%v", item.HandoffTicketID)
+	}
+	var ticketCount int64
+	if err := p.DB.Model(&contracts.Ticket{}).Count(&ticketCount).Error; err != nil {
+		t.Fatalf("count tickets failed: %v", err)
+	}
+	if ticketCount != 1 {
+		t.Fatalf("expected no extra integration ticket, got count=%d", ticketCount)
 	}
 }
 

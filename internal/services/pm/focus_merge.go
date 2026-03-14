@@ -27,25 +27,26 @@ func stripRefsPrefix(ref string) string {
 	return ref
 }
 
-// gitMergeTicketBranch 在 repo root 上执行 git merge。
-func (s *Service) gitMergeTicketBranch(ctx context.Context, workerBranch, targetBranch string) (mergeResult, error) {
+// gitMergeTicketBranch 在 repo root 上执行 git merge，并返回 handoff 描述需要的 merge 摘要。
+func (s *Service) gitMergeTicketBranch(ctx context.Context, workerBranch, targetBranch string) (mergeResult, string, error) {
 	repoRoot := s.p.RepoRoot
 	targetBranch = stripRefsPrefix(targetBranch)
 
 	// 确保在 target 分支上
 	if out, err := runGit(ctx, repoRoot, "checkout", targetBranch); err != nil {
-		return mergeError, fmt.Errorf("git checkout %s 失败: %s: %w", targetBranch, out, err)
+		return mergeError, strings.TrimSpace(out), fmt.Errorf("git checkout %s 失败: %s: %w", targetBranch, out, err)
 	}
 
 	// 尝试 merge
 	out, err := runGit(ctx, repoRoot, "merge", workerBranch, "--no-edit")
+	summary := summarizeMergeOutput(out)
 	if err == nil {
-		return mergeSuccess, nil
+		return mergeSuccess, summary, nil
 	}
 	if strings.Contains(strings.ToLower(out), "conflict") {
-		return mergeConflict, nil
+		return mergeConflict, summary, nil
 	}
-	return mergeError, fmt.Errorf("git merge %s 失败: %s: %w", workerBranch, out, err)
+	return mergeError, summary, fmt.Errorf("git merge %s 失败: %s: %w", workerBranch, out, err)
 }
 
 // gitMergeAbort 取消正在进行的 merge（确保 git 状态干净）。
@@ -139,4 +140,12 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func summarizeMergeOutput(out string) string {
+	summary := strings.Join(strings.Fields(strings.TrimSpace(out)), " ")
+	if len(summary) <= 512 {
+		return summary
+	}
+	return summary[:509] + "..."
 }
