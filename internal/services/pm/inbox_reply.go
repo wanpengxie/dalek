@@ -117,8 +117,40 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 	if err != nil {
 		return InboxReplyResult{}, err
 	}
-	if _, err := s.prepareInboxReplyWorker(ctx, *ticket, baseBranch); err != nil {
+	worker, err := s.prepareInboxReplyWorker(ctx, *ticket, baseBranch)
+	if err != nil {
 		return InboxReplyResult{}, err
+	}
+	if submitter := s.getWorkerRunSubmitter(); submitter != nil {
+		submission, err := submitter.SubmitTicketWorkerRun(context.WithoutCancel(ctx), ticket.ID, WorkerRunSubmitOptions{
+			BaseBranch: baseBranch,
+			Prompt:     strings.TrimSpace(prompt),
+		})
+		if err != nil {
+			return InboxReplyResult{}, err
+		}
+		if submission.TaskRunID == 0 {
+			return InboxReplyResult{}, fmt.Errorf("submit worker run 未返回 task_run_id")
+		}
+		if err := s.markInboxReplyConsumed(ctx, item.ID); err != nil {
+			return InboxReplyResult{}, err
+		}
+		workerID := submission.WorkerID
+		if workerID == 0 && worker != nil {
+			workerID = worker.ID
+		}
+		if workerID == 0 {
+			workerID = item.WorkerID
+		}
+		return InboxReplyResult{
+			InboxID:    item.ID,
+			TicketID:   ticket.ID,
+			WorkerID:   workerID,
+			Action:     action,
+			Mode:       inboxReplyModeSingle,
+			RunID:      submission.TaskRunID,
+			Accepted:   true,
+		}, nil
 	}
 	autoStart := false
 	runResult, err := s.RunTicketWorker(ctx, ticket.ID, WorkerRunOptions{
@@ -129,8 +161,11 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 	if err != nil {
 		return InboxReplyResult{}, err
 	}
-	if err := s.markInboxReplyConsumed(ctx, item.ID); err != nil {
-		return InboxReplyResult{}, err
+	nextAction := strings.TrimSpace(strings.ToLower(runResult.LastNextAction))
+	if nextAction != string(contracts.NextWaitUser) {
+		if err := s.markInboxReplyConsumed(ctx, item.ID); err != nil {
+			return InboxReplyResult{}, err
+		}
 	}
 	return InboxReplyResult{
 		InboxID:    item.ID,
@@ -676,6 +711,10 @@ func closeDuplicateNeedsUserInboxesTx(ctx context.Context, tx *gorm.DB, ticketID
 			"status":            contracts.InboxDone,
 			"closed_at":         &now,
 			"chain_resolved_at": &now,
+			"reply_action":      contracts.InboxReplyNone,
+			"reply_markdown":    "",
+			"reply_received_at": nil,
+			"reply_consumed_at": nil,
 			"updated_at":        now,
 		}).Error
 }
