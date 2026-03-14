@@ -341,11 +341,18 @@ func (s *Service) markTicketIntegrationMerged(ctx context.Context, ticketID uint
 		return err
 	}
 	now := time.Now()
-	return db.WithContext(ctx).
+	result := db.WithContext(ctx).
 		Model(&contracts.Ticket{}).
 		Where("id = ? AND integration_status = ?", ticketID, contracts.IntegrationNeedsMerge).
 		Updates(map[string]any{
 			"integration_status": contracts.IntegrationMerged,
 			"merged_at":          &now,
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		s.projectWake()
+	}
+	return nil
 }

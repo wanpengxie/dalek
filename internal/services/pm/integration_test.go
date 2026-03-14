@@ -101,6 +101,10 @@ func TestSyncRef_MergesMatchingNeedsMergeTickets(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	branch, head := initGitRepoForIntegrationObserveTest(t, p.RepoRoot)
 	targetRef := "refs/heads/" + branch
+	wakeCalls := 0
+	svc.SetProjectWakeHook(func() {
+		wakeCalls++
+	})
 
 	okTicket := createTicket(t, p.DB, "sync-ref-ok")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", okTicket.ID).Updates(map[string]any{
@@ -136,6 +140,9 @@ func TestSyncRef_MergesMatchingNeedsMergeTickets(t *testing.T) {
 	if len(res.Errors) == 0 {
 		t.Fatalf("expected bad anchor error to be recorded")
 	}
+	if wakeCalls != 1 {
+		t.Fatalf("expected SyncRef to wake project once after merged ticket, got=%d", wakeCalls)
+	}
 
 	var got contracts.Ticket
 	if err := p.DB.First(&got, okTicket.ID).Error; err != nil {
@@ -143,6 +150,69 @@ func TestSyncRef_MergesMatchingNeedsMergeTickets(t *testing.T) {
 	}
 	if contracts.CanonicalIntegrationStatus(got.IntegrationStatus) != contracts.IntegrationMerged {
 		t.Fatalf("expected merged ticket status, got=%s", got.IntegrationStatus)
+	}
+}
+
+func TestFinalizeTicketSuperseded_RequiresMergedReplacementAndSetsMapping(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	source := createTicket(t, p.DB, "finalize-superseded-source")
+	replacement := createTicket(t, p.DB, "finalize-superseded-replacement")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", source.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare source ticket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", replacement.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare replacement ticket failed: %v", err)
+	}
+
+	if err := svc.FinalizeTicketSuperseded(ctx, source.ID, replacement.ID, ""); err == nil {
+		t.Fatalf("expected finalize to reject non-merged replacement")
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", replacement.ID).Updates(map[string]any{
+		"integration_status": contracts.IntegrationMerged,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("mark replacement merged failed: %v", err)
+	}
+
+	if err := svc.FinalizeTicketSuperseded(ctx, source.ID, replacement.ID, ""); err != nil {
+		t.Fatalf("FinalizeTicketSuperseded failed: %v", err)
+	}
+	if err := svc.FinalizeTicketSuperseded(ctx, source.ID, replacement.ID, ""); err != nil {
+		t.Fatalf("FinalizeTicketSuperseded second call should stay idempotent: %v", err)
+	}
+
+	var sourceAfter contracts.Ticket
+	if err := p.DB.First(&sourceAfter, source.ID).Error; err != nil {
+		t.Fatalf("reload source ticket failed: %v", err)
+	}
+	if contracts.CanonicalIntegrationStatus(sourceAfter.IntegrationStatus) != contracts.IntegrationAbandoned {
+		t.Fatalf("expected source integration_status abandoned, got=%s", sourceAfter.IntegrationStatus)
+	}
+	if sourceAfter.SupersededByTicketID == nil || *sourceAfter.SupersededByTicketID != replacement.ID {
+		t.Fatalf("expected superseded_by=%d, got=%v", replacement.ID, sourceAfter.SupersededByTicketID)
+	}
+	if !strings.Contains(sourceAfter.AbandonedReason, "integration ticket") {
+		t.Fatalf("expected default abandoned reason written, got=%q", sourceAfter.AbandonedReason)
+	}
+
+	var lifecycleCount int64
+	if err := p.DB.Model(&contracts.TicketLifecycleEvent{}).
+		Where("ticket_id = ? AND event_type = ?", source.ID, contracts.TicketLifecycleMergeAbandoned).
+		Count(&lifecycleCount).Error; err != nil {
+		t.Fatalf("count merge_abandoned lifecycle failed: %v", err)
+	}
+	if lifecycleCount != 1 {
+		t.Fatalf("expected one merge_abandoned lifecycle event, got=%d", lifecycleCount)
 	}
 }
 

@@ -355,7 +355,46 @@ func (s *Service) focusTickBlockedItem(ctx context.Context, run contracts.FocusR
 	case contracts.FocusDesiredCanceling:
 		return s.focusTerminalizeItem(ctx, run.ID, item.ID, contracts.FocusCanceled, contracts.FocusItemCanceled)
 	}
+	if strings.TrimSpace(item.BlockedReason) == focusBlockedReasonHandoffWaitingMerge {
+		return s.focusResolveHandoffBlockedItem(ctx, run, item)
+	}
 	return nil
+}
+
+func (s *Service) focusResolveHandoffBlockedItem(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem) error {
+	if item.HandoffTicketID == nil || *item.HandoffTicketID == 0 {
+		return nil
+	}
+	replacementTicketID := *item.HandoffTicketID
+
+	replacement, err := s.focusLoadTicketOnly(ctx, replacementTicketID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if contracts.CanonicalIntegrationStatus(replacement.IntegrationStatus) != contracts.IntegrationMerged {
+		return nil
+	}
+
+	source, err := s.focusLoadTicketOnly(ctx, item.TicketID)
+	if err != nil {
+		return err
+	}
+	if source.SupersededByTicketID != nil && *source.SupersededByTicketID != 0 && *source.SupersededByTicketID != replacementTicketID {
+		return fmt.Errorf("focus handoff mismatch: source ticket t%d 已被 t%d supersede，当前 handoff 指向 t%d", item.TicketID, *source.SupersededByTicketID, replacementTicketID)
+	}
+	if contracts.CanonicalIntegrationStatus(source.IntegrationStatus) != contracts.IntegrationAbandoned ||
+		source.SupersededByTicketID == nil ||
+		*source.SupersededByTicketID != replacementTicketID {
+		reason := fmt.Sprintf("superseded by integration ticket t%d", replacementTicketID)
+		if err := s.FinalizeTicketSuperseded(ctx, item.TicketID, replacementTicketID, reason); err != nil {
+			return err
+		}
+	}
+
+	return s.focusResolveHandoffItem(ctx, run, item, replacementTicketID, fmt.Sprintf("handoff resolved by integration ticket t%d", replacementTicketID))
 }
 
 func (s *Service) focusHandleBlockedExecution(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, snapshot focusTicketSnapshot) error {
@@ -505,6 +544,72 @@ func (s *Service) focusCompleteItem(ctx context.Context, run contracts.FocusRun,
 	}); err != nil {
 		return err
 	}
+	if runStatus != contracts.FocusRunning {
+		return nil
+	}
+	return s.focusPromoteNextPendingItem(ctx, run.ID)
+}
+
+func (s *Service) focusResolveHandoffItem(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, replacementTicketID uint, reason string) error {
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	runStatus := contracts.FocusRunning
+	switch strings.TrimSpace(run.DesiredState) {
+	case contracts.FocusDesiredStopping:
+		runStatus = contracts.FocusStopped
+	case contracts.FocusDesiredCanceling:
+		runStatus = contracts.FocusCanceled
+	}
+	now := time.Now()
+	runUpdates := map[string]any{
+		"status":     runStatus,
+		"updated_at": now,
+	}
+	if runStatus == contracts.FocusStopped || runStatus == contracts.FocusCanceled {
+		runUpdates["finished_at"] = &now
+	} else {
+		runUpdates["finished_at"] = nil
+	}
+	itemUpdates := map[string]any{
+		"status":         contracts.FocusItemCompleted,
+		"finished_at":    &now,
+		"updated_at":     now,
+		"blocked_reason": "",
+		"last_error":     strings.TrimSpace(reason),
+	}
+	itemID := item.ID
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Model(&contracts.FocusRun{}).Where("id = ?", run.ID).Updates(runUpdates).Error; err != nil {
+			return err
+		}
+		if err := tx.WithContext(ctx).Model(&contracts.FocusRunItem{}).Where("id = ? AND focus_run_id = ?", item.ID, run.ID).Updates(itemUpdates).Error; err != nil {
+			return err
+		}
+		if _, err := appendFocusEventTx(ctx, tx, run.ID, &itemID, contracts.FocusEventHandoffResolved, "focus handoff resolved", map[string]any{
+			"ticket_id":             item.TicketID,
+			"handoff_ticket_id":     replacementTicketID,
+			"replacement_ticket_id": replacementTicketID,
+			"reason":                strings.TrimSpace(reason),
+		}, now); err != nil {
+			return err
+		}
+		if _, err := appendFocusEventTx(ctx, tx, run.ID, &itemID, contracts.FocusEventItemCompleted, "focus item completed", map[string]any{
+			"ticket_id": item.TicketID,
+			"reason":    strings.TrimSpace(reason),
+		}, now); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	s.projectWake()
 	if runStatus != contracts.FocusRunning {
 		return nil
 	}

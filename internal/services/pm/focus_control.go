@@ -262,6 +262,9 @@ func (s *Service) FinalizeTicketSuperseded(ctx context.Context, sourceTicketID, 
 		if err := tx.WithContext(ctx).First(&source, sourceTicketID).Error; err != nil {
 			return err
 		}
+		if source.SupersededByTicketID != nil && *source.SupersededByTicketID != 0 && *source.SupersededByTicketID != replacementTicketID {
+			return fmt.Errorf("source ticket t%d 已被 t%d supersede，不能改写为 t%d", sourceTicketID, *source.SupersededByTicketID, replacementTicketID)
+		}
 		now := time.Now()
 		if contracts.CanonicalIntegrationStatus(source.IntegrationStatus) != contracts.IntegrationAbandoned {
 			lifecycleResult, err := s.appendTicketLifecycleEventAndProjectSnapshotTx(ctx, tx, ticketlifecycle.AppendInput{

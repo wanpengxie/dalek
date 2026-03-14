@@ -433,12 +433,107 @@ func TestAdvanceFocusController_BlocksIntegrationTicketMergeConflictAsHandoffReq
 	}
 }
 
-func TestAdvanceFocusController_DoesNotAutoResolveHandoffBlockedItem(t *testing.T) {
+func TestAdvanceFocusController_ResolvesHandoffBlockedItemAndAdvances(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
 
 	source := createTicket(t, p.DB, "focus-handoff-source")
 	replacement := createTicket(t, p.DB, "focus-handoff-replacement")
+	next := createTicket(t, p.DB, "focus-handoff-next")
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", source.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare source ticket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", replacement.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationMerged,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("prepare replacement ticket failed: %v", err)
+	}
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{source.ID, next.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	item := focusItemByTicketID(view.Items, source.ID)
+	if item == nil {
+		t.Fatalf("expected focus item for t%d", source.ID)
+	}
+	if err := p.DB.Model(&contracts.FocusRun{}).Where("id = ?", res.FocusID).Updates(map[string]any{
+		"status":     contracts.FocusBlocked,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set focus blocked failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.FocusRunItem{}).Where("id = ?", item.ID).Updates(map[string]any{
+		"status":            contracts.FocusItemBlocked,
+		"blocked_reason":    focusBlockedReasonHandoffWaitingMerge,
+		"handoff_ticket_id": replacement.ID,
+		"updated_at":        time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set item handoff blocked failed: %v", err)
+	}
+
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController failed: %v", err)
+	}
+
+	after, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet after blocked tick failed: %v", err)
+	}
+	afterItem := focusItemByTicketID(after.Items, source.ID)
+	if after.Run.Status != contracts.FocusRunning {
+		t.Fatalf("expected focus returns running, got=%s", after.Run.Status)
+	}
+	if afterItem == nil || afterItem.Status != contracts.FocusItemCompleted {
+		t.Fatalf("expected item completed after handoff resolve, got=%+v", afterItem)
+	}
+	if afterItem.BlockedReason != "" {
+		t.Fatalf("expected blocked_reason cleared, got=%s", afterItem.BlockedReason)
+	}
+	nextItem := focusItemByTicketID(after.Items, next.ID)
+	if nextItem == nil || nextItem.Status != contracts.FocusItemQueued {
+		t.Fatalf("expected next item queued after handoff resolve, got=%+v", nextItem)
+	}
+
+	var sourceAfter contracts.Ticket
+	if err := p.DB.First(&sourceAfter, source.ID).Error; err != nil {
+		t.Fatalf("reload source ticket failed: %v", err)
+	}
+	if sourceAfter.SupersededByTicketID == nil || *sourceAfter.SupersededByTicketID != replacement.ID {
+		t.Fatalf("expected source ticket superseded by t%d, got=%v", replacement.ID, sourceAfter.SupersededByTicketID)
+	}
+	if contracts.CanonicalIntegrationStatus(sourceAfter.IntegrationStatus) != contracts.IntegrationAbandoned {
+		t.Fatalf("expected source integration_status abandoned, got=%s", sourceAfter.IntegrationStatus)
+	}
+	if !strings.Contains(sourceAfter.AbandonedReason, fmt.Sprintf("t%d", replacement.ID)) {
+		t.Fatalf("expected abandoned_reason mention replacement ticket, got=%q", sourceAfter.AbandonedReason)
+	}
+
+	var resolvedEvent contracts.FocusEvent
+	if err := p.DB.Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?", res.FocusID, afterItem.ID, contracts.FocusEventHandoffResolved).First(&resolvedEvent).Error; err != nil {
+		t.Fatalf("expected handoff resolved event, got err=%v", err)
+	}
+}
+
+func TestAdvanceFocusController_DoesNotAutoResolveNonHandoffBlockedItem(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	source := createTicket(t, p.DB, "focus-blocked-source")
+	replacement := createTicket(t, p.DB, "focus-blocked-replacement")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", source.ID).Updates(map[string]any{
 		"workflow_status":    contracts.TicketDone,
 		"integration_status": contracts.IntegrationNeedsMerge,
@@ -477,11 +572,11 @@ func TestAdvanceFocusController_DoesNotAutoResolveHandoffBlockedItem(t *testing.
 	}
 	if err := p.DB.Model(&contracts.FocusRunItem{}).Where("id = ?", item.ID).Updates(map[string]any{
 		"status":            contracts.FocusItemBlocked,
-		"blocked_reason":    focusBlockedReasonHandoffWaitingMerge,
+		"blocked_reason":    focusBlockedReasonNeedsUser,
 		"handoff_ticket_id": replacement.ID,
 		"updated_at":        time.Now(),
 	}).Error; err != nil {
-		t.Fatalf("set item handoff blocked failed: %v", err)
+		t.Fatalf("set item blocked failed: %v", err)
 	}
 
 	if err := svc.AdvanceFocusController(ctx); err != nil {
@@ -499,8 +594,8 @@ func TestAdvanceFocusController_DoesNotAutoResolveHandoffBlockedItem(t *testing.
 	if afterItem == nil || afterItem.Status != contracts.FocusItemBlocked {
 		t.Fatalf("expected item stays blocked, got=%+v", afterItem)
 	}
-	if afterItem.BlockedReason != focusBlockedReasonHandoffWaitingMerge {
-		t.Fatalf("expected blocked_reason stays %s, got=%s", focusBlockedReasonHandoffWaitingMerge, afterItem.BlockedReason)
+	if afterItem.BlockedReason != focusBlockedReasonNeedsUser {
+		t.Fatalf("expected blocked_reason stays %s, got=%s", focusBlockedReasonNeedsUser, afterItem.BlockedReason)
 	}
 
 	var sourceAfter contracts.Ticket
@@ -508,10 +603,7 @@ func TestAdvanceFocusController_DoesNotAutoResolveHandoffBlockedItem(t *testing.
 		t.Fatalf("reload source ticket failed: %v", err)
 	}
 	if sourceAfter.SupersededByTicketID != nil {
-		t.Fatalf("expected source ticket not auto-superseded, got=%v", *sourceAfter.SupersededByTicketID)
-	}
-	if contracts.CanonicalIntegrationStatus(sourceAfter.IntegrationStatus) != contracts.IntegrationNeedsMerge {
-		t.Fatalf("expected source integration_status stays needs_merge, got=%s", sourceAfter.IntegrationStatus)
+		t.Fatalf("expected non-handoff blocked item not auto-superseded, got=%v", *sourceAfter.SupersededByTicketID)
 	}
 }
 

@@ -119,6 +119,9 @@ func (s *Service) SyncRef(ctx context.Context, ref, oldSHA, newSHA string) (Sync
 		}
 		res.MergedTicketIDs = append(res.MergedTicketIDs, tk.ID)
 	}
+	if len(res.MergedTicketIDs) > 0 {
+		s.projectWake()
+	}
 	return res, nil
 }
 
