@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"dalek/internal/app"
 )
 
 func cmdManagerRunBatch(out cliOutputFormat, home, proj, ticketsFlag string, budget int) {
@@ -31,6 +33,17 @@ func cmdManagerRunBatch(out cliOutputFormat, home, proj, ticketsFlag string, bud
 		exitUsageError(out, "请通过 --tickets 指定 ticket IDs", "示例: --tickets 1,2,3", "dalek manager run --mode batch --tickets 1,2,3")
 	}
 
+	// 通过 daemon client start ticket，走 daemon 的 queue consumer + execution host
+	_, daemonClient := mustOpenDaemonClient(out, home)
+	projectName := p.Name()
+	startTicket := func(ctx context.Context, ticketID uint) error {
+		_, err := daemonClient.StartTicket(ctx, app.DaemonTicketStartRequest{
+			Project:  projectName,
+			TicketID: ticketID,
+		})
+		return err
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -41,7 +54,7 @@ func cmdManagerRunBatch(out cliOutputFormat, home, proj, ticketsFlag string, bud
 		<-sig
 		fmt.Fprintln(os.Stderr, "\n收到中断信号，完成当前 ticket 后停止...")
 		close(softStop)
-		<-sig // 第二次信号
+		<-sig
 		fmt.Fprintln(os.Stderr, "\n强制停止...")
 		cancel()
 	}()
@@ -52,7 +65,7 @@ func cmdManagerRunBatch(out cliOutputFormat, home, proj, ticketsFlag string, bud
 	}
 	fmt.Printf("focus batch 已创建: id=%d scope=%v budget=%d\n", focus.ID, ticketIDs, budget)
 
-	if err := p.RunBatchFocus(ctx, focus, softStop); err != nil {
+	if err := p.RunBatchFocus(ctx, focus, startTicket, softStop); err != nil {
 		fmt.Fprintf(os.Stderr, "focus batch 结束: %v\n", err)
 	}
 	fmt.Printf("focus batch 完成: status=%s progress=%d/%d summary=%s\n",

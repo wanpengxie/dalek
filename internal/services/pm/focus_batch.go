@@ -16,9 +16,14 @@ const (
 	focusTicketTimeout    = 4 * time.Hour
 )
 
+// TicketStarter 是 start ticket 的抽象——由调用方注入实现。
+// CLI 层通过 daemon client API 实现，确保走 daemon 的 queue consumer + execution host。
+type TicketStarter func(ctx context.Context, ticketID uint) error
+
 // RunBatchFocus 执行 batch focus 主循环。阻塞直到完成/blocked/canceled。
+// startTicket 必须通过 daemon API 实现，不能走本地 PM Service。
 // softStop 用于优雅停止：关闭该 channel 后，loop 会在当前 ticket 处理完后退出。
-func (s *Service) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun, softStop <-chan struct{}) error {
+func (s *Service) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun, startTicket TicketStarter, softStop <-chan struct{}) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -30,8 +35,6 @@ func (s *Service) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun, 
 		s.focusCancelFn = nil
 		s.focusCancelMu.Unlock()
 	}()
-
-	s.StartQueueConsumer(ctx)
 
 	focus.Status = contracts.FocusRunning
 	if err := s.updateFocusRun(ctx, focus); err != nil {
@@ -70,7 +73,7 @@ func (s *Service) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun, 
 			"progress", fmt.Sprintf("%d/%d", i+1, len(ticketIDs)),
 		)
 
-		result := s.processTicket(ctx, focus, ticketID)
+		result := s.processTicket(ctx, focus, ticketID, startTicket)
 		switch result {
 		case ticketResultMerged:
 			focus.CompletedCount++
@@ -103,13 +106,13 @@ const (
 	ticketResultError
 )
 
-func (s *Service) processTicket(ctx context.Context, focus *contracts.FocusRun, ticketID uint) ticketResult {
+func (s *Service) processTicket(ctx context.Context, focus *contracts.FocusRun, ticketID uint, startTicket TicketStarter) ticketResult {
 	restartCount := 0
 
 	for {
-		// 1. Start ticket（幂等：已 queued/active 则跳过）
+		// 1. Start ticket（通过 daemon API，幂等：已 queued/active 则跳过）
 		if !s.isTicketActive(ctx, ticketID) {
-			if _, err := s.StartTicket(ctx, ticketID); err != nil {
+			if err := startTicket(ctx, ticketID); err != nil {
 				s.slog().Warn("focus batch: start ticket failed", "ticket_id", ticketID, "error", err)
 				return ticketResultError
 			}
