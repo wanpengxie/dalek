@@ -138,6 +138,7 @@ const (
 	FocusEventItemSelected           = "item.selected"
 	FocusEventItemStartRequested     = "item.start_requested"
 	FocusEventItemAdopted            = "item.adopted"
+	FocusEventInboxReplyAccepted     = "item.reply_received"
 	FocusEventItemRestarted          = "item.restarted"
 	FocusEventItemBlocked            = "item.blocked"
 	FocusEventItemCompleted          = "item.completed"
