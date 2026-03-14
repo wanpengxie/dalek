@@ -120,12 +120,14 @@ func (s *Service) FocusStart(ctx context.Context, in contracts.FocusStartInput) 
 	if err != nil {
 		return contracts.FocusStartResult{}, err
 	}
-	return contracts.FocusStartResult{
+	out := contracts.FocusStartResult{
 		Created:   created,
 		FocusID:   focus.ID,
 		RequestID: requestID,
 		View:      view,
-	}, nil
+	}
+	s.projectWake()
+	return out, nil
 }
 
 func (s *Service) FocusGet(ctx context.Context, focusID uint) (contracts.FocusRunView, error) {
@@ -165,11 +167,19 @@ func (s *Service) FocusPoll(ctx context.Context, focusID uint, sinceEventID uint
 }
 
 func (s *Service) FocusStop(ctx context.Context, focusID uint, requestID string) error {
-	return s.updateFocusDesiredState(ctx, focusID, contracts.FocusDesiredStopping, requestID)
+	if err := s.updateFocusDesiredState(ctx, focusID, contracts.FocusDesiredStopping, requestID); err != nil {
+		return err
+	}
+	s.projectWake()
+	return nil
 }
 
 func (s *Service) FocusCancel(ctx context.Context, focusID uint, requestID string) error {
-	return s.updateFocusDesiredState(ctx, focusID, contracts.FocusDesiredCanceling, requestID)
+	if err := s.updateFocusDesiredState(ctx, focusID, contracts.FocusDesiredCanceling, requestID); err != nil {
+		return err
+	}
+	s.projectWake()
+	return nil
 }
 
 func (s *Service) CreateIntegrationTicket(ctx context.Context, in contracts.CreateIntegrationTicketInput) (contracts.CreateIntegrationTicketResult, error) {

@@ -17,6 +17,8 @@ const defaultDaemonManagerTickInterval = 30 * time.Second
 
 type managerExecutionHost interface {
 	SubmitTicketLoop(ctx context.Context, req daemonsvc.TicketLoopSubmitRequest) (daemonsvc.TicketLoopSubmitReceipt, error)
+	CancelTaskRun(ctx context.Context, runID uint) (daemonsvc.CancelResult, error)
+	CancelTicketLoop(ctx context.Context, project string, ticketID uint) (daemonsvc.CancelResult, error)
 }
 
 type managerRunProjectIndexWarmer interface {
@@ -345,6 +347,13 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 			projectName: projectName,
 			host:        m.host,
 		})
+		p.pm.SetFocusLoopControl(daemonManagerFocusLoopControl{
+			projectName: projectName,
+			host:        m.host,
+		})
+		p.pm.SetProjectWakeHook(func() {
+			m.NotifyProject(projectName)
+		})
 		p.pm.StartQueueConsumer(parent)
 		p.pm.KickQueueConsumer()
 	}
@@ -385,6 +394,11 @@ type daemonManagerWorkerRunSubmitter struct {
 	host        managerExecutionHost
 }
 
+type daemonManagerFocusLoopControl struct {
+	projectName string
+	host        managerExecutionHost
+}
+
 func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Context, ticketID uint) (pmsvc.WorkerRunSubmission, error) {
 	if s.host == nil {
 		return pmsvc.WorkerRunSubmission{}, fmt.Errorf("worker run host 未初始化")
@@ -407,4 +421,24 @@ func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Conte
 		WorkerID:  receipt.WorkerID,
 		RequestID: strings.TrimSpace(receipt.RequestID),
 	}, nil
+}
+
+func (c daemonManagerFocusLoopControl) CancelTaskRun(ctx context.Context, runID uint) error {
+	if c.host == nil || runID == 0 {
+		return nil
+	}
+	_, err := c.host.CancelTaskRun(ctx, runID)
+	return err
+}
+
+func (c daemonManagerFocusLoopControl) CancelTicketLoop(ctx context.Context, ticketID uint) error {
+	if c.host == nil || ticketID == 0 {
+		return nil
+	}
+	projectName := strings.TrimSpace(c.projectName)
+	if projectName == "" {
+		return nil
+	}
+	_, err := c.host.CancelTicketLoop(ctx, projectName, ticketID)
+	return err
 }

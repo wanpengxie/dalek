@@ -28,7 +28,9 @@ type Service struct {
 	logger             *slog.Logger
 	mu                 sync.RWMutex
 	workerRunSubmitter WorkerRunSubmitter
+	focusLoopControl   FocusLoopControl
 	statusChangeHook   WorkflowStatusChangeHook
+	projectWakeHook    func()
 	statusHookWG       sync.WaitGroup
 
 	workerReadyTimeout      time.Duration
@@ -78,6 +80,15 @@ func (s *Service) SetWorkerRunSubmitter(submitter WorkerRunSubmitter) {
 	s.workerRunSubmitter = submitter
 }
 
+func (s *Service) SetFocusLoopControl(ctrl FocusLoopControl) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.focusLoopControl = ctrl
+}
+
 func (s *Service) SetStatusChangeHook(hook WorkflowStatusChangeHook) {
 	if s == nil {
 		return
@@ -85,6 +96,15 @@ func (s *Service) SetStatusChangeHook(hook WorkflowStatusChangeHook) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.statusChangeHook = hook
+}
+
+func (s *Service) SetProjectWakeHook(hook func()) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.projectWakeHook = hook
 }
 
 func (s *Service) getWorkerRunSubmitter() WorkerRunSubmitter {
@@ -96,6 +116,15 @@ func (s *Service) getWorkerRunSubmitter() WorkerRunSubmitter {
 	return s.workerRunSubmitter
 }
 
+func (s *Service) getFocusLoopControl() FocusLoopControl {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.focusLoopControl
+}
+
 func (s *Service) getStatusChangeHook() WorkflowStatusChangeHook {
 	if s == nil {
 		return nil
@@ -103,6 +132,18 @@ func (s *Service) getStatusChangeHook() WorkflowStatusChangeHook {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.statusChangeHook
+}
+
+func (s *Service) projectWake() {
+	if s == nil {
+		return
+	}
+	s.mu.RLock()
+	hook := s.projectWakeHook
+	s.mu.RUnlock()
+	if hook != nil {
+		hook()
+	}
 }
 
 func (s *Service) require() (*core.Project, *gorm.DB, error) {

@@ -688,7 +688,14 @@ func (h *ExecutionHost) FocusStart(ctx context.Context, projectName string, in c
 	if err != nil {
 		return contracts.FocusStartResult{}, err
 	}
-	return project.FocusStart(ctx, in)
+	result, err := project.FocusStart(ctx, in)
+	if err != nil {
+		return contracts.FocusStartResult{}, err
+	}
+	if h.onRunSettled != nil {
+		h.onRunSettled(strings.TrimSpace(projectName))
+	}
+	return result, nil
 }
 
 func (h *ExecutionHost) FocusGet(ctx context.Context, projectName string, focusID uint) (contracts.FocusRunView, error) {
@@ -730,7 +737,13 @@ func (h *ExecutionHost) FocusStop(ctx context.Context, projectName string, focus
 	if err != nil {
 		return err
 	}
-	return project.FocusStop(ctx, focusID, requestID)
+	if err := project.FocusStop(ctx, focusID, requestID); err != nil {
+		return err
+	}
+	if h.onRunSettled != nil {
+		h.onRunSettled(strings.TrimSpace(projectName))
+	}
+	return nil
 }
 
 func (h *ExecutionHost) FocusCancel(ctx context.Context, projectName string, focusID uint, requestID string) error {
@@ -744,7 +757,13 @@ func (h *ExecutionHost) FocusCancel(ctx context.Context, projectName string, foc
 	if err != nil {
 		return err
 	}
-	return project.FocusCancel(ctx, focusID, requestID)
+	if err := project.FocusCancel(ctx, focusID, requestID); err != nil {
+		return err
+	}
+	if h.onRunSettled != nil {
+		h.onRunSettled(strings.TrimSpace(projectName))
+	}
+	return nil
 }
 
 func (h *ExecutionHost) openDashboardProject(projectName string) (DashboardProject, error) {

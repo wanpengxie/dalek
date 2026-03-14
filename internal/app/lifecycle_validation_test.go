@@ -258,6 +258,21 @@ func (h *acceptingLifecycleManagerHost) SubmitTicketLoop(ctx context.Context, re
 	}, nil
 }
 
+func (h *acceptingLifecycleManagerHost) CancelTaskRun(ctx context.Context, runID uint) (daemonsvc.CancelResult, error) {
+	_ = ctx
+	return daemonsvc.CancelResult{Found: runID != 0, Canceled: runID != 0}, nil
+}
+
+func (h *acceptingLifecycleManagerHost) CancelTicketLoop(ctx context.Context, project string, ticketID uint) (daemonsvc.CancelResult, error) {
+	_ = ctx
+	return daemonsvc.CancelResult{
+		Found:    ticketID != 0,
+		Canceled: ticketID != 0,
+		Project:  strings.TrimSpace(project),
+		TicketID: ticketID,
+	}, nil
+}
+
 func (h *acceptingLifecycleManagerHost) SubmittedTicketIDs() []uint {
 	if h == nil {
 		return nil

@@ -174,6 +174,12 @@ func (s *Service) ManagerTick(ctx context.Context, opt ManagerTickOptions) (Mana
 	mergeResult := s.freezeMergesForDoneTickets(ctx, db, st, opt.DryRun)
 	res.applyMergeFrozenResult(mergeResult)
 
+	if !opt.DryRun {
+		if err := s.AdvanceFocusController(ctx); err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("focus controller advance failed: %v", err))
+		}
+	}
+
 	finalizeCtx, finalizeCancel := managerTickFinalizeContext(ctx)
 	defer finalizeCancel()
 	if err := s.saveManagerTickState(finalizeCtx, db, st, now, lastEventID, maxRunning, opt); err != nil {
@@ -551,6 +557,11 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 	if runningTicketIDs == nil {
 		runningTicketIDs = map[uint]bool{}
 	}
+	focusManagedTicketIDs, err := s.focusManagedTicketIDs(ctx, db)
+	if err != nil {
+		out.Errors = append(out.Errors, fmt.Sprintf("读取 active focus scope 失败: %v", err))
+		focusManagedTicketIDs = map[uint]struct{}{}
+	}
 
 	var queued []contracts.Ticket
 	if err := db.WithContext(ctx).
@@ -572,6 +583,9 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 			break
 		}
 		if runningTicketIDs[t.ID] {
+			continue
+		}
+		if _, managed := focusManagedTicketIDs[t.ID]; managed {
 			continue
 		}
 		if hasSurfaceIndex {
@@ -603,6 +617,18 @@ func (s *Service) scheduleQueuedTickets(ctx context.Context, db *gorm.DB, opt sc
 				})
 				continue
 			}
+		}
+
+		allowedByFocus, serialDeferredByFocus, ferr := s.focusAllowsQueuedActivation(ctx, db, t.ID)
+		if ferr != nil {
+			out.Errors = append(out.Errors, fmt.Sprintf("focus activation gate 失败：t%d: %v", t.ID, ferr))
+			continue
+		}
+		if !allowedByFocus {
+			if serialDeferredByFocus {
+				out.SerialDeferred = append(out.SerialDeferred, t.ID)
+			}
+			continue
 		}
 
 		if workerID, remaining, err := s.queuedRetryBackoffRemaining(ctx, t.ID, time.Now()); err != nil {
