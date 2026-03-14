@@ -63,27 +63,6 @@ func (p *Project) FocusCancel(ctx context.Context, focusID uint, requestID strin
 	return p.pm.FocusCancel(ctx, focusID, requestID)
 }
 
-func (p *Project) CreateFocusRun(ctx context.Context, mode string, ticketIDs []uint, budget int) (*contracts.FocusRun, error) {
-	if p == nil || p.pm == nil {
-		return nil, fmt.Errorf("project pm service 为空")
-	}
-	return p.pm.CreateFocusRun(ctx, mode, ticketIDs, budget)
-}
-
-func (p *Project) ActiveFocusRun(ctx context.Context) (*contracts.FocusRun, error) {
-	if p == nil || p.pm == nil {
-		return nil, fmt.Errorf("project pm service 为空")
-	}
-	return p.pm.ActiveFocusRun(ctx)
-}
-
-func (p *Project) StopFocusRun(ctx context.Context, reason string) error {
-	if p == nil || p.pm == nil {
-		return fmt.Errorf("project pm service 为空")
-	}
-	return p.pm.StopFocusRun(ctx, reason)
-}
-
 func (p *Project) CreateIntegrationTicket(ctx context.Context, in CreateIntegrationTicketInput) (CreateIntegrationTicketResult, error) {
 	if p == nil || p.pm == nil {
 		return CreateIntegrationTicketResult{}, fmt.Errorf("project pm service 为空")
@@ -96,13 +75,6 @@ func (p *Project) FinalizeTicketSuperseded(ctx context.Context, sourceTicketID, 
 		return fmt.Errorf("project pm service 为空")
 	}
 	return p.pm.FinalizeTicketSuperseded(ctx, sourceTicketID, replacementTicketID, reason)
-}
-
-func (p *Project) RunBatchFocus(ctx context.Context, focus *contracts.FocusRun, startTicket func(context.Context, uint) error, softStop <-chan struct{}) error {
-	if p == nil || p.pm == nil {
-		return fmt.Errorf("project pm service 为空")
-	}
-	return p.pm.RunBatchFocus(ctx, focus, startTicket, softStop)
 }
 
 func (p *Project) GetPMHealthMetrics(ctx context.Context, opt PMHealthMetricsOptions) (PMHealthMetrics, error) {
