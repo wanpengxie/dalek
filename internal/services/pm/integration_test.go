@@ -216,7 +216,7 @@ func TestFinalizeTicketSuperseded_RequiresMergedReplacementAndSetsMapping(t *tes
 	}
 }
 
-func TestRetargetTicketIntegration_OnlyNeedsMergeAllowed(t *testing.T) {
+func TestRetargetTicketIntegration_IsRejectedByAtomicityGuard(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	tk := createTicket(t, p.DB, "retarget-needs-merge")
 	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
@@ -228,33 +228,16 @@ func TestRetargetTicketIntegration_OnlyNeedsMergeAllowed(t *testing.T) {
 		t.Fatalf("prepare ticket failed: %v", err)
 	}
 
-	res, err := svc.RetargetTicketIntegration(context.Background(), tk.ID, "release/v1")
-	if err != nil {
-		t.Fatalf("RetargetTicketIntegration failed: %v", err)
-	}
-	if res.TargetRef != "refs/heads/release/v1" {
-		t.Fatalf("unexpected target ref: %q", res.TargetRef)
+	if _, err := svc.RetargetTicketIntegration(context.Background(), tk.ID, "release/v1"); err == nil || !strings.Contains(err.Error(), "merge retarget 被拒绝") {
+		t.Fatalf("expected atomicity rejection, got=%v", err)
 	}
 
 	var got contracts.Ticket
 	if err := p.DB.First(&got, tk.ID).Error; err != nil {
 		t.Fatalf("reload retarget ticket failed: %v", err)
 	}
-	if strings.TrimSpace(got.TargetBranch) != "refs/heads/release/v1" {
-		t.Fatalf("expected target_branch updated, got=%q", got.TargetBranch)
-	}
-
-	mergedTicket := createTicket(t, p.DB, "retarget-merged")
-	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", mergedTicket.ID).Updates(map[string]any{
-		"workflow_status":    contracts.TicketDone,
-		"integration_status": contracts.IntegrationMerged,
-		"target_branch":      "refs/heads/main",
-		"updated_at":         time.Now(),
-	}).Error; err != nil {
-		t.Fatalf("prepare merged ticket failed: %v", err)
-	}
-	if _, err := svc.RetargetTicketIntegration(context.Background(), mergedTicket.ID, "refs/heads/release/v2"); err == nil {
-		t.Fatalf("retarget on merged ticket should fail")
+	if strings.TrimSpace(got.TargetBranch) != "refs/heads/main" {
+		t.Fatalf("target_branch should stay unchanged, got=%q", got.TargetBranch)
 	}
 }
 

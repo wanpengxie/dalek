@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"dalek/internal/contracts"
+	"dalek/internal/ticketatomic"
 )
 
 func (s *Service) workerBaseBranchForTicket(ctx context.Context, ticketID uint, requested string) (string, error) {
@@ -22,41 +23,50 @@ func (s *Service) workerBaseBranchForTicket(ctx context.Context, ticketID uint, 
 		First(&ticket, ticketID).Error; err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(requested) == "" {
-		return requiredWorkerBaseBranch(ticket)
+	currentBranch := ""
+	var currentErr error
+	if s != nil && s.p != nil && s.p.Git != nil {
+		currentBranch, currentErr = s.p.Git.CurrentBranch(s.p.RepoRoot)
 	}
-	return resolveWorkerBaseBranch(ticket, requested)
+	resolution, err := ticketatomic.ResolveStartBase(ticket, requested, currentBranch, currentErr)
+	if err != nil {
+		return "", err
+	}
+	return resolution.BaseBranch, nil
 }
 
 func requiredWorkerBaseBranch(ticket contracts.Ticket) (string, error) {
-	if !strings.EqualFold(strings.TrimSpace(ticket.Label), "integration") {
-		return "", nil
-	}
-	targetRef, err := normalizeIntegrationTargetRefInput(strings.TrimSpace(ticket.TargetBranch))
+	targetRef, err := ticketatomic.NormalizeOptionalTargetRef(ticket.TargetBranch)
 	if err != nil {
-		return "", fmt.Errorf("integration ticket t%d 缺少有效 target_ref: %w", ticket.ID, err)
+		return "", fmt.Errorf("ticket t%d 的 target_ref 非法: %w", ticket.ID, err)
+	}
+	if targetRef == "" {
+		if strings.EqualFold(strings.TrimSpace(ticket.Label), "integration") {
+			return "", fmt.Errorf("integration ticket t%d 缺少有效 target_ref", ticket.ID)
+		}
+		return "", nil
 	}
 	return targetRef, nil
 }
 
 func resolveWorkerBaseBranch(ticket contracts.Ticket, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
+	requestedRef, err := ticketatomic.NormalizeTargetRefInput(requested)
+	if err != nil {
+		return "", fmt.Errorf("ticket start 被拒绝：ticket t%d --base 非法: %w", ticket.ID, err)
+	}
 	targetRef, err := requiredWorkerBaseBranch(ticket)
 	if err != nil {
 		return "", err
 	}
 	if targetRef == "" {
-		return requested, nil
+		return requestedRef, nil
 	}
 	if requested == "" {
 		return "", fmt.Errorf("integration ticket t%d 缺少 BaseBranch；期望 target_ref=%s", ticket.ID, targetRef)
 	}
-	baseBranch, err := normalizeIntegrationTargetRefInput(requested)
-	if err != nil {
-		return "", fmt.Errorf("integration ticket t%d base_branch 非法: %w", ticket.ID, err)
-	}
-	if baseBranch != targetRef {
-		return "", fmt.Errorf("integration ticket t%d base_branch=%s 与 target_ref=%s 不一致", ticket.ID, baseBranch, targetRef)
+	if requestedRef != targetRef {
+		return "", fmt.Errorf("ticket start 被拒绝：ticket t%d --base=%s 与 ticket.target_ref=%s 不一致。当前 ticket 是单 ref 原子任务，如需在新 ref 上执行，请创建新 ticket。", ticket.ID, requestedRef, targetRef)
 	}
 	return targetRef, nil
 }

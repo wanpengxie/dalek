@@ -47,12 +47,7 @@ func (s *Service) RunTicketWorker(ctx context.Context, ticketID uint, opt Worker
 	}
 
 	autoStart := workerRunAutoStartEnabled(opt.AutoStart)
-	baseBranch := strings.TrimSpace(opt.BaseBranch)
-	if baseBranch == "" {
-		baseBranch, err = requiredWorkerBaseBranch(t)
-	} else {
-		baseBranch, err = resolveWorkerBaseBranch(t, baseBranch)
-	}
+	baseBranch, err := s.workerBaseBranchForTicket(ctx, ticketID, opt.BaseBranch)
 	if err != nil {
 		return WorkerRunResult{}, err
 	}

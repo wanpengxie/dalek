@@ -47,12 +47,7 @@ func (s *Service) StartTicketWithOptions(ctx context.Context, ticketID uint, opt
 	if err := db.WithContext(ctx).First(&t, ticketID).Error; err != nil {
 		return nil, err
 	}
-	baseBranch := strings.TrimSpace(opt.BaseBranch)
-	if baseBranch == "" {
-		baseBranch, err = requiredWorkerBaseBranch(t)
-	} else {
-		baseBranch, err = resolveWorkerBaseBranch(t, baseBranch)
-	}
+	baseBranch, err := s.workerBaseBranchForTicket(ctx, ticketID, opt.BaseBranch)
 	if err != nil {
 		return nil, err
 	}
