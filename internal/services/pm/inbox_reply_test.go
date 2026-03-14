@@ -2,6 +2,8 @@ package pm
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -85,8 +87,80 @@ func TestReplyInboxItem_SingleTicketInjectsReplyPrompt(t *testing.T) {
 	if !strings.Contains(capturedPrompt, "资料已放到 /tmp/final.md") {
 		t.Fatalf("expected prompt contains user reply, got:\n%s", capturedPrompt)
 	}
+	if !strings.Contains(capturedPrompt, "当前动作：done") {
+		t.Fatalf("expected done prompt declares explicit action, got:\n%s", capturedPrompt)
+	}
 	if !strings.Contains(capturedPrompt, "本轮只允许做最小收尾执行") {
 		t.Fatalf("expected done prompt to enforce closeout-only semantics, got:\n%s", capturedPrompt)
+	}
+}
+
+func TestReplyInboxItem_SingleTicketKeepsInboxOpenWhenRunSubmissionFails(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "reply-inbox-single-failure")
+	w, err := svc.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+
+	waitRunID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	waitReport := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  waitRunID,
+		Summary:    "缺少配置",
+		NeedsUser:  true,
+		Blockers:   []string{"请提供 /tmp/runtime.json"},
+		NextAction: string(contracts.NextWaitUser),
+	}
+	if err := svc.applyWorkerLoopTerminalReport(ctx, waitReport, "pm.worker_loop.closure(test:reply_single_failure_wait)"); err != nil {
+		t.Fatalf("apply wait_user failed: %v", err)
+	}
+
+	var inbox contracts.InboxItem
+	if err := p.DB.Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).First(&inbox).Error; err != nil {
+		t.Fatalf("load open needs_user inbox failed: %v", err)
+	}
+
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return nil, fmt.Errorf("launch failed")
+	}
+
+	_, err = svc.ReplyInboxItem(ctx, inbox.ID, string(contracts.InboxReplyContinue), "配置在 /tmp/runtime.json")
+	if err == nil {
+		t.Fatalf("expected reply failure")
+	}
+	if !strings.Contains(err.Error(), "launch failed") {
+		t.Fatalf("expected launch failure, got=%v", err)
+	}
+
+	var inboxAfter contracts.InboxItem
+	if err := p.DB.First(&inboxAfter, inbox.ID).Error; err != nil {
+		t.Fatalf("reload inbox failed: %v", err)
+	}
+	if inboxAfter.Status != contracts.InboxOpen {
+		t.Fatalf("expected inbox stay open on failure, got=%s", inboxAfter.Status)
+	}
+	if inboxAfter.ReplyConsumedAt != nil {
+		t.Fatalf("expected reply not consumed on failure")
+	}
+	if inboxAfter.ReplyAction != contracts.InboxReplyContinue {
+		t.Fatalf("expected reply action preserved, got=%s", inboxAfter.ReplyAction)
+	}
+	if strings.TrimSpace(inboxAfter.ReplyMarkdown) != "配置在 /tmp/runtime.json" {
+		t.Fatalf("expected reply markdown preserved, got=%q", inboxAfter.ReplyMarkdown)
+	}
+
+	var ticketAfter contracts.Ticket
+	if err := p.DB.First(&ticketAfter, tk.ID).Error; err != nil {
+		t.Fatalf("reload ticket failed: %v", err)
+	}
+	if contracts.CanonicalTicketWorkflowStatus(ticketAfter.WorkflowStatus) != contracts.TicketBlocked {
+		t.Fatalf("expected ticket stay blocked on failure, got=%s", ticketAfter.WorkflowStatus)
 	}
 }
 
@@ -166,6 +240,43 @@ func TestReplyInboxItem_FocusBatchUsesControllerAndKeepsSerialOrder(t *testing.T
 	if result.FocusID != focusRes.FocusID {
 		t.Fatalf("expected focus_id=%d, got=%d", focusRes.FocusID, result.FocusID)
 	}
+	if len(submitter.Prompts()) != 0 {
+		t.Fatalf("expected reply api not submit prompt directly")
+	}
+
+	beforeController, err := svc.FocusGet(ctx, focusRes.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet before controller failed: %v", err)
+	}
+	beforeItem1 := focusItemByTicketID(beforeController.Items, tk1.ID)
+	beforeItem2 := focusItemByTicketID(beforeController.Items, tk2.ID)
+	if beforeController.Run.Status != contracts.FocusBlocked {
+		t.Fatalf("expected focus stay blocked before controller consumes reply, got=%s", beforeController.Run.Status)
+	}
+	if beforeItem1 == nil || beforeItem1.Status != contracts.FocusItemBlocked {
+		t.Fatalf("expected first item stay blocked before controller, got=%+v", beforeItem1)
+	}
+	if beforeItem2 == nil || beforeItem2.Status != contracts.FocusItemPending {
+		t.Fatalf("expected second item stay pending before controller, got=%+v", beforeItem2)
+	}
+
+	var inboxAccepted contracts.InboxItem
+	if err := p.DB.First(&inboxAccepted, inbox.ID).Error; err != nil {
+		t.Fatalf("reload inbox before controller failed: %v", err)
+	}
+	if inboxAccepted.Status != contracts.InboxOpen {
+		t.Fatalf("expected inbox stay open before controller consumes reply, got=%s", inboxAccepted.Status)
+	}
+	if inboxAccepted.ReplyAction != contracts.InboxReplyContinue {
+		t.Fatalf("expected reply action stored before controller, got=%s", inboxAccepted.ReplyAction)
+	}
+
+	var acceptedEvent contracts.FocusEvent
+	if err := p.DB.Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?", focusRes.FocusID, item1.ID, contracts.FocusEventInboxReplyAccepted).First(&acceptedEvent).Error; err != nil {
+		t.Fatalf("load focus reply accepted event failed: %v", err)
+	}
+	acceptedPayload := decodeJSONMapForTest(t, acceptedEvent.PayloadJSON)
+	assertFocusReplyPayload(t, acceptedPayload, tk1.ID, inbox.ID, "continue", "资料已放到 /tmp/context.md，请继续执行。")
 
 	if err := svc.AdvanceFocusController(ctx); err != nil {
 		t.Fatalf("AdvanceFocusController after reply failed: %v", err)
@@ -207,9 +318,19 @@ func TestReplyInboxItem_FocusBatchUsesControllerAndKeepsSerialOrder(t *testing.T
 	if !strings.Contains(prompts[0], "资料已放到 /tmp/context.md") {
 		t.Fatalf("expected focus prompt contains reply markdown, got:\n%s", prompts[0])
 	}
+	if !strings.Contains(prompts[0], "当前动作：continue") {
+		t.Fatalf("expected continue prompt declares explicit action, got:\n%s", prompts[0])
+	}
 	if !strings.Contains(prompts[0], "继续推进当前 ticket 的最小必要实现") {
 		t.Fatalf("expected continue prompt semantics, got:\n%s", prompts[0])
 	}
+
+	var resumedEvent contracts.FocusEvent
+	if err := p.DB.Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?", focusRes.FocusID, item1.ID, contracts.FocusEventItemRestarted).First(&resumedEvent).Error; err != nil {
+		t.Fatalf("load focus resumed event failed: %v", err)
+	}
+	resumedPayload := decodeJSONMapForTest(t, resumedEvent.PayloadJSON)
+	assertFocusReplyPayload(t, resumedPayload, tk1.ID, inbox.ID, "continue", "资料已放到 /tmp/context.md，请继续执行。")
 }
 
 func TestReplyInboxItem_RejectsWhenWaitUserRoundsExhausted(t *testing.T) {
@@ -239,5 +360,151 @@ func TestReplyInboxItem_RejectsWhenWaitUserRoundsExhausted(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "wait_user 链已达到") {
 		t.Fatalf("expected round limit error, got=%v", err)
+	}
+
+	var inboxAfter contracts.InboxItem
+	if err := p.DB.First(&inboxAfter, inbox.ID).Error; err != nil {
+		t.Fatalf("reload inbox failed: %v", err)
+	}
+	if !strings.Contains(inboxAfter.Title, "已达 3 轮上限") {
+		t.Fatalf("expected inbox title mark manual handling, got=%q", inboxAfter.Title)
+	}
+	if !strings.Contains(inboxAfter.Body, "需要 PM/用户手工处理") {
+		t.Fatalf("expected inbox body mark manual handling, got=%q", inboxAfter.Body)
+	}
+}
+
+func TestApplyWorkerLoopTerminalReport_WaitUserRoundLimitMarksManualHandling(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "reply-inbox-round-limit-marker")
+	w, err := svc.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+
+	for i := 1; i <= maxWaitUserRounds; i++ {
+		runID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+		report := contracts.WorkerReport{
+			Schema:     contracts.WorkerReportSchemaV1,
+			ProjectKey: strings.TrimSpace(p.Key),
+			WorkerID:   w.ID,
+			TicketID:   tk.ID,
+			TaskRunID:  runID,
+			Summary:    fmt.Sprintf("第 %d 次 wait_user", i),
+			NeedsUser:  true,
+			Blockers:   []string{fmt.Sprintf("请补充第 %d 次资料", i)},
+			NextAction: string(contracts.NextWaitUser),
+		}
+		if err := svc.applyWorkerLoopTerminalReport(ctx, report, fmt.Sprintf("pm.worker_loop.closure(test:wait_round_%d)", i)); err != nil {
+			t.Fatalf("apply wait_user #%d failed: %v", i, err)
+		}
+	}
+
+	var inbox contracts.InboxItem
+	if err := p.DB.Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).First(&inbox).Error; err != nil {
+		t.Fatalf("load open needs_user inbox failed: %v", err)
+	}
+	if inbox.WaitRoundCount != maxWaitUserRounds {
+		t.Fatalf("expected wait_round_count=%d, got=%d", maxWaitUserRounds, inbox.WaitRoundCount)
+	}
+	if !strings.Contains(inbox.Title, "已达 3 轮上限") {
+		t.Fatalf("expected title mark manual handling, got=%q", inbox.Title)
+	}
+	if !strings.Contains(inbox.Body, "需要 PM/用户手工处理") {
+		t.Fatalf("expected body mark manual handling, got=%q", inbox.Body)
+	}
+}
+
+func TestCloseDuplicateNeedsUserInboxesTx_ResolvesDuplicateChain(t *testing.T) {
+	_, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "reply-inbox-duplicate-chain")
+	now := time.Now()
+	keep := contracts.InboxItem{
+		Key:              inboxKeyNeedsUserChain(tk.ID, 11),
+		Status:           contracts.InboxOpen,
+		Severity:         contracts.InboxBlocker,
+		Reason:           contracts.InboxNeedsUser,
+		Title:            "保留链条",
+		Body:             "keep",
+		TicketID:         tk.ID,
+		OriginTaskRunID:  11,
+		CurrentTaskRunID: 12,
+		WaitRoundCount:   2,
+	}
+	if err := p.DB.Create(&keep).Error; err != nil {
+		t.Fatalf("create keep inbox failed: %v", err)
+	}
+	duplicate := contracts.InboxItem{
+		Key:              inboxKeyNeedsUserChain(tk.ID, 11) + ":dup",
+		Status:           contracts.InboxOpen,
+		Severity:         contracts.InboxBlocker,
+		Reason:           contracts.InboxNeedsUser,
+		Title:            "重复链条",
+		Body:             "duplicate",
+		TicketID:         tk.ID,
+		OriginTaskRunID:  11,
+		CurrentTaskRunID: 13,
+		WaitRoundCount:   2,
+	}
+	if err := p.DB.Create(&duplicate).Error; err != nil {
+		t.Fatalf("create duplicate inbox failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.InboxItem{}).Where("id = ?", duplicate.ID).Update("updated_at", now.Add(time.Minute)).Error; err != nil {
+		t.Fatalf("bump duplicate updated_at failed: %v", err)
+	}
+
+	if err := closeDuplicateNeedsUserInboxesTx(ctx, p.DB, tk.ID, keep.ID); err != nil {
+		t.Fatalf("closeDuplicateNeedsUserInboxesTx failed: %v", err)
+	}
+
+	var duplicateAfter contracts.InboxItem
+	if err := p.DB.First(&duplicateAfter, duplicate.ID).Error; err != nil {
+		t.Fatalf("reload duplicate inbox failed: %v", err)
+	}
+	if duplicateAfter.Status != contracts.InboxDone {
+		t.Fatalf("expected duplicate inbox done, got=%s", duplicateAfter.Status)
+	}
+	if duplicateAfter.ChainResolvedAt == nil {
+		t.Fatalf("expected duplicate chain_resolved_at set")
+	}
+
+	active, err := loadActiveNeedsUserChainInboxByTicketWithDB(ctx, p.DB, tk.ID)
+	if err != nil {
+		t.Fatalf("load active needs_user chain failed: %v", err)
+	}
+	if active == nil || active.ID != keep.ID {
+		t.Fatalf("expected active chain keep inbox#%d, got=%+v", keep.ID, active)
+	}
+}
+
+func decodeJSONMapForTest(t *testing.T, raw string) map[string]any {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("unmarshal payload failed: %v raw=%s", err, raw)
+	}
+	return payload
+}
+
+func assertFocusReplyPayload(t *testing.T, payload map[string]any, ticketID, inboxID uint, action, reply string) {
+	t.Helper()
+	if got := uint(payload["ticket_id"].(float64)); got != ticketID {
+		t.Fatalf("expected ticket_id=%d, got=%d payload=%+v", ticketID, got, payload)
+	}
+	if got := uint(payload["inbox_id"].(float64)); got != inboxID {
+		t.Fatalf("expected inbox_id=%d, got=%d payload=%+v", inboxID, got, payload)
+	}
+	if got := strings.TrimSpace(payload["action"].(string)); got != action {
+		t.Fatalf("expected action=%s, got=%s payload=%+v", action, got, payload)
+	}
+	if got := strings.TrimSpace(payload["reply"].(string)); got != reply {
+		t.Fatalf("expected reply=%q, got=%q payload=%+v", reply, got, payload)
+	}
+	if got := strings.TrimSpace(payload["reply_excerpt"].(string)); got != reply {
+		t.Fatalf("expected reply_excerpt=%q, got=%q payload=%+v", reply, got, payload)
 	}
 }
