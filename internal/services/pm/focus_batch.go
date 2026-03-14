@@ -276,11 +276,11 @@ func (s *Service) waitTicketOutcome(ctx context.Context, ticketID uint) ticketOu
 			return outcomeTicketCanceled
 		}
 
-		// 检查 worker 是否已死但 ticket 还在运行
-		if status == contracts.TicketActive || status == contracts.TicketQueued {
+		// 检查 worker 是否已死但 ticket 还在 active（queued 时 worker 未启动是正常的）
+		if status == contracts.TicketActive {
 			if w, werr := s.worker.LatestWorker(ctx, ticketID); werr == nil && w != nil {
 				if w.Status == contracts.WorkerFailed || w.Status == contracts.WorkerStopped {
-					return outcomeTicketBlocked // 视为 blocked，交给 triage 处理
+					return outcomeTicketBlocked
 				}
 			}
 		}
