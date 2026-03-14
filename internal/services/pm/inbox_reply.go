@@ -143,13 +143,13 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 			workerID = item.WorkerID
 		}
 		return InboxReplyResult{
-			InboxID:    item.ID,
-			TicketID:   ticket.ID,
-			WorkerID:   workerID,
-			Action:     action,
-			Mode:       inboxReplyModeSingle,
-			RunID:      submission.TaskRunID,
-			Accepted:   true,
+			InboxID:  item.ID,
+			TicketID: ticket.ID,
+			WorkerID: workerID,
+			Action:   action,
+			Mode:     inboxReplyModeSingle,
+			RunID:    submission.TaskRunID,
+			Accepted: true,
 		}, nil
 	}
 	autoStart := false
