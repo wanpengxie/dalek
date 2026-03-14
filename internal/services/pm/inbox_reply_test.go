@@ -95,6 +95,76 @@ func TestReplyInboxItem_SingleTicketInjectsReplyPrompt(t *testing.T) {
 	}
 }
 
+func TestReplyInboxItem_SingleTicketUsesSubmitterAndConsumesInboxOnAcceptedRun(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "reply-inbox-single-submitter")
+	w, err := svc.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+
+	waitRunID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	waitReport := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  waitRunID,
+		Summary:    "缺少配置说明",
+		NeedsUser:  true,
+		Blockers:   []string{"请提供 /tmp/reply.md"},
+		NextAction: string(contracts.NextWaitUser),
+	}
+	if err := svc.applyWorkerLoopTerminalReport(ctx, waitReport, "pm.worker_loop.closure(test:reply_single_submit_wait)"); err != nil {
+		t.Fatalf("apply wait_user failed: %v", err)
+	}
+
+	var inbox contracts.InboxItem
+	if err := p.DB.Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).First(&inbox).Error; err != nil {
+		t.Fatalf("load open needs_user inbox failed: %v", err)
+	}
+
+	submitter := &stubWorkerRunSubmitter{runID: 88}
+	svc.SetWorkerRunSubmitter(submitter)
+
+	result, err := svc.ReplyInboxItem(ctx, inbox.ID, string(contracts.InboxReplyContinue), "资料已放到 /tmp/reply.md，请继续。")
+	if err != nil {
+		t.Fatalf("ReplyInboxItem failed: %v", err)
+	}
+	if result.Mode != inboxReplyModeSingle {
+		t.Fatalf("expected mode=%s, got=%s", inboxReplyModeSingle, result.Mode)
+	}
+	if result.RunID != 88 {
+		t.Fatalf("expected run_id=88, got=%d", result.RunID)
+	}
+	if result.WorkerID != w.ID {
+		t.Fatalf("expected worker_id=%d, got=%d", w.ID, result.WorkerID)
+	}
+	prompts := submitter.Prompts()
+	if len(prompts) != 1 {
+		t.Fatalf("expected exactly one submitter prompt, got=%d", len(prompts))
+	}
+	if !strings.Contains(prompts[0], "当前动作：continue") {
+		t.Fatalf("expected submitter prompt contains explicit action, got:\n%s", prompts[0])
+	}
+	if !strings.Contains(prompts[0], "资料已放到 /tmp/reply.md，请继续。") {
+		t.Fatalf("expected submitter prompt contains reply markdown, got:\n%s", prompts[0])
+	}
+
+	var inboxAfter contracts.InboxItem
+	if err := p.DB.First(&inboxAfter, inbox.ID).Error; err != nil {
+		t.Fatalf("reload inbox failed: %v", err)
+	}
+	if inboxAfter.Status != contracts.InboxDone {
+		t.Fatalf("expected inbox done after accepted submit, got=%s", inboxAfter.Status)
+	}
+	if inboxAfter.ReplyConsumedAt == nil {
+		t.Fatalf("expected reply consumed timestamp set after accepted submit")
+	}
+}
+
 func TestReplyInboxItem_SingleTicketKeepsInboxOpenWhenRunSubmissionFails(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
@@ -161,6 +231,87 @@ func TestReplyInboxItem_SingleTicketKeepsInboxOpenWhenRunSubmissionFails(t *test
 	}
 	if contracts.CanonicalTicketWorkflowStatus(ticketAfter.WorkflowStatus) != contracts.TicketBlocked {
 		t.Fatalf("expected ticket stay blocked on failure, got=%s", ticketAfter.WorkflowStatus)
+	}
+}
+
+func TestReplyInboxItem_SingleTicketWaitUserFallbackKeepsReopenedInboxOpen(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "reply-inbox-single-wait-fallback")
+	w, err := svc.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+
+	waitRunID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	waitReport := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  waitRunID,
+		Summary:    "第一次 wait_user",
+		NeedsUser:  true,
+		Blockers:   []string{"请提供 /tmp/retry.txt"},
+		NextAction: string(contracts.NextWaitUser),
+	}
+	if err := svc.applyWorkerLoopTerminalReport(ctx, waitReport, "pm.worker_loop.closure(test:reply_single_wait_fallback_wait1)"); err != nil {
+		t.Fatalf("apply first wait_user failed: %v", err)
+	}
+
+	var inbox contracts.InboxItem
+	if err := p.DB.Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).First(&inbox).Error; err != nil {
+		t.Fatalf("load open needs_user inbox failed: %v", err)
+	}
+
+	runID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	secondWaitReport := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  runID,
+		Summary:    "第二次 wait_user",
+		NeedsUser:  true,
+		Blockers:   []string{"请补充 /tmp/retry.txt 的格式说明"},
+		NextAction: string(contracts.NextWaitUser),
+	}
+	if err := svc.ApplyWorkerReport(ctx, secondWaitReport, "test-runtime"); err != nil {
+		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "wait_user", "第二次 wait_user", []string{"请补充 /tmp/retry.txt 的格式说明"}, false, testWorkerDoneHeadSHA, "clean")
+
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		return &fakeAgentRunHandle{
+			runID:  runID,
+			result: agentexec.AgentRunResult{ExitCode: 0},
+		}, nil
+	}
+
+	result, err := svc.ReplyInboxItem(ctx, inbox.ID, string(contracts.InboxReplyContinue), "资料已放到 /tmp/retry.txt")
+	if err != nil {
+		t.Fatalf("ReplyInboxItem failed: %v", err)
+	}
+	if result.NextAction != string(contracts.NextWaitUser) {
+		t.Fatalf("expected next_action=wait_user, got=%s", result.NextAction)
+	}
+
+	var inboxAfter contracts.InboxItem
+	if err := p.DB.First(&inboxAfter, inbox.ID).Error; err != nil {
+		t.Fatalf("reload inbox failed: %v", err)
+	}
+	if inboxAfter.Status != contracts.InboxOpen {
+		t.Fatalf("expected reopened inbox stay open after sync wait_user fallback, got=%s", inboxAfter.Status)
+	}
+	if inboxAfter.ReplyConsumedAt != nil {
+		t.Fatalf("expected reopened inbox not marked consumed")
+	}
+	if inboxAfter.WaitRoundCount != 2 {
+		t.Fatalf("expected wait_round_count=2 after second wait_user, got=%d", inboxAfter.WaitRoundCount)
+	}
+	if inboxAfter.ReplyAction != contracts.InboxReplyNone {
+		t.Fatalf("expected reply action reset after new wait_user, got=%s", inboxAfter.ReplyAction)
 	}
 }
 
