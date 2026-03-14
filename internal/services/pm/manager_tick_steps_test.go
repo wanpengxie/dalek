@@ -97,6 +97,7 @@ func TestScanRunningWorkers_TracksBlockedAndProgressable(t *testing.T) {
 	}
 
 	rt, run := createWorkerRunForManagerTickTest(t, svc, p, blockedTicket.ID, blockedWorker.ID, "scan-running")
+	createWorkerRunForManagerTickTest(t, svc, p, cleanTicket.ID, cleanWorker.ID, "scan-running-clean")
 	if err := rt.AppendRuntimeSample(context.Background(), contracts.TaskRuntimeSampleInput{
 		TaskRunID:  run.ID,
 		State:      contracts.TaskHealthWaitingUser,
