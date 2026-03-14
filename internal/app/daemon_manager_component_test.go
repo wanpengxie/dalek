@@ -133,6 +133,7 @@ func prepareDaemonFocusMergeConflictTicket(t *testing.T, p *Project, tk contract
 	}
 	mustRunGitForDaemonManagerTest(t, worker.WorktreePath, "add", conflictFile)
 	mustRunGitForDaemonManagerTest(t, worker.WorktreePath, "commit", "-m", "worker conflict change")
+	workerAnchor := mustRunGitForDaemonManagerTest(t, worker.WorktreePath, "rev-parse", "HEAD")
 
 	targetConflictPath := filepath.Join(p.RepoRoot(), conflictFile)
 	mustRunGitForDaemonManagerTest(t, p.RepoRoot(), "checkout", targetBranch)
@@ -145,6 +146,7 @@ func prepareDaemonFocusMergeConflictTicket(t *testing.T, p *Project, tk contract
 	if err := mustProjectDB(t, p).WithContext(ctx).Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
 		"workflow_status":    contracts.TicketDone,
 		"integration_status": contracts.IntegrationNeedsMerge,
+		"merge_anchor_sha":   workerAnchor,
 		"target_branch":      "refs/heads/" + targetBranch,
 		"updated_at":         time.Now(),
 	}).Error; err != nil {

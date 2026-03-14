@@ -290,7 +290,6 @@ type FocusEvent struct {
 - merge.conflict_requires_integration_ticket
 - merge.aborted
 - merge.observed
-- recovery.resumed
 
 ### 5.5 约束
 

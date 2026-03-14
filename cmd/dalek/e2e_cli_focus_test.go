@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"dalek/internal/app"
+	"dalek/internal/contracts"
 )
 
 func TestCLI_ManagerFocusCommands_DaemonUnavailable(t *testing.T) {
@@ -48,5 +53,96 @@ func TestCLI_ManagerFocusCommands_DaemonUnavailable(t *testing.T) {
 				t.Fatalf("stderr should contain daemon start guide for manager %s:\n%s", tc.name, stderr)
 			}
 		})
+	}
+}
+
+func TestCLI_ManagerShow_DaemonUnavailableFallsBackToReadonlyFocusView(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+	home := filepath.Join(t.TempDir(), "home")
+
+	prepareDemoProjectWithOneTicket(t, bin, repo, home)
+
+	h, err := app.OpenHome(home)
+	if err != nil {
+		t.Fatalf("OpenHome failed: %v", err)
+	}
+	project, err := h.OpenProjectByName("demo")
+	if err != nil {
+		t.Fatalf("OpenProjectByName failed: %v", err)
+	}
+	focusRes, err := project.FocusStart(context.Background(), app.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{1},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	configureDaemonInternalListenForE2E(t, home, "http://127.0.0.1:1")
+
+	textStdout, textStderr, err := runCLI(t, bin, repo, "-home", home, "-project", "demo", "manager", "show")
+	if err != nil {
+		t.Fatalf("manager show text should fallback to local readonly view: stderr=%s err=%v", textStderr, err)
+	}
+	if strings.TrimSpace(textStderr) != "" {
+		t.Fatalf("manager show text stderr should be empty on readonly fallback, got:\n%s", textStderr)
+	}
+	if !strings.Contains(textStdout, "[readonly-stale] focus_id=") {
+		t.Fatalf("manager show text should include readonly-stale status line, got:\n%s", textStdout)
+	}
+	if strings.Contains(textStdout, "active_ticket=") {
+		t.Fatalf("manager show text should not use legacy active_ticket output, got:\n%s", textStdout)
+	}
+
+	stdout, stderr, err := runCLI(t, bin, repo, "-home", home, "-project", "demo", "manager", "show", "-o", "json")
+	if err != nil {
+		t.Fatalf("manager show should fallback to local readonly view: stderr=%s err=%v", stderr, err)
+	}
+	if strings.TrimSpace(stderr) != "" {
+		t.Fatalf("manager show stderr should be empty on readonly fallback, got:\n%s", stderr)
+	}
+
+	var payload struct {
+		ReadonlyStale bool `json:"readonly_stale"`
+		Focus         struct {
+			Run struct {
+				ID uint `json:"id"`
+			} `json:"run"`
+			Items []struct {
+				TicketID uint `json:"ticket_id"`
+			} `json:"items"`
+			ReadonlyStale bool `json:"readonly_stale"`
+		} `json:"focus"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("decode manager show json failed: %v\nraw=%s", err, stdout)
+	}
+	if !payload.ReadonlyStale {
+		t.Fatalf("expected readonly_stale=true, got raw=%s", stdout)
+	}
+	if !payload.Focus.ReadonlyStale {
+		t.Fatalf("expected nested focus.readonly_stale=true, got raw=%s", stdout)
+	}
+	if payload.Focus.Run.ID != focusRes.FocusID {
+		t.Fatalf("expected focus id %d, got %d", focusRes.FocusID, payload.Focus.Run.ID)
+	}
+	if len(payload.Focus.Items) != 1 || payload.Focus.Items[0].TicketID != 1 {
+		t.Fatalf("expected readonly focus items to come from FocusRunView, got raw=%s", stdout)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(stdout), &raw); err != nil {
+		t.Fatalf("decode raw json failed: %v", err)
+	}
+	focusMap, ok := raw["focus"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected focus payload object, got raw=%s", stdout)
+	}
+	if _, ok := focusMap["run"]; !ok {
+		t.Fatalf("expected focus.run in readonly fallback payload, got raw=%s", stdout)
+	}
+	if _, ok := focusMap["mode"]; ok {
+		t.Fatalf("readonly fallback should not use legacy FocusRun payload, got raw=%s", stdout)
 	}
 }
