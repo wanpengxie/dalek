@@ -80,11 +80,19 @@ func (s *Service) CloseInboxItem(ctx context.Context, id uint) error {
 		return nil
 	}
 	now := time.Now()
-	return db.WithContext(ctx).Model(&contracts.InboxItem{}).Where("id = ?", id).Updates(map[string]any{
+	updates := map[string]any{
 		"status":     contracts.InboxDone,
 		"closed_at":  &now,
 		"updated_at": now,
-	}).Error
+	}
+	if it.Reason == contracts.InboxNeedsUser {
+		updates["chain_resolved_at"] = &now
+		updates["reply_action"] = contracts.InboxReplyNone
+		updates["reply_markdown"] = ""
+		updates["reply_received_at"] = nil
+		updates["reply_consumed_at"] = nil
+	}
+	return db.WithContext(ctx).Model(&contracts.InboxItem{}).Where("id = ?", id).Updates(updates).Error
 }
 
 func (s *Service) SnoozeInboxItem(ctx context.Context, id uint, until time.Time) error {

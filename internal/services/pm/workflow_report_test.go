@@ -85,8 +85,10 @@ func TestApplyWorkerLoopTerminalReport_WaitUserCreatesInboxSynchronously(t *test
 	}
 
 	var inbox contracts.InboxItem
-	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
-		t.Fatalf("wait_user should create inbox during closure: %v", err)
+	if err := p.DB.Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+		var rows []contracts.InboxItem
+		_ = p.DB.Where("ticket_id = ? AND reason = ?", tk.ID, contracts.InboxNeedsUser).Order("id asc").Find(&rows).Error
+		t.Fatalf("wait_user should create inbox during closure: %v rows=%+v", err, rows)
 	}
 	if inbox.Reason != contracts.InboxNeedsUser || inbox.Severity != contracts.InboxBlocker {
 		t.Fatalf("unexpected inbox reason/severity: %s/%s", inbox.Reason, inbox.Severity)
@@ -230,7 +232,7 @@ func TestApplyWorkerLoopTerminalReport_WaitUserDuplicateDoesNotDuplicateLifecycl
 
 	var inboxCount int64
 	if err := p.DB.Model(&contracts.InboxItem{}).
-		Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).
+		Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).
 		Count(&inboxCount).Error; err != nil {
 		t.Fatalf("count wait_user inbox failed: %v", err)
 	}
@@ -284,6 +286,143 @@ func TestApplyWorkerLoopTerminalReport_DoneDuplicateDoesNotReopenNeedsMergeAfter
 	}
 	if lifecycleCount != 1 {
 		t.Fatalf("expected exactly 1 done lifecycle event, got=%d", lifecycleCount)
+	}
+}
+
+func TestApplyWorkerLoopTerminalReport_WaitUserTracksChainRounds(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "workflow-report-wait-user-rounds")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+
+	runID1 := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	report1 := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  runID1,
+		Summary:    "第一次 wait_user",
+		NeedsUser:  true,
+		Blockers:   []string{"请提供第一次资料"},
+		NextAction: string(contracts.NextWaitUser),
+	}
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report1, "pm.worker_loop.closure(test:wait_user_round1)"); err != nil {
+		t.Fatalf("first applyWorkerLoopTerminalReport failed: %v", err)
+	}
+
+	var inbox contracts.InboxItem
+	if err := p.DB.Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).First(&inbox).Error; err != nil {
+		t.Fatalf("load first open needs_user inbox failed: %v", err)
+	}
+	if inbox.OriginTaskRunID != runID1 || inbox.CurrentTaskRunID != runID1 {
+		t.Fatalf("unexpected first chain task_run_ids: %+v", inbox)
+	}
+	if inbox.WaitRoundCount != 1 {
+		t.Fatalf("expected first wait_round_count=1, got=%d", inbox.WaitRoundCount)
+	}
+
+	runID2 := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	report2 := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  runID2,
+		Summary:    "第二次 wait_user",
+		NeedsUser:  true,
+		Blockers:   []string{"请提供第二次资料"},
+		NextAction: string(contracts.NextWaitUser),
+	}
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), report2, "pm.worker_loop.closure(test:wait_user_round2)"); err != nil {
+		t.Fatalf("second applyWorkerLoopTerminalReport failed: %v", err)
+	}
+
+	if err := p.DB.Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).First(&inbox).Error; err != nil {
+		t.Fatalf("reload open needs_user inbox failed: %v", err)
+	}
+	if inbox.OriginTaskRunID != runID1 {
+		t.Fatalf("expected origin_task_run_id stay at first run %d, got=%d", runID1, inbox.OriginTaskRunID)
+	}
+	if inbox.CurrentTaskRunID != runID2 {
+		t.Fatalf("expected current_task_run_id switch to second run %d, got=%d", runID2, inbox.CurrentTaskRunID)
+	}
+	if inbox.WaitRoundCount != 2 {
+		t.Fatalf("expected wait_round_count=2, got=%d", inbox.WaitRoundCount)
+	}
+
+	var openCount int64
+	if err := p.DB.Model(&contracts.InboxItem{}).
+		Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).
+		Count(&openCount).Error; err != nil {
+		t.Fatalf("count open needs_user inbox failed: %v", err)
+	}
+	if openCount != 1 {
+		t.Fatalf("expected exactly 1 open needs_user inbox, got=%d", openCount)
+	}
+}
+
+func TestApplyWorkerLoopTerminalReport_DoneResolvesNeedsUserChain(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	tk := createTicket(t, p.DB, "workflow-report-done-resolves-needs-user")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+
+	waitRunID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	waitReport := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  waitRunID,
+		Summary:    "缺少收尾确认",
+		NeedsUser:  true,
+		Blockers:   []string{"请确认 /tmp/final.md"},
+		NextAction: string(contracts.NextWaitUser),
+	}
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), waitReport, "pm.worker_loop.closure(test:done_chain_wait)"); err != nil {
+		t.Fatalf("wait_user apply failed: %v", err)
+	}
+
+	doneRunID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk.ID, w.ID)
+	doneReport := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   w.ID,
+		TicketID:   tk.ID,
+		TaskRunID:  doneRunID,
+		HeadSHA:    testWorkerDoneHeadSHA,
+		Summary:    "收尾完成",
+		NextAction: string(contracts.NextDone),
+	}
+	writeWorkerLoopStateForTest(t, w.WorktreePath, "done", "收尾完成", nil, true, testWorkerDoneHeadSHA, "clean")
+	if err := svc.applyWorkerLoopTerminalReport(context.Background(), doneReport, "pm.worker_loop.closure(test:done_chain_done)"); err != nil {
+		t.Fatalf("done apply failed: %v", err)
+	}
+
+	var openCount int64
+	if err := p.DB.Model(&contracts.InboxItem{}).
+		Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).
+		Count(&openCount).Error; err != nil {
+		t.Fatalf("count open needs_user inbox failed: %v", err)
+	}
+	if openCount != 0 {
+		t.Fatalf("expected no open needs_user inbox after done, got=%d", openCount)
+	}
+
+	var inbox contracts.InboxItem
+	if err := p.DB.Where("ticket_id = ? AND reason = ?", tk.ID, contracts.InboxNeedsUser).Order("id desc").First(&inbox).Error; err != nil {
+		t.Fatalf("load latest needs_user inbox failed: %v", err)
+	}
+	if inbox.Status != contracts.InboxDone {
+		t.Fatalf("expected needs_user inbox status done after chain resolve, got=%s", inbox.Status)
+	}
+	if inbox.ChainResolvedAt == nil {
+		t.Fatalf("expected chain_resolved_at set after done")
 	}
 }
 

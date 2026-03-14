@@ -118,6 +118,11 @@ func storeMigrations() []Migration {
 			Name:    "lean_focus_v1_control_plane",
 			Up:      migrateLeanFocusControlPlane,
 		},
+		{
+			Version: 21,
+			Name:    "add_inbox_reply_chain_columns",
+			Up:      migrateAddInboxReplyChainColumns,
+		},
 	}
 }
 
@@ -599,6 +604,34 @@ func migrateLeanFocusControlPlane(db *gorm.DB) error {
 	}
 	if err := db.Exec(`UPDATE focus_runs SET scope_ticket_ids = '[]' WHERE COALESCE(TRIM(scope_ticket_ids), '') = '';`).Error; err != nil {
 		return err
+	}
+	return nil
+}
+
+func migrateAddInboxReplyChainColumns(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	statements := []string{
+		`ALTER TABLE inbox_items ADD COLUMN origin_task_run_id INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE inbox_items ADD COLUMN current_task_run_id INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE inbox_items ADD COLUMN wait_round_count INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE inbox_items ADD COLUMN chain_resolved_at TEXT DEFAULT NULL;`,
+		`ALTER TABLE inbox_items ADD COLUMN reply_action TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE inbox_items ADD COLUMN reply_markdown TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE inbox_items ADD COLUMN reply_received_at TEXT DEFAULT NULL;`,
+		`ALTER TABLE inbox_items ADD COLUMN reply_consumed_at TEXT DEFAULT NULL;`,
+		`CREATE INDEX IF NOT EXISTS idx_inbox_items_origin_task_run_id ON inbox_items(origin_task_run_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_inbox_items_current_task_run_id ON inbox_items(current_task_run_id);`,
+	}
+	for _, stmt := range statements {
+		if err := db.Exec(stmt).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if strings.Contains(msg, "duplicate column name") || strings.Contains(msg, "already exists") {
+				continue
+			}
+			return err
+		}
 	}
 	return nil
 }

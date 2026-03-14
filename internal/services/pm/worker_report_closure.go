@@ -213,18 +213,12 @@ func (s *Service) applyWorkerLoopTerminalReportCore(ctx context.Context, r contr
 					statusEvent.Detail = buildNeedsUserInboxBodyFromReport(r)
 				}
 			}
-			_, err = s.upsertOpenInboxTx(ctx, tx, contracts.InboxItem{
-				Key:      inboxKeyNeedsUser(r.WorkerID),
-				Status:   contracts.InboxOpen,
-				Severity: contracts.InboxBlocker,
-				Reason:   contracts.InboxNeedsUser,
-				Title:    fmt.Sprintf("需要你输入：t%d w%d", t.ID, r.WorkerID),
-				Body:     buildNeedsUserInboxBodyFromReport(r),
-				TicketID: t.ID,
-				WorkerID: r.WorkerID,
-			})
+			_, err = s.upsertNeedsUserInboxFromReportTx(ctx, tx, t, r, now)
 			return err
 		case string(contracts.NextDone):
+			if err := s.resolveNeedsUserChainTx(ctx, tx, t.ID, now); err != nil {
+				return err
+			}
 			freeze, err := s.resolveDoneIntegrationFreezeTx(ctx, tx, t.ID, r.WorkerID, taskRunID, r.HeadSHA)
 			if err != nil {
 				return err

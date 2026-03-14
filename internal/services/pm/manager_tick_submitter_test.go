@@ -16,6 +16,7 @@ type stubWorkerRunSubmitter struct {
 	mu           sync.Mutex
 	calls        []uint
 	baseBranches []string
+	prompts      []string
 	err          error
 	runID        uint
 }
@@ -25,6 +26,7 @@ func (s *stubWorkerRunSubmitter) SubmitTicketWorkerRun(_ context.Context, ticket
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, ticketID)
 	s.baseBranches = append(s.baseBranches, strings.TrimSpace(opt.BaseBranch))
+	s.prompts = append(s.prompts, strings.TrimSpace(opt.Prompt))
 	if s.err != nil {
 		return WorkerRunSubmission{}, s.err
 	}
@@ -48,6 +50,14 @@ func (s *stubWorkerRunSubmitter) BaseBranches() []string {
 	defer s.mu.Unlock()
 	out := make([]string, len(s.baseBranches))
 	copy(out, s.baseBranches)
+	return out
+}
+
+func (s *stubWorkerRunSubmitter) Prompts() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.prompts))
+	copy(out, s.prompts)
 	return out
 }
 

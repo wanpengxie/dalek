@@ -23,7 +23,10 @@ const (
 	focusBlockedReasonHandoffRecursionRequiresUser = "handoff_recursion_requires_user"
 )
 
-const focusMaxAutoRestarts = 1
+const (
+	focusMaxAutoRestarts       = 1
+	focusSubmitAcceptanceGrace = 30 * time.Second
+)
 
 type focusTicketSnapshot struct {
 	Ticket    contracts.Ticket
@@ -165,6 +168,14 @@ func (s *Service) focusTickExecutingItem(ctx context.Context, run contracts.Focu
 		if err := s.focusRefreshExecutionBinding(ctx, run.ID, item.ID, snapshot); err != nil {
 			return err
 		}
+	} else {
+		waitingAccept, err := s.focusAwaitSubmittedExecutionAcceptance(ctx, item)
+		if err != nil {
+			return err
+		}
+		if waitingAccept {
+			return nil
+		}
 	}
 	switch contracts.CanonicalTicketWorkflowStatus(snapshot.Ticket.WorkflowStatus) {
 	case contracts.TicketDone:
@@ -196,6 +207,36 @@ func (s *Service) focusTickExecutingItem(ctx context.Context, run contracts.Focu
 		}
 		return nil
 	}
+}
+
+func (s *Service) focusAwaitSubmittedExecutionAcceptance(ctx context.Context, item contracts.FocusRunItem) (bool, error) {
+	if item.CurrentTaskRunID == nil || *item.CurrentTaskRunID == 0 {
+		return false, nil
+	}
+	rt, err := s.taskRuntime()
+	if err != nil {
+		return false, err
+	}
+	run, err := rt.FindRunByID(ctx, *item.CurrentTaskRunID)
+	if err != nil {
+		return false, err
+	}
+	if run != nil {
+		switch run.OrchestrationState {
+		case contracts.TaskSucceeded, contracts.TaskFailed, contracts.TaskCanceled:
+			return false, nil
+		default:
+			return true, nil
+		}
+	}
+	observedAt := item.UpdatedAt
+	if item.StartedAt != nil && !item.StartedAt.IsZero() {
+		observedAt = *item.StartedAt
+	}
+	if observedAt.IsZero() {
+		return true, nil
+	}
+	return time.Since(observedAt) < focusSubmitAcceptanceGrace, nil
 }
 
 func (s *Service) focusTickMergingItem(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem) error {
@@ -374,6 +415,14 @@ func (s *Service) focusTickBlockedItem(ctx context.Context, run contracts.FocusR
 	if strings.TrimSpace(item.BlockedReason) == focusBlockedReasonHandoffWaitingMerge {
 		return s.focusResolveHandoffBlockedItem(ctx, run, item)
 	}
+	if strings.TrimSpace(item.BlockedReason) != focusBlockedReasonNeedsUser {
+		return nil
+	}
+	if pending, err := s.loadPendingNeedsUserInbox(ctx, item.TicketID, 0); err != nil {
+		return err
+	} else if pending != nil {
+		return s.focusResumeBlockedItemFromInboxReply(ctx, run, item, *pending)
+	}
 	return nil
 }
 
@@ -422,6 +471,48 @@ func (s *Service) focusHandleBlockedExecution(ctx context.Context, run contracts
 	return s.focusRestartOrBlock(ctx, run, item, snapshot, item.CurrentAttempt+1)
 }
 
+func (s *Service) focusResumeBlockedItemFromInboxReply(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, inbox contracts.InboxItem) error {
+	if inbox.ID == 0 {
+		return nil
+	}
+	if inbox.WaitRoundCount >= 3 {
+		return nil
+	}
+	if inbox.ReplyAction != contracts.InboxReplyContinue && inbox.ReplyAction != contracts.InboxReplyDone {
+		return nil
+	}
+	snapshot, err := s.focusLoadTicketSnapshot(ctx, item.TicketID)
+	if err != nil {
+		return err
+	}
+	baseBranch, berr := requiredWorkerBaseBranch(snapshot.Ticket)
+	if berr != nil {
+		return s.focusBlockItem(ctx, run, item, focusBlockedReasonStartFailed, berr.Error())
+	}
+	if _, err := s.StartTicketWithOptions(ctx, item.TicketID, StartOptions{BaseBranch: baseBranch}); err != nil {
+		return s.focusBlockItem(ctx, run, item, focusBlockedReasonStartFailed, err.Error())
+	}
+	snapshot, err = s.focusLoadTicketSnapshot(ctx, item.TicketID)
+	if err != nil {
+		return err
+	}
+	attempt := item.CurrentAttempt
+	if attempt <= 0 {
+		attempt = 1
+	}
+	return s.focusSubmitItemRun(
+		ctx,
+		run,
+		item,
+		snapshot.Worker,
+		contracts.FocusEventItemRestarted,
+		"focus item resumed from inbox reply",
+		attempt,
+		buildInboxReplyPrompt(inbox, inbox.ReplyAction, inbox.ReplyMarkdown),
+		inbox.ID,
+	)
+}
+
 func (s *Service) focusRestartOrBlock(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, snapshot focusTicketSnapshot, nextAttempt int) error {
 	if nextAttempt <= 0 {
 		nextAttempt = 1
@@ -448,7 +539,7 @@ func (s *Service) focusRestartOrBlock(ctx context.Context, run contracts.FocusRu
 	})
 }
 
-func (s *Service) focusSubmitItemRun(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, worker *contracts.Worker, eventKind, eventSummary string, attempt int) error {
+func (s *Service) focusSubmitItemRun(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, worker *contracts.Worker, eventKind, eventSummary string, attempt int, prompt string, consumeInboxID uint) error {
 	submitter := s.getWorkerRunSubmitter()
 	if submitter == nil {
 		return s.focusBlockItem(ctx, run, item, focusBlockedReasonSubmitFailed, "worker run submitter 未配置")
@@ -463,6 +554,7 @@ func (s *Service) focusSubmitItemRun(ctx context.Context, run contracts.FocusRun
 	}
 	submission, err := submitter.SubmitTicketWorkerRun(context.WithoutCancel(ctx), item.TicketID, WorkerRunSubmitOptions{
 		BaseBranch: baseBranch,
+		Prompt:     strings.TrimSpace(prompt),
 	})
 	if err != nil {
 		return s.focusBlockItem(ctx, run, item, focusBlockedReasonSubmitFailed, err.Error())
@@ -484,15 +576,47 @@ func (s *Service) focusSubmitItemRun(ctx context.Context, run contracts.FocusRun
 	if workerID != 0 {
 		itemUpdates["current_worker_id"] = workerID
 	}
-	return s.focusUpdateRunAndItem(ctx, run.ID, &item.ID, map[string]any{
-		"status":      contracts.FocusRunning,
-		"finished_at": nil,
-	}, itemUpdates, eventKind, eventSummary, map[string]any{
-		"ticket_id":   item.TicketID,
-		"worker_id":   workerID,
-		"task_run_id": submission.TaskRunID,
-		"attempt":     attempt,
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).Model(&contracts.FocusRun{}).Where("id = ?", run.ID).Updates(map[string]any{
+			"status":      contracts.FocusRunning,
+			"finished_at": nil,
+			"updated_at":  now,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.WithContext(ctx).Model(&contracts.FocusRunItem{}).Where("id = ? AND focus_run_id = ?", item.ID, run.ID).Updates(itemUpdates).Error; err != nil {
+			return err
+		}
+		if consumeInboxID != 0 {
+			if err := tx.WithContext(ctx).Model(&contracts.InboxItem{}).Where("id = ?", consumeInboxID).Updates(map[string]any{
+				"status":            contracts.InboxDone,
+				"closed_at":         &now,
+				"reply_consumed_at": &now,
+				"updated_at":        now,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(eventKind) == "" {
+			return nil
+		}
+		_, err := appendFocusEventTx(ctx, tx, run.ID, &item.ID, eventKind, eventSummary, map[string]any{
+			"ticket_id":   item.TicketID,
+			"worker_id":   workerID,
+			"task_run_id": submission.TaskRunID,
+			"attempt":     attempt,
+		}, now)
+		return err
 	})
+	if err != nil {
+		return err
+	}
+	s.projectWake()
+	return nil
 }
 
 func (s *Service) focusAdoptExecutingItem(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, snapshot focusTicketSnapshot) error {
@@ -977,7 +1101,8 @@ func (s *Service) focusHasNeedsUserInbox(ctx context.Context, ticketID, workerID
 	}
 	var cnt int64
 	query := db.WithContext(ctx).Model(&contracts.InboxItem{}).
-		Where("status = ? AND reason = ?", contracts.InboxOpen, contracts.InboxNeedsUser)
+		Where("status = ? AND reason = ?", contracts.InboxOpen, contracts.InboxNeedsUser).
+		Where("COALESCE(reply_action, '') = ''")
 	if workerID != 0 {
 		query = query.Where("(ticket_id = ? OR worker_id = ?)", ticketID, workerID)
 	} else {

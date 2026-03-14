@@ -239,6 +239,55 @@ func TestOpenAndMigrate_TicketLifecycleTablePresent(t *testing.T) {
 	}
 }
 
+func TestOpenAndMigrate_InboxReplyChainColumnsPresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	for _, col := range []string{
+		"origin_task_run_id",
+		"current_task_run_id",
+		"wait_round_count",
+		"chain_resolved_at",
+		"reply_action",
+		"reply_markdown",
+		"reply_received_at",
+		"reply_consumed_at",
+	} {
+		ok, err := tableHasColumn(db, "inbox_items", col)
+		if err != nil {
+			t.Fatalf("tableHasColumn(inbox_items.%s) failed: %v", col, err)
+		}
+		if !ok {
+			t.Fatalf("inbox_items should contain column: %s", col)
+		}
+	}
+
+	if err := dropTableColumn(db, "inbox_items", "reply_markdown"); err != nil {
+		t.Fatalf("drop inbox_items.reply_markdown failed: %v", err)
+	}
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 21;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations for v21 failed: %v", err)
+	}
+	if _, err := OpenAndMigrate(dbPath); err != nil {
+		t.Fatalf("OpenAndMigrate (reapply v21) failed: %v", err)
+	}
+
+	db2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	ok, err := tableHasColumn(db2, "inbox_items", "reply_markdown")
+	if err != nil {
+		t.Fatalf("tableHasColumn(inbox_items.reply_markdown) after reapply failed: %v", err)
+	}
+	if !ok {
+		t.Fatalf("inbox_items should restore reply_markdown after reapply")
+	}
+}
+
 func TestOpenAndMigrate_ChannelConversationAgentProviderPresent(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)

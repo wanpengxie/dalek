@@ -217,7 +217,7 @@ func TestRunTicketWorker_DirtyDoneClosureFallsBackToWaitUser(t *testing.T) {
 	}
 
 	var inbox contracts.InboxItem
-	if err := p.DB.Where("key = ? AND status = ?", inboxKeyNeedsUser(w.ID), contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
+	if err := p.DB.Where("ticket_id = ? AND reason = ? AND status = ?", tk.ID, contracts.InboxNeedsUser, contracts.InboxOpen).Order("id desc").First(&inbox).Error; err != nil {
 		t.Fatalf("expected fallback inbox: %v", err)
 	}
 	if !strings.Contains(inbox.Body, "dirty") {

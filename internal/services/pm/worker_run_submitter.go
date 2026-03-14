@@ -10,6 +10,7 @@ type WorkerRunSubmission struct {
 
 type WorkerRunSubmitOptions struct {
 	BaseBranch string
+	Prompt     string
 }
 
 // WorkerRunSubmitter 抽象“把 ticket 激活为受管 deliver_ticket run”的能力。

@@ -35,6 +35,13 @@ func (p *Project) CloseInboxItem(ctx context.Context, id uint) error {
 	return p.pm.CloseInboxItem(ctx, id)
 }
 
+func (p *Project) ReplyInboxItem(ctx context.Context, id uint, action, reply string) (InboxReplyResult, error) {
+	if p == nil || p.pm == nil {
+		return InboxReplyResult{}, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.ReplyInboxItem(ctx, id, action, reply)
+}
+
 func (p *Project) SnoozeInboxItem(ctx context.Context, id uint, until time.Time) error {
 	if p == nil || p.pm == nil {
 		return fmt.Errorf("project pm service 为空")

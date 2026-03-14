@@ -413,6 +413,7 @@ func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Conte
 		TicketID:   ticketID,
 		RequestID:  requestID,
 		BaseBranch: strings.TrimSpace(opt.BaseBranch),
+		Prompt:     strings.TrimSpace(opt.Prompt),
 	})
 	if err != nil {
 		return pmsvc.WorkerRunSubmission{}, err

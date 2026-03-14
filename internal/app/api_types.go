@@ -27,6 +27,8 @@ type ListInboxOptions struct {
 	Limit  int
 }
 
+type InboxReplyResult = pmsvc.InboxReplyResult
+
 type ListMergeOptions struct {
 	Status contracts.MergeStatus
 	Limit  int

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dalek/internal/app"
+	"dalek/internal/contracts"
 )
 
 func cmdInbox(args []string) {
@@ -24,6 +25,10 @@ func cmdInbox(args []string) {
 		cmdInboxShow(args[1:])
 	case "close":
 		cmdInboxClose(args[1:])
+	case "continue":
+		cmdInboxReply(args[1:], contracts.InboxReplyContinue)
+	case "done":
+		cmdInboxReply(args[1:], contracts.InboxReplyDone)
 	case "snooze":
 		cmdInboxSnooze(args[1:])
 	case "unsnooze":
@@ -45,6 +50,8 @@ func printInboxUsage() {
 		"ls         列出 inbox 项",
 		"show       查看 inbox 详情",
 		"close      关闭 inbox 项",
+		"continue   回复 needs_user inbox 并继续执行",
+		"done       回复 needs_user inbox 并发起 closeout-only 收尾执行",
 		"snooze     延后处理 inbox 项",
 		"unsnooze   取消延后",
 	})
@@ -296,4 +303,107 @@ func cmdInboxUnsnooze(args []string) {
 		)
 	}
 	fmt.Printf("unsnoozed inbox#%d\n", *id)
+}
+
+func cmdInboxReply(args []string, action contracts.InboxReplyAction) {
+	name := string(action)
+	fs := flag.NewFlagSet("inbox "+name, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() {
+		printSubcommandUsage(
+			fs,
+			"回复 needs_user inbox 并恢复执行",
+			fmt.Sprintf("dalek inbox %s --id <id> --reply \"...\" [--output text|json]", name),
+			fmt.Sprintf("dalek inbox %s --id 1 --reply \"资料已放到 /tmp/spec.md\"", name),
+			fmt.Sprintf("dalek inbox %s --id 1 --reply \"可以按当前方案收尾\" -o json", name),
+		)
+	}
+	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
+	proj := fs.String("project", globalProject, "项目名（可选）")
+	projShort := fs.String("p", globalProject, "项目名（可选）")
+	id := fs.Uint("id", 0, "inbox ID（必填）")
+	reply := fs.String("reply", "", "原样 markdown 回复（必填）")
+	timeout := fs.Duration("timeout", 10*time.Second, "请求超时（例如 10s）")
+	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
+	parseFlagSetOrExit(fs, args, globalOutput, "inbox reply 参数解析失败", fmt.Sprintf("运行 dalek inbox %s --help 查看参数", name))
+	if strings.TrimSpace(*projShort) != "" {
+		*proj = strings.TrimSpace(*projShort)
+	}
+	out := parseOutputOrExit(*output, true)
+	if *id == 0 {
+		exitUsageError(out,
+			"缺少必填参数 --id",
+			fmt.Sprintf("inbox %s 需要 inbox ID", name),
+			fmt.Sprintf("dalek inbox %s --id 1 --reply \"...\"", name),
+		)
+	}
+	if strings.TrimSpace(*reply) == "" {
+		exitUsageError(out,
+			"缺少必填参数 --reply",
+			"--reply 不能为空",
+			fmt.Sprintf("dalek inbox %s --id 1 --reply \"资料已放到 /tmp/spec.md\"", name),
+		)
+	}
+	if *timeout <= 0 {
+		exitUsageError(out,
+			"非法参数 --timeout",
+			"--timeout 必须大于 0",
+			fmt.Sprintf("dalek inbox %s --timeout 10s", name),
+		)
+	}
+
+	p := mustOpenProjectWithOutput(out, *home, *proj)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	result, err := p.ReplyInboxItem(ctx, uint(*id), string(action), *reply)
+	if err != nil {
+		exitRuntimeError(out,
+			fmt.Sprintf("执行 inbox #%d 的 %s 回复失败", *id, name),
+			err.Error(),
+			"确认 inbox 为 open needs_user 项，且 wait_user 链未达到上限后重试",
+		)
+	}
+
+	if strings.TrimSpace(result.Mode) == "focus_batch" {
+		if out == outputJSON {
+			printJSONOrExit(map[string]any{
+				"schema":    "dalek.inbox.reply.accepted.v1",
+				"accepted":  result.Accepted,
+				"mode":      strings.TrimSpace(result.Mode),
+				"inbox_id":  result.InboxID,
+				"ticket_id": result.TicketID,
+				"worker_id": result.WorkerID,
+				"focus_id":  result.FocusID,
+				"run_id":    result.RunID,
+				"action":    string(result.Action),
+			})
+			return
+		}
+		fmt.Printf("reply accepted: inbox#%d action=%s mode=%s ticket=%d\n", result.InboxID, result.Action, result.Mode, result.TicketID)
+		fmt.Println("focus controller 将串行恢复当前 blocked item")
+		return
+	}
+
+	if out == outputJSON {
+		printJSONOrExit(map[string]any{
+			"schema":      "dalek.inbox.reply.accepted.v1",
+			"accepted":    result.Accepted,
+			"mode":        strings.TrimSpace(result.Mode),
+			"inbox_id":    result.InboxID,
+			"ticket_id":   result.TicketID,
+			"worker_id":   result.WorkerID,
+			"task_run_id": result.RunID,
+			"next_action": strings.TrimSpace(result.NextAction),
+			"action":      string(result.Action),
+		})
+		return
+	}
+	fmt.Printf("reply accepted: inbox#%d action=%s mode=%s ticket=%d worker=%d run=%d\n", result.InboxID, result.Action, result.Mode, result.TicketID, result.WorkerID, result.RunID)
+	if result.RunID != 0 {
+		fmt.Printf("ticket: dalek ticket show --ticket %d\n", result.TicketID)
+		fmt.Printf("events: dalek ticket events --ticket %d\n", result.TicketID)
+		fmt.Printf("task: dalek task show --id %d\n", result.RunID)
+		fmt.Printf("task_events: dalek task events --id %d\n", result.RunID)
+	}
 }

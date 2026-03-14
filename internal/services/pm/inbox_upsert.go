@@ -14,6 +14,13 @@ func inboxKeyNeedsUser(workerID uint) string {
 	return fmt.Sprintf("needs_user:w%d", workerID)
 }
 
+func inboxKeyNeedsUserChain(ticketID, originTaskRunID uint) string {
+	if ticketID == 0 || originTaskRunID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("needs_user:t%d:run%d", ticketID, originTaskRunID)
+}
+
 func inboxKeyWorkerIncident(workerID uint, typ string) string {
 	typ = strings.TrimSpace(strings.ToLower(typ))
 	if typ == "" {
