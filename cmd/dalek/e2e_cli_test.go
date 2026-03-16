@@ -469,6 +469,56 @@ func TestCLI_TicketStopAll_PreservesRuntimeLogPath(t *testing.T) {
 	}
 }
 
+func TestCLI_WorkerReportRejectsStructuredBlockersJSON(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+	home := filepath.Join(t.TempDir(), "home")
+
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "init", "-name", "demo")
+	_, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "ticket", "create", "-title", "worker-report-blockers", "-desc", "worker-report-blockers")
+
+	h, err := app.OpenHome(home)
+	if err != nil {
+		t.Fatalf("OpenHome failed: %v", err)
+	}
+	project, err := h.OpenProjectByName("demo")
+	if err != nil {
+		t.Fatalf("OpenProjectByName failed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	started, err := project.StartTicket(ctx, 1)
+	if err != nil {
+		t.Fatalf("project.StartTicket(1) failed: %v", err)
+	}
+	if started == nil || started.ID == 0 {
+		t.Fatalf("project.StartTicket should return non-zero worker id, got=%v", started)
+	}
+
+	_, stderr, err := runCLI(
+		t,
+		bin,
+		repo,
+		"-home", home,
+		"-project", "demo",
+		"worker", "report",
+		"--worker", fmt.Sprintf("%d", started.ID),
+		"--next", "wait_user",
+		"--needs-user", "true",
+		"--summary", "需要人工介入",
+		"--blockers-json", `[{"id":"approval","detail":"需要审批"}]`,
+	)
+	if err == nil {
+		t.Fatalf("worker report with structured blockers-json should fail")
+	}
+	if !strings.Contains(stderr, "非法参数 --blockers-json") {
+		t.Fatalf("stderr should include blockers-json usage error, got:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "当前仅支持 JSON 字符串数组") {
+		t.Fatalf("stderr should explain string-array contract, got:\n%s", stderr)
+	}
+}
+
 func TestCLI_GatewayChat_ListTickets(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)

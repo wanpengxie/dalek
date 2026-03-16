@@ -123,6 +123,11 @@ func storeMigrations() []Migration {
 			Name:    "add_inbox_reply_chain_columns",
 			Up:      migrateAddInboxReplyChainColumns,
 		},
+		{
+			Version: 22,
+			Name:    "ensure_inbox_reply_time_columns_datetime",
+			Up:      migrateEnsureInboxReplyTimeColumnsDateTime,
+		},
 	}
 }
 
@@ -338,6 +343,85 @@ END;
 		return err
 	}
 	if err := db.Exec(`ALTER TABLE workers RENAME COLUMN last_retry_at_tmp_datetime TO last_retry_at;`).Error; err != nil {
+		msg := strings.ToLower(strings.TrimSpace(err.Error()))
+		if !strings.Contains(msg, "duplicate column name") {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateEnsureTableColumnDateTime(db *gorm.DB, table string, col string) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	var err error
+	table, err = normalizeSQLIdentifier(table)
+	if err != nil {
+		return err
+	}
+	col, err = normalizeSQLIdentifier(col)
+	if err != nil {
+		return err
+	}
+	tempCol, err := normalizeSQLIdentifier(col + "_tmp_datetime")
+	if err != nil {
+		return err
+	}
+
+	has, err := tableHasColumn(db, table, col)
+	if err != nil {
+		return err
+	}
+	hasTemp, err := tableHasColumn(db, table, tempCol)
+	if err != nil {
+		return err
+	}
+	if !has {
+		if !hasTemp {
+			return nil
+		}
+		if err := db.Exec(fmt.Sprintf(`ALTER TABLE %s RENAME COLUMN %s TO %s;`, table, tempCol, col)).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if !strings.Contains(msg, "duplicate column name") {
+				return err
+			}
+		}
+		return nil
+	}
+
+	colType, err := tableColumnType(db, table, col)
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(strings.TrimSpace(colType)) {
+	case "datetime", "timestamp":
+		return nil
+	}
+
+	if !hasTemp {
+		if err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s datetime;`, table, tempCol)).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if !strings.Contains(msg, "duplicate column name") {
+				return err
+			}
+		}
+	}
+
+	if err := db.Exec(fmt.Sprintf(`
+UPDATE %s
+SET %s = CASE
+	WHEN TRIM(COALESCE(%s, '')) = '' THEN NULL
+	ELSE %s
+END;
+`, table, tempCol, col, col)).Error; err != nil {
+		return err
+	}
+
+	if err := dropTableColumn(db, table, col); err != nil {
+		return err
+	}
+	if err := db.Exec(fmt.Sprintf(`ALTER TABLE %s RENAME COLUMN %s TO %s;`, table, tempCol, col)).Error; err != nil {
 		msg := strings.ToLower(strings.TrimSpace(err.Error()))
 		if !strings.Contains(msg, "duplicate column name") {
 			return err
@@ -630,6 +714,18 @@ func migrateAddInboxReplyChainColumns(db *gorm.DB) error {
 			if strings.Contains(msg, "duplicate column name") || strings.Contains(msg, "already exists") {
 				continue
 			}
+			return err
+		}
+	}
+	return nil
+}
+
+func migrateEnsureInboxReplyTimeColumnsDateTime(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	for _, col := range []string{"chain_resolved_at", "reply_received_at", "reply_consumed_at"} {
+		if err := migrateEnsureTableColumnDateTime(db, "inbox_items", col); err != nil {
 			return err
 		}
 	}

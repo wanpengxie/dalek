@@ -1,6 +1,7 @@
 package store
 
 import (
+	"dalek/internal/contracts"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -285,6 +286,242 @@ func TestOpenAndMigrate_InboxReplyChainColumnsPresent(t *testing.T) {
 	}
 	if !ok {
 		t.Fatalf("inbox_items should restore reply_markdown after reapply")
+	}
+}
+
+func TestOpenAndMigrate_InboxReplyTimeColumnsUpgradeLegacyTextAndRemainReadable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	ticket := contracts.Ticket{
+		Title:          "legacy-inbox-time-columns",
+		Description:    "legacy schema regression",
+		WorkflowStatus: contracts.TicketBlocked,
+	}
+	if err := db.Create(&ticket).Error; err != nil {
+		t.Fatalf("create ticket failed: %v", err)
+	}
+
+	done := contracts.InboxItem{
+		Key:              "legacy-chain-done",
+		Status:           contracts.InboxDone,
+		Severity:         contracts.InboxBlocker,
+		Reason:           contracts.InboxNeedsUser,
+		Title:            "历史 done inbox",
+		Body:             "legacy chain resolved",
+		TicketID:         ticket.ID,
+		OriginTaskRunID:  11,
+		CurrentTaskRunID: 11,
+		WaitRoundCount:   1,
+		ReplyAction:      contracts.InboxReplyDone,
+		ReplyMarkdown:    "按最小收尾结束",
+	}
+	if err := db.Create(&done).Error; err != nil {
+		t.Fatalf("create done inbox failed: %v", err)
+	}
+
+	pending := contracts.InboxItem{
+		Key:              "legacy-reply-pending",
+		Status:           contracts.InboxOpen,
+		Severity:         contracts.InboxBlocker,
+		Reason:           contracts.InboxNeedsUser,
+		Title:            "待消费 reply inbox",
+		Body:             "legacy reply pending",
+		TicketID:         ticket.ID,
+		OriginTaskRunID:  11,
+		CurrentTaskRunID: 12,
+		WaitRoundCount:   2,
+		ReplyAction:      contracts.InboxReplyContinue,
+		ReplyMarkdown:    "资料已补充，请继续",
+	}
+	if err := db.Create(&pending).Error; err != nil {
+		t.Fatalf("create pending inbox failed: %v", err)
+	}
+
+	for _, col := range []string{"chain_resolved_at", "reply_received_at", "reply_consumed_at"} {
+		if err := dropTableColumn(db, "inbox_items", col); err != nil {
+			t.Fatalf("drop inbox_items.%s failed: %v", col, err)
+		}
+		if err := db.Exec("ALTER TABLE inbox_items ADD COLUMN " + col + " TEXT DEFAULT NULL;").Error; err != nil {
+			t.Fatalf("re-add inbox_items.%s as TEXT failed: %v", col, err)
+		}
+	}
+
+	const (
+		chainResolvedLegacy = "2026-03-16 09:56:54.787762+08:00"
+		replyReceivedLegacy = "2026-03-16 10:01:02.123456+08:00"
+		replyConsumedLegacy = "2026-03-16 10:05:33.999999+08:00"
+	)
+	if err := db.Exec(`
+UPDATE inbox_items
+SET chain_resolved_at = ?, reply_received_at = ?, reply_consumed_at = ?
+WHERE id = ?;
+`, chainResolvedLegacy, replyReceivedLegacy, replyConsumedLegacy, done.ID).Error; err != nil {
+		t.Fatalf("backfill done inbox legacy timestamps failed: %v", err)
+	}
+	if err := db.Exec(`
+UPDATE inbox_items
+SET reply_received_at = ?, reply_consumed_at = NULL
+WHERE id = ?;
+`, replyReceivedLegacy, pending.ID).Error; err != nil {
+		t.Fatalf("backfill pending inbox legacy timestamps failed: %v", err)
+	}
+
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 22;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations for v22 failed: %v", err)
+	}
+	if _, err := OpenAndMigrate(dbPath); err != nil {
+		t.Fatalf("OpenAndMigrate (reapply v22) failed: %v", err)
+	}
+
+	db2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	for _, col := range []string{"chain_resolved_at", "reply_received_at", "reply_consumed_at"} {
+		colType, err := tableColumnType(db2, "inbox_items", col)
+		if err != nil {
+			t.Fatalf("tableColumnType(inbox_items.%s) failed: %v", col, err)
+		}
+		switch strings.ToLower(strings.TrimSpace(colType)) {
+		case "datetime", "timestamp":
+		default:
+			t.Fatalf("expected inbox_items.%s upgraded to datetime/timestamp, got=%q", col, colType)
+		}
+	}
+
+	var gotDone contracts.InboxItem
+	if err := db2.First(&gotDone, done.ID).Error; err != nil {
+		t.Fatalf("reload done inbox failed: %v", err)
+	}
+	if gotDone.ChainResolvedAt == nil {
+		t.Fatalf("expected chain_resolved_at readable after migration")
+	}
+	if gotDone.ReplyReceivedAt == nil {
+		t.Fatalf("expected done inbox reply_received_at readable after migration")
+	}
+	if gotDone.ReplyConsumedAt == nil {
+		t.Fatalf("expected done inbox reply_consumed_at readable after migration")
+	}
+
+	var gotPending contracts.InboxItem
+	if err := db2.
+		Where("status = ? AND reason = ? AND ticket_id = ?", contracts.InboxOpen, contracts.InboxNeedsUser, ticket.ID).
+		Where("COALESCE(reply_action, '') <> ''").
+		Where("reply_consumed_at IS NULL").
+		Order("id desc").
+		First(&gotPending).Error; err != nil {
+		t.Fatalf("reload pending reply inbox failed: %v", err)
+	}
+	if gotPending.ID != pending.ID {
+		t.Fatalf("expected pending inbox id=%d, got=%d", pending.ID, gotPending.ID)
+	}
+	if gotPending.ReplyReceivedAt == nil {
+		t.Fatalf("expected pending inbox reply_received_at readable after migration")
+	}
+	if gotPending.ReplyConsumedAt != nil {
+		t.Fatalf("expected pending inbox reply_consumed_at remain nil, got=%v", gotPending.ReplyConsumedAt)
+	}
+}
+
+func TestOpenAndMigrate_InboxReplyTimeColumnsUpgradeLegacyTextRows(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	for _, col := range []string{"chain_resolved_at", "reply_received_at", "reply_consumed_at"} {
+		if err := dropTableColumn(db, "inbox_items", col); err != nil {
+			t.Fatalf("drop inbox_items.%s failed: %v", col, err)
+		}
+	}
+	if err := db.Exec("DELETE FROM schema_migrations WHERE version >= 21;").Error; err != nil {
+		t.Fatalf("rollback schema_migrations for v21/v22 failed: %v", err)
+	}
+	if err := migrateAddInboxReplyChainColumns(db); err != nil {
+		t.Fatalf("migrateAddInboxReplyChainColumns failed: %v", err)
+	}
+
+	for _, col := range []string{"chain_resolved_at", "reply_received_at", "reply_consumed_at"} {
+		gotType, err := tableColumnType(db, "inbox_items", col)
+		if err != nil {
+			t.Fatalf("tableColumnType(inbox_items.%s) failed: %v", col, err)
+		}
+		if !strings.EqualFold(strings.TrimSpace(gotType), "text") {
+			t.Fatalf("legacy inbox_items.%s should be TEXT before v22, got=%q", col, gotType)
+		}
+	}
+
+	const resolvedAt = "2026-03-16 07:50:23.612544+08:00"
+	const receivedAt = "2026-03-16 09:56:54.787762+08:00"
+
+	if err := db.Exec(`
+INSERT INTO inbox_items (
+	created_at, updated_at, key, status, severity, reason, title, body,
+	ticket_id, worker_id, merge_item_id,
+	origin_task_run_id, current_task_run_id, wait_round_count,
+	chain_resolved_at, reply_action, reply_markdown, reply_received_at, reply_consumed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+`, resolvedAt, resolvedAt, "legacy-done", contracts.InboxDone, contracts.InboxBlocker, contracts.InboxNeedsUser, "历史 done", "legacy done", 1, 1, 0, 11, 11, 1, resolvedAt, contracts.InboxReplyNone, "", nil, nil).Error; err != nil {
+		t.Fatalf("insert legacy done inbox failed: %v", err)
+	}
+	if err := db.Exec(`
+INSERT INTO inbox_items (
+	created_at, updated_at, key, status, severity, reason, title, body,
+	ticket_id, worker_id, merge_item_id,
+	origin_task_run_id, current_task_run_id, wait_round_count,
+	chain_resolved_at, reply_action, reply_markdown, reply_received_at, reply_consumed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+`, receivedAt, receivedAt, "legacy-pending", contracts.InboxOpen, contracts.InboxBlocker, contracts.InboxNeedsUser, "历史 pending", "legacy pending", 1, 1, 0, 11, 12, 2, nil, contracts.InboxReplyContinue, "已补充说明", receivedAt, nil).Error; err != nil {
+		t.Fatalf("insert legacy pending inbox failed: %v", err)
+	}
+
+	var doneBefore contracts.InboxItem
+	if err := db.Where("key = ?", "legacy-done").First(&doneBefore).Error; err == nil || !strings.Contains(err.Error(), "unsupported Scan") {
+		t.Fatalf("legacy done inbox should fail scan before v22, err=%v", err)
+	}
+	var pendingBefore contracts.InboxItem
+	if err := db.Where("key = ?", "legacy-pending").First(&pendingBefore).Error; err == nil || !strings.Contains(err.Error(), "unsupported Scan") {
+		t.Fatalf("legacy pending inbox should fail scan before v22, err=%v", err)
+	}
+
+	db2, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	for _, col := range []string{"chain_resolved_at", "reply_received_at", "reply_consumed_at"} {
+		gotType, err := tableColumnType(db2, "inbox_items", col)
+		if err != nil {
+			t.Fatalf("tableColumnType(inbox_items.%s) after v22 failed: %v", col, err)
+		}
+		gotType = strings.ToLower(strings.TrimSpace(gotType))
+		if gotType != "datetime" && gotType != "timestamp" {
+			t.Fatalf("inbox_items.%s should upgrade to datetime-compatible type, got=%q", col, gotType)
+		}
+	}
+
+	var done contracts.InboxItem
+	if err := db2.Where("key = ?", "legacy-done").First(&done).Error; err != nil {
+		t.Fatalf("load legacy done inbox after v22 failed: %v", err)
+	}
+	if done.ChainResolvedAt == nil {
+		t.Fatalf("expected chain_resolved_at restored after v22")
+	}
+
+	var pending contracts.InboxItem
+	if err := db2.Where("key = ?", "legacy-pending").First(&pending).Error; err != nil {
+		t.Fatalf("load legacy pending inbox after v22 failed: %v", err)
+	}
+	if pending.ReplyReceivedAt == nil {
+		t.Fatalf("expected reply_received_at restored after v22")
+	}
+	if pending.ReplyConsumedAt != nil {
+		t.Fatalf("expected reply_consumed_at remain nil after v22, got=%v", pending.ReplyConsumedAt)
 	}
 }
 
