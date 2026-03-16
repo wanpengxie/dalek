@@ -254,10 +254,10 @@ run_status 枚举：
 <operations>
 Ticket：create|edit|set-priority|show|start|interrupt|stop|cleanup|archive|ls|events（ID: --ticket N）
 Task：ls|show|events|cancel（ID: --id N）
-Inbox：ls|show|close|snooze|unsnooze（ID: --id N）
+Inbox：ls|show|continue|done|close|snooze|unsnooze（ID: --id N）
 Merge：ls|status|abandon|retarget|rescan|sync-ref（ticket 交付集成状态入口；sync-ref 由 hook 调用，非日常操作）
 Note：add|ls|show|approve|reject|discard（ID: --id N）
-Manager：status|tick|run|pause|resume
+Manager：status|show|tick|run|stop|tail
 Worker：report|run（ID: run 用 --ticket N）
 Agent：run|ls|show|cancel|logs|finish（ID: show/cancel/logs/finish 用 --id N）
 Gateway：chat|ingress|send|bind|unbind|ws-server|serve
@@ -296,10 +296,22 @@ Entry：init|upgrade|tui|version
 Case 1: 启动 ticket
   触发：ticket 需要执行（workflow_status=backlog 或 blocked）
   操作：dalek ticket create → dalek ticket start
-	  start 的职责：创建/恢复 worktree + worker session → 准备 worker runtime → ticket 推进到 queued
-	  worker run 被接受后 ticket 才进入 active；worker loop 自主执行开发工作，通过 report 驱动后续状态流转
-	  → worker runtime: .dalek/control/worker/
+		  start 的职责：创建/恢复 worktree + worker session → 准备 worker runtime → ticket 推进到 queued
+		  worker run 被接受后 ticket 才进入 active；worker loop 自主执行开发工作，通过 report 驱动后续状态流转
+		  → worker runtime: .dalek/control/worker/
 </ticket_start>
+
+<focus_mode>
+Case 2: 运行 focus batch
+  触发：需要串行推进多个 ticket
+  前提：先确保 daemon 在线（`dalek daemon start`）
+  常用命令：
+    dalek manager run --mode batch --tickets 12,13,14 --budget 5
+    dalek manager show
+    dalek manager tail
+    dalek manager stop
+  说明：focus batch 提交后由 daemon 持续推进；退出 tail 不会停止 focus
+</focus_mode>
 
 <human_notify>
 Case 3: Worker 需要人介入
@@ -307,6 +319,11 @@ Case 3: Worker 需要人介入
   状态变化：ticket(active) → ticket(blocked)
   系统自动创建 inbox 条目（severity 由 blockers 内容决定）
   PM 动作：检查 inbox → 理解 blocker 内容 → 等待人响应或尝试自行解决
+  常用命令：
+    dalek inbox ls
+    dalek inbox show --id N
+    dalek inbox continue --id N --reply "补充给 worker 的信息"
+    dalek inbox done --id N --reply "无需继续实现，直接按最小收尾结束"
 </human_notify>
 </sop>
 
@@ -316,7 +333,7 @@ Case 3: Worker 需要人介入
   运行态快照          → dalek ticket ls / manager status
   单 ticket 诊断      → dalek ticket show --ticket N / ticket events --ticket N
   task run 观测       → dalek task ls / task show --id N / task events --id N
-  待办与集成决策      → dalek inbox ls / inbox show --id N / merge status --ticket N / merge ls
+  待办与集成决策      → dalek inbox ls / inbox show --id N / inbox continue --id N --reply "..." / inbox done --id N --reply "..." / merge status --ticket N / merge ls
   需求漏斗状态        → dalek note ls / note show --id N
   subagent 运行状态   → dalek agent ls --ticket N / agent show --id N
   项目配置            → dalek config ls / config get <key>
