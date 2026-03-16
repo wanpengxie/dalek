@@ -13,6 +13,7 @@ func TestCLI_HelpShouldExitZero(t *testing.T) {
 	cases := [][]string{
 		{"ticket", "start", "--help"},
 		{"ticket", "edit", "--help"},
+		{"worker", "report", "--help"},
 		{"manager", "status", "--help"},
 		{"pm", "dashboard", "--help"},
 		{"inbox", "ls", "--help"},
@@ -58,6 +59,23 @@ func TestCLI_TicketHelpIncludesEdit(t *testing.T) {
 	combined := stdout + "\n" + stderr
 	if !strings.Contains(combined, "edit") {
 		t.Fatalf("ticket --help should include edit subcommand, got:\n%s", combined)
+	}
+}
+
+func TestCLI_WorkerReportHelpMentionsStringArrayBlockers(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+
+	stdout, stderr, err := runCLI(t, bin, repo, "worker", "report", "--help")
+	if err != nil {
+		t.Fatalf("worker report --help should exit 0: %v, stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	combined := stdout + "\n" + stderr
+	if !strings.Contains(combined, "JSON 字符串数组") {
+		t.Fatalf("worker report --help should mention string-array blockers contract, got:\n%s", combined)
+	}
+	if !strings.Contains(combined, "--blockers-json '[\"等待评审\"]'") {
+		t.Fatalf("worker report --help should include blockers example, got:\n%s", combined)
 	}
 }
 

@@ -176,14 +176,14 @@ func cmdWorkerReport(args []string) {
 			"上报 worker 运行状态",
 			"dalek worker report --worker <id> [--summary ...] [--output text|json]",
 			"dalek worker report --worker 1 --summary \"阶段1完成\"",
-			"dalek worker report --worker 1 --needs-user true -o json",
+			"dalek worker report --worker 1 --next wait_user --needs-user true --blockers-json '[\"等待评审\"]' -o json",
 		)
 	}
 	workerID := fs.Uint("worker", 0, "worker id（默认读 DALEK_WORKER_ID）")
 	taskRunID := fs.Uint("run", 0, "task run id（默认读 DALEK_TASK_RUN_ID）")
 	summary := fs.String("summary", "", "一句话摘要（可空）")
 	needsUser := fs.String("needs-user", "", "是否需要人类输入（true/false；可空）")
-	blockersJSON := fs.String("blockers-json", "", "blockers 的 JSON 数组（可空）")
+	blockersJSON := fs.String("blockers-json", "", "blockers 的 JSON 字符串数组（可空），例如 '[\"等待评审\"]'")
 	next := fs.String("next", "", "next_action：continue|wait_user|done（可空）")
 	headSHA := fs.String("head-sha", "", "git HEAD SHA（可空；可自动推断）")
 	dirty := fs.String("dirty", "", "工作区是否 dirty（true/false；可空；可自动推断）")
@@ -279,7 +279,7 @@ func cmdWorkerReport(args []string) {
 			exitUsageError(out,
 				"非法参数 --blockers-json",
 				err.Error(),
-				"传入 JSON 字符串数组，例如 '[\"等待评审\"]'",
+				"当前仅支持 JSON 字符串数组，例如 '[\"等待评审\"]'；不支持对象数组",
 			)
 		}
 		r.Blockers = b

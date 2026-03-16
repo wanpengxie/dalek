@@ -172,7 +172,7 @@ next_action 语义：
 
 可选字段：
   --needs-user true
-  --blockers-json '[...]'
+  --blockers-json '["等待评审"]'  # 仅接受字符串数组
 </reporting>
 
 <system_contract_alignment>
