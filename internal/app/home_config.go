@@ -90,8 +90,9 @@ type HomeDaemonConfig struct {
 }
 
 type HomeDaemonInternalConfig struct {
-	Listen         string `json:"listen"`
-	NodeAgentToken string `json:"node_agent_token,omitempty"`
+	Listen         string   `json:"listen"`
+	AllowCIDRs     []string `json:"allow_cidrs,omitempty"`
+	NodeAgentToken string   `json:"node_agent_token,omitempty"`
 }
 
 type HomeDaemonPublicConfig struct {
@@ -141,7 +142,8 @@ func DefaultHomeConfig() HomeConfig {
 			LogFile:       defaultDaemonLogFile,
 			MaxConcurrent: defaultDaemonMaxConcurrent,
 			Internal: HomeDaemonInternalConfig{
-				Listen: defaultDaemonInternalListenAddr,
+				Listen:     defaultDaemonInternalListenAddr,
+				AllowCIDRs: append([]string(nil), defaultGatewayInternalAllowCIDRs...),
 			},
 			Public: HomeDaemonPublicConfig{
 				Listen: defaultDaemonPublicListenAddr,
@@ -228,6 +230,10 @@ func (c HomeConfig) WithDefaults() HomeConfig {
 	out.Daemon.Internal.Listen = strings.TrimSpace(out.Daemon.Internal.Listen)
 	if out.Daemon.Internal.Listen == "" {
 		out.Daemon.Internal.Listen = defaultDaemonInternalListenAddr
+	}
+	out.Daemon.Internal.AllowCIDRs = normalizeGatewayInternalAllowCIDRs(out.Daemon.Internal.AllowCIDRs)
+	if len(out.Daemon.Internal.AllowCIDRs) == 0 {
+		out.Daemon.Internal.AllowCIDRs = append([]string(nil), defaultGatewayInternalAllowCIDRs...)
 	}
 	out.Daemon.Internal.NodeAgentToken = strings.TrimSpace(out.Daemon.Internal.NodeAgentToken)
 
@@ -317,9 +323,6 @@ func validateRemovedDaemonInternalFields(raw []byte) error {
 	var internal map[string]json.RawMessage
 	if err := json.Unmarshal(internalRaw, &internal); err != nil {
 		return nil
-	}
-	if _, ok := internal["allow_cidrs"]; ok {
-		return fmt.Errorf("daemon.internal.allow_cidrs 已移除，请删除该字段")
 	}
 	if _, ok := internal["auth_token_env"]; ok {
 		return fmt.Errorf("daemon.internal.auth_token_env 已移除，请删除该字段")

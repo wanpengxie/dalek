@@ -87,6 +87,7 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *slog.Logger) erro
 	})
 	internalAPI, err := daemonsvc.NewInternalAPI(host, daemonsvc.InternalAPIConfig{
 		ListenAddr:     strings.TrimSpace(cfg.Daemon.Internal.Listen),
+		AllowCIDRs:     append([]string(nil), cfg.Daemon.Internal.AllowCIDRs...),
 		NodeAgentToken: strings.TrimSpace(cfg.Daemon.Internal.NodeAgentToken),
 	}, daemonsvc.InternalAPIOptions{
 		Logger:              logger,

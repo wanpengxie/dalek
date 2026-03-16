@@ -23,6 +23,7 @@ const (
 
 const (
 	ConfigKeyDaemonInternalListen     = "daemon.internal.listen"
+	ConfigKeyDaemonInternalAllowCIDRs = "daemon.internal.allow_cidrs"
 	ConfigKeyDaemonPublicListen       = "daemon.public.listen"
 	ConfigKeyDaemonMaxConcurrent      = "daemon.max_concurrent"
 	ConfigKeyProjectMaxRunningWorkers = "project.max_running_workers"
@@ -45,6 +46,11 @@ type KeyMeta struct {
 var KeyOrder = []KeyMeta{
 	{
 		Key:           ConfigKeyDaemonInternalListen,
+		DefaultScope:  ScopeGlobal,
+		AllowedScopes: []Scope{ScopeGlobal},
+	},
+	{
+		Key:           ConfigKeyDaemonInternalAllowCIDRs,
 		DefaultScope:  ScopeGlobal,
 		AllowedScopes: []Scope{ScopeGlobal},
 	},
@@ -76,11 +82,12 @@ var KeyOrder = []KeyMeta{
 }
 
 type HomePresence struct {
-	DaemonInternalListen bool
-	DaemonPublicListen   bool
-	DaemonMaxConcurrent  bool
-	AgentProvider        bool
-	AgentModel           bool
+	DaemonInternalListen     bool
+	DaemonInternalAllowCIDRs bool
+	DaemonPublicListen       bool
+	DaemonMaxConcurrent      bool
+	AgentProvider            bool
+	AgentModel               bool
 }
 
 type LocalPresence struct {
@@ -105,7 +112,8 @@ type HomeDaemonConfig struct {
 }
 
 type HomeDaemonInternalConfig struct {
-	Listen string
+	Listen     string
+	AllowCIDRs []string
 }
 
 type HomeDaemonPublicConfig struct {
@@ -117,6 +125,12 @@ func (c HomeConfig) WithDefaults() HomeConfig {
 	out.Daemon.Internal.Listen = strings.TrimSpace(out.Daemon.Internal.Listen)
 	if out.Daemon.Internal.Listen == "" {
 		out.Daemon.Internal.Listen = defaultDaemonInternalListen
+	}
+	if len(out.Daemon.Internal.AllowCIDRs) == 0 {
+		out.Daemon.Internal.AllowCIDRs = []string{"127.0.0.1/32", "::1/128"}
+	}
+	for i := range out.Daemon.Internal.AllowCIDRs {
+		out.Daemon.Internal.AllowCIDRs[i] = strings.TrimSpace(out.Daemon.Internal.AllowCIDRs[i])
 	}
 	out.Daemon.Public.Listen = strings.TrimSpace(out.Daemon.Public.Listen)
 	if out.Daemon.Public.Listen == "" {
@@ -207,6 +221,12 @@ func ResolveValue(key string, eval *EvalContext) (string, Scope, error) {
 			return value, ScopeGlobal, nil
 		}
 		return value, ScopeDefault, nil
+	case ConfigKeyDaemonInternalAllowCIDRs:
+		value := strings.Join(home.Daemon.Internal.AllowCIDRs, ",")
+		if eval.HomePresence.DaemonInternalAllowCIDRs {
+			return value, ScopeGlobal, nil
+		}
+		return value, ScopeDefault, nil
 	case ConfigKeyDaemonPublicListen:
 		value := strings.TrimSpace(home.Daemon.Public.Listen)
 		if eval.HomePresence.DaemonPublicListen {
@@ -270,6 +290,27 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 			return "", err
 		}
 		return strings.TrimSpace(ctx.HomeCfg.WithDefaults().Daemon.Internal.Listen), nil
+	case ConfigKeyDaemonInternalAllowCIDRs:
+		if scope != ScopeGlobal {
+			return "", fmt.Errorf("%s 仅支持 global 层", key)
+		}
+		parts := strings.Split(rawValue, ",")
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			out = append(out, part)
+		}
+		if len(out) == 0 {
+			return "", fmt.Errorf("daemon.internal.allow_cidrs 不能为空")
+		}
+		ctx.HomeCfg.Daemon.Internal.AllowCIDRs = out
+		if err := persistHomeConfig(ctx); err != nil {
+			return "", err
+		}
+		return strings.Join(ctx.HomeCfg.WithDefaults().Daemon.Internal.AllowCIDRs, ","), nil
 	case ConfigKeyDaemonPublicListen:
 		if scope != ScopeGlobal {
 			return "", fmt.Errorf("%s 仅支持 global 层", key)
@@ -394,11 +435,12 @@ func LoadHomeConfigPresence(path string) (HomePresence, error) {
 		return HomePresence{}, err
 	}
 	return HomePresence{
-		DaemonInternalListen: jsonPathExists(root, "daemon", "internal", "listen"),
-		DaemonPublicListen:   jsonPathExists(root, "daemon", "public", "listen"),
-		DaemonMaxConcurrent:  jsonPathExists(root, "daemon", "max_concurrent"),
-		AgentProvider:        jsonPathExists(root, "agent", "provider"),
-		AgentModel:           jsonPathExists(root, "agent", "model"),
+		DaemonInternalListen:     jsonPathExists(root, "daemon", "internal", "listen"),
+		DaemonInternalAllowCIDRs: jsonPathExists(root, "daemon", "internal", "allow_cidrs"),
+		DaemonPublicListen:       jsonPathExists(root, "daemon", "public", "listen"),
+		DaemonMaxConcurrent:      jsonPathExists(root, "daemon", "max_concurrent"),
+		AgentProvider:            jsonPathExists(root, "agent", "provider"),
+		AgentModel:               jsonPathExists(root, "agent", "model"),
 	}, nil
 }
 

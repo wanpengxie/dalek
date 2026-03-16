@@ -26,6 +26,7 @@ const internalAPIMaxJSONBodyBytes int64 = 1 << 20
 
 type InternalAPIConfig struct {
 	ListenAddr     string
+	AllowCIDRs     []string
 	NodeAgentToken string
 }
 
@@ -85,6 +86,7 @@ func NewInternalAPI(host *ExecutionHost, cfg InternalAPIConfig, opt InternalAPIO
 	return &InternalAPI{
 		cfg: InternalAPIConfig{
 			ListenAddr:     listen,
+			AllowCIDRs:     normalizeInternalAllowCIDRs(cfg.AllowCIDRs),
 			NodeAgentToken: strings.TrimSpace(cfg.NodeAgentToken),
 		},
 		host:                host,
@@ -217,8 +219,8 @@ func (s *InternalAPI) authorize(r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if !ip.IsLoopback() {
-		return fmt.Errorf("internal api 仅允许 loopback 来源: %s", ip.String())
+	if !ipAllowedByCIDRs(ip, normalizeInternalAllowCIDRs(s.cfg.AllowCIDRs)) {
+		return fmt.Errorf("internal api 来源不在 allow_cidrs 内: %s", ip.String())
 	}
 	return nil
 }
@@ -1095,13 +1097,40 @@ func validateInternalListenAddr(listenAddr string) error {
 	}
 	host = strings.TrimSpace(host)
 	if host == "" {
-		return fmt.Errorf("internal listen 必须显式使用 loopback 地址（127.0.0.1 或 ::1）")
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("internal listen 仅允许 loopback 地址，当前=%s", host)
+		return fmt.Errorf("internal listen 必须显式使用 host:port")
 	}
 	return nil
+}
+
+func normalizeInternalAllowCIDRs(raw []string) []string {
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	if len(out) == 0 {
+		return []string{"127.0.0.1/32", "::1/128"}
+	}
+	return out
+}
+
+func ipAllowedByCIDRs(ip net.IP, allowCIDRs []string) bool {
+	if ip == nil {
+		return false
+	}
+	for _, item := range allowCIDRs {
+		_, network, err := net.ParseCIDR(strings.TrimSpace(item))
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeJSONBody(r *http.Request, out any) error {

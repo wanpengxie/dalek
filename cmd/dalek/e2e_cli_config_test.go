@@ -51,6 +51,7 @@ func TestCLI_E2E_ConfigCommands(t *testing.T) {
 	}
 	requiredKeys := []string{
 		"daemon.internal.listen",
+		"daemon.internal.allow_cidrs",
 		"daemon.public.listen",
 		"daemon.max_concurrent",
 		"project.max_running_workers",
@@ -78,6 +79,14 @@ func TestCLI_E2E_ConfigCommands(t *testing.T) {
 		t.Fatalf("unexpected config get daemon.max_concurrent payload: %+v", getPayload)
 	}
 
+	getOut, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "config", "get", "daemon.internal.allow_cidrs", "-o", "json")
+	if err := json.Unmarshal([]byte(getOut), &getPayload); err != nil {
+		t.Fatalf("decode config get daemon.internal.allow_cidrs json failed: %v\nraw=%s", err, getOut)
+	}
+	if getPayload.Value != "127.0.0.1/32,::1/128" {
+		t.Fatalf("unexpected daemon.internal.allow_cidrs default payload: %+v", getPayload)
+	}
+
 	setOut, _ := runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "config", "set", "daemon.max_concurrent", "8", "--global", "-o", "json")
 	var setPayload configE2EValuePayload
 	if err := json.Unmarshal([]byte(setOut), &setPayload); err != nil {
@@ -93,6 +102,14 @@ func TestCLI_E2E_ConfigCommands(t *testing.T) {
 	}
 	if getPayload.Value != "8" || getPayload.Source != "global" {
 		t.Fatalf("unexpected daemon.max_concurrent after set: %+v", getPayload)
+	}
+
+	setOut, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "config", "set", "daemon.internal.allow_cidrs", "10.0.0.0/8,192.168.0.0/16", "--global", "-o", "json")
+	if err := json.Unmarshal([]byte(setOut), &setPayload); err != nil {
+		t.Fatalf("decode config set daemon.internal.allow_cidrs json failed: %v\nraw=%s", err, setOut)
+	}
+	if setPayload.Value != "10.0.0.0/8,192.168.0.0/16" || setPayload.Source != "global" {
+		t.Fatalf("unexpected config set daemon.internal.allow_cidrs payload: %+v", setPayload)
 	}
 
 	setOut, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "config", "set", "project.max_running_workers", "5", "-o", "json")

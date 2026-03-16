@@ -24,12 +24,28 @@ func TestInternalAPIAuthorize_RejectsNonLoopbackRemote(t *testing.T) {
 	}
 }
 
-func TestValidateInternalListenAddr_RejectsNonLoopbackListen(t *testing.T) {
-	if err := validateInternalListenAddr("0.0.0.0:18081"); err == nil {
-		t.Fatalf("expected non-loopback listen to be rejected")
+func TestInternalAPIAuthorize_AcceptsRemoteWithinAllowCIDRs(t *testing.T) {
+	svc := &InternalAPI{
+		cfg: InternalAPIConfig{
+			AllowCIDRs: []string{"10.0.0.0/8"},
+		},
 	}
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.RemoteAddr = "10.0.0.5:34567"
+	if err := svc.authorize(req); err != nil {
+		t.Fatalf("expected remote within allow_cidrs to pass, got err=%v", err)
+	}
+}
+
+func TestValidateInternalListenAddr_RejectsEmptyHost(t *testing.T) {
 	if err := validateInternalListenAddr(":18081"); err == nil {
 		t.Fatalf("expected empty-host listen to be rejected")
+	}
+}
+
+func TestValidateInternalListenAddr_AcceptsNonLoopbackListen(t *testing.T) {
+	if err := validateInternalListenAddr("0.0.0.0:18081"); err != nil {
+		t.Fatalf("expected non-loopback listen to pass, got=%v", err)
 	}
 }
 

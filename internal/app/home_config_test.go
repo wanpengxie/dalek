@@ -76,6 +76,11 @@ func TestLoadHomeConfig_MissingUsesDefaults(t *testing.T) {
 	if cfg.Daemon.Internal.Listen != "127.0.0.1:18081" {
 		t.Fatalf("unexpected default daemon.internal.listen: %q", cfg.Daemon.Internal.Listen)
 	}
+	if len(cfg.Daemon.Internal.AllowCIDRs) != 2 ||
+		cfg.Daemon.Internal.AllowCIDRs[0] != "127.0.0.1/32" ||
+		cfg.Daemon.Internal.AllowCIDRs[1] != "::1/128" {
+		t.Fatalf("unexpected default daemon.internal.allow_cidrs: %#v", cfg.Daemon.Internal.AllowCIDRs)
+	}
 	if cfg.Daemon.Internal.NodeAgentToken != "" {
 		t.Fatalf("unexpected default daemon.internal.node_agent_token: %q", cfg.Daemon.Internal.NodeAgentToken)
 	}
@@ -138,6 +143,7 @@ func TestLoadHomeConfig_ExistingConfigWithDefaults(t *testing.T) {
     "log_file": " runtime/daemon.log ",
     "internal": {
       "listen": " 0.0.0.0:18081 ",
+      "allow_cidrs": [" 10.0.0.0/8 ", " 192.168.0.0/16 "],
       "node_agent_token": "  node-token-1  "
     },
     "public": {
@@ -219,6 +225,11 @@ func TestLoadHomeConfig_ExistingConfigWithDefaults(t *testing.T) {
 	if cfg.Daemon.Internal.Listen != "0.0.0.0:18081" {
 		t.Fatalf("daemon.internal.listen should be normalized: got=%q", cfg.Daemon.Internal.Listen)
 	}
+	if len(cfg.Daemon.Internal.AllowCIDRs) != 2 ||
+		cfg.Daemon.Internal.AllowCIDRs[0] != "10.0.0.0/8" ||
+		cfg.Daemon.Internal.AllowCIDRs[1] != "192.168.0.0/16" {
+		t.Fatalf("daemon.internal.allow_cidrs should be normalized: got=%#v", cfg.Daemon.Internal.AllowCIDRs)
+	}
 	if cfg.Daemon.Internal.NodeAgentToken != "node-token-1" {
 		t.Fatalf("daemon.internal.node_agent_token should be normalized: got=%q", cfg.Daemon.Internal.NodeAgentToken)
 	}
@@ -295,7 +306,7 @@ func TestLoadHomeConfig_DaemonNotebookWorkerCountFromJSON(t *testing.T) {
 	}
 }
 
-func TestLoadHomeConfig_RejectsRemovedDaemonInternalFields(t *testing.T) {
+func TestLoadHomeConfig_AcceptsDaemonInternalAllowCIDRsAndRejectsRemovedAuthTokenEnv(t *testing.T) {
 	root := t.TempDir()
 	cfgPath := filepath.Join(root, "config.json")
 	raw := `{
@@ -310,9 +321,15 @@ func TestLoadHomeConfig_RejectsRemovedDaemonInternalFields(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("write config failed: %v", err)
 	}
-	_, _, _, err := LoadHomeConfig(cfgPath)
-	if err == nil || !strings.Contains(err.Error(), "daemon.internal.allow_cidrs 已移除") {
-		t.Fatalf("expected removed allow_cidrs error, got=%v", err)
+	cfg, exists, _, err := LoadHomeConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadHomeConfig failed: %v", err)
+	}
+	if !exists {
+		t.Fatalf("config should exist")
+	}
+	if len(cfg.Daemon.Internal.AllowCIDRs) != 1 || cfg.Daemon.Internal.AllowCIDRs[0] != "127.0.0.1/32" {
+		t.Fatalf("unexpected daemon.internal.allow_cidrs: %#v", cfg.Daemon.Internal.AllowCIDRs)
 	}
 
 	raw = `{

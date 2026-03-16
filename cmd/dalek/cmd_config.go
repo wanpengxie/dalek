@@ -87,7 +87,8 @@ func toConfigHomeCfg(cfg app.HomeConfig) config.HomeConfig {
 		Daemon: config.HomeDaemonConfig{
 			MaxConcurrent: v.Daemon.MaxConcurrent,
 			Internal: config.HomeDaemonInternalConfig{
-				Listen: strings.TrimSpace(v.Daemon.Internal.Listen),
+				Listen:     strings.TrimSpace(v.Daemon.Internal.Listen),
+				AllowCIDRs: append([]string(nil), v.Daemon.Internal.AllowCIDRs...),
 			},
 			Public: config.HomeDaemonPublicConfig{
 				Listen: strings.TrimSpace(v.Daemon.Public.Listen),
@@ -338,6 +339,7 @@ func cmdConfigSet(args []string) {
 			next := homeCfg
 			normalized := cfg.WithDefaults()
 			next.Daemon.Internal.Listen = strings.TrimSpace(normalized.Daemon.Internal.Listen)
+			next.Daemon.Internal.AllowCIDRs = append([]string(nil), normalized.Daemon.Internal.AllowCIDRs...)
 			next.Daemon.Public.Listen = strings.TrimSpace(normalized.Daemon.Public.Listen)
 			next.Daemon.MaxConcurrent = normalized.Daemon.MaxConcurrent
 			next.Agent.Provider = strings.TrimSpace(normalized.Agent.Provider)
