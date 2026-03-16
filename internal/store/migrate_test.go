@@ -158,6 +158,101 @@ func TestOpenAndMigrate_TicketLabelColumnPresent(t *testing.T) {
 	}
 }
 
+func TestOpenAndMigrate_RunViewsTablePresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	type columnRow struct {
+		Name string `gorm:"column:name"`
+	}
+	var cols []columnRow
+	if err := db.Raw("PRAGMA table_info(run_views);").Scan(&cols).Error; err != nil {
+		t.Fatalf("query run_views columns failed: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, col := range cols {
+		seen[col.Name] = true
+	}
+	for _, want := range []string{"run_id", "task_run_id", "project_key", "request_id", "run_status", "verify_target"} {
+		if !seen[want] {
+			t.Fatalf("run_views missing expected column: %s", want)
+		}
+	}
+}
+
+func TestOpenAndMigrate_NodeTablesPresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	type columnRow struct {
+		Name string `gorm:"column:name"`
+	}
+
+	var nodeCols []columnRow
+	if err := db.Raw("PRAGMA table_info(nodes);").Scan(&nodeCols).Error; err != nil {
+		t.Fatalf("query nodes columns failed: %v", err)
+	}
+	nodeSeen := map[string]bool{}
+	for _, col := range nodeCols {
+		nodeSeen[col.Name] = true
+	}
+	for _, want := range []string{"name", "status", "protocol_version", "role_capabilities_json", "provider_modes_json"} {
+		if !nodeSeen[want] {
+			t.Fatalf("nodes missing expected column: %s", want)
+		}
+	}
+	for _, want := range []string{"session_epoch"} {
+		if !nodeSeen[want] {
+			t.Fatalf("nodes missing expected column: %s", want)
+		}
+	}
+
+	var wsCols []columnRow
+	if err := db.Raw("PRAGMA table_info(workspace_assignments);").Scan(&wsCols).Error; err != nil {
+		t.Fatalf("query workspace_assignments columns failed: %v", err)
+	}
+	wsSeen := map[string]bool{}
+	for _, col := range wsCols {
+		wsSeen[col.Name] = true
+	}
+	for _, want := range []string{"project_key", "node_id", "role", "workspace_generation", "desired_revision", "current_revision"} {
+		if !wsSeen[want] {
+			t.Fatalf("workspace_assignments missing expected column: %s", want)
+		}
+	}
+}
+
+func TestOpenAndMigrate_SnapshotsTablePresent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	type columnRow struct {
+		Name string `gorm:"column:name"`
+	}
+	var cols []columnRow
+	if err := db.Raw("PRAGMA table_info(snapshots);").Scan(&cols).Error; err != nil {
+		t.Fatalf("query snapshots columns failed: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, col := range cols {
+		seen[col.Name] = true
+	}
+	for _, want := range []string{"snapshot_id", "project_key", "node_name", "base_commit", "workspace_generation", "manifest_digest", "status", "artifact_path", "ref_count"} {
+		if !seen[want] {
+			t.Fatalf("snapshots missing expected column: %s", want)
+		}
+	}
+}
+
 func TestOpenAndMigrate_RepairWorkerLogPathWhenOldV9Occupied(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := OpenAndMigrate(dbPath)

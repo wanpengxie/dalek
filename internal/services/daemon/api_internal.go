@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"dalek/internal/contracts"
 	channelsvc "dalek/internal/services/channel"
 	gatewaysendsvc "dalek/internal/services/gatewaysend"
+	nodeagentsvc "dalek/internal/services/nodeagent"
 
 	"gorm.io/gorm"
 )
@@ -23,7 +25,8 @@ import (
 const internalAPIMaxJSONBodyBytes int64 = 1 << 20
 
 type InternalAPIConfig struct {
-	ListenAddr string
+	ListenAddr     string
+	NodeAgentToken string
 }
 
 type InternalAPIOptions struct {
@@ -34,6 +37,7 @@ type InternalAPIOptions struct {
 	GatewaySendSender   gatewaysendsvc.MessageSender
 	GatewayQueueDepth   int
 	CloseGatewaySendDB  bool
+	NodeProjectResolver InternalNodeProjectResolver
 }
 
 type InternalAPI struct {
@@ -42,13 +46,14 @@ type InternalAPI struct {
 	host   *ExecutionHost
 	logger *slog.Logger
 
-	listener    net.Listener
-	server      *http.Server
-	sendHandler http.HandlerFunc
-	gateway     *channelsvc.Gateway
-	wsPath      string
-	sendDB      *gorm.DB
-	closeSendDB bool
+	listener            net.Listener
+	server              *http.Server
+	sendHandler         http.HandlerFunc
+	gateway             *channelsvc.Gateway
+	wsPath              string
+	sendDB              *gorm.DB
+	closeSendDB         bool
+	nodeProjectResolver InternalNodeProjectResolver
 }
 
 func NewInternalAPI(host *ExecutionHost, cfg InternalAPIConfig, opt InternalAPIOptions) (*InternalAPI, error) {
@@ -79,15 +84,17 @@ func NewInternalAPI(host *ExecutionHost, cfg InternalAPIConfig, opt InternalAPIO
 	sendService := gatewaysendsvc.NewServiceWithDB(opt.GatewaySendDB, opt.GatewaySendResolver, opt.GatewaySendSender, logger)
 	return &InternalAPI{
 		cfg: InternalAPIConfig{
-			ListenAddr: listen,
+			ListenAddr:     listen,
+			NodeAgentToken: strings.TrimSpace(cfg.NodeAgentToken),
 		},
-		host:        host,
-		logger:      logger,
-		sendHandler: gatewaysendsvc.NewHandler(sendService, gatewaysendsvc.HandlerConfig{}),
-		gateway:     gateway,
-		wsPath:      "/ws",
-		sendDB:      opt.GatewaySendDB,
-		closeSendDB: opt.CloseGatewaySendDB,
+		host:                host,
+		logger:              logger,
+		sendHandler:         gatewaysendsvc.NewHandler(sendService, gatewaysendsvc.HandlerConfig{}),
+		gateway:             gateway,
+		wsPath:              "/ws",
+		sendDB:              opt.GatewaySendDB,
+		closeSendDB:         opt.CloseGatewaySendDB,
+		nodeProjectResolver: opt.NodeProjectResolver,
 	}, nil
 }
 
@@ -114,6 +121,16 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/subagent/submit", s.withInternalAccess(s.handleSubagentSubmit))
 	mux.HandleFunc("/api/notes", s.withInternalAccess(s.handleNoteSubmit))
 	mux.HandleFunc("/api/runs/", s.withInternalAccess(s.handleRuns))
+	mux.HandleFunc("/api/node/register", s.withNodeAgentAccess(s.handleNodeRegister))
+	mux.HandleFunc("/api/node/heartbeat", s.withNodeAgentAccess(s.handleNodeHeartbeat))
+	mux.HandleFunc("/api/node/snapshot/upload", s.withNodeAgentAccess(s.handleNodeSnapshotUpload))
+	mux.HandleFunc("/api/node/snapshot/upload-chunk", s.withNodeAgentAccess(s.handleNodeSnapshotUploadChunk))
+	mux.HandleFunc("/api/node/snapshot/download", s.withNodeAgentAccess(s.handleNodeSnapshotDownload))
+	mux.HandleFunc("/api/node/run/submit", s.withNodeAgentAccess(s.handleNodeRunSubmit))
+	mux.HandleFunc("/api/node/run/cancel", s.withNodeAgentAccess(s.handleNodeRunCancel))
+	mux.HandleFunc("/api/node/run/logs", s.withNodeAgentAccess(s.handleNodeRunLogs))
+	mux.HandleFunc("/api/node/run/artifacts", s.withNodeAgentAccess(s.handleNodeRunArtifacts))
+	mux.HandleFunc("/api/node/run/query", s.withNodeAgentAccess(s.handleNodeRunQuery))
 	mux.HandleFunc(gatewaysendsvc.Path, s.withInternalAccess(s.handleSend))
 	mux.HandleFunc(wsPath, s.withInternalAccess(wsHandler))
 
@@ -182,6 +199,16 @@ func (s *InternalAPI) withInternalAccess(next http.HandlerFunc) http.HandlerFunc
 	}
 }
 
+func (s *InternalAPI) withNodeAgentAccess(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := s.authorizeNodeAgent(r); err != nil {
+			writeAPIError(w, http.StatusForbidden, "forbidden", err.Error())
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (s *InternalAPI) authorize(r *http.Request) error {
 	if r == nil {
 		return fmt.Errorf("request 为空")
@@ -192,6 +219,28 @@ func (s *InternalAPI) authorize(r *http.Request) error {
 	}
 	if !ip.IsLoopback() {
 		return fmt.Errorf("internal api 仅允许 loopback 来源: %s", ip.String())
+	}
+	return nil
+}
+
+func (s *InternalAPI) authorizeNodeAgent(r *http.Request) error {
+	if r == nil {
+		return fmt.Errorf("request 为空")
+	}
+	token := strings.TrimSpace(s.cfg.NodeAgentToken)
+	if token == "" {
+		return fmt.Errorf("node agent token 未配置")
+	}
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if authHeader == "" {
+		return fmt.Errorf("缺少 authorization bearer token")
+	}
+	const prefix = "Bearer "
+	if !strings.HasPrefix(authHeader, prefix) {
+		return fmt.Errorf("authorization 必须为 Bearer token")
+	}
+	if strings.TrimSpace(strings.TrimPrefix(authHeader, prefix)) != token {
+		return fmt.Errorf("node agent token 无效")
 	}
 	return nil
 }
@@ -213,6 +262,486 @@ func (s *InternalAPI) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.sendHandler(w, r)
+}
+
+func (s *InternalAPI) handleNodeRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	if s == nil || s.nodeProjectResolver == nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "node project resolver 未初始化")
+		return
+	}
+	var payload nodeagentsvc.RegisterRequest
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	project, err := s.openNodeProject(strings.TrimSpace(payload.Meta.ProjectKey))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	lastSeenAt, err := parseOptionalRFC3339(payload.LastSeenAt)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "last_seen_at 非法")
+		return
+	}
+	registration, err := project.RegisterNode(r.Context(), NodeRegisterOptions{
+		Name:                 strings.TrimSpace(payload.Name),
+		Endpoint:             strings.TrimSpace(payload.Endpoint),
+		AuthMode:             strings.TrimSpace(payload.AuthMode),
+		Status:               string(contracts.NodeStatusOnline),
+		Version:              strings.TrimSpace(payload.Version),
+		ProtocolVersion:      strings.TrimSpace(payload.ProtocolVersion),
+		RoleCapabilities:     append([]string(nil), payload.RoleCapabilities...),
+		ProviderModes:        append([]string(nil), payload.ProviderModes...),
+		DefaultProvider:      strings.TrimSpace(payload.DefaultProvider),
+		ProviderCapabilities: cloneStringAnyMap(payload.ProviderCapabilities),
+		SessionAffinity:      strings.TrimSpace(payload.SessionAffinity),
+		LastSeenAt:           lastSeenAt,
+	})
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	lease, err := project.BeginNodeSession(r.Context(), registration.Name, lastSeenAt)
+	if err != nil {
+		writeAPIError(w, http.StatusConflict, "session_conflict", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, nodeagentsvc.RegisterResponse{
+		Accepted:     true,
+		Name:         registration.Name,
+		SessionEpoch: lease.SessionEpoch,
+		Status:       string(contracts.NodeStatusOnline),
+	})
+}
+
+func (s *InternalAPI) handleNodeHeartbeat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	if s == nil || s.nodeProjectResolver == nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "node project resolver 未初始化")
+		return
+	}
+	var payload nodeagentsvc.HeartbeatRequest
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	project, err := s.openNodeProject(strings.TrimSpace(payload.Meta.ProjectKey))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	observedAt, err := parseOptionalRFC3339(payload.ObservedAt)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "observed_at 非法")
+		return
+	}
+	if err := project.HeartbeatNodeWithEpoch(r.Context(), strings.TrimSpace(payload.Name), payload.SessionEpoch, observedAt); err != nil {
+		status := http.StatusConflict
+		code := "session_conflict"
+		if strings.Contains(err.Error(), "不存在") {
+			status = http.StatusNotFound
+			code = "not_found"
+		}
+		writeAPIError(w, status, code, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, nodeagentsvc.HeartbeatResponse{
+		Accepted:     true,
+		Name:         strings.TrimSpace(payload.Name),
+		SessionEpoch: payload.SessionEpoch,
+		Status:       string(contracts.NodeStatusOnline),
+	})
+}
+
+func (s *InternalAPI) handleNodeRunSubmit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	if s == nil || s.nodeProjectResolver == nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "node project resolver 未初始化")
+		return
+	}
+	var payload nodeagentsvc.RunSubmitRequest
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	project, err := s.openNodeProject(strings.TrimSpace(payload.Meta.ProjectKey))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := validateNodeSessionEpoch(r.Context(), project, strings.TrimSpace(payload.NodeName), payload.Meta.SessionEpoch); err != nil {
+		writeAPIError(w, http.StatusConflict, "session_conflict", err.Error())
+		return
+	}
+	submission, err := project.SubmitRun(r.Context(), NodeRunSubmitOptions{
+		RequestID:    strings.TrimSpace(payload.Meta.RequestID),
+		TicketID:     0,
+		VerifyTarget: strings.TrimSpace(payload.VerifyTarget),
+		SnapshotID:   strings.TrimSpace(payload.SnapshotID),
+		BaseCommit:   strings.TrimSpace(payload.BaseCommit),
+	})
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, nodeagentsvc.RunSubmitResponse{
+		Accepted:  submission.Accepted,
+		RunID:     submission.RunID,
+		TaskRunID: submission.TaskRunID,
+		RequestID: submission.RequestID,
+		Status:    strings.TrimSpace(submission.RunStatus),
+	})
+}
+
+func (s *InternalAPI) handleNodeRunQuery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	if s == nil || s.nodeProjectResolver == nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "node project resolver 未初始化")
+		return
+	}
+	var payload nodeagentsvc.RunQueryRequest
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	project, err := s.openNodeProject(strings.TrimSpace(payload.Meta.ProjectKey))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	var view *nodeagentsvc.RunQueryResponse
+	var nodeView *NodeRunView
+	switch {
+	case payload.Meta.RunID != 0:
+		nodeView, err = project.GetRun(r.Context(), payload.Meta.RunID)
+	case strings.TrimSpace(payload.Meta.RequestID) != "":
+		nodeView, err = project.GetRunByRequestID(r.Context(), strings.TrimSpace(payload.Meta.RequestID))
+	default:
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "run_id 或 request_id 至少提供一个")
+		return
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	if nodeView == nil {
+		writeJSON(w, http.StatusOK, nodeagentsvc.RunQueryResponse{Found: false})
+		return
+	}
+	view = &nodeagentsvc.RunQueryResponse{
+		Found:          true,
+		RunID:          nodeView.RunID,
+		TaskRunID:      nodeView.TaskRunID,
+		Status:         strings.TrimSpace(nodeView.RunStatus),
+		LifecycleStage: strings.TrimSpace(nodeView.LifecycleStage),
+		Summary:        strings.TrimSpace(nodeView.Summary),
+		UpdatedAt:      nodeView.UpdatedAt,
+		SnapshotID:     nodeView.SnapshotID,
+		VerifyTarget:   nodeView.VerifyTarget,
+		ArtifactCount:  nodeView.ArtifactCount,
+		LastEventType:  strings.TrimSpace(nodeView.LastEventType),
+		LastEventNote:  strings.TrimSpace(nodeView.LastEventNote),
+		ProtocolSource: nodeagentsvc.ProtocolVersionV1,
+	}
+	writeJSON(w, http.StatusOK, view)
+}
+
+func (s *InternalAPI) handleNodeRunCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	if s == nil || s.nodeProjectResolver == nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "node project resolver 未初始化")
+		return
+	}
+	var payload nodeagentsvc.RunCancelRequest
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	project, err := s.openNodeProject(strings.TrimSpace(payload.Meta.ProjectKey))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if payload.Meta.RunID == 0 {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "run_id 不能为空")
+		return
+	}
+	result, err := project.CancelRun(r.Context(), payload.Meta.RunID)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "cancel_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, nodeagentsvc.RunCancelResponse{
+		Accepted: result.Found,
+		Found:    result.Found,
+		Canceled: result.Canceled,
+		Reason:   result.Reason,
+	})
+}
+
+func (s *InternalAPI) handleNodeSnapshotUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	if s == nil || s.nodeProjectResolver == nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "node project resolver 未初始化")
+		return
+	}
+	var payload nodeagentsvc.SnapshotUploadRequest
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	project, err := s.openNodeProject(strings.TrimSpace(payload.Meta.ProjectKey))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := validateNodeSessionEpoch(r.Context(), project, strings.TrimSpace(payload.NodeName), payload.Meta.SessionEpoch); err != nil {
+		writeAPIError(w, http.StatusConflict, "session_conflict", err.Error())
+		return
+	}
+	expiresAt, err := parseOptionalRFC3339(payload.ExpiresAt)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "expires_at 非法")
+		return
+	}
+	res, err := project.UploadSnapshot(r.Context(), NodeSnapshotUploadOptions{
+		SnapshotID:          strings.TrimSpace(payload.SnapshotID),
+		NodeName:            strings.TrimSpace(payload.NodeName),
+		BaseCommit:          strings.TrimSpace(payload.BaseCommit),
+		WorkspaceGeneration: strings.TrimSpace(payload.WorkspaceGeneration),
+		ManifestJSON:        strings.TrimSpace(payload.ManifestJSON),
+		ExpiresAt:           expiresAt,
+	})
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "upload_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, nodeagentsvc.SnapshotUploadResponse{
+		Accepted:            true,
+		SnapshotID:          res.SnapshotID,
+		Status:              res.Status,
+		ManifestDigest:      res.ManifestDigest,
+		ArtifactPath:        res.ArtifactPath,
+		BaseCommit:          res.BaseCommit,
+		WorkspaceGeneration: res.WorkspaceGeneration,
+	})
+}
+
+func (s *InternalAPI) handleNodeSnapshotUploadChunk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	if s == nil || s.nodeProjectResolver == nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "node project resolver 未初始化")
+		return
+	}
+	var payload nodeagentsvc.SnapshotChunkUploadRequest
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	project, err := s.openNodeProject(strings.TrimSpace(payload.Meta.ProjectKey))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if err := validateNodeSessionEpoch(r.Context(), project, strings.TrimSpace(payload.NodeName), payload.Meta.SessionEpoch); err != nil {
+		writeAPIError(w, http.StatusConflict, "session_conflict", err.Error())
+		return
+	}
+	expiresAt, err := parseOptionalRFC3339(payload.ExpiresAt)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "expires_at 非法")
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(payload.ChunkData))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "chunk_data 非法")
+		return
+	}
+	res, err := project.UploadSnapshotChunk(r.Context(), NodeSnapshotChunkUploadOptions{
+		SnapshotID:          strings.TrimSpace(payload.SnapshotID),
+		NodeName:            strings.TrimSpace(payload.NodeName),
+		BaseCommit:          strings.TrimSpace(payload.BaseCommit),
+		WorkspaceGeneration: strings.TrimSpace(payload.WorkspaceGeneration),
+		ChunkIndex:          payload.ChunkIndex,
+		ChunkData:           data,
+		IsFinal:             payload.IsFinal,
+		ExpiresAt:           expiresAt,
+	})
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "upload_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, nodeagentsvc.SnapshotChunkUploadResponse{
+		Accepted:            res.Accepted,
+		SnapshotID:          res.SnapshotID,
+		Status:              res.Status,
+		NextIndex:           res.NextIndex,
+		ManifestDigest:      res.ManifestDigest,
+		ArtifactPath:        res.ArtifactPath,
+		BaseCommit:          res.BaseCommit,
+		WorkspaceGeneration: res.WorkspaceGeneration,
+	})
+}
+
+func validateNodeSessionEpoch(ctx context.Context, project InternalNodeProject, nodeName string, sessionEpoch int) error {
+	if project == nil {
+		return fmt.Errorf("node project 未初始化")
+	}
+	nodeName = strings.TrimSpace(nodeName)
+	if nodeName == "" {
+		return fmt.Errorf("node_name 不能为空")
+	}
+	if sessionEpoch <= 0 {
+		return fmt.Errorf("session_epoch 不能为空")
+	}
+	return project.HeartbeatNodeWithEpoch(ctx, nodeName, sessionEpoch, nil)
+}
+
+func (s *InternalAPI) handleNodeSnapshotDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	if s == nil || s.nodeProjectResolver == nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "node project resolver 未初始化")
+		return
+	}
+	var payload nodeagentsvc.SnapshotDownloadRequest
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	project, err := s.openNodeProject(strings.TrimSpace(payload.Meta.ProjectKey))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	res, err := project.DownloadSnapshot(r.Context(), strings.TrimSpace(payload.SnapshotID))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, nodeagentsvc.SnapshotDownloadResponse{
+		Found:               res.Found,
+		SnapshotID:          res.SnapshotID,
+		Status:              res.Status,
+		ManifestDigest:      res.ManifestDigest,
+		ManifestJSON:        res.ManifestJSON,
+		ArtifactPath:        res.ArtifactPath,
+		BaseCommit:          res.BaseCommit,
+		WorkspaceGeneration: res.WorkspaceGeneration,
+	})
+}
+
+func (s *InternalAPI) handleNodeRunLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	if s == nil || s.nodeProjectResolver == nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "node project resolver 未初始化")
+		return
+	}
+	var payload nodeagentsvc.RunLogsRequest
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	project, err := s.openNodeProject(strings.TrimSpace(payload.Meta.ProjectKey))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if payload.Meta.RunID == 0 {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "run_id 不能为空")
+		return
+	}
+	logs, err := project.GetRunLogs(r.Context(), payload.Meta.RunID, payload.Lines)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, nodeagentsvc.RunLogsResponse{
+		Found: logs.Found,
+		RunID: logs.RunID,
+		Tail:  logs.Tail,
+	})
+}
+
+func (s *InternalAPI) handleNodeRunArtifacts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	if s == nil || s.nodeProjectResolver == nil {
+		writeAPIError(w, http.StatusInternalServerError, "internal_error", "node project resolver 未初始化")
+		return
+	}
+	var payload nodeagentsvc.RunQueryRequest
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	project, err := s.openNodeProject(strings.TrimSpace(payload.Meta.ProjectKey))
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if payload.Meta.RunID == 0 {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "run_id 不能为空")
+		return
+	}
+	artifacts, err := project.ListRunArtifacts(r.Context(), payload.Meta.RunID)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	out := make([]nodeagentsvc.ArtifactSummary, 0, len(artifacts.Artifacts))
+	for _, item := range artifacts.Artifacts {
+		out = append(out, nodeagentsvc.ArtifactSummary{
+			Name: item.Name,
+			Kind: item.Kind,
+			Size: item.Size,
+			Ref:  item.Ref,
+		})
+	}
+	issues := make([]nodeagentsvc.ArtifactIssue, 0, len(artifacts.Issues))
+	for _, item := range artifacts.Issues {
+		issues = append(issues, nodeagentsvc.ArtifactIssue{
+			Name:   item.Name,
+			Status: item.Status,
+			Reason: item.Reason,
+		})
+	}
+	writeJSON(w, http.StatusOK, nodeagentsvc.RunArtifactsResponse{
+		Found:     artifacts.Found,
+		RunID:     artifacts.RunID,
+		Artifacts: out,
+		Issues:    issues,
+	})
 }
 
 type dispatchSubmitPayload struct {
@@ -511,6 +1040,48 @@ func remoteIP(remoteAddr string) (net.IP, error) {
 		return nil, fmt.Errorf("无法解析 remote ip: %s", remoteAddr)
 	}
 	return ip, nil
+}
+
+func (s *InternalAPI) openNodeProject(projectKey string) (InternalNodeProject, error) {
+	if s == nil || s.nodeProjectResolver == nil {
+		return nil, fmt.Errorf("node project resolver 未初始化")
+	}
+	projectKey = strings.TrimSpace(projectKey)
+	if projectKey == "" {
+		return nil, fmt.Errorf("project_key 不能为空")
+	}
+	return s.nodeProjectResolver.OpenNodeProject(projectKey)
+}
+
+func parseOptionalRFC3339(raw string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, err
+	}
+	local := parsed.Local()
+	return &local, nil
+}
+
+func cloneStringAnyMap(in map[string]any) map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		key := strings.TrimSpace(k)
+		if key == "" {
+			continue
+		}
+		out[key] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func validateInternalListenAddr(listenAddr string) error {

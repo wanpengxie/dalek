@@ -498,6 +498,14 @@ func TestCLI_GatewaySend_ProxyToDaemonInternalAPI(t *testing.T) {
 
 	var called bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":      true,
+				"service": "dalek.daemon.internal",
+			})
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/send" {
 			http.NotFound(w, r)
 			return

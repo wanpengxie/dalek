@@ -53,7 +53,13 @@ func cmdGatewaySend(args []string) {
 		exitUsageError(out, "非法参数 --timeout", "--timeout 必须大于 0", "例如: dalek gateway send --timeout 12s")
 	}
 
-	_, daemonClient := mustOpenDaemonClient(out, *homeFlag)
+	_, remote, derr := openRemoteProject(*homeFlag, project)
+	if derr != nil {
+		if app.IsDaemonUnavailable(derr) {
+			exitRuntimeError(out, "gateway send 失败（daemon 不在线）", derr.Error(), "请先执行 dalek daemon start 后重试")
+		}
+		exitRuntimeError(out, "gateway send 失败", derr.Error(), "检查项目绑定与 gateway 配置后重试")
+	}
 
 	reqTimeout := *timeout
 	if reqTimeout <= 0 {
@@ -62,10 +68,7 @@ func cmdGatewaySend(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), reqTimeout)
 	defer cancel()
 
-	resp, err := daemonClient.SendProjectText(ctx, app.DaemonGatewaySendRequest{
-		Project: project,
-		Text:    msg,
-	})
+	resp, err := remote.SendProjectText(ctx, app.DaemonGatewaySendRequest{Text: msg})
 	if err != nil {
 		if app.IsDaemonUnavailable(err) {
 			exitRuntimeError(out, "gateway send 失败（daemon 不在线）", err.Error(), "请先执行 dalek daemon start 后重试")

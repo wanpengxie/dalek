@@ -4,8 +4,11 @@ import (
 	"time"
 
 	"dalek/internal/contracts"
+	nodesvc "dalek/internal/services/node"
 	notebooksvc "dalek/internal/services/notebook"
 	pmsvc "dalek/internal/services/pm"
+	runsvc "dalek/internal/services/run"
+	snapshotsvc "dalek/internal/services/snapshot"
 	subagentsvc "dalek/internal/services/subagent"
 	tasksvc "dalek/internal/services/task"
 	ticketsvc "dalek/internal/services/ticket"
@@ -44,6 +47,12 @@ type NoteAddResult = notebooksvc.NoteAddResult
 type NoteView = notebooksvc.NoteView
 type ShapedView = notebooksvc.ShapedView
 
+type Node = contracts.Node
+
+type ListNodesOptions = nodesvc.ListOptions
+
+type RegisterNodeOptions = nodesvc.RegisterInput
+
 type ManagerTickOptions = pmsvc.ManagerTickOptions
 type ManagerTickResult = pmsvc.ManagerTickResult
 
@@ -73,6 +82,42 @@ type SubagentSubmitOptions = subagentsvc.SubmitInput
 type SubagentSubmission = subagentsvc.SubmitResult
 
 type SubagentRunOptions = subagentsvc.RunInput
+
+type RunView = contracts.RunView
+
+type SubmitRunOptions = runsvc.SubmitInput
+
+type RunSubmission = runsvc.SubmitResult
+
+type RunLogs struct {
+	Found bool
+	RunID uint
+	Tail  string
+}
+
+type RunArtifact struct {
+	Name string
+	Kind string
+	Size int64
+	Ref  string
+}
+
+type RunArtifactIssue struct {
+	Name   string
+	Status string
+	Reason string
+}
+
+type RunArtifacts struct {
+	Found     bool
+	RunID     uint
+	Artifacts []RunArtifact
+	Issues    []RunArtifactIssue
+}
+
+type SnapshotUploadResult = snapshotsvc.UploadResult
+
+type SnapshotDownloadResult = snapshotsvc.DownloadResult
 
 type TaskStatus = contracts.TaskStatusView
 

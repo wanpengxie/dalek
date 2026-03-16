@@ -80,6 +80,8 @@ func main() {
 		cmdNote(rest[1:])
 	case "task":
 		cmdTask(rest[1:])
+	case "run":
+		cmdRun(rest[1:])
 	case "manager":
 		cmdManager(rest[1:])
 	case "inbox":
@@ -102,6 +104,8 @@ func main() {
 		cmdGateway(rest[1:])
 	case "daemon":
 		cmdDaemon(rest[1:])
+	case "node":
+		cmdNode(rest[1:])
 	case "feishu":
 		cmdFeishu(rest[1:])
 	case "help", "-h", "--help":
@@ -127,6 +131,7 @@ func usage(code int) {
 	fmt.Fprintln(out, "  ticket     Ticket 生命周期管理（创建/编辑/启动/派发/中断/清理/归档）")
 	fmt.Fprintln(out, "  note       Notebook 需求漏斗（add/ls/show/approve/reject/discard）")
 	fmt.Fprintln(out, "  task       任务运行时观测（查看/事件）")
+	fmt.Fprintln(out, "  run        Run 运行与观测（request/show/logs/artifact/cancel）")
 	fmt.Fprintln(out, "  manager    PM 调度器控制（状态/调度/暂停/恢复）")
 	fmt.Fprintln(out, "  inbox      人工待处理项（查看/关闭/延后）")
 	fmt.Fprintln(out, "  merge      合并队列管理（提议/审批/标记）")
@@ -138,6 +143,7 @@ func usage(code int) {
 	fmt.Fprintln(out, "  version    打印当前 dalek binary 版本")
 	fmt.Fprintln(out, "  gateway    Channel Gateway（对话/通知/绑定）")
 	fmt.Fprintln(out, "  daemon     Daemon 进程管理（start/stop/status/logs）")
+	fmt.Fprintln(out, "  node       Node Agent 运行命令（run-loop）")
 	fmt.Fprintln(out, "  feishu     飞书文档协同（auth/doc/wiki/perm/comment）")
 	fmt.Fprintln(out, "  init       初始化项目（注册当前 git repo）")
 	fmt.Fprintln(out, "  tui        启动交互式 TUI")

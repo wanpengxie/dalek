@@ -10,9 +10,12 @@ import (
 	agentprovider "dalek/internal/agent/provider"
 	channelsvc "dalek/internal/services/channel"
 	"dalek/internal/services/core"
+	nodesvc "dalek/internal/services/node"
 	notebooksvc "dalek/internal/services/notebook"
 	pmsvc "dalek/internal/services/pm"
 	previewsvc "dalek/internal/services/preview"
+	runsvc "dalek/internal/services/run"
+	snapshotsvc "dalek/internal/services/snapshot"
 	subagentsvc "dalek/internal/services/subagent"
 	tasksvc "dalek/internal/services/task"
 	ticketsvc "dalek/internal/services/ticket"
@@ -42,7 +45,11 @@ type Project struct {
 	worker      *workersvc.Service
 	preview     *previewsvc.Service
 	notebook    *notebooksvc.Service
+	node        *nodesvc.Service
+	nodeSession *nodesvc.SessionManager
+	snapshot    *snapshotsvc.Service
 	pm          *pmsvc.Service
+	run         *runsvc.Service
 	subagent    *subagentsvc.Service
 	task        *tasksvc.Service
 	channel     *channelsvc.Service

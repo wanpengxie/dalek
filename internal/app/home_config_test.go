@@ -76,6 +76,9 @@ func TestLoadHomeConfig_MissingUsesDefaults(t *testing.T) {
 	if cfg.Daemon.Internal.Listen != "127.0.0.1:18081" {
 		t.Fatalf("unexpected default daemon.internal.listen: %q", cfg.Daemon.Internal.Listen)
 	}
+	if cfg.Daemon.Internal.NodeAgentToken != "" {
+		t.Fatalf("unexpected default daemon.internal.node_agent_token: %q", cfg.Daemon.Internal.NodeAgentToken)
+	}
 	if cfg.Daemon.Public.Listen != "127.0.0.1:18080" {
 		t.Fatalf("unexpected default daemon.public.listen: %q", cfg.Daemon.Public.Listen)
 	}
@@ -134,7 +137,8 @@ func TestLoadHomeConfig_ExistingConfigWithDefaults(t *testing.T) {
     "lock_file": " runtime/daemon.lock ",
     "log_file": " runtime/daemon.log ",
     "internal": {
-      "listen": " 0.0.0.0:18081 "
+      "listen": " 0.0.0.0:18081 ",
+      "node_agent_token": "  node-token-1  "
     },
     "public": {
       "listen": " 0.0.0.0:18080 ",
@@ -214,6 +218,9 @@ func TestLoadHomeConfig_ExistingConfigWithDefaults(t *testing.T) {
 	}
 	if cfg.Daemon.Internal.Listen != "0.0.0.0:18081" {
 		t.Fatalf("daemon.internal.listen should be normalized: got=%q", cfg.Daemon.Internal.Listen)
+	}
+	if cfg.Daemon.Internal.NodeAgentToken != "node-token-1" {
+		t.Fatalf("daemon.internal.node_agent_token should be normalized: got=%q", cfg.Daemon.Internal.NodeAgentToken)
 	}
 	if cfg.Daemon.Public.Listen != "0.0.0.0:18080" {
 		t.Fatalf("daemon.public.listen should be normalized: got=%q", cfg.Daemon.Public.Listen)

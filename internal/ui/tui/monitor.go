@@ -308,7 +308,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		showArchiveRows: false,
 		mergeErr:        "",
 		archiveErr:      "",
-		helpMsg:         "g 管理员  n notebook  c 新建  Enter tmux  s 启动  p 派发  i 中断  a 日志  k 停止  d 归档  r 重新跑  e 编辑  v 事件  Shift+K/J backlog排序  +/- 优先级  0-4 状态  t 配色  q 退出",
+		helpMsg:         "g 管理员  n notebook  R run  c 新建  Enter tmux  s 启动  p 派发  i 中断  a 日志  k 停止  d 归档  r 重新跑  e 编辑  v 事件  Shift+K/J backlog排序  +/- 优先级  0-4 状态  t 配色  q 退出",
 		status:          "就绪",
 		errMsg:          "",
 		titleInput:      ti,

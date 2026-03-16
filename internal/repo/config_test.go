@@ -49,6 +49,12 @@ func TestConfigWithDefaults_SetsAgentAndTimeoutDefaults(t *testing.T) {
 	if cfg.GatewayAgent.Model != "opus" {
 		t.Fatalf("expected gateway_agent.model=opus by default, got=%q", cfg.GatewayAgent.Model)
 	}
+	if len(cfg.RunTargets) != 3 {
+		t.Fatalf("expected default run_targets, got=%d", len(cfg.RunTargets))
+	}
+	if cfg.RunTargets["test"].TimeoutMS != 20*60*1000 {
+		t.Fatalf("unexpected run_targets.test.timeout_ms: %d", cfg.RunTargets["test"].TimeoutMS)
+	}
 	if !cfg.Notebook.Enabled {
 		t.Fatalf("expected notebook.enabled=true by default")
 	}
@@ -214,6 +220,32 @@ func TestMergeConfig_OverridesGatewayAgentFields(t *testing.T) {
 	}
 }
 
+func TestMergeConfig_OverridesRunTargets(t *testing.T) {
+	base := Config{}.WithDefaults()
+	got := MergeConfig(base, Config{
+		RunTargets: map[string]RunTargetConfig{
+			"smoke": {
+				Description: "Smoke test",
+				Command:     []string{"make", "smoke"},
+				TimeoutMS:   90000,
+			},
+		},
+	})
+	if len(got.RunTargets) != 1 {
+		t.Fatalf("unexpected run target count: %d", len(got.RunTargets))
+	}
+	smoke, ok := got.RunTargets["smoke"]
+	if !ok {
+		t.Fatalf("expected smoke target")
+	}
+	if smoke.Description != "Smoke test" {
+		t.Fatalf("unexpected smoke description: %q", smoke.Description)
+	}
+	if len(smoke.Command) != 2 || smoke.Command[0] != "make" || smoke.Command[1] != "smoke" {
+		t.Fatalf("unexpected smoke command: %+v", smoke.Command)
+	}
+}
+
 func TestLoadConfig_DoesNotRewriteWhenSchemaAndAgentsComplete(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.json")
@@ -249,6 +281,49 @@ func TestLoadConfig_DoesNotRewriteWhenSchemaAndAgentsComplete(t *testing.T) {
 	}
 	if cfg.PMDispatchTimeoutMS != 0 {
 		t.Fatalf("expected pm_dispatch_timeout_ms default=0 after defaults, got=%d", cfg.PMDispatchTimeoutMS)
+	}
+}
+
+func TestLoadConfig_NormalizesRunTargets(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.json")
+	raw := `{
+  "schema_version": 2,
+  "worker_agent": { "provider": "codex" },
+  "pm_agent": { "provider": "claude" },
+  "run_targets": {
+    " Smoke ": {
+      "description": "  smoke suite  ",
+      "command": [" make ", " smoke "],
+      "timeout_ms": 45000
+    }
+  },
+  "notebook": {
+    "enabled": true,
+    "auto_shape": true,
+    "shape_interval_sec": 60
+  }
+}`
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	cfg, needsRewrite, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if needsRewrite {
+		t.Fatalf("expected needsRewrite=false")
+	}
+	smoke, ok := cfg.RunTargets["smoke"]
+	if !ok {
+		t.Fatalf("expected normalized smoke target, got=%+v", cfg.RunTargets)
+	}
+	if smoke.Description != "smoke suite" {
+		t.Fatalf("unexpected smoke description: %q", smoke.Description)
+	}
+	if len(smoke.Command) != 2 || smoke.Command[0] != "make" || smoke.Command[1] != "smoke" {
+		t.Fatalf("unexpected smoke command: %+v", smoke.Command)
 	}
 }
 

@@ -90,7 +90,8 @@ type HomeDaemonConfig struct {
 }
 
 type HomeDaemonInternalConfig struct {
-	Listen string `json:"listen"`
+	Listen         string `json:"listen"`
+	NodeAgentToken string `json:"node_agent_token,omitempty"`
 }
 
 type HomeDaemonPublicConfig struct {
@@ -228,6 +229,7 @@ func (c HomeConfig) WithDefaults() HomeConfig {
 	if out.Daemon.Internal.Listen == "" {
 		out.Daemon.Internal.Listen = defaultDaemonInternalListenAddr
 	}
+	out.Daemon.Internal.NodeAgentToken = strings.TrimSpace(out.Daemon.Internal.NodeAgentToken)
 
 	out.Daemon.Public.Listen = strings.TrimSpace(out.Daemon.Public.Listen)
 	if out.Daemon.Public.Listen == "" {

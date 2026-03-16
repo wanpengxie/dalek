@@ -86,7 +86,8 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *slog.Logger) erro
 		return pmsvc.NewGatewayStatusNotifier(projectName, p.core.DB, internalSendDB, gatewayResolver, gatewaySender, notifierLogger)
 	})
 	internalAPI, err := daemonsvc.NewInternalAPI(host, daemonsvc.InternalAPIConfig{
-		ListenAddr: strings.TrimSpace(cfg.Daemon.Internal.Listen),
+		ListenAddr:     strings.TrimSpace(cfg.Daemon.Internal.Listen),
+		NodeAgentToken: strings.TrimSpace(cfg.Daemon.Internal.NodeAgentToken),
 	}, daemonsvc.InternalAPIOptions{
 		Logger:              logger,
 		GatewaySendDB:       internalSendDB,
@@ -95,6 +96,7 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *slog.Logger) erro
 		GatewaySendSender:   gatewaySender,
 		GatewayQueueDepth:   cfg.Gateway.QueueDepth,
 		CloseGatewaySendDB:  true,
+		NodeProjectResolver: resolver,
 	})
 	if err != nil {
 		_ = closeDaemonGatewayDB(internalSendDB)

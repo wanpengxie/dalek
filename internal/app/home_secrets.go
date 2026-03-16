@@ -18,6 +18,20 @@ func EnsureHomeSecrets(h *Home) error {
 	cfg := h.Config.WithDefaults()
 	changed := false
 
+	nodeAgentToken := strings.TrimSpace(cfg.Daemon.Internal.NodeAgentToken)
+	if nodeAgentToken == "" {
+		token, err := GenerateSecretToken(24)
+		if err != nil {
+			return err
+		}
+		nodeAgentToken = token
+		changed = true
+	}
+	if nodeAgentToken != strings.TrimSpace(cfg.Daemon.Internal.NodeAgentToken) {
+		changed = true
+	}
+	cfg.Daemon.Internal.NodeAgentToken = nodeAgentToken
+
 	normalizedPath := NormalizeWebhookSecretPath(cfg.Daemon.Public.Feishu.WebhookSecretPath)
 	if normalizedPath == "" {
 		secretPath, err := GenerateWebhookSecretPath()

@@ -14,9 +14,13 @@ import (
 	"dalek/internal/repo"
 	channelsvc "dalek/internal/services/channel"
 	"dalek/internal/services/core"
+	nodesvc "dalek/internal/services/node"
 	"dalek/internal/services/notebook"
 	"dalek/internal/services/pm"
 	previewsvc "dalek/internal/services/preview"
+	runsvc "dalek/internal/services/run"
+	runexecsvc "dalek/internal/services/runexecutor"
+	snapshotsvc "dalek/internal/services/snapshot"
 	subagentsvc "dalek/internal/services/subagent"
 	"dalek/internal/services/task"
 	"dalek/internal/services/ticket"
@@ -280,12 +284,28 @@ func (h *Home) OpenProjectFromDir(startDir string) (*Project, error) {
 	return h.OpenProjectByName(rp.Name)
 }
 
+func (h *Home) OpenLocalProjectFromDir(startDir string) (*LocalProject, error) {
+	p, err := h.OpenProjectFromDir(startDir)
+	if err != nil {
+		return nil, err
+	}
+	return AsLocalProject(p), nil
+}
+
 func (h *Home) OpenProjectByName(name string) (*Project, error) {
 	rp, err := h.FindProjectByName(name)
 	if err != nil {
 		return nil, err
 	}
 	return h.openProject(*rp)
+}
+
+func (h *Home) OpenLocalProjectByName(name string) (*LocalProject, error) {
+	p, err := h.OpenProjectByName(name)
+	if err != nil {
+		return nil, err
+	}
+	return AsLocalProject(p), nil
 }
 
 func (h *Home) openProject(rp RegisteredProject) (*Project, error) {
@@ -496,13 +516,21 @@ func applyAgentProviderModel(cfg repo.Config, providerRaw, model string) repo.Co
 }
 
 func assembleProject(cp *core.Project) *Project {
+	runTargetCatalog := buildRunTargetCatalog(cp.Config.WithDefaults())
 	ticketSvc := ticket.New(cp.DB)
 	ticketQuerySvc := ticket.NewQueryService(cp)
 	workerSvc := worker.New(cp, ticketSvc)
 	previewSvc := previewsvc.New(cp, workerSvc)
 	notebookSvc := notebook.New(cp)
+	nodeSvc := nodesvc.New(cp.DB)
+	nodeSessionSvc := nodesvc.NewSessionManager(nodeSvc)
+	snapshotCatalog := snapshotsvc.NewCatalog(cp.DB)
+	snapshotStore, _ := snapshotsvc.NewFileStore(filepath.Join(cp.ProjectDir(), "runtime", "snapshots"))
+	snapshotSvc := snapshotsvc.NewService(snapshotCatalog, snapshotStore)
 	pmSvc := pm.New(cp, workerSvc)
 	taskSvc := task.New(cp.DB)
+	snapshotApply := snapshotsvc.NewApplyService(snapshotCatalog, snapshotStore)
+	runSvc := runsvc.New(cp.DB, taskSvc, runTargetCatalog, snapshotApply)
 	subagentSvc := subagentsvc.New(cp, taskSvc, cp.Logger)
 	channelSvc := channelsvc.New(cp)
 	channelSvc.SetActionExecutor(newChannelActionExecutor(ticketSvc, pmSvc, workerSvc))
@@ -513,11 +541,29 @@ func assembleProject(cp *core.Project) *Project {
 		worker:      workerSvc,
 		preview:     previewSvc,
 		notebook:    notebookSvc,
+		node:        nodeSvc,
+		nodeSession: nodeSessionSvc,
+		snapshot:    snapshotSvc,
 		pm:          pmSvc,
+		run:         runSvc,
 		subagent:    subagentSvc,
 		task:        taskSvc,
 		channel:     channelSvc,
 	}
+}
+
+func buildRunTargetCatalog(cfg repo.Config) runexecsvc.TargetCatalog {
+	cfg = cfg.WithDefaults()
+	targets := make(map[string]runexecsvc.TargetConfig, len(cfg.RunTargets))
+	for name, target := range cfg.RunTargets {
+		targets[name] = runexecsvc.TargetConfig{
+			Description: strings.TrimSpace(target.Description),
+			Command:     append([]string(nil), target.Command...),
+			TimeoutMS:   target.TimeoutMS,
+		}
+	}
+	specs := runexecsvc.TargetSpecsFromConfig(targets)
+	return runexecsvc.New(specs)
 }
 
 func samePath(a, b string) bool {

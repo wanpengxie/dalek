@@ -15,6 +15,7 @@ const (
 	TaskTypePMDispatchAgent = "pm_dispatch_agent"
 	TaskTypeSubagentRun     = "subagent_run"
 	TaskTypeChannelTurn     = "channel_turn"
+	TaskTypeRunVerify       = "run_verify"
 )
 
 type TaskOrchestrationState string

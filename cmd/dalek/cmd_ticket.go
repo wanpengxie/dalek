@@ -940,12 +940,24 @@ func cmdTicketDispatch(args []string) {
 		return
 	}
 
-	p := mustOpenProjectWithOutput(out, *home, *proj)
-	_, daemonClient := mustOpenDaemonClient(out, *home)
+	_, remote, derr := openRemoteProject(*home, *proj)
+	if derr != nil {
+		if app.IsDaemonUnavailable(derr) {
+			exitFixFirstError(out, 1,
+				"daemon 不在线，无法异步派发",
+				daemonUnavailableDispatchFix(uint(*ticketID)),
+				daemonRuntimeErrorCause(derr),
+			)
+		}
+		exitRuntimeError(out,
+			"打开 remote project 失败",
+			daemonRuntimeErrorCause(derr),
+			"检查 daemon 日志（dalek daemon logs）后重试，或改用 --sync",
+		)
+	}
 	ctx, cancel := projectCtx(*timeout)
 	defer cancel()
-	receipt, err := daemonClient.SubmitDispatch(ctx, app.DaemonDispatchSubmitRequest{
-		Project:   strings.TrimSpace(p.Name()),
+	receipt, err := remote.SubmitDispatch(ctx, app.DaemonDispatchSubmitRequest{
 		TicketID:  uint(*ticketID),
 		RequestID: strings.TrimSpace(*requestID),
 		Prompt:    strings.TrimSpace(*entryPrompt),

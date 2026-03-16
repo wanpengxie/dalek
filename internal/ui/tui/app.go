@@ -23,6 +23,7 @@ const (
 	pageProjects appPage = iota
 	pageMonitor
 	pageNotebook
+	pageRuns
 )
 
 type projectsMode int
@@ -65,6 +66,10 @@ type appModel struct {
 	// notebook page
 	notebook    notebookModel
 	hasNotebook bool
+
+	// runs page
+	runs    runModel
+	hasRuns bool
 }
 
 type projectsLoadedMsg struct {
@@ -98,6 +103,8 @@ type startupProbeMsg struct {
 type gotoNotebookMsg struct{}
 
 type notebookClosedMsg struct{}
+
+type gotoRunsMsg struct{}
 
 func newAppModel(h *app.Home, initialProject string) appModel {
 	cols := []table.Column{
@@ -136,6 +143,8 @@ func newAppModel(h *app.Home, initialProject string) appModel {
 		hasMonitor:         false,
 		notebook:           notebookModel{},
 		hasNotebook:        false,
+		runs:               runModel{},
+		hasRuns:            false,
 	}
 	return m
 }
@@ -215,6 +224,13 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		nb := newNotebookModel(m.p, m.currentProjectName)
 		return m.setNotebook(nb)
 
+	case gotoRunsMsg:
+		if m.p == nil {
+			return m, nil
+		}
+		rm := newRunModel(m.p, m.currentProjectName)
+		return m.setRuns(rm)
+
 	case notebookClosedMsg:
 		if !m.hasMonitor {
 			return m, nil
@@ -287,6 +303,21 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			nb, cmd := m.notebookUpdate(msg)
 			m = nb
 			return m, cmd
+		case pageRuns:
+			if msg.String() == "q" || msg.String() == "ctrl+c" {
+				m.cancel()
+				return m, tea.Quit
+			}
+			if msg.String() == "esc" {
+				if m.hasMonitor {
+					m.page = pageMonitor
+					m.hasRuns = false
+					return m, nil
+				}
+			}
+			rm, cmd := m.runUpdate(msg)
+			m = rm
+			return m, cmd
 		}
 	}
 
@@ -302,6 +333,11 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m = nb
 		return m, cmd
 	}
+	if m.page == pageRuns {
+		rm, cmd := m.runUpdate(msg)
+		m = rm
+		return m, cmd
+	}
 
 	return m, nil
 }
@@ -314,6 +350,8 @@ func (m appModel) View() string {
 		return m.viewMonitor()
 	case pageNotebook:
 		return m.viewNotebook()
+	case pageRuns:
+		return m.viewRuns()
 	default:
 		return "unknown page"
 	}
@@ -685,4 +723,38 @@ func (m appModel) viewNotebook() string {
 		return appStyle().Render(panelStyle().Render("notebook 未初始化"))
 	}
 	return m.notebook.View()
+}
+
+func (m appModel) setRuns(rm runModel) (tea.Model, tea.Cmd) {
+	if m.width > 0 && m.height > 0 {
+		updated, cmd := rm.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		if upd, ok := updated.(runModel); ok {
+			rm = upd
+			if cmd != nil {
+				m.runs = rm
+				m.page = pageRuns
+				m.hasRuns = true
+				return m, cmd
+			}
+		}
+	}
+	m.runs = rm
+	m.page = pageRuns
+	m.hasRuns = true
+	return m, rm.Init()
+}
+
+func (m appModel) runUpdate(msg tea.Msg) (appModel, tea.Cmd) {
+	nm, cmd := m.runs.Update(msg)
+	if nn, ok := nm.(runModel); ok {
+		m.runs = nn
+	}
+	return m, cmd
+}
+
+func (m appModel) viewRuns() string {
+	if !m.hasRuns {
+		return appStyle().Render(panelStyle().Render("run 视图未初始化"))
+	}
+	return m.runs.View()
 }

@@ -11,15 +11,16 @@ import (
 )
 
 type Config struct {
-	SchemaVersion       int                `json:"schema_version"`
-	BranchPrefix        string             `json:"branch_prefix"`
-	RefreshIntervalMS   int                `json:"refresh_interval_ms"`
-	WorkerAgent         AgentExecConfig    `json:"worker_agent"`
-	PMAgent             AgentExecConfig    `json:"pm_agent"`
-	ManagerCommand      string             `json:"manager_command"`
-	PMDispatchTimeoutMS int                `json:"pm_dispatch_timeout_ms"`
-	GatewayAgent        GatewayAgentConfig `json:"gateway_agent"`
-	Notebook            NotebookConfig     `json:"notebook"`
+	SchemaVersion       int                        `json:"schema_version"`
+	BranchPrefix        string                     `json:"branch_prefix"`
+	RefreshIntervalMS   int                        `json:"refresh_interval_ms"`
+	WorkerAgent         AgentExecConfig            `json:"worker_agent"`
+	PMAgent             AgentExecConfig            `json:"pm_agent"`
+	ManagerCommand      string                     `json:"manager_command"`
+	PMDispatchTimeoutMS int                        `json:"pm_dispatch_timeout_ms"`
+	GatewayAgent        GatewayAgentConfig         `json:"gateway_agent"`
+	RunTargets          map[string]RunTargetConfig `json:"run_targets,omitempty"`
+	Notebook            NotebookConfig             `json:"notebook"`
 
 	notebookSet              bool
 	notebookEnabledSet       bool
@@ -45,6 +46,18 @@ type GatewayAgentConfig struct {
 	Output        string `json:"output"`
 	ResumeOutput  string `json:"resume_output"`
 	TurnTimeoutMS int    `json:"turn_timeout_ms"`
+}
+
+type RunTargetConfig struct {
+	Description        string   `json:"description,omitempty"`
+	Command            []string `json:"command,omitempty"`
+	TimeoutMS          int64    `json:"timeout_ms,omitempty"`
+	PreflightCommand   []string `json:"preflight_command,omitempty"`
+	PreflightTimeoutMS int64    `json:"preflight_timeout_ms,omitempty"`
+	BootstrapCommand   []string `json:"bootstrap_command,omitempty"`
+	BootstrapTimeoutMS int64    `json:"bootstrap_timeout_ms,omitempty"`
+	RepairCommand      []string `json:"repair_command,omitempty"`
+	RepairTimeoutMS    int64    `json:"repair_timeout_ms,omitempty"`
 }
 
 type NotebookConfig struct {
@@ -115,6 +128,10 @@ func (c Config) WithDefaults() Config {
 	out.WorkerAgent = normalizeAgentExecConfig(out.WorkerAgent)
 	out.PMAgent = normalizeAgentExecConfig(out.PMAgent)
 	out.GatewayAgent = normalizeGatewayAgentConfig(out.GatewayAgent)
+	out.RunTargets = normalizeRunTargetConfigs(out.RunTargets)
+	if len(out.RunTargets) == 0 {
+		out.RunTargets = defaultRunTargetConfigs()
+	}
 	if out.WorkerAgent.Provider == "" {
 		out.WorkerAgent = AgentExecConfig{
 			Provider:        defaultWorkerProvider,
@@ -198,6 +215,104 @@ func normalizeGatewayAgentConfig(in GatewayAgentConfig) GatewayAgentConfig {
 	out.Command = strings.TrimSpace(out.Command)
 	out.Output = strings.TrimSpace(out.Output)
 	out.ResumeOutput = strings.TrimSpace(out.ResumeOutput)
+	return out
+}
+
+func defaultRunTargetConfigs() map[string]RunTargetConfig {
+	return map[string]RunTargetConfig{
+		"test": {
+			Description: "Run the default project test suite.",
+			Command:     []string{"go", "test", "./..."},
+			TimeoutMS:   20 * 60 * 1000,
+			PreflightCommand: []string{"go", "test", "./..."},
+			PreflightTimeoutMS: 2 * 60 * 1000,
+		},
+		"lint": {
+			Description: "Run the default project linter entrypoint.",
+			Command:     []string{"golangci-lint", "run"},
+			TimeoutMS:   10 * 60 * 1000,
+			PreflightCommand: []string{"golangci-lint", "run"},
+			PreflightTimeoutMS: 60 * 1000,
+		},
+		"build": {
+			Description: "Run the default project build entrypoint.",
+			Command:     []string{"go", "build", "./..."},
+			TimeoutMS:   15 * 60 * 1000,
+			PreflightCommand: []string{"go", "build", "./..."},
+			PreflightTimeoutMS: 60 * 1000,
+		},
+	}
+}
+
+func normalizeRunTargetConfigs(in map[string]RunTargetConfig) map[string]RunTargetConfig {
+	if len(in) == 0 {
+		return map[string]RunTargetConfig{}
+	}
+	out := make(map[string]RunTargetConfig, len(in))
+	for name, cfg := range in {
+		key := strings.TrimSpace(strings.ToLower(name))
+		if key == "" {
+			continue
+		}
+		cfg.Description = strings.TrimSpace(cfg.Description)
+		if cfg.TimeoutMS < 0 {
+			cfg.TimeoutMS = 0
+		}
+		if cfg.PreflightTimeoutMS < 0 {
+			cfg.PreflightTimeoutMS = 0
+		}
+		if cfg.BootstrapTimeoutMS < 0 {
+			cfg.BootstrapTimeoutMS = 0
+		}
+		if cfg.RepairTimeoutMS < 0 {
+			cfg.RepairTimeoutMS = 0
+		}
+		if len(cfg.Command) > 0 {
+			args := make([]string, 0, len(cfg.Command))
+			for _, arg := range cfg.Command {
+				arg = strings.TrimSpace(arg)
+				if arg == "" {
+					continue
+				}
+				args = append(args, arg)
+			}
+			cfg.Command = args
+		}
+		if len(cfg.PreflightCommand) > 0 {
+			args := make([]string, 0, len(cfg.PreflightCommand))
+			for _, arg := range cfg.PreflightCommand {
+				arg = strings.TrimSpace(arg)
+				if arg == "" {
+					continue
+				}
+				args = append(args, arg)
+			}
+			cfg.PreflightCommand = args
+		}
+		if len(cfg.BootstrapCommand) > 0 {
+			args := make([]string, 0, len(cfg.BootstrapCommand))
+			for _, arg := range cfg.BootstrapCommand {
+				arg = strings.TrimSpace(arg)
+				if arg == "" {
+					continue
+				}
+				args = append(args, arg)
+			}
+			cfg.BootstrapCommand = args
+		}
+		if len(cfg.RepairCommand) > 0 {
+			args := make([]string, 0, len(cfg.RepairCommand))
+			for _, arg := range cfg.RepairCommand {
+				arg = strings.TrimSpace(arg)
+				if arg == "" {
+					continue
+				}
+				args = append(args, arg)
+			}
+			cfg.RepairCommand = args
+		}
+		out[key] = cfg
+	}
 	return out
 }
 
@@ -333,6 +448,9 @@ func MergeConfig(oldCfg, override Config) Config {
 	}
 	if override.GatewayAgent.TurnTimeoutMS > 0 {
 		out.GatewayAgent.TurnTimeoutMS = override.GatewayAgent.TurnTimeoutMS
+	}
+	if len(override.RunTargets) > 0 {
+		out.RunTargets = normalizeRunTargetConfigs(override.RunTargets)
 	}
 	if override.notebookSet {
 		if override.notebookEnabledSet {

@@ -14,6 +14,18 @@ import (
 	"dalek/internal/app"
 )
 
+func maybeHandleDaemonHealth(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet && r.URL.Path == "/health" {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":      true,
+			"service": "dalek.daemon.internal",
+		})
+		return true
+	}
+	return false
+}
+
 type daemonDispatchSubmitPayload struct {
 	Project   string `json:"project"`
 	TicketID  uint   `json:"ticket_id"`
@@ -72,6 +84,9 @@ func TestCLI_TicketDispatch_AsyncAccepted(t *testing.T) {
 
 	var called atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if maybeHandleDaemonHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/dispatch/submit" {
 			http.NotFound(w, r)
 			return
@@ -155,6 +170,9 @@ func TestCLI_TicketDispatch_AsyncAutoStartFalse(t *testing.T) {
 
 	var called atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if maybeHandleDaemonHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/dispatch/submit" {
 			http.NotFound(w, r)
 			return
@@ -394,6 +412,9 @@ func TestCLI_WorkerRun_AsyncAccepted(t *testing.T) {
 
 	var called atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if maybeHandleDaemonHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/worker-run/submit" {
 			http.NotFound(w, r)
 			return

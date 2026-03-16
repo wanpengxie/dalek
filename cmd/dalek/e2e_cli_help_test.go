@@ -56,6 +56,76 @@ func TestCLI_TicketHelpIncludesEdit(t *testing.T) {
 	}
 }
 
+func TestCLI_HelpIncludesNode(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+
+	stdout, stderr, err := runCLI(t, bin, repo, "--help")
+	if err != nil {
+		t.Fatalf("dalek --help should exit 0: %v, stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	combined := stdout + "\n" + stderr
+	if !strings.Contains(combined, "node") {
+		t.Fatalf("top-level help should include node command, got:\n%s", combined)
+	}
+}
+
+func TestCLI_NodeHelpIncludesRunLoop(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+
+	stdout, stderr, err := runCLI(t, bin, repo, "node", "--help")
+	if err != nil {
+		t.Fatalf("node --help should exit 0: %v, stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	combined := stdout + "\n" + stderr
+	if !strings.Contains(combined, "run-loop") {
+		t.Fatalf("node --help should include run-loop, got:\n%s", combined)
+	}
+}
+
+func TestCLI_RunShowHelpIncludesTaskStatusAndWarnings(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+
+	stdout, stderr, err := runCLI(t, bin, repo, "run", "show", "--help")
+	if err != nil {
+		t.Fatalf("run show --help should exit 0: %v, stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	combined := stdout + "\n" + stderr
+	if !strings.Contains(combined, "聚合状态") {
+		t.Fatalf("run show --help should mention aggregated status, got:\n%s", combined)
+	}
+}
+
+func TestCLI_RunArtifactHelpIncludesIssues(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+
+	stdout, stderr, err := runCLI(t, bin, repo, "run", "artifact", "ls", "--help")
+	if err != nil {
+		t.Fatalf("run artifact ls --help should exit 0: %v, stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	combined := stdout + "\n" + stderr
+	if !strings.Contains(combined, "artifact issues") {
+		t.Fatalf("run artifact ls --help should mention artifact issues, got:\n%s", combined)
+	}
+}
+
+func TestCLI_NodeRunLoopHelpIncludesRecoveryWarnings(t *testing.T) {
+	bin := buildCLIBinary(t)
+	repo := initGitRepo(t)
+
+	stdout, stderr, err := runCLI(t, bin, repo, "node", "run-loop", "--help")
+	if err != nil {
+		t.Fatalf("node run-loop --help should exit 0: %v, stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	combined := stdout + "\n" + stderr
+	if !strings.Contains(combined, "recovery") || !strings.Contains(combined, "warnings") {
+		t.Fatalf("node run-loop --help should mention recovery and warnings, got:\n%s", combined)
+	}
+}
+
 func TestCLI_OldTopLevelCommandFails(t *testing.T) {
 	bin := buildCLIBinary(t)
 	repo := initGitRepo(t)

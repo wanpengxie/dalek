@@ -83,6 +83,26 @@ func storeMigrations() []Migration {
 			Name:    "ensure_ticket_label_column",
 			Up:      migrateEnsureTicketLabelColumn,
 		},
+		{
+			Version: 14,
+			Name:    "ensure_run_views_table",
+			Up:      migrateEnsureRunViewsTable,
+		},
+		{
+			Version: 15,
+			Name:    "ensure_nodes_and_workspace_assignments_tables",
+			Up:      migrateEnsureNodesAndWorkspaceAssignments,
+		},
+		{
+			Version: 16,
+			Name:    "ensure_node_session_epoch_column",
+			Up:      migrateEnsureNodeSessionEpochColumn,
+		},
+		{
+			Version: 17,
+			Name:    "ensure_snapshots_table",
+			Up:      migrateEnsureSnapshotsTable,
+		},
 	}
 }
 
@@ -352,7 +372,30 @@ func migrateEnsureTicketLabelColumn(db *gorm.DB) error {
 UPDATE tickets
 SET label = ''
 WHERE label IS NULL;
+	`).Error
+}
+
+func migrateEnsureRunViewsTable(db *gorm.DB) error {
+	return db.AutoMigrate(&RunView{})
+}
+
+func migrateEnsureNodesAndWorkspaceAssignments(db *gorm.DB) error {
+	return db.AutoMigrate(&Node{}, &WorkspaceAssignment{})
+}
+
+func migrateEnsureNodeSessionEpochColumn(db *gorm.DB) error {
+	if err := db.AutoMigrate(&Node{}); err != nil {
+		return err
+	}
+	return db.Exec(`
+UPDATE nodes
+SET session_epoch = 1
+WHERE session_epoch IS NULL OR session_epoch <= 0;
 `).Error
+}
+
+func migrateEnsureSnapshotsTable(db *gorm.DB) error {
+	return db.AutoMigrate(&Snapshot{})
 }
 
 func normalizeMigrations(migrations []Migration) ([]Migration, error) {

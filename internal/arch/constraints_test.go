@@ -460,14 +460,18 @@ func TestCmdTestsServicesImportAllowlist(t *testing.T) {
 	root := repoRoot(t)
 	cmdDir := filepath.Join(root, "cmd", "dalek")
 	files := listGoFiles(t, cmdDir)
-	allowlist := map[string]map[string]bool{
-		"cmd/dalek/cmd_gateway_feishu_test.go": {
-			"dalek/internal/services/channel": true,
-		},
-		"cmd/dalek/e2e_cli_test.go": {
-			"dalek/internal/services/channel": true,
-		},
-	}
+		allowlist := map[string]map[string]bool{
+			"cmd/dalek/cmd_gateway_feishu_test.go": {
+				"dalek/internal/services/channel": true,
+			},
+			"cmd/dalek/e2e_cli_test.go": {
+				"dalek/internal/services/channel": true,
+			},
+			"cmd/dalek/e2e_cli_run_test.go": {
+				"dalek/internal/services/run":  true,
+				"dalek/internal/services/task": true,
+			},
+		}
 
 	for _, path := range files {
 		if !strings.HasSuffix(path, "_test.go") {

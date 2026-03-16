@@ -168,11 +168,24 @@ func cmdAgentRun(args []string) {
 		return
 	}
 
-	_, daemonClient := mustOpenDaemonClient(out, *home)
+	_, remote, derr := openRemoteProject(*home, *proj)
+	if derr != nil {
+		if app.IsDaemonUnavailable(derr) {
+			exitFixFirstError(out, 1,
+				"daemon 不在线，无法异步执行 agent run",
+				daemonUnavailableAgentRunFix(),
+				daemonRuntimeErrorCause(derr),
+			)
+		}
+		exitRuntimeError(out,
+			"打开 remote project 失败",
+			daemonRuntimeErrorCause(derr),
+			"检查 daemon 日志（dalek daemon logs）后重试，或改用 --sync",
+		)
+	}
 	ctx, cancel := projectCtx(*timeout)
 	defer cancel()
-	receipt, err := daemonClient.SubmitSubagentRun(ctx, app.DaemonSubagentSubmitRequest{
-		Project:   strings.TrimSpace(p.Name()),
+	receipt, err := remote.SubmitSubagentRun(ctx, app.DaemonSubagentSubmitRequest{
 		RequestID: strings.TrimSpace(*requestID),
 		Provider:  strings.TrimSpace(*provider),
 		Model:     strings.TrimSpace(*model),

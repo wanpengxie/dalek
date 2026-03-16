@@ -84,11 +84,15 @@ func cmdNoteAdd(args []string) {
 		exitUsageError(out, "缺少 note 文本", "note add 需要文本内容", "dalek note add \"需要支持导出 CSV\"")
 	}
 
-	p := mustOpenProjectWithOutput(out, *home, *proj)
-	_, daemonClient := mustOpenDaemonClient(out, *home)
-	res, err := daemonClient.SubmitNote(context.Background(), app.DaemonNoteSubmitRequest{
-		Project: strings.TrimSpace(p.Name()),
-		Text:    raw,
+	_, remote, derr := openRemoteProject(*home, *proj)
+	if derr != nil {
+		if app.IsDaemonUnavailable(derr) {
+			exitRuntimeError(out, "note add 失败（daemon 不在线）", derr.Error(), "请先执行 dalek daemon start 后重试")
+		}
+		exitRuntimeError(out, "note add 失败", derr.Error(), "检查输入内容后重试")
+	}
+	res, err := remote.SubmitNote(context.Background(), app.DaemonNoteSubmitRequest{
+		Text: raw,
 	})
 	if err != nil {
 		if app.IsDaemonUnavailable(err) {
