@@ -770,6 +770,45 @@ func TestIntegration_Lifecycle_RejectsWorkerReportBoundToWrongRun(t *testing.T) 
 	assertLifecycleConsistentForLifecycleTest(t, p, tk1.ID, contracts.TicketQueued, contracts.IntegrationNone)
 }
 
+func TestIntegration_Lifecycle_ProjectApplyWorkerReportDoesNotAdvanceWorkflow(t *testing.T) {
+	p := newIntegrationProject(t)
+	ctx := context.Background()
+
+	tk, err := p.CreateTicketWithDescription(ctx, "report-runtime-only", "project ApplyWorkerReport should only write runtime state")
+	if err != nil {
+		t.Fatalf("CreateTicket failed: %v", err)
+	}
+	w, err := p.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	run := createWorkerDeliverRunForLifecycleTest(t, p, tk.ID, w.ID, "report-runtime-only")
+
+	err = p.ApplyWorkerReport(ctx, contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: p.Key(),
+		TicketID:   tk.ID,
+		WorkerID:   w.ID,
+		TaskRunID:  run.ID,
+		Summary:    "need input before closure",
+		NeedsUser:  true,
+		Blockers:   []string{"waiting for PM"},
+		NextAction: string(contracts.NextWaitUser),
+	}, "integration.runtime_only")
+	if err != nil {
+		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	}
+
+	ticket := loadTicketForLifecycleTest(t, p, tk.ID)
+	if ticket.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected ticket remain queued after direct report ingestion, got=%s", ticket.WorkflowStatus)
+	}
+	if got := countLifecycleEventsForLifecycleTest(t, p, tk.ID, contracts.TicketLifecycleWaitUserReported); got != 0 {
+		t.Fatalf("expected no wait_user_reported event from direct report ingestion, got=%d", got)
+	}
+	assertLifecycleConsistentForLifecycleTest(t, p, tk.ID, contracts.TicketQueued, contracts.IntegrationNone)
+}
+
 func TestIntegration_Lifecycle_DaemonStartRecoveryAndTickConvergesQueuedAndActiveTickets(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
