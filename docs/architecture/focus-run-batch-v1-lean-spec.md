@@ -356,7 +356,7 @@ focus 只在主路径收口后做两种动作：
    - 收口完成后，同一个 batch 可继续下一张 ticket
 
 2. 其他 `blocked_reason`
-   - 例如 `needs_user`、`restart_exhausted`
+   - 例如 `needs_user`、`budget_exhausted`
    - v1 不自动恢复
    - 需要人工决策后，再显式 stop 当前 focus 或启动新的 batch
 

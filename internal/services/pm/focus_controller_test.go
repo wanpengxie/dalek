@@ -325,11 +325,11 @@ func TestFocusStop_PreservesRunRequestIDAndTerminalizesPendingItems(t *testing.T
 	}
 }
 
-func TestAdvanceFocusController_BlocksAfterRestartExhausted(t *testing.T) {
+func TestAdvanceFocusController_BlocksAfterFocusBudgetExhausted(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
 
-	tk := createTicket(t, p.DB, "focus-restart-exhausted")
+	tk := createTicket(t, p.DB, "focus-budget-exhausted")
 	w, err := svc.StartTicket(ctx, tk.ID)
 	if err != nil {
 		t.Fatalf("StartTicket failed: %v", err)
@@ -342,6 +342,7 @@ func TestAdvanceFocusController_BlocksAfterRestartExhausted(t *testing.T) {
 	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
 		Mode:           contracts.FocusModeBatch,
 		ScopeTicketIDs: []uint{tk.ID},
+		AgentBudget:    2,
 	})
 	if err != nil {
 		t.Fatalf("FocusStart failed: %v", err)
@@ -365,6 +366,13 @@ func TestAdvanceFocusController_BlocksAfterRestartExhausted(t *testing.T) {
 	if err := svc.AdvanceFocusController(ctx); err != nil {
 		t.Fatalf("AdvanceFocusController first requeue failed: %v", err)
 	}
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet after first requeue failed: %v", err)
+	}
+	if view.Run.AgentBudget != 1 {
+		t.Fatalf("expected remaining budget=1 after first restart, got=%d", view.Run.AgentBudget)
+	}
 
 	run2 := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "focus-restart-run-2")
 	if _, err := svc.acceptWorkerRun(ctx, tk.ID, w, run2.ID, "test.focus.restart2", contracts.TicketLifecycleActorSystem, nil); err != nil {
@@ -387,10 +395,42 @@ func TestAdvanceFocusController_BlocksAfterRestartExhausted(t *testing.T) {
 		t.Fatalf("requeue ticket after run2 failed: %v", err)
 	}
 	if err := svc.AdvanceFocusController(ctx); err != nil {
-		t.Fatalf("AdvanceFocusController restart exhausted failed: %v", err)
+		t.Fatalf("AdvanceFocusController second requeue failed: %v", err)
 	}
 
-	view, err := svc.FocusGet(ctx, res.FocusID)
+	view, err = svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet after second requeue failed: %v", err)
+	}
+	if view.Run.AgentBudget != 0 {
+		t.Fatalf("expected remaining budget=0 after second restart, got=%d", view.Run.AgentBudget)
+	}
+
+	run3 := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "focus-restart-run-3")
+	if _, err := svc.acceptWorkerRun(ctx, tk.ID, w, run3.ID, "test.focus.restart3", contracts.TicketLifecycleActorSystem, nil); err != nil {
+		t.Fatalf("acceptWorkerRun(3) failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController third accept failed: %v", err)
+	}
+
+	if err := p.DB.Model(&contracts.TaskRun{}).Where("id = ?", run3.ID).Updates(map[string]any{
+		"orchestration_state": contracts.TaskCanceled,
+		"finished_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("mark run3 canceled failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketQueued,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("requeue ticket after run3 failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController budget exhausted failed: %v", err)
+	}
+
+	view, err = svc.FocusGet(ctx, res.FocusID)
 	if err != nil {
 		t.Fatalf("FocusGet failed: %v", err)
 	}
@@ -401,11 +441,11 @@ func TestAdvanceFocusController_BlocksAfterRestartExhausted(t *testing.T) {
 	if item == nil || item.Status != contracts.FocusItemBlocked {
 		t.Fatalf("expected item blocked, got=%+v", item)
 	}
-	if item.BlockedReason != "restart_exhausted" {
-		t.Fatalf("expected blocked_reason restart_exhausted, got=%s", item.BlockedReason)
+	if item.BlockedReason != "budget_exhausted" {
+		t.Fatalf("expected blocked_reason budget_exhausted, got=%s", item.BlockedReason)
 	}
-	if item.CurrentAttempt != 2 {
-		t.Fatalf("expected current_attempt=2 after second accept, got=%d", item.CurrentAttempt)
+	if item.CurrentAttempt != 3 {
+		t.Fatalf("expected current_attempt=3 after budget-exhausted block, got=%d", item.CurrentAttempt)
 	}
 }
 

@@ -15,7 +15,7 @@ import (
 
 const (
 	focusBlockedReasonNeedsUser                    = "needs_user"
-	focusBlockedReasonRestartExhausted             = "restart_exhausted"
+	focusBlockedReasonBudgetExhausted              = "budget_exhausted"
 	focusBlockedReasonSubmitFailed                 = "submit_failed"
 	focusBlockedReasonStartFailed                  = "start_failed"
 	focusBlockedReasonMergeFailed                  = "merge_failed"
@@ -24,7 +24,6 @@ const (
 )
 
 const (
-	focusMaxAutoRestarts       = 1
 	focusSubmitAcceptanceGrace = 30 * time.Second
 )
 
@@ -130,7 +129,7 @@ func (s *Service) focusTickPendingItem(ctx context.Context, run contracts.FocusR
 		if snapshot.ActiveRun != nil {
 			return s.focusAdoptExecutingItem(ctx, run, item, snapshot)
 		}
-		return s.focusQueueItem(ctx, run.ID, item.ID, focusWorkerID(snapshot.Worker), focusNextAttempt(item.CurrentAttempt), "", "", nil)
+		return s.focusQueueItem(ctx, run, item, focusWorkerID(snapshot.Worker), focusNextAttempt(item.CurrentAttempt), false, "", "", nil)
 	case contracts.TicketBlocked:
 		return s.focusRestartOrBlock(ctx, run, item, snapshot, focusNextAttempt(item.CurrentAttempt))
 	case contracts.TicketArchived:
@@ -147,7 +146,7 @@ func (s *Service) focusTickPendingItem(ctx context.Context, run contracts.FocusR
 		if err != nil {
 			return err
 		}
-		return s.focusQueueItem(ctx, run.ID, item.ID, focusWorkerID(snapshot.Worker), focusNextAttempt(item.CurrentAttempt), contracts.FocusEventItemStartRequested, "focus item start requested", map[string]any{
+		return s.focusQueueItem(ctx, run, item, focusWorkerID(snapshot.Worker), focusNextAttempt(item.CurrentAttempt), false, contracts.FocusEventItemStartRequested, "focus item start requested", map[string]any{
 			"ticket_id": item.TicketID,
 			"worker_id": focusWorkerID(snapshot.Worker),
 			"seq":       item.Seq,
@@ -506,8 +505,8 @@ func (s *Service) focusRestartOrBlock(ctx context.Context, run contracts.FocusRu
 	if nextAttempt <= 0 {
 		nextAttempt = 1
 	}
-	if nextAttempt > focusMaxAutoRestarts+1 {
-		return s.focusBlockItem(ctx, run, item, focusBlockedReasonRestartExhausted, "focus restart exhausted")
+	if focusRemainingBudget(run) <= 0 {
+		return s.focusBlockItem(ctx, run, item, focusBlockedReasonBudgetExhausted, focusBudgetExhaustedMessage(run, nextAttempt))
 	}
 	baseBranch, berr := requiredWorkerBaseBranch(snapshot.Ticket)
 	if berr != nil {
@@ -521,7 +520,7 @@ func (s *Service) focusRestartOrBlock(ctx context.Context, run contracts.FocusRu
 		return loadErr
 	}
 	snapshot = reloaded
-	return s.focusQueueItem(ctx, run.ID, item.ID, focusWorkerID(snapshot.Worker), nextAttempt, contracts.FocusEventItemRestarted, "focus item restarted", map[string]any{
+	return s.focusQueueItem(ctx, run, item, focusWorkerID(snapshot.Worker), nextAttempt, true, contracts.FocusEventItemRestarted, "focus item restarted", map[string]any{
 		"ticket_id": item.TicketID,
 		"worker_id": focusWorkerID(snapshot.Worker),
 		"attempt":   nextAttempt,
@@ -640,8 +639,15 @@ func (s *Service) focusAdoptExecutingItem(ctx context.Context, run contracts.Foc
 	})
 }
 
-func (s *Service) focusQueueItem(ctx context.Context, runID, itemID, workerID uint, attempt int, eventKind, eventSummary string, payload any) error {
+func (s *Service) focusQueueItem(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, workerID uint, attempt int, consumeRestartBudget bool, eventKind, eventSummary string, payload any) error {
 	now := time.Now()
+	runUpdates := map[string]any{
+		"status":      contracts.FocusRunning,
+		"finished_at": nil,
+	}
+	if consumeRestartBudget {
+		runUpdates["agent_budget"] = gorm.Expr("CASE WHEN agent_budget > 0 THEN agent_budget - 1 ELSE 0 END")
+	}
 	itemUpdates := map[string]any{
 		"status":              contracts.FocusItemQueued,
 		"current_attempt":     focusNextAttempt(attempt),
@@ -654,10 +660,7 @@ func (s *Service) focusQueueItem(ctx context.Context, runID, itemID, workerID ui
 	if workerID != 0 {
 		itemUpdates["current_worker_id"] = workerID
 	}
-	if err := s.focusUpdateRunAndItem(ctx, runID, &itemID, map[string]any{
-		"status":      contracts.FocusRunning,
-		"finished_at": nil,
-	}, itemUpdates, eventKind, eventSummary, payload); err != nil {
+	if err := s.focusUpdateRunAndItem(ctx, run.ID, &item.ID, runUpdates, itemUpdates, eventKind, eventSummary, payload); err != nil {
 		return err
 	}
 	s.KickQueueConsumer()
@@ -1363,6 +1366,32 @@ func focusNextAttempt(current int) int {
 		return 1
 	}
 	return current
+}
+
+func focusRemainingBudget(run contracts.FocusRun) int {
+	if run.AgentBudget > 0 {
+		return run.AgentBudget
+	}
+	return 0
+}
+
+func focusMaxBudget(run contracts.FocusRun) int {
+	if run.AgentBudgetMax > 0 {
+		return run.AgentBudgetMax
+	}
+	if run.AgentBudget > 0 {
+		return run.AgentBudget
+	}
+	return defaultAgentBudget
+}
+
+func focusBudgetExhaustedMessage(run contracts.FocusRun, nextAttempt int) string {
+	return fmt.Sprintf(
+		"focus budget exhausted: next_attempt=%d remaining_budget=%d budget_max=%d",
+		nextAttempt,
+		focusRemainingBudget(run),
+		focusMaxBudget(run),
+	)
 }
 
 func focusItemTerminalStatus(status string) bool {
