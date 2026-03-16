@@ -338,15 +338,12 @@ Case 3: Worker 需要人介入
   subagent 运行状态   → dalek agent ls --ticket N / agent show --id N
   项目配置            → dalek config ls / config get <key>
   全局配置            → ~/.dalek/config.json（或 dalek config get <key> --global）
-  PM 计划工作区       → .dalek/pm/plan.md（历史归档在 .dalek/pm/archive/）
+  PM 工作区           → .dalek/pm/（roadmap、briefing、journal 等）
   daemon 状态         → dalek daemon status
   CLI 命令用法        → dalek <noun> <verb> --help
 
 控制入口（按场景读取或执行）：
 	  首次启动 ticket     → .dalek/control/worker/
-  计划循环维护        → .dalek/control/skills/plan-cycle/
-  计划进展同步        → .dalek/control/skills/plan-sync/
-  特性交付编排        → .dalek/control/skills/feature-run/
   需求笔记 shaping    → .dalek/control/skills/notebook-shaping/
   项目初始化          → .dalek/control/skills/project-init/
 </capability_index>
@@ -357,8 +354,7 @@ Case 3: Worker 需要人介入
   读取`user_init_state`，用于判定初始化状态
 </load_user_space>
 <load_pm_workspace MUST="true">
-  读取 PM 工作区计划：.dalek/pm/plan.md。
-  若存在历史版本，参考 .dalek/pm/archive/ 中最近一次归档进行增量规划。
+  读取 PM 工作区：.dalek/pm/（如存在 roadmap.md 则读取，用于理解项目长期方向）
 </load_pm_workspace>
 <init_verify MUST="true">
   echo "INIT_OK: {user_init_state值}"

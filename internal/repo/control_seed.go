@@ -37,9 +37,6 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 	if _, err := writeFileIfMissing(layout.ProjectAgentUserPath, defaultControlProjectAgentUserTemplate(layout, projectName), 0o644); err != nil {
 		return err
 	}
-	if _, err := writeFileIfMissing(pmPlanPath(layout), defaultPMPlanTemplate(), 0o644); err != nil {
-		return err
-	}
 	if _, err := ensureProjectBootstrap(layout); err != nil {
 		return err
 	}
@@ -88,7 +85,6 @@ func PlanControlPlaneSeedUpdate(layout Layout, projectName string) ([]ControlPla
 		{path: layout.ProjectAgentKernelPath, content: defaultControlProjectAgentKernelTemplate(layout, projectName)},
 		{path: layout.ProjectAgentUserPath, content: defaultControlProjectAgentUserTemplate(layout, projectName)},
 		{path: layout.ProjectBootstrapPath, content: defaultProjectBootstrapTemplate()},
-		{path: pmPlanPath(layout), content: defaultPMPlanTemplate()},
 	}
 	for _, spec := range planSpecs {
 		differs, err := fileContentDiffers(spec.path, spec.content)
@@ -131,7 +127,6 @@ func UpdateControlPlaneSeed(layout Layout, projectName string) ([]ControlPlaneCh
 		{path: layout.ProjectAgentKernelPath, content: defaultControlProjectAgentKernelTemplate(layout, projectName), mode: 0o644},
 		{path: layout.ProjectAgentUserPath, content: defaultControlProjectAgentUserTemplate(layout, projectName), mode: 0o644},
 		{path: layout.ProjectBootstrapPath, content: defaultProjectBootstrapTemplate(), mode: 0o755},
-		{path: pmPlanPath(layout), content: defaultPMPlanTemplate(), mode: 0o644},
 	}
 	for _, spec := range forceSpecs {
 		existed := true
@@ -251,14 +246,6 @@ func defaultProjectBootstrapTemplate() string {
 	return mustReadSeedTemplate("templates/project/bootstrap.sh")
 }
 
-func defaultPMPlanTemplate() string {
-	return mustReadSeedTemplate("templates/project/pm/plan.md")
-}
-
-func pmPlanPath(layout Layout) string {
-	return filepath.Join(layout.PMDir, "plan.md")
-}
-
 func ensureProjectBootstrap(layout Layout) (bool, error) {
 	current := strings.TrimSpace(layout.ProjectBootstrapPath)
 	if current == "" {
@@ -287,7 +274,6 @@ func ensureControlPlaneDirs(layout Layout) error {
 		layout.ControlKnowledgeDir,
 		layout.ControlToolsDir,
 		layout.PMDir,
-		layout.PMArchiveDir,
 		layout.RuntimeDir,
 		layout.RuntimeWorkersDir,
 	}
