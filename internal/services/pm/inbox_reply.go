@@ -86,21 +86,56 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 		return InboxReplyResult{}, err
 	}
 	if focusRun != nil && focusItem != nil {
-		if err := s.storeInboxReplyIntent(ctx, item.ID, action, reply); err != nil {
+		switch strings.TrimSpace(focusRun.DesiredState) {
+		case contracts.FocusDesiredStopping:
+			return InboxReplyResult{}, fmt.Errorf("focus batch#%d 正在 stopping，不能恢复 t%d", focusRun.ID, item.TicketID)
+		case contracts.FocusDesiredCanceling:
+			return InboxReplyResult{}, fmt.Errorf("focus batch#%d 正在 canceling，不能恢复 t%d", focusRun.ID, item.TicketID)
+		}
+		replyInbox := *item
+		replyInbox.ReplyAction = action
+		replyInbox.ReplyMarkdown = reply
+		if err := s.focusAppendEvent(ctx, focusRun.ID, focusItem.ID, contracts.FocusEventInboxReplyAccepted, "focus inbox reply accepted", inboxReplyAuditPayload(replyInbox, action, reply)); err != nil {
 			return InboxReplyResult{}, err
 		}
-		if err := s.focusAppendEvent(ctx, focusRun.ID, focusItem.ID, contracts.FocusEventInboxReplyAccepted, "focus inbox reply accepted", inboxReplyAuditPayload(*item, action, reply)); err != nil {
+		if err := s.focusResumeBlockedItemFromInboxReply(ctx, *focusRun, *focusItem, replyInbox); err != nil {
 			return InboxReplyResult{}, err
+		}
+		view, err := s.FocusGet(ctx, focusRun.ID)
+		if err != nil {
+			return InboxReplyResult{}, err
+		}
+		var updatedItem *contracts.FocusRunItem
+		for i := range view.Items {
+			if view.Items[i].ID == focusItem.ID {
+				itemCopy := view.Items[i]
+				updatedItem = &itemCopy
+				break
+			}
+		}
+		if updatedItem == nil {
+			return InboxReplyResult{}, fmt.Errorf("focus batch#%d 缺少 focus item#%d", focusRun.ID, focusItem.ID)
+		}
+		if strings.TrimSpace(updatedItem.Status) == contracts.FocusItemBlocked {
+			lastError := strings.TrimSpace(updatedItem.LastError)
+			if lastError == "" {
+				lastError = fmt.Sprintf("focus item t%d 回复后仍处于 blocked", item.TicketID)
+			}
+			return InboxReplyResult{}, fmt.Errorf("%s", lastError)
+		}
+		workerID := item.WorkerID
+		if updatedItem.CurrentWorkerID != nil && *updatedItem.CurrentWorkerID != 0 {
+			workerID = *updatedItem.CurrentWorkerID
 		}
 		out := InboxReplyResult{
 			InboxID:     item.ID,
 			TicketID:    item.TicketID,
-			WorkerID:    item.WorkerID,
+			WorkerID:    workerID,
 			Action:      action,
 			Mode:        inboxReplyModeFocus,
 			FocusID:     focusRun.ID,
 			Accepted:    true,
-			FocusedItem: focusItem.ID,
+			FocusedItem: updatedItem.ID,
 		}
 		return out, nil
 	}

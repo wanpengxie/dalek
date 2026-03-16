@@ -747,7 +747,7 @@ func TestAdvanceFocusController_ResolvesHandoffBlockedItemAndAdvances(t *testing
 	}
 }
 
-func TestAdvanceFocusController_DoesNotAutoResolveNonHandoffBlockedItem(t *testing.T) {
+func TestAdvanceFocusController_DoesNotAutoSupersedeNonHandoffBlockedItem(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
 
@@ -807,14 +807,14 @@ func TestAdvanceFocusController_DoesNotAutoResolveNonHandoffBlockedItem(t *testi
 		t.Fatalf("FocusGet after blocked tick failed: %v", err)
 	}
 	afterItem := focusItemByTicketID(after.Items, source.ID)
-	if after.Run.Status != contracts.FocusBlocked {
-		t.Fatalf("expected focus stays blocked, got=%s", after.Run.Status)
+	if after.Run.Status != contracts.FocusRunning {
+		t.Fatalf("expected focus converges back to running, got=%s", after.Run.Status)
 	}
-	if afterItem == nil || afterItem.Status != contracts.FocusItemBlocked {
-		t.Fatalf("expected item stays blocked, got=%+v", afterItem)
+	if afterItem == nil || afterItem.Status != contracts.FocusItemMerging {
+		t.Fatalf("expected item converges to merging by source ticket truth, got=%+v", afterItem)
 	}
-	if afterItem.BlockedReason != focusBlockedReasonNeedsUser {
-		t.Fatalf("expected blocked_reason stays %s, got=%s", focusBlockedReasonNeedsUser, afterItem.BlockedReason)
+	if afterItem.BlockedReason != "" {
+		t.Fatalf("expected blocked_reason cleared after converge, got=%s", afterItem.BlockedReason)
 	}
 
 	var sourceAfter contracts.Ticket
@@ -823,6 +823,71 @@ func TestAdvanceFocusController_DoesNotAutoResolveNonHandoffBlockedItem(t *testi
 	}
 	if sourceAfter.SupersededByTicketID != nil {
 		t.Fatalf("expected non-handoff blocked item not auto-superseded, got=%v", *sourceAfter.SupersededByTicketID)
+	}
+}
+
+func TestAdvanceFocusController_ConvergesBlockedNeedsUserItemToMergingByTicketTruth(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "focus-blocked-needs-merge")
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	item := focusItemByTicketID(view.Items, tk.ID)
+	if item == nil {
+		t.Fatalf("expected focus item for t%d", tk.ID)
+	}
+	if err := p.DB.Model(&contracts.FocusRun{}).Where("id = ?", res.FocusID).Updates(map[string]any{
+		"status":     contracts.FocusBlocked,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set focus blocked failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.FocusRunItem{}).Where("id = ?", item.ID).Updates(map[string]any{
+		"status":         contracts.FocusItemBlocked,
+		"blocked_reason": focusBlockedReasonNeedsUser,
+		"last_error":     "waiting for inbox reply",
+		"updated_at":     time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set focus item blocked failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"updated_at":         time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket done+needs_merge failed: %v", err)
+	}
+
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController failed: %v", err)
+	}
+
+	after, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet after converge failed: %v", err)
+	}
+	afterItem := focusItemByTicketID(after.Items, tk.ID)
+	if after.Run.Status != contracts.FocusRunning {
+		t.Fatalf("expected focus running after canonical converge, got=%s", after.Run.Status)
+	}
+	if afterItem == nil || afterItem.Status != contracts.FocusItemMerging {
+		t.Fatalf("expected item merging after canonical converge, got=%+v", afterItem)
+	}
+	if afterItem.BlockedReason != "" {
+		t.Fatalf("expected blocked_reason cleared, got=%s", afterItem.BlockedReason)
+	}
+	if afterItem.LastError != "" {
+		t.Fatalf("expected last_error cleared, got=%s", afterItem.LastError)
 	}
 }
 
