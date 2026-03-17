@@ -697,7 +697,7 @@ func isSubagentTask(st app.TaskStatus) bool {
 }
 
 func mapAgentRunPublic(st app.TaskStatus, rec *app.SubagentRun) agentRunPublic {
-	mapped := mapTaskStatusPublic(st)
+	mapped := mapTaskStatusPublic(context.Background(), nil, st)
 	out := agentRunPublic{
 		RunID:      st.RunID,
 		RunStatus:  strings.TrimSpace(mapped.RunStatus),
