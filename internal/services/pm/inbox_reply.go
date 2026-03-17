@@ -92,15 +92,66 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 		case contracts.FocusDesiredCanceling:
 			return InboxReplyResult{}, fmt.Errorf("focus batch#%d 正在 canceling，不能恢复 t%d", focusRun.ID, item.TicketID)
 		}
+		if err := s.focusAppendEvent(ctx, focusRun.ID, focusItem.ID, contracts.FocusEventInboxReplyAccepted, "focus inbox reply accepted", inboxReplyAuditPayload(*item, action, reply)); err != nil {
+			return InboxReplyResult{}, err
+		}
+		// 直接驱动：准备 worker → 提交 run → 关闭 inbox，不经过 focusResumeBlockedItemFromInboxReply
+		snapshot, err := s.focusLoadTicketSnapshot(ctx, item.TicketID)
+		if err != nil {
+			return InboxReplyResult{}, err
+		}
+		// 先检查 ticket 是否已不再 blocked（convergence 场景）
+		if handled, cerr := s.focusConvergeBlockedItemToTicketTruth(ctx, *focusRun, *focusItem, snapshot); cerr != nil {
+			return InboxReplyResult{}, cerr
+		} else if handled {
+			// ticket 已脱离 blocked（如 done+needs_merge），convergence 已处理 focus 状态，关闭 inbox
+			if err := s.markInboxReplyConsumed(ctx, item.ID); err != nil {
+				return InboxReplyResult{}, err
+			}
+			return InboxReplyResult{
+				InboxID:     item.ID,
+				TicketID:    item.TicketID,
+				WorkerID:    item.WorkerID,
+				Action:      action,
+				Mode:        inboxReplyModeFocus,
+				FocusID:     focusRun.ID,
+				Accepted:    true,
+				FocusedItem: focusItem.ID,
+			}, nil
+		}
+		baseBranch, berr := requiredWorkerBaseBranch(snapshot.Ticket)
+		if berr != nil {
+			return InboxReplyResult{}, berr
+		}
+		if _, err := s.StartTicketWithOptions(ctx, item.TicketID, StartOptions{BaseBranch: baseBranch}); err != nil {
+			return InboxReplyResult{}, fmt.Errorf("focus reply 启动 worker 失败：%w", err)
+		}
+		snapshot, err = s.focusLoadTicketSnapshot(ctx, item.TicketID)
+		if err != nil {
+			return InboxReplyResult{}, err
+		}
 		replyInbox := *item
 		replyInbox.ReplyAction = action
 		replyInbox.ReplyMarkdown = reply
-		if err := s.focusAppendEvent(ctx, focusRun.ID, focusItem.ID, contracts.FocusEventInboxReplyAccepted, "focus inbox reply accepted", inboxReplyAuditPayload(replyInbox, action, reply)); err != nil {
+		prompt := buildInboxReplyPrompt(replyInbox, action, reply)
+		attempt := focusItem.CurrentAttempt
+		if attempt <= 0 {
+			attempt = 1
+		}
+		if err := s.focusSubmitItemRun(
+			ctx,
+			*focusRun,
+			*focusItem,
+			snapshot.Worker,
+			contracts.FocusEventItemRestarted,
+			"focus item resumed from inbox reply",
+			attempt,
+			prompt,
+			&replyInbox,
+		); err != nil {
 			return InboxReplyResult{}, err
 		}
-		if err := s.focusResumeBlockedItemFromInboxReply(ctx, *focusRun, *focusItem, replyInbox); err != nil {
-			return InboxReplyResult{}, err
-		}
+		// 重新加载 focus view 获取最新状态
 		view, err := s.FocusGet(ctx, focusRun.ID)
 		if err != nil {
 			return InboxReplyResult{}, err
@@ -127,7 +178,7 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 		if updatedItem.CurrentWorkerID != nil && *updatedItem.CurrentWorkerID != 0 {
 			workerID = *updatedItem.CurrentWorkerID
 		}
-		out := InboxReplyResult{
+		return InboxReplyResult{
 			InboxID:     item.ID,
 			TicketID:    item.TicketID,
 			WorkerID:    workerID,
@@ -136,8 +187,7 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 			FocusID:     focusRun.ID,
 			Accepted:    true,
 			FocusedItem: updatedItem.ID,
-		}
-		return out, nil
+		}, nil
 	}
 
 	if contracts.CanonicalTicketWorkflowStatus(ticket.WorkflowStatus) != contracts.TicketBlocked {
@@ -201,6 +251,8 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 		if err := s.markInboxReplyConsumed(ctx, item.ID); err != nil {
 			return InboxReplyResult{}, err
 		}
+	} else if err := s.reopenInboxReplyIntent(ctx, item.ID); err != nil {
+		return InboxReplyResult{}, err
 	}
 	return InboxReplyResult{
 		InboxID:    item.ID,
@@ -560,13 +612,28 @@ func (s *Service) reopenInboxReplyIntent(ctx context.Context, inboxID uint) erro
 	if inboxID == 0 {
 		return nil
 	}
+	var current contracts.InboxItem
+	if err := db.WithContext(ctx).First(&current, inboxID).Error; err != nil {
+		return err
+	}
+	existing, err := loadActiveNeedsUserChainInboxByTicketWithDB(ctx, db, current.TicketID)
+	if err != nil {
+		return err
+	}
+	if existing != nil && existing.ID != 0 && existing.ID != inboxID && existing.Status == contracts.InboxOpen {
+		return nil
+	}
 	now := time.Now()
 	return db.WithContext(ctx).
 		Model(&contracts.InboxItem{}).
-		Where("id = ? AND reason = ? AND chain_resolved_at IS NULL", inboxID, contracts.InboxNeedsUser).
+		Where("id = ? AND reason = ?", inboxID, contracts.InboxNeedsUser).
 		Updates(map[string]any{
 			"status":            contracts.InboxOpen,
 			"closed_at":         nil,
+			"chain_resolved_at": nil,
+			"reply_action":      contracts.InboxReplyNone,
+			"reply_markdown":    "",
+			"reply_received_at": nil,
 			"reply_consumed_at": nil,
 			"updated_at":        now,
 		}).Error
@@ -771,6 +838,31 @@ func (s *Service) resolveNeedsUserChainTx(ctx context.Context, tx *gorm.DB, tick
 			"status":            contracts.InboxDone,
 			"closed_at":         &now,
 			"chain_resolved_at": &now,
+			"updated_at":        now,
+			"reply_action":      contracts.InboxReplyNone,
+			"reply_markdown":    "",
+			"reply_received_at": nil,
+			"reply_consumed_at": nil,
+		}).Error
+}
+
+func (s *Service) closeNeedsUserInboxOnBlockedExitTx(ctx context.Context, tx *gorm.DB, ticketID uint, now time.Time) error {
+	if tx == nil || ticketID == 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return tx.WithContext(ctx).
+		Model(&contracts.InboxItem{}).
+		Where("ticket_id = ? AND reason = ? AND chain_resolved_at IS NULL AND status <> ?", ticketID, contracts.InboxNeedsUser, contracts.InboxDone).
+		Where("COALESCE(reply_action, '') = ?", contracts.InboxReplyNone).
+		Updates(map[string]any{
+			"status":            contracts.InboxDone,
+			"closed_at":         &now,
 			"updated_at":        now,
 			"reply_action":      contracts.InboxReplyNone,
 			"reply_markdown":    "",

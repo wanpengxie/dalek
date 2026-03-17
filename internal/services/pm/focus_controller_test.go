@@ -891,6 +891,105 @@ func TestAdvanceFocusController_ConvergesBlockedNeedsUserItemToMergingByTicketTr
 	}
 }
 
+func TestAdvanceFocusController_IgnoresStaleNeedsUserInboxProjectionWhenTicketAlreadyNeedsMerge(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, p.DB, "focus-stale-inbox-source")
+	tk2 := createTicket(t, p.DB, "focus-stale-inbox-next")
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID, tk2.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	item1 := focusItemByTicketID(view.Items, tk1.ID)
+	item2 := focusItemByTicketID(view.Items, tk2.ID)
+	if item1 == nil {
+		t.Fatalf("expected focus item for t%d", tk1.ID)
+	}
+	if item2 == nil {
+		t.Fatalf("expected focus item for t%d", tk2.ID)
+	}
+	now := time.Now()
+	if err := p.DB.Model(&contracts.FocusRun{}).Where("id = ?", res.FocusID).Updates(map[string]any{
+		"status":     contracts.FocusBlocked,
+		"updated_at": now,
+	}).Error; err != nil {
+		t.Fatalf("set focus blocked failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.FocusRunItem{}).Where("id = ?", item1.ID).Updates(map[string]any{
+		"status":         contracts.FocusItemBlocked,
+		"blocked_reason": focusBlockedReasonNeedsUser,
+		"last_error":     "waiting for inbox reply",
+		"updated_at":     now,
+	}).Error; err != nil {
+		t.Fatalf("set focus item blocked failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk1.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+		"updated_at":         now,
+	}).Error; err != nil {
+		t.Fatalf("set ticket done+needs_merge failed: %v", err)
+	}
+
+	staleInbox := contracts.InboxItem{
+		Key:              fmt.Sprintf("manual-needs-user:t%d", tk1.ID),
+		Status:           contracts.InboxOpen,
+		Severity:         contracts.InboxBlocker,
+		Reason:           contracts.InboxNeedsUser,
+		Title:            "人工伪造的 needs_user inbox",
+		Body:             "这是一条手工注入的错误投影，不应再影响 focus controller。",
+		TicketID:         tk1.ID,
+		OriginTaskRunID:  901,
+		CurrentTaskRunID: 901,
+		WaitRoundCount:   1,
+	}
+	if err := p.DB.Create(&staleInbox).Error; err != nil {
+		t.Fatalf("create stale needs_user inbox failed: %v", err)
+	}
+
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController failed: %v", err)
+	}
+
+	after, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet after converge failed: %v", err)
+	}
+	afterItem1 := focusItemByTicketID(after.Items, tk1.ID)
+	afterItem2 := focusItemByTicketID(after.Items, tk2.ID)
+	if after.Run.Status != contracts.FocusRunning {
+		t.Fatalf("expected focus running after converge, got=%s", after.Run.Status)
+	}
+	if afterItem1 == nil || afterItem1.Status != contracts.FocusItemMerging {
+		t.Fatalf("expected stale inbox projection ignored and item enters merging, got=%+v", afterItem1)
+	}
+	if afterItem1.BlockedReason != "" {
+		t.Fatalf("expected blocked_reason cleared, got=%s", afterItem1.BlockedReason)
+	}
+	if afterItem1.LastError != "" {
+		t.Fatalf("expected last_error cleared, got=%s", afterItem1.LastError)
+	}
+	if afterItem2 == nil || afterItem2.Status != contracts.FocusItemPending {
+		t.Fatalf("expected downstream item remains pending while merge is unresolved, got=%+v", afterItem2)
+	}
+
+	var inboxAfter contracts.InboxItem
+	if err := p.DB.First(&inboxAfter, staleInbox.ID).Error; err != nil {
+		t.Fatalf("reload stale inbox failed: %v", err)
+	}
+	if inboxAfter.Status != contracts.InboxOpen {
+		t.Fatalf("expected manually injected stale inbox stay open and not affect controller, got=%s", inboxAfter.Status)
+	}
+}
+
 func prepareFocusMergeConflictTicket(t *testing.T, svc *Service, p *core.Project, tk contracts.Ticket, label string) string {
 	t.Helper()
 

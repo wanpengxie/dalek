@@ -453,6 +453,155 @@ func TestReplyInboxItem_FocusBatchResumesImmediatelyAndKeepsSerialOrder(t *testi
 	assertFocusReplyPayload(t, resumedPayload, tk1.ID, inbox.ID, "continue", "资料已放到 /tmp/context.md，请继续执行。")
 }
 
+func TestReplyInboxItem_FocusBatchReturnsErrorWhenResumeRemainsBlocked(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, p.DB, "reply-inbox-focus-submit-fail-1")
+	tk2 := createTicket(t, p.DB, "reply-inbox-focus-submit-fail-2")
+	worker, err := svc.StartTicket(ctx, tk1.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk1.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketBlocked,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket blocked failed: %v", err)
+	}
+
+	focusRes, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID, tk2.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	view, err := svc.FocusGet(ctx, focusRes.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	item1 := focusItemByTicketID(view.Items, tk1.ID)
+	if item1 == nil {
+		t.Fatalf("expected focus item for t%d", tk1.ID)
+	}
+	if err := p.DB.Model(&contracts.FocusRun{}).Where("id = ?", focusRes.FocusID).Updates(map[string]any{
+		"status":     contracts.FocusBlocked,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set focus blocked failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.FocusRunItem{}).Where("id = ?", item1.ID).Updates(map[string]any{
+		"status":         contracts.FocusItemBlocked,
+		"blocked_reason": focusBlockedReasonNeedsUser,
+		"updated_at":     time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set focus item blocked failed: %v", err)
+	}
+
+	inbox := contracts.InboxItem{
+		Key:              inboxKeyNeedsUser(worker.ID),
+		Status:           contracts.InboxOpen,
+		Severity:         contracts.InboxBlocker,
+		Reason:           contracts.InboxNeedsUser,
+		Title:            "需要你输入",
+		Body:             "请根据 /tmp/context.md 继续推进",
+		TicketID:         tk1.ID,
+		WorkerID:         worker.ID,
+		OriginTaskRunID:  21,
+		CurrentTaskRunID: 21,
+		WaitRoundCount:   1,
+	}
+	if err := p.DB.Create(&inbox).Error; err != nil {
+		t.Fatalf("create needs_user inbox failed: %v", err)
+	}
+
+	submitter := &stubWorkerRunSubmitter{err: fmt.Errorf("submit failed")}
+	svc.SetWorkerRunSubmitter(submitter)
+
+	_, err = svc.ReplyInboxItem(ctx, inbox.ID, string(contracts.InboxReplyContinue), "资料已放到 /tmp/context.md，请继续执行。")
+	if err == nil {
+		t.Fatalf("expected reply failure when focus item remains blocked")
+	}
+	if !strings.Contains(err.Error(), "submit failed") {
+		t.Fatalf("expected submit failure, got=%v", err)
+	}
+
+	after, err := svc.FocusGet(ctx, focusRes.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet after reply failed: %v", err)
+	}
+	afterItem1 := focusItemByTicketID(after.Items, tk1.ID)
+	if afterItem1 == nil || afterItem1.Status != contracts.FocusItemBlocked {
+		t.Fatalf("expected first item stays blocked after failed resume, got=%+v", afterItem1)
+	}
+	if strings.TrimSpace(afterItem1.LastError) != "submit failed" {
+		t.Fatalf("expected blocked last_error preserved, got=%q", afterItem1.LastError)
+	}
+}
+
+func TestAcceptWorkerRun_LeavingBlockedClosesNeedsUserInbox(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "accept-run-leaves-blocked-closes-inbox")
+	worker, err := svc.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketBlocked,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket blocked failed: %v", err)
+	}
+
+	inbox := contracts.InboxItem{
+		Key:              inboxKeyNeedsUserChain(tk.ID, 41),
+		Status:           contracts.InboxOpen,
+		Severity:         contracts.InboxBlocker,
+		Reason:           contracts.InboxNeedsUser,
+		Title:            "需要更多输入",
+		Body:             "请提供 /tmp/retry.txt",
+		TicketID:         tk.ID,
+		WorkerID:         worker.ID,
+		OriginTaskRunID:  41,
+		CurrentTaskRunID: 41,
+		WaitRoundCount:   1,
+	}
+	if err := p.DB.Create(&inbox).Error; err != nil {
+		t.Fatalf("create needs_user inbox failed: %v", err)
+	}
+
+	run := createWorkerTaskRun(t, p.DB, tk.ID, worker.ID, "blocked-accept-run")
+	if _, err := svc.acceptWorkerRun(ctx, tk.ID, worker, run.ID, "test.accept_worker_run", contracts.TicketLifecycleActorSystem, map[string]any{
+		"ticket_id": tk.ID,
+		"worker_id": worker.ID,
+		"task_run":  run.ID,
+	}); err != nil {
+		t.Fatalf("acceptWorkerRun failed: %v", err)
+	}
+
+	var ticketAfter contracts.Ticket
+	if err := p.DB.First(&ticketAfter, tk.ID).Error; err != nil {
+		t.Fatalf("reload ticket failed: %v", err)
+	}
+	if contracts.CanonicalTicketWorkflowStatus(ticketAfter.WorkflowStatus) != contracts.TicketActive {
+		t.Fatalf("expected ticket active after acceptWorkerRun, got=%s", ticketAfter.WorkflowStatus)
+	}
+
+	var inboxAfter contracts.InboxItem
+	if err := p.DB.First(&inboxAfter, inbox.ID).Error; err != nil {
+		t.Fatalf("reload inbox failed: %v", err)
+	}
+	if inboxAfter.Status != contracts.InboxDone {
+		t.Fatalf("expected needs_user inbox closed when ticket leaves blocked, got=%s", inboxAfter.Status)
+	}
+	if inboxAfter.ChainResolvedAt != nil {
+		t.Fatalf("expected blocked exit only closes current notification, got chain_resolved_at=%v", inboxAfter.ChainResolvedAt)
+	}
+}
+
 func TestReplyInboxItem_RejectsWhenWaitUserRoundsExhausted(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()

@@ -129,6 +129,21 @@ func TestStartTicket_BlockedPromotesWorkflowQueued(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("set ticket blocked failed: %v", err)
 	}
+	inbox := contracts.InboxItem{
+		Key:              inboxKeyNeedsUserChain(tk.ID, 41),
+		Status:           contracts.InboxOpen,
+		Severity:         contracts.InboxBlocker,
+		Reason:           contracts.InboxNeedsUser,
+		Title:            "需要补充信息后继续执行",
+		Body:             "请补充 /tmp/context.md",
+		TicketID:         tk.ID,
+		OriginTaskRunID:  41,
+		CurrentTaskRunID: 41,
+		WaitRoundCount:   1,
+	}
+	if err := p.DB.Create(&inbox).Error; err != nil {
+		t.Fatalf("create needs_user inbox failed: %v", err)
+	}
 
 	w, err := svc.StartTicket(context.Background(), tk.ID)
 	if err != nil {
@@ -157,5 +172,16 @@ func TestStartTicket_BlockedPromotesWorkflowQueued(t *testing.T) {
 	var lifecycle contracts.TicketLifecycleEvent
 	if err := p.DB.Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleStartRequested).Order("sequence desc").First(&lifecycle).Error; err != nil {
 		t.Fatalf("query lifecycle event failed: %v", err)
+	}
+
+	var inboxAfter contracts.InboxItem
+	if err := p.DB.First(&inboxAfter, inbox.ID).Error; err != nil {
+		t.Fatalf("reload inbox failed: %v", err)
+	}
+	if inboxAfter.Status != contracts.InboxDone {
+		t.Fatalf("expected blocked exit resolves needs_user inbox, got=%s", inboxAfter.Status)
+	}
+	if inboxAfter.ChainResolvedAt != nil {
+		t.Fatalf("expected blocked exit only closes current notification, got chain_resolved_at=%v", inboxAfter.ChainResolvedAt)
 	}
 }

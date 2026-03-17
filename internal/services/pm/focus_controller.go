@@ -424,14 +424,7 @@ func (s *Service) focusTickBlockedItem(ctx context.Context, run contracts.FocusR
 	} else if handled {
 		return nil
 	}
-	if strings.TrimSpace(item.BlockedReason) != focusBlockedReasonNeedsUser {
-		return nil
-	}
-	if pending, err := s.loadPendingNeedsUserInbox(ctx, item.TicketID, 0); err != nil {
-		return err
-	} else if pending != nil {
-		return s.focusResumeBlockedItemFromInboxReply(ctx, run, item, *pending)
-	}
+	// ticket 仍在 blocked → 保持 blocked，等 ReplyInboxItem 直接驱动恢复
 	return nil
 }
 
@@ -502,68 +495,11 @@ func (s *Service) focusResolveHandoffBlockedItem(ctx context.Context, run contra
 }
 
 func (s *Service) focusHandleBlockedExecution(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, snapshot focusTicketSnapshot) error {
-	if inbox, err := s.focusNeedsUserInbox(ctx, item.TicketID, focusWorkerID(snapshot.Worker)); err != nil {
-		return err
-	} else if inbox != nil {
-		lastError := "ticket 需要用户介入"
-		if inbox.WaitRoundCount >= maxWaitUserRounds {
-			lastError = needsUserManualInterventionMessage()
-			_ = s.ensureWaitUserRoundLimitVisible(context.WithoutCancel(ctx), inbox.ID, inbox.Title, inbox.Body)
-		}
-		return s.focusBlockItem(ctx, run, item, focusBlockedReasonNeedsUser, lastError)
+	// ticket blocked = needs_user，直接 block focus item；其他情况尝试重启
+	if contracts.CanonicalTicketWorkflowStatus(snapshot.Ticket.WorkflowStatus) == contracts.TicketBlocked {
+		return s.focusBlockItem(ctx, run, item, focusBlockedReasonNeedsUser, "ticket 需要用户介入")
 	}
 	return s.focusRestartOrBlock(ctx, run, item, snapshot, item.CurrentAttempt+1)
-}
-
-func (s *Service) focusResumeBlockedItemFromInboxReply(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, inbox contracts.InboxItem) error {
-	if inbox.ID == 0 {
-		return nil
-	}
-	if inbox.WaitRoundCount >= maxWaitUserRounds {
-		_ = s.ensureWaitUserRoundLimitVisible(context.WithoutCancel(ctx), inbox.ID, inbox.Title, inbox.Body)
-		if strings.TrimSpace(item.LastError) == needsUserManualInterventionMessage() {
-			return nil
-		}
-		return s.focusBlockItem(ctx, run, item, focusBlockedReasonNeedsUser, needsUserManualInterventionMessage())
-	}
-	if inbox.ReplyAction != contracts.InboxReplyContinue && inbox.ReplyAction != contracts.InboxReplyDone {
-		return nil
-	}
-	snapshot, err := s.focusLoadTicketSnapshot(ctx, item.TicketID)
-	if err != nil {
-		return err
-	}
-	if handled, err := s.focusConvergeBlockedItemToTicketTruth(ctx, run, item, snapshot); err != nil {
-		return err
-	} else if handled {
-		return nil
-	}
-	baseBranch, berr := requiredWorkerBaseBranch(snapshot.Ticket)
-	if berr != nil {
-		return s.focusBlockItem(ctx, run, item, focusBlockedReasonStartFailed, berr.Error())
-	}
-	if _, err := s.StartTicketWithOptions(ctx, item.TicketID, StartOptions{BaseBranch: baseBranch}); err != nil {
-		return s.focusBlockItem(ctx, run, item, focusBlockedReasonStartFailed, err.Error())
-	}
-	snapshot, err = s.focusLoadTicketSnapshot(ctx, item.TicketID)
-	if err != nil {
-		return err
-	}
-	attempt := item.CurrentAttempt
-	if attempt <= 0 {
-		attempt = 1
-	}
-	return s.focusSubmitItemRun(
-		ctx,
-		run,
-		item,
-		snapshot.Worker,
-		contracts.FocusEventItemRestarted,
-		"focus item resumed from inbox reply",
-		attempt,
-		buildInboxReplyPrompt(inbox, inbox.ReplyAction, inbox.ReplyMarkdown),
-		&inbox,
-	)
 }
 
 func (s *Service) focusRestartOrBlock(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, snapshot focusTicketSnapshot, nextAttempt int) error {
@@ -656,7 +592,7 @@ func (s *Service) focusSubmitItemRun(ctx context.Context, run contracts.FocusRun
 			return err
 		}
 		if consumeInbox != nil && consumeInbox.ID != 0 {
-			if err := tx.WithContext(ctx).Model(&contracts.InboxItem{}).Where("id = ?", consumeInbox.ID).Updates(map[string]any{
+			if err := tx.WithContext(ctx).Model(&contracts.InboxItem{}).Where("id = ? AND reason = ?", consumeInbox.ID, contracts.InboxNeedsUser).Updates(map[string]any{
 				"status":            contracts.InboxDone,
 				"closed_at":         &now,
 				"reply_consumed_at": &now,
@@ -1148,32 +1084,6 @@ func (s *Service) focusLoadTicketOnly(ctx context.Context, ticketID uint) (contr
 		return contracts.Ticket{}, err
 	}
 	return ticket, nil
-}
-
-func (s *Service) focusNeedsUserInbox(ctx context.Context, ticketID, workerID uint) (*contracts.InboxItem, error) {
-	_, db, err := s.require()
-	if err != nil {
-		return nil, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	var item contracts.InboxItem
-	query := db.WithContext(ctx).
-		Where("status = ? AND reason = ?", contracts.InboxOpen, contracts.InboxNeedsUser).
-		Where("COALESCE(reply_action, '') = ''")
-	if workerID != 0 {
-		query = query.Where("(ticket_id = ? OR worker_id = ?)", ticketID, workerID)
-	} else {
-		query = query.Where("ticket_id = ?", ticketID)
-	}
-	if err := query.Order("updated_at desc").Order("id desc").First(&item).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &item, nil
 }
 
 func (s *Service) focusCancelExecutingItem(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem) error {

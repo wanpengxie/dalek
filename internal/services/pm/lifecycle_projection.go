@@ -80,6 +80,13 @@ func (s *Service) appendTicketLifecycleEventAndProjectSnapshotTx(
 	if updatedAt.IsZero() {
 		updatedAt = time.Now()
 	}
+	if result.WorkflowChanged() &&
+		contracts.CanonicalTicketWorkflowStatus(result.Before.WorkflowStatus) == contracts.TicketBlocked &&
+		contracts.CanonicalTicketWorkflowStatus(result.After.WorkflowStatus) != contracts.TicketBlocked {
+		if err := s.closeNeedsUserInboxOnBlockedExitTx(ctx, tx, input.TicketID, updatedAt); err != nil {
+			return result, err
+		}
+	}
 	if err := tx.WithContext(ctx).Model(&contracts.Ticket{}).
 		Where("id = ?", input.TicketID).
 		Updates(map[string]any{
