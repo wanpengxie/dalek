@@ -315,7 +315,7 @@ func TestReplyInboxItem_SingleTicketWaitUserFallbackKeepsReopenedInboxOpen(t *te
 	}
 }
 
-func TestReplyInboxItem_FocusBatchUsesControllerAndKeepsSerialOrder(t *testing.T) {
+func TestReplyInboxItem_FocusBatchResumesImmediatelyAndKeepsSerialOrder(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
 
@@ -391,36 +391,6 @@ func TestReplyInboxItem_FocusBatchUsesControllerAndKeepsSerialOrder(t *testing.T
 	if result.FocusID != focusRes.FocusID {
 		t.Fatalf("expected focus_id=%d, got=%d", focusRes.FocusID, result.FocusID)
 	}
-	if len(submitter.Prompts()) != 0 {
-		t.Fatalf("expected reply api not submit prompt directly")
-	}
-
-	beforeController, err := svc.FocusGet(ctx, focusRes.FocusID)
-	if err != nil {
-		t.Fatalf("FocusGet before controller failed: %v", err)
-	}
-	beforeItem1 := focusItemByTicketID(beforeController.Items, tk1.ID)
-	beforeItem2 := focusItemByTicketID(beforeController.Items, tk2.ID)
-	if beforeController.Run.Status != contracts.FocusBlocked {
-		t.Fatalf("expected focus stay blocked before controller consumes reply, got=%s", beforeController.Run.Status)
-	}
-	if beforeItem1 == nil || beforeItem1.Status != contracts.FocusItemBlocked {
-		t.Fatalf("expected first item stay blocked before controller, got=%+v", beforeItem1)
-	}
-	if beforeItem2 == nil || beforeItem2.Status != contracts.FocusItemPending {
-		t.Fatalf("expected second item stay pending before controller, got=%+v", beforeItem2)
-	}
-
-	var inboxAccepted contracts.InboxItem
-	if err := p.DB.First(&inboxAccepted, inbox.ID).Error; err != nil {
-		t.Fatalf("reload inbox before controller failed: %v", err)
-	}
-	if inboxAccepted.Status != contracts.InboxOpen {
-		t.Fatalf("expected inbox stay open before controller consumes reply, got=%s", inboxAccepted.Status)
-	}
-	if inboxAccepted.ReplyAction != contracts.InboxReplyContinue {
-		t.Fatalf("expected reply action stored before controller, got=%s", inboxAccepted.ReplyAction)
-	}
 
 	var acceptedEvent contracts.FocusEvent
 	if err := p.DB.Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?", focusRes.FocusID, item1.ID, contracts.FocusEventInboxReplyAccepted).First(&acceptedEvent).Error; err != nil {
@@ -428,10 +398,6 @@ func TestReplyInboxItem_FocusBatchUsesControllerAndKeepsSerialOrder(t *testing.T
 	}
 	acceptedPayload := decodeJSONMapForTest(t, acceptedEvent.PayloadJSON)
 	assertFocusReplyPayload(t, acceptedPayload, tk1.ID, inbox.ID, "continue", "资料已放到 /tmp/context.md，请继续执行。")
-
-	if err := svc.AdvanceFocusController(ctx); err != nil {
-		t.Fatalf("AdvanceFocusController after reply failed: %v", err)
-	}
 
 	prompts := submitter.Prompts()
 	after, err := svc.FocusGet(ctx, focusRes.FocusID)
@@ -445,7 +411,7 @@ func TestReplyInboxItem_FocusBatchUsesControllerAndKeepsSerialOrder(t *testing.T
 	afterItem1 := focusItemByTicketID(after.Items, tk1.ID)
 	afterItem2 := focusItemByTicketID(after.Items, tk2.ID)
 	if after.Run.Status != contracts.FocusRunning {
-		t.Fatalf("expected focus running after controller resume, got=%s focus=%+v inbox=%+v", after.Run.Status, after, inboxAfter)
+		t.Fatalf("expected focus running immediately after reply, got=%s focus=%+v inbox=%+v", after.Run.Status, after, inboxAfter)
 	}
 	if afterItem1 == nil || afterItem1.Status != contracts.FocusItemExecuting {
 		t.Fatalf("expected first item executing, got=%+v", afterItem1)
@@ -455,10 +421,13 @@ func TestReplyInboxItem_FocusBatchUsesControllerAndKeepsSerialOrder(t *testing.T
 	}
 
 	if inboxAfter.Status != contracts.InboxDone {
-		t.Fatalf("expected inbox marked done after controller consumes reply, got=%s", inboxAfter.Status)
+		t.Fatalf("expected inbox marked done after direct reply resume, got=%s", inboxAfter.Status)
 	}
 	if inboxAfter.ReplyConsumedAt == nil {
-		t.Fatalf("expected inbox reply marked consumed after controller submit")
+		t.Fatalf("expected inbox reply marked consumed after direct resume")
+	}
+	if inboxAfter.ReplyAction != contracts.InboxReplyNone {
+		t.Fatalf("expected focus reply path not persist pending reply intent, got=%s", inboxAfter.ReplyAction)
 	}
 	if len(prompts) != 1 {
 		t.Fatalf("expected exactly one submitted prompt, got=%d focus=%+v inbox=%+v", len(prompts), after, inboxAfter)

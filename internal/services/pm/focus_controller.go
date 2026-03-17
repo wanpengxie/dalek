@@ -415,6 +415,15 @@ func (s *Service) focusTickBlockedItem(ctx context.Context, run contracts.FocusR
 	if strings.TrimSpace(item.BlockedReason) == focusBlockedReasonHandoffWaitingMerge {
 		return s.focusResolveHandoffBlockedItem(ctx, run, item)
 	}
+	snapshot, err := s.focusLoadTicketSnapshot(ctx, item.TicketID)
+	if err != nil {
+		return err
+	}
+	if handled, err := s.focusConvergeBlockedItemToTicketTruth(ctx, run, item, snapshot); err != nil {
+		return err
+	} else if handled {
+		return nil
+	}
 	if strings.TrimSpace(item.BlockedReason) != focusBlockedReasonNeedsUser {
 		return nil
 	}
@@ -424,6 +433,36 @@ func (s *Service) focusTickBlockedItem(ctx context.Context, run contracts.FocusR
 		return s.focusResumeBlockedItemFromInboxReply(ctx, run, item, *pending)
 	}
 	return nil
+}
+
+func (s *Service) focusConvergeBlockedItemToTicketTruth(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, snapshot focusTicketSnapshot) (bool, error) {
+	switch contracts.CanonicalTicketWorkflowStatus(snapshot.Ticket.WorkflowStatus) {
+	case contracts.TicketDone:
+		switch contracts.CanonicalIntegrationStatus(snapshot.Ticket.IntegrationStatus) {
+		case contracts.IntegrationNeedsMerge:
+			now := time.Now()
+			return true, s.focusUpdateRunAndItem(ctx, run.ID, &item.ID, map[string]any{
+				"status":      contracts.FocusRunning,
+				"finished_at": nil,
+				"updated_at":  now,
+			}, map[string]any{
+				"status":         contracts.FocusItemMerging,
+				"started_at":     now,
+				"updated_at":     now,
+				"blocked_reason": "",
+				"last_error":     "",
+			}, "", "", nil)
+		case contracts.IntegrationMerged:
+			return true, s.focusCompleteItem(ctx, run, item, "")
+		case contracts.IntegrationAbandoned:
+			return true, s.focusCompleteItem(ctx, run, item, "ticket abandoned")
+		}
+	case contracts.TicketActive:
+		return true, s.focusAdoptExecutingItem(ctx, run, item, snapshot)
+	case contracts.TicketArchived:
+		return true, s.focusCompleteItem(ctx, run, item, "ticket archived")
+	}
+	return false, nil
 }
 
 func (s *Service) focusResolveHandoffBlockedItem(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem) error {
@@ -493,6 +532,11 @@ func (s *Service) focusResumeBlockedItemFromInboxReply(ctx context.Context, run 
 	snapshot, err := s.focusLoadTicketSnapshot(ctx, item.TicketID)
 	if err != nil {
 		return err
+	}
+	if handled, err := s.focusConvergeBlockedItemToTicketTruth(ctx, run, item, snapshot); err != nil {
+		return err
+	} else if handled {
+		return nil
 	}
 	baseBranch, berr := requiredWorkerBaseBranch(snapshot.Ticket)
 	if berr != nil {
