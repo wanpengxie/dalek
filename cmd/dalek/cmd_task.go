@@ -12,22 +12,28 @@ import (
 )
 
 type taskStatusPublic struct {
-	RunID      uint    `json:"run_id"`
-	Owner      string  `json:"owner"`
-	Type       string  `json:"type"`
-	ProjectKey string  `json:"project_key"`
-	TicketID   uint    `json:"ticket_id"`
-	WorkerID   uint    `json:"worker_id"`
-	Subject    string  `json:"subject"`
-	RunStatus  string  `json:"run_status"`
-	NextAction string  `json:"next_action,omitempty"`
-	NeedsUser  bool    `json:"needs_user"`
-	Summary    string  `json:"summary"`
-	ErrorCode  string  `json:"error_code,omitempty"`
-	ErrorMsg   string  `json:"error_message,omitempty"`
-	StartedAt  *string `json:"started_at,omitempty"`
-	FinishedAt *string `json:"finished_at,omitempty"`
-	UpdatedAt  string  `json:"updated_at"`
+	RunID       uint    `json:"run_id"`
+	Owner       string  `json:"owner"`
+	Type        string  `json:"type"`
+	ProjectKey  string  `json:"project_key"`
+	TicketID    uint    `json:"ticket_id"`
+	WorkerID    uint    `json:"worker_id"`
+	Subject     string  `json:"subject"`
+	RunStatus   string  `json:"run_status"`
+	NextAction  string  `json:"next_action,omitempty"`
+	NeedsUser   bool    `json:"needs_user"`
+	Summary     string  `json:"summary"`
+	ErrorCode   string  `json:"error_code,omitempty"`
+	ErrorMsg    string  `json:"error_message,omitempty"`
+	Role        string  `json:"role,omitempty"`
+	RoleSource  string  `json:"role_source,omitempty"`
+	RouteReason string  `json:"route_reason,omitempty"`
+	RouteMode   string  `json:"route_mode,omitempty"`
+	RouteTarget string  `json:"route_target,omitempty"`
+	RemoteRunID uint    `json:"remote_run_id,omitempty"`
+	StartedAt   *string `json:"started_at,omitempty"`
+	FinishedAt  *string `json:"finished_at,omitempty"`
+	UpdatedAt   string  `json:"updated_at"`
 }
 
 func cmdTask(args []string) {
@@ -37,6 +43,8 @@ func cmdTask(args []string) {
 	}
 	sub := strings.TrimSpace(args[0])
 	switch sub {
+	case "request":
+		cmdTaskRequest(args[1:])
 	case "ls", "list":
 		cmdTaskList(args[1:])
 	case "show":
@@ -117,7 +125,7 @@ func cmdTaskList(args []string) {
 	}
 	publicItems := make([]taskStatusPublic, 0, len(items))
 	for _, it := range items {
-		publicItems = append(publicItems, mapTaskStatusPublic(it))
+		publicItems = append(publicItems, mapTaskStatusPublic(ctx, p, it))
 	}
 
 	if out == outputJSON {
@@ -146,6 +154,92 @@ func cmdTaskList(args []string) {
 			trimField(it.Summary, 80),
 		)
 	}
+}
+
+func cmdTaskRequest(args []string) {
+	fs := flag.NewFlagSet("task request", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() {
+		printSubcommandUsage(
+			fs,
+			"统一入口提交开发或验证任务",
+			"dalek task request --ticket <id> [--prompt ... | --verify-target test] [--role dev|run]",
+			"dalek task request --ticket 12 --prompt \"继续修复 verify 失败\"",
+			"dalek task request --ticket 12 --verify-target test -o json",
+		)
+	}
+	home := fs.String("home", globalHome, "dalek Home 目录")
+	proj := fs.String("project", globalProject, "项目名（可选）")
+	projShort := fs.String("p", globalProject, "项目名（可选）")
+	ticketID := fs.Uint("ticket", 0, "ticket id（必填）")
+	requestID := fs.String("request-id", "", "幂等 request id（可选）")
+	prompt := fs.String("prompt", "", "开发任务 prompt")
+	verifyTarget := fs.String("verify-target", "", "验证目标，例如 test")
+	role := fs.String("role", "", "显式角色：dev|run")
+	remoteBaseURL := fs.String("remote-base-url", "", "覆盖默认远程路由地址")
+	remoteProject := fs.String("remote-project", "", "覆盖默认远程项目名")
+	timeout := fs.Duration("timeout", 10*time.Second, "超时")
+	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
+	parseFlagSetOrExit(fs, args, globalOutput, "task request 参数解析失败", "运行 dalek task request --help 查看参数")
+	if strings.TrimSpace(*projShort) != "" {
+		*proj = strings.TrimSpace(*projShort)
+	}
+	out := parseOutputOrExit(*output, true)
+	if *ticketID == 0 {
+		exitUsageError(out, "缺少必填参数 --ticket", "task request 需要 ticket id", "dalek task request --ticket 1 --prompt \"继续开发\"")
+	}
+	p := mustOpenProjectWithOutput(out, *home, *proj)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	var forceRole app.TaskRequestRole
+	switch strings.TrimSpace(*role) {
+	case "", "auto":
+	case "dev":
+		forceRole = app.TaskRequestRoleDev
+	case "run":
+		forceRole = app.TaskRequestRoleRun
+	default:
+		exitUsageError(out, "参数错误", "--role 仅支持 dev|run", "调整 --role 后重试")
+	}
+
+	res, err := p.SubmitTaskRequest(ctx, app.SubmitTaskRequestOptions{
+		TicketID:      uint(*ticketID),
+		RequestID:     strings.TrimSpace(*requestID),
+		Prompt:        strings.TrimSpace(*prompt),
+		VerifyTarget:  strings.TrimSpace(*verifyTarget),
+		RemoteBaseURL: strings.TrimSpace(*remoteBaseURL),
+		RemoteProject: strings.TrimSpace(*remoteProject),
+		ForceRole:     forceRole,
+	})
+	if err != nil {
+		exitRuntimeError(out, "task request 失败", err.Error(), "检查角色路由配置或参数后重试")
+	}
+	if out == outputJSON {
+		printJSONOrExit(map[string]any{
+			"schema": "dalek.task.request.v1",
+			"task":   res,
+		})
+		return
+	}
+	fmt.Printf("task accepted: role=%s mode=%s run=%d request=%s\n", res.Role, res.RouteMode, res.TaskRunID, strings.TrimSpace(res.RequestID))
+	if strings.TrimSpace(res.RoleSource) != "" {
+		fmt.Printf("role_source: %s\n", strings.TrimSpace(res.RoleSource))
+	}
+	if strings.TrimSpace(res.RouteReason) != "" {
+		fmt.Printf("route_reason: %s\n", strings.TrimSpace(res.RouteReason))
+	}
+	if strings.TrimSpace(res.RouteTarget) != "" {
+		fmt.Printf("route_target: %s\n", res.RouteTarget)
+	}
+	if res.RemoteRunID != 0 {
+		fmt.Printf("remote_run_id: %d\n", res.RemoteRunID)
+	}
+	if strings.TrimSpace(res.LinkedSummary) != "" {
+		fmt.Printf("linked_run_context: %s\n", strings.TrimSpace(res.LinkedSummary))
+	}
+	fmt.Printf("show:   dalek task show --id %d\n", res.TaskRunID)
+	fmt.Printf("events: dalek task events --id %d\n", res.TaskRunID)
 }
 
 func cmdTaskShow(args []string) {
@@ -196,7 +290,7 @@ func cmdTaskShow(args []string) {
 			"先运行 dalek task ls 查看可用 run id",
 		)
 	}
-	publicItem := mapTaskStatusPublic(*it)
+	publicItem := mapTaskStatusPublic(ctx, p, *it)
 
 	if out == outputJSON {
 		printJSONOrExit(map[string]any{
@@ -212,6 +306,9 @@ func cmdTaskShow(args []string) {
 	fmt.Printf("ticket/worker: t%d / w%d\n", publicItem.TicketID, publicItem.WorkerID)
 	fmt.Printf("subject: %s\n", publicItem.Subject)
 	fmt.Printf("run_status: %s\n", emptyAsDash(publicItem.RunStatus))
+	fmt.Printf("role/route: %s / %s\n", emptyAsDash(publicItem.Role), emptyAsDash(firstNonEmpty(publicItem.RouteTarget, publicItem.RouteMode)))
+	fmt.Printf("role_source: %s\n", emptyAsDash(publicItem.RoleSource))
+	fmt.Printf("route_reason: %s\n", emptyAsDash(publicItem.RouteReason))
 	fmt.Printf("next_action: %s\n", emptyAsDash(publicItem.NextAction))
 	fmt.Printf("needs_user: %v\n", publicItem.NeedsUser)
 	fmt.Printf("last_event: %s at=%s\n", emptyAsDash(it.LastEventType), formatTimePtr(it.LastEventAt))
@@ -429,6 +526,7 @@ func cmdTaskCancel(args []string) {
 
 func printTaskUsage() {
 	printGroupUsage("任务运行时观测", "dalek task <command> [flags]", []string{
+		"request   统一入口提交开发/验证任务",
 		"ls        列出 task runs",
 		"show      查看 task run 详情",
 		"events    查看 task run 事件",
@@ -464,7 +562,7 @@ func trimField(s string, max int) string {
 	return string(runes[:max-3]) + "..."
 }
 
-func mapTaskStatusPublic(it app.TaskStatus) taskStatusPublic {
+func mapTaskStatusPublic(ctx context.Context, p *app.Project, it app.TaskStatus) taskStatusPublic {
 	subject := strings.TrimSpace(it.SubjectType)
 	if sid := strings.TrimSpace(it.SubjectID); sid != "" {
 		if subject != "" {
@@ -483,7 +581,7 @@ func mapTaskStatusPublic(it app.TaskStatus) taskStatusPublic {
 	runStatus := app.DeriveRunStatus(it.OrchestrationState, it.RuntimeHealthState, it.RuntimeNeedsUser)
 	startedAt := formatPtrRFC3339(it.StartedAt)
 	finishedAt := formatPtrRFC3339(it.FinishedAt)
-	return taskStatusPublic{
+	public := taskStatusPublic{
 		RunID:      it.RunID,
 		Owner:      strings.TrimSpace(it.OwnerType),
 		Type:       strings.TrimSpace(it.TaskType),
@@ -501,6 +599,17 @@ func mapTaskStatusPublic(it app.TaskStatus) taskStatusPublic {
 		FinishedAt: finishedAt,
 		UpdatedAt:  app.TaskStatusUpdatedAt(it).Local().Format(time.RFC3339),
 	}
+	if p != nil {
+		if route, ok, err := p.GetTaskRouteInfo(ctx, it.RunID); err == nil && ok {
+			public.Role = route.Role
+			public.RoleSource = route.RoleSource
+			public.RouteReason = route.RouteReason
+			public.RouteMode = route.RouteMode
+			public.RouteTarget = route.RouteTarget
+			public.RemoteRunID = route.RemoteRunID
+		}
+	}
+	return public
 }
 
 func formatPtrRFC3339(v *time.Time) *string {

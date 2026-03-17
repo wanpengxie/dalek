@@ -19,6 +19,7 @@ type runTickMsg struct{}
 type runRefreshedMsg struct {
 	Runs     []app.RunView
 	Statuses map[uint]app.TaskStatus
+	Routes   map[uint]app.TaskRouteInfo
 	Err      error
 }
 
@@ -32,6 +33,7 @@ type runModel struct {
 	table     table.Model
 	tableRows []app.RunView
 	statuses  map[uint]app.TaskStatus
+	routes    map[uint]app.TaskRouteInfo
 	detail    viewport.Model
 
 	status          string
@@ -63,6 +65,7 @@ func newRunModel(p *app.Project, projectName string) runModel {
 		table:       t,
 		tableRows:   nil,
 		statuses:    map[uint]app.TaskStatus{},
+		routes:      map[uint]app.TaskRouteInfo{},
 		detail:      vp,
 		status:      "就绪",
 		errMsg:      "",
@@ -104,6 +107,11 @@ func (m runModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statuses = map[uint]app.TaskStatus{}
 		} else {
 			m.statuses = msg.Statuses
+		}
+		if msg.Routes == nil {
+			m.routes = map[uint]app.TaskRouteInfo{}
+		} else {
+			m.routes = msg.Routes
 		}
 		m.table.SetRows(runRows(msg.Runs))
 		recoveryCount := 0
@@ -183,7 +191,17 @@ func (m runModel) refreshCmd() tea.Cmd {
 		for _, item := range statusList {
 			statuses[item.RunID] = item
 		}
-		return runRefreshedMsg{Runs: runs, Statuses: statuses, Err: nil}
+		routes := make(map[uint]app.TaskRouteInfo, len(runs))
+		for _, run := range runs {
+			route, ok, err := m.p.GetTaskRouteInfo(ctx, run.RunID)
+			if err != nil {
+				return runRefreshedMsg{Runs: runs, Statuses: statuses, Err: err}
+			}
+			if ok {
+				routes[run.RunID] = route
+			}
+		}
+		return runRefreshedMsg{Runs: runs, Statuses: statuses, Routes: routes, Err: nil}
 	}
 }
 
@@ -222,6 +240,19 @@ func (m runModel) renderDetail() string {
 			lines = append(lines, kv("last_note:", note))
 		}
 	}
+	if route, ok := m.routes[v.RunID]; ok {
+		lines = append(lines,
+			kv("role:", strings.TrimSpace(route.Role)),
+			kv("role_source:", strings.TrimSpace(route.RoleSource)),
+			kv("route:", firstNonEmpty(strings.TrimSpace(route.RouteTarget), strings.TrimSpace(route.RouteMode))),
+		)
+		if reason := strings.TrimSpace(route.RouteReason); reason != "" {
+			lines = append(lines, kv("route_reason:", reason))
+		}
+		if route.RemoteRunID != 0 {
+			lines = append(lines, kv("remote_run_id:", fmt.Sprintf("%d", route.RemoteRunID)))
+		}
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -244,4 +275,13 @@ func formatShortTime(t time.Time) string {
 		return "-"
 	}
 	return t.Local().Format("01-02 15:04:05")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return "-"
 }

@@ -634,6 +634,10 @@ func (s *Service) runTurnJob(ctx context.Context, jobID uint) error {
 	}
 	defer tctx.closeEventLogger()
 
+	if reply, handled := s.tryHandleDirectTaskRequest(ctx, tctx); handled {
+		return s.finalizeTurn(ctx, tctx, reply, nil)
+	}
+
 	agentResp, err := s.executeTurnAgent(ctx, tctx)
 	if tctx.slotAcquired {
 		defer s.releaseTurnSlot()
@@ -939,6 +943,9 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound contracts.Chann
 
 	_ = binding
 	prompt := buildPMAgentPrompt(inbound)
+	if p.Config.WithDefaults().MultiNode.AutoRoute {
+		prompt = buildGatewayAgentInstructionPrompt(prompt)
+	}
 	if prompt == "" {
 		return pmAgentTurnResponse{}, fmt.Errorf("用户消息为空，无法调用 project manager agent")
 	}
@@ -1063,6 +1070,24 @@ func buildPMAgentPrompt(inbound contracts.ChannelMessage) string {
 		return fmt.Sprintf("[sender: %s]\n%s", senderID, body)
 	}
 	return fmt.Sprintf("[sender: %s (%s)]\n%s", senderName, senderID, body)
+}
+
+func buildGatewayAgentInstructionPrompt(userPrompt string) string {
+	userPrompt = strings.TrimSpace(userPrompt)
+	if userPrompt == "" {
+		return ""
+	}
+	instructions := strings.Join([]string{
+		"[dalek gateway instructions]",
+		"- Reply in `dalek.turn_response.v1` JSON when possible.",
+		"- Prefer action `submit_task_request` for requests like continue development, fix issue, verify, run tests, regression, smoke test.",
+		"- Use args `ticket_id`, `prompt`, `verify_target`, `role` (`dev|run`) as needed.",
+		"- Only use `dispatch_ticket` as fallback for legacy dispatch semantics.",
+		"- Use list/detail/create/start/merge actions only when the user is explicitly asking for those operations.",
+		"[user message]",
+		userPrompt,
+	}, "\n")
+	return instructions
 }
 
 func copyCLIEvents(in []agentcli.Event) []agentcli.Event {

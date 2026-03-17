@@ -14,6 +14,25 @@ func (p *Project) ListTaskStatus(ctx context.Context, opt ListTaskOptions) ([]Ta
 	if p == nil || p.task == nil {
 		return nil, fmt.Errorf("project task service 为空")
 	}
+	items, err := p.task.ListStatus(ctx, contracts.TaskListStatusOptions{
+		OwnerType:       opt.OwnerType,
+		TaskType:        strings.TrimSpace(opt.TaskType),
+		TicketID:        opt.TicketID,
+		WorkerID:        opt.WorkerID,
+		IncludeTerminal: opt.IncludeTerminal,
+		Limit:           opt.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range items {
+		if err := p.reconcileRemoteTaskIfNeeded(ctx, item.RunID); err != nil {
+			return nil, err
+		}
+		if err := p.reconcileRemoteRunIfNeeded(ctx, item.RunID); err != nil {
+			return nil, err
+		}
+	}
 	return p.task.ListStatus(ctx, contracts.TaskListStatusOptions{
 		OwnerType:       opt.OwnerType,
 		TaskType:        strings.TrimSpace(opt.TaskType),
@@ -28,6 +47,12 @@ func (p *Project) GetTaskStatus(ctx context.Context, runID uint) (*TaskStatus, e
 	if p == nil || p.task == nil {
 		return nil, fmt.Errorf("project task service 为空")
 	}
+	if err := p.reconcileRemoteTaskIfNeeded(ctx, runID); err != nil {
+		return nil, err
+	}
+	if err := p.reconcileRemoteRunIfNeeded(ctx, runID); err != nil {
+		return nil, err
+	}
 	v, err := p.task.GetStatusByRunID(ctx, runID)
 	if err != nil {
 		return nil, err
@@ -41,6 +66,12 @@ func (p *Project) GetTaskStatus(ctx context.Context, runID uint) (*TaskStatus, e
 func (p *Project) ListTaskEvents(ctx context.Context, runID uint, limit int) ([]TaskEvent, error) {
 	if p == nil || p.task == nil {
 		return nil, fmt.Errorf("project task service 为空")
+	}
+	if err := p.reconcileRemoteTaskIfNeeded(ctx, runID); err != nil {
+		return nil, err
+	}
+	if err := p.reconcileRemoteRunIfNeeded(ctx, runID); err != nil {
+		return nil, err
 	}
 	evs, err := p.task.ListEvents(ctx, runID, limit)
 	if err != nil {
@@ -142,6 +173,8 @@ func (p *Project) CancelTaskRun(ctx context.Context, runID uint) (TaskCancelResu
 	if p == nil || p.task == nil {
 		return TaskCancelResult{}, fmt.Errorf("project task service 为空")
 	}
+	_ = p.cancelRemoteTaskIfNeeded(ctx, runID)
+	_ = p.cancelRemoteRunIfNeeded(ctx, runID)
 	res, err := p.task.CancelRun(ctx, runID, time.Now())
 	if err != nil {
 		return TaskCancelResult{}, err

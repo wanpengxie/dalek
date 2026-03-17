@@ -20,12 +20,22 @@ func (p *Project) GetRun(ctx context.Context, runID uint) (*RunView, error) {
 	if p == nil || p.run == nil {
 		return nil, fmt.Errorf("project run service 为空")
 	}
+	if err := p.reconcileRemoteRunIfNeeded(ctx, runID); err != nil {
+		return nil, err
+	}
 	return p.run.Get(ctx, runID)
 }
 
 func (p *Project) GetRunByRequestID(ctx context.Context, requestID string) (*RunView, error) {
 	if p == nil || p.run == nil {
 		return nil, fmt.Errorf("project run service 为空")
+	}
+	view, err := p.run.GetByRequestID(ctx, strings.TrimSpace(requestID))
+	if err != nil || view == nil {
+		return view, err
+	}
+	if rerr := p.reconcileRemoteRunIfNeeded(ctx, view.RunID); rerr != nil {
+		return nil, rerr
 	}
 	return p.run.GetByRequestID(ctx, strings.TrimSpace(requestID))
 }
@@ -55,6 +65,7 @@ func (p *Project) CancelRun(ctx context.Context, runID uint) (TaskCancelResult, 
 	if p == nil || p.run == nil {
 		return TaskCancelResult{}, fmt.Errorf("project run service 为空")
 	}
+	_ = p.cancelRemoteRunIfNeeded(ctx, runID)
 	return p.run.Cancel(ctx, runID)
 }
 
@@ -68,6 +79,17 @@ func (p *Project) GetRunLogs(ctx context.Context, runID uint, lines int) (RunLog
 	}
 	if view == nil {
 		return RunLogs{Found: false, RunID: runID}, nil
+	}
+	if payload, ok := p.lookupRemoteRunPayload(ctx, runID); ok {
+		remote, err := NewDaemonRemoteProjectFromBaseURL(payload.RemoteBaseURL, payload.RemoteProject)
+		if err != nil {
+			return RunLogs{}, err
+		}
+		logs, err := remote.GetRunLogs(ctx, payload.RemoteRunID, lines)
+		if err != nil {
+			return RunLogs{}, err
+		}
+		return RunLogs{Found: logs.Found, RunID: runID, Tail: strings.TrimSpace(logs.Tail)}, nil
 	}
 	events, err := p.ListTaskEvents(ctx, runID, lines)
 	if err != nil {
@@ -98,6 +120,25 @@ func (p *Project) ListRunArtifacts(ctx context.Context, runID uint) (RunArtifact
 	if view == nil {
 		return RunArtifacts{Found: false, RunID: runID}, nil
 	}
+	if payload, ok := p.lookupRemoteRunPayload(ctx, runID); ok {
+		remote, err := NewDaemonRemoteProjectFromBaseURL(payload.RemoteBaseURL, payload.RemoteProject)
+		if err != nil {
+			return RunArtifacts{}, err
+		}
+		artifacts, err := remote.GetRunArtifacts(ctx, payload.RemoteRunID)
+		if err != nil {
+			return RunArtifacts{}, err
+		}
+		out := make([]RunArtifact, 0, len(artifacts.Artifacts))
+		for _, item := range artifacts.Artifacts {
+			out = append(out, RunArtifact{Name: item.Name, Kind: item.Kind, Size: item.Size, Ref: item.Ref})
+		}
+		issues := make([]RunArtifactIssue, 0, len(artifacts.Issues))
+		for _, item := range artifacts.Issues {
+			issues = append(issues, RunArtifactIssue{Name: item.Name, Status: item.Status, Reason: item.Reason})
+		}
+		return RunArtifacts{Found: artifacts.Found, RunID: runID, Artifacts: out, Issues: issues}, nil
+	}
 	events, err := p.ListTaskEvents(ctx, runID, 50)
 	if err != nil {
 		return RunArtifacts{}, err
@@ -108,6 +149,21 @@ func (p *Project) ListRunArtifacts(ctx context.Context, runID uint) (RunArtifact
 		Artifacts: buildRunArtifactsFromEvents(events),
 		Issues:    buildRunArtifactIssuesFromEvents(events),
 	}, nil
+}
+
+func (p *Project) lookupRemoteRunPayload(ctx context.Context, runID uint) (remoteTaskProxyPayload, bool) {
+	if p == nil || p.task == nil || runID == 0 {
+		return remoteTaskProxyPayload{}, false
+	}
+	record, err := p.task.FindRunByID(ctx, runID)
+	if err != nil || record == nil {
+		return remoteTaskProxyPayload{}, false
+	}
+	payload, ok := parseRemoteTaskProxyPayload(record.RequestPayloadJSON)
+	if !ok || payload.Role != string(TaskRequestRoleRun) || payload.RemoteRunID == 0 || strings.TrimSpace(payload.RemoteBaseURL) == "" {
+		return remoteTaskProxyPayload{}, false
+	}
+	return payload, true
 }
 
 func buildRunArtifactsFromEvents(events []TaskEvent) []RunArtifact {

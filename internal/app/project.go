@@ -119,6 +119,13 @@ func (p *Project) GatewayTurnTimeout() time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
+func (p *Project) HasRemoteRunRoute() bool {
+	if p == nil || p.core == nil {
+		return false
+	}
+	return strings.TrimSpace(p.core.Config.WithDefaults().MultiNode.RunBaseURL) != ""
+}
+
 // ChannelService 暂时暴露底层 channel service 以兼容 gateway 链路。
 // 这是一个已知的 facade 边界泄露点：仅允许在 gateway 相关 cmd 中受控使用，
 // 后续应通过专门的 gateway facade/runtime 接口收敛，避免扩散到更多调用方。

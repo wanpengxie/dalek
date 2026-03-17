@@ -63,7 +63,8 @@ func TestLoadPresence(t *testing.T) {
 	localPath := filepath.Join(t.TempDir(), "config.json")
 	localJSON := `{
   "worker_agent": {"provider": "codex", "model": "gpt-5.3-codex"},
-  "pm_agent": {"model": "gpt-5.3-codex"}
+  "pm_agent": {"model": "gpt-5.3-codex"},
+  "multi_node": {"auto_route": true, "dev_base_url": "http://127.0.0.1:19091"}
 }`
 	if err := os.WriteFile(localPath, []byte(localJSON), 0o644); err != nil {
 		t.Fatalf("write local json failed: %v", err)
@@ -72,7 +73,7 @@ func TestLoadPresence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadLocalConfigPresence failed: %v", err)
 	}
-	if !lp.AgentProvider || !lp.AgentModel {
+	if !lp.AgentProvider || !lp.AgentModel || !lp.MultiNodeAutoRoute || !lp.MultiNodeDevBaseURL {
 		t.Fatalf("unexpected local presence: %+v", lp)
 	}
 }
@@ -137,6 +138,32 @@ func TestResolveValue(t *testing.T) {
 			t.Fatalf("unexpected local provider/src: value=%s src=%s", v, src)
 		}
 	})
+
+	t.Run("multi_node local source", func(t *testing.T) {
+		t.Parallel()
+		localCfg := repo.Config{}.WithDefaults()
+		localCfg.MultiNode.AutoRoute = true
+		localCfg.MultiNode.DevBaseURL = "http://127.0.0.1:19091"
+		eval := &EvalContext{
+			HomeCfg:       defaultHome,
+			LocalCfg:      localCfg,
+			LocalPresence: LocalPresence{MultiNodeAutoRoute: true, MultiNodeDevBaseURL: true},
+		}
+		v, src, err := ResolveValue(ConfigKeyMultiNodeAutoRoute, eval)
+		if err != nil {
+			t.Fatalf("ResolveValue auto_route failed: %v", err)
+		}
+		if v != "true" || src != ScopeLocal {
+			t.Fatalf("unexpected auto_route value/src: value=%s src=%s", v, src)
+		}
+		v, src, err = ResolveValue(ConfigKeyMultiNodeDevBaseURL, eval)
+		if err != nil {
+			t.Fatalf("ResolveValue dev_base_url failed: %v", err)
+		}
+		if v != "http://127.0.0.1:19091" || src != ScopeLocal {
+			t.Fatalf("unexpected dev_base_url value/src: value=%s src=%s", v, src)
+		}
+	})
 }
 
 func TestSetValue_Global(t *testing.T) {
@@ -197,6 +224,29 @@ func TestSetValue_LocalWritesProjectConfig(t *testing.T) {
 	cfg = cfg.WithDefaults()
 	if cfg.WorkerAgent.Model != "claude-3-7-sonnet" || cfg.PMAgent.Model != "claude-3-7-sonnet" {
 		t.Fatalf("unexpected local models: worker=%s pm=%s", cfg.WorkerAgent.Model, cfg.PMAgent.Model)
+	}
+
+	v, err = SetValue(ctx, ConfigKeyMultiNodeDevBaseURL, ScopeLocal, "http://127.0.0.1:19091")
+	if err != nil {
+		t.Fatalf("SetValue multi_node.dev_base_url failed: %v", err)
+	}
+	if v != "http://127.0.0.1:19091" {
+		t.Fatalf("unexpected dev_base_url value: %s", v)
+	}
+	v, err = SetValue(ctx, ConfigKeyMultiNodeAutoRoute, ScopeLocal, "true")
+	if err != nil {
+		t.Fatalf("SetValue multi_node.auto_route failed: %v", err)
+	}
+	if v != "true" {
+		t.Fatalf("unexpected auto_route value: %s", v)
+	}
+	cfg, _, err = repo.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig after multi_node set failed: %v", err)
+	}
+	cfg = cfg.WithDefaults()
+	if cfg.MultiNode.DevBaseURL != "http://127.0.0.1:19091" || !cfg.MultiNode.AutoRoute {
+		t.Fatalf("unexpected multi_node config: %+v", cfg.MultiNode)
 	}
 }
 

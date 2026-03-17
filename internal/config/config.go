@@ -29,6 +29,11 @@ const (
 	ConfigKeyProjectMaxRunningWorkers = "project.max_running_workers"
 	ConfigKeyAgentProvider            = "agent.provider"
 	ConfigKeyAgentModel               = "agent.model"
+	ConfigKeyMultiNodeAutoRoute       = "multi_node.auto_route"
+	ConfigKeyMultiNodeDevBaseURL      = "multi_node.dev_base_url"
+	ConfigKeyMultiNodeDevProjectName  = "multi_node.dev_project_name"
+	ConfigKeyMultiNodeRunBaseURL      = "multi_node.run_base_url"
+	ConfigKeyMultiNodeRunProjectName  = "multi_node.run_project_name"
 )
 
 const (
@@ -79,6 +84,31 @@ var KeyOrder = []KeyMeta{
 		DefaultScope:  ScopeLocal,
 		AllowedScopes: []Scope{ScopeGlobal, ScopeLocal},
 	},
+	{
+		Key:           ConfigKeyMultiNodeAutoRoute,
+		DefaultScope:  ScopeLocal,
+		AllowedScopes: []Scope{ScopeLocal},
+	},
+	{
+		Key:           ConfigKeyMultiNodeDevBaseURL,
+		DefaultScope:  ScopeLocal,
+		AllowedScopes: []Scope{ScopeLocal},
+	},
+	{
+		Key:           ConfigKeyMultiNodeDevProjectName,
+		DefaultScope:  ScopeLocal,
+		AllowedScopes: []Scope{ScopeLocal},
+	},
+	{
+		Key:           ConfigKeyMultiNodeRunBaseURL,
+		DefaultScope:  ScopeLocal,
+		AllowedScopes: []Scope{ScopeLocal},
+	},
+	{
+		Key:           ConfigKeyMultiNodeRunProjectName,
+		DefaultScope:  ScopeLocal,
+		AllowedScopes: []Scope{ScopeLocal},
+	},
 }
 
 type HomePresence struct {
@@ -91,8 +121,13 @@ type HomePresence struct {
 }
 
 type LocalPresence struct {
-	AgentProvider bool
-	AgentModel    bool
+	AgentProvider           bool
+	AgentModel              bool
+	MultiNodeAutoRoute      bool
+	MultiNodeDevBaseURL     bool
+	MultiNodeDevProjectName bool
+	MultiNodeRunBaseURL     bool
+	MultiNodeRunProjectName bool
 }
 
 type HomeConfig struct {
@@ -268,6 +303,41 @@ func ResolveValue(key string, eval *EvalContext) (string, Scope, error) {
 			return value, ScopeGlobal, nil
 		}
 		return value, ScopeDefault, nil
+	case ConfigKeyMultiNodeAutoRoute:
+		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
+		value := strconv.FormatBool(effective.MultiNode.AutoRoute)
+		if eval.LocalPresence.MultiNodeAutoRoute {
+			return value, ScopeLocal, nil
+		}
+		return value, ScopeDefault, nil
+	case ConfigKeyMultiNodeDevBaseURL:
+		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
+		value := strings.TrimSpace(effective.MultiNode.DevBaseURL)
+		if eval.LocalPresence.MultiNodeDevBaseURL {
+			return value, ScopeLocal, nil
+		}
+		return value, ScopeDefault, nil
+	case ConfigKeyMultiNodeDevProjectName:
+		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
+		value := strings.TrimSpace(effective.MultiNode.DevProjectName)
+		if eval.LocalPresence.MultiNodeDevProjectName {
+			return value, ScopeLocal, nil
+		}
+		return value, ScopeDefault, nil
+	case ConfigKeyMultiNodeRunBaseURL:
+		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
+		value := strings.TrimSpace(effective.MultiNode.RunBaseURL)
+		if eval.LocalPresence.MultiNodeRunBaseURL {
+			return value, ScopeLocal, nil
+		}
+		return value, ScopeDefault, nil
+	case ConfigKeyMultiNodeRunProjectName:
+		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
+		value := strings.TrimSpace(effective.MultiNode.RunProjectName)
+		if eval.LocalPresence.MultiNodeRunProjectName {
+			return value, ScopeLocal, nil
+		}
+		return value, ScopeDefault, nil
 	default:
 		return "", ScopeDefault, fmt.Errorf("未知配置键: %s", key)
 	}
@@ -379,6 +449,7 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 			if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
 				return "", err
 			}
+			ctx.LocalCfg = next
 			return strings.TrimSpace(strings.ToLower(next.WorkerAgent.Provider)), nil
 		default:
 			return "", fmt.Errorf("agent.provider 不支持 scope=%s", scope)
@@ -405,10 +476,85 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 			if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
 				return "", err
 			}
+			ctx.LocalCfg = next
 			return strings.TrimSpace(next.WorkerAgent.Model), nil
 		default:
 			return "", fmt.Errorf("agent.model 不支持 scope=%s", scope)
 		}
+	case ConfigKeyMultiNodeAutoRoute:
+		if scope != ScopeLocal {
+			return "", fmt.Errorf("%s 仅支持 local 层", key)
+		}
+		if ctx.Project == nil {
+			return "", fmt.Errorf("project 为空")
+		}
+		enabled, err := parseBool(rawValue)
+		if err != nil {
+			return "", fmt.Errorf("multi_node.auto_route 必须是 true/false: %w", err)
+		}
+		next := ctx.LocalCfg.WithDefaults()
+		next.MultiNode.AutoRoute = enabled
+		if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
+			return "", err
+		}
+		ctx.LocalCfg = next
+		return strconv.FormatBool(next.MultiNode.AutoRoute), nil
+	case ConfigKeyMultiNodeDevBaseURL:
+		if scope != ScopeLocal {
+			return "", fmt.Errorf("%s 仅支持 local 层", key)
+		}
+		if ctx.Project == nil {
+			return "", fmt.Errorf("project 为空")
+		}
+		next := ctx.LocalCfg.WithDefaults()
+		next.MultiNode.DevBaseURL = strings.TrimSpace(rawValue)
+		if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
+			return "", err
+		}
+		ctx.LocalCfg = next
+		return strings.TrimSpace(next.MultiNode.DevBaseURL), nil
+	case ConfigKeyMultiNodeDevProjectName:
+		if scope != ScopeLocal {
+			return "", fmt.Errorf("%s 仅支持 local 层", key)
+		}
+		if ctx.Project == nil {
+			return "", fmt.Errorf("project 为空")
+		}
+		next := ctx.LocalCfg.WithDefaults()
+		next.MultiNode.DevProjectName = strings.TrimSpace(rawValue)
+		if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
+			return "", err
+		}
+		ctx.LocalCfg = next
+		return strings.TrimSpace(next.MultiNode.DevProjectName), nil
+	case ConfigKeyMultiNodeRunBaseURL:
+		if scope != ScopeLocal {
+			return "", fmt.Errorf("%s 仅支持 local 层", key)
+		}
+		if ctx.Project == nil {
+			return "", fmt.Errorf("project 为空")
+		}
+		next := ctx.LocalCfg.WithDefaults()
+		next.MultiNode.RunBaseURL = strings.TrimSpace(rawValue)
+		if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
+			return "", err
+		}
+		ctx.LocalCfg = next
+		return strings.TrimSpace(next.MultiNode.RunBaseURL), nil
+	case ConfigKeyMultiNodeRunProjectName:
+		if scope != ScopeLocal {
+			return "", fmt.Errorf("%s 仅支持 local 层", key)
+		}
+		if ctx.Project == nil {
+			return "", fmt.Errorf("project 为空")
+		}
+		next := ctx.LocalCfg.WithDefaults()
+		next.MultiNode.RunProjectName = strings.TrimSpace(rawValue)
+		if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
+			return "", err
+		}
+		ctx.LocalCfg = next
+		return strings.TrimSpace(next.MultiNode.RunProjectName), nil
 	default:
 		return "", fmt.Errorf("未知配置键: %s", key)
 	}
@@ -450,8 +596,13 @@ func LoadLocalConfigPresence(path string) (LocalPresence, error) {
 		return LocalPresence{}, err
 	}
 	return LocalPresence{
-		AgentProvider: jsonPathExists(root, "worker_agent", "provider") || jsonPathExists(root, "pm_agent", "provider"),
-		AgentModel:    jsonPathExists(root, "worker_agent", "model") || jsonPathExists(root, "pm_agent", "model"),
+		AgentProvider:           jsonPathExists(root, "worker_agent", "provider") || jsonPathExists(root, "pm_agent", "provider"),
+		AgentModel:              jsonPathExists(root, "worker_agent", "model") || jsonPathExists(root, "pm_agent", "model"),
+		MultiNodeAutoRoute:      jsonPathExists(root, "multi_node", "auto_route"),
+		MultiNodeDevBaseURL:     jsonPathExists(root, "multi_node", "dev_base_url"),
+		MultiNodeDevProjectName: jsonPathExists(root, "multi_node", "dev_project_name"),
+		MultiNodeRunBaseURL:     jsonPathExists(root, "multi_node", "run_base_url"),
+		MultiNodeRunProjectName: jsonPathExists(root, "multi_node", "run_project_name"),
 	}, nil
 }
 
@@ -519,6 +670,17 @@ func applyAgentProviderModelOverride(cfg *repo.Config, providerRaw, model string
 	if model != "" {
 		cfg.WorkerAgent.Model = model
 		cfg.PMAgent.Model = model
+	}
+}
+
+func parseBool(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "y", "on":
+		return true, nil
+	case "0", "false", "no", "n", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("非法布尔值: %s", raw)
 	}
 }
 

@@ -85,16 +85,17 @@ func (e InboundEnvelope) Validate() error {
 }
 
 const (
-	ActionListTickets     = "list_tickets"
-	ActionTicketDetail    = "ticket_detail"
-	ActionCreateTicket    = "create_ticket"
-	ActionStartTicket     = "start_ticket"
-	ActionInterruptTicket = "interrupt_ticket"
-	ActionStopTicket      = "stop_ticket"
-	ActionArchiveTicket   = "archive_ticket"
-	ActionListMergeItems  = "list_merge_items"
-	ActionApproveMerge    = "approve_merge"
-	ActionRejectMerge     = "reject_merge"
+	ActionListTickets       = "list_tickets"
+	ActionTicketDetail      = "ticket_detail"
+	ActionCreateTicket      = "create_ticket"
+	ActionStartTicket       = "start_ticket"
+	ActionInterruptTicket   = "interrupt_ticket"
+	ActionStopTicket        = "stop_ticket"
+	ActionArchiveTicket     = "archive_ticket"
+	ActionListMergeItems    = "list_merge_items"
+	ActionApproveMerge      = "approve_merge"
+	ActionRejectMerge       = "reject_merge"
+	ActionSubmitTaskRequest = "submit_task_request"
 )
 
 type TurnAction struct {

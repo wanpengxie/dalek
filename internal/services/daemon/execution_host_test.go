@@ -222,6 +222,50 @@ func (p *testExecutionHostProject) SubmitSubagentRun(ctx context.Context, opt Su
 	return submission, nil
 }
 
+func (p *testExecutionHostProject) SubmitRun(ctx context.Context, opt NodeRunSubmitOptions) (NodeRunSubmission, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.nextRunID == 0 {
+		p.nextRunID = 200
+	}
+	p.nextRunID++
+	requestID := strings.TrimSpace(opt.RequestID)
+	if requestID == "" {
+		requestID = fmt.Sprintf("run-test-generated-%d", p.nextRunID)
+	}
+	return NodeRunSubmission{
+		Accepted:     true,
+		RunID:        p.nextRunID,
+		TaskRunID:    p.nextRunID,
+		RequestID:    requestID,
+		RunStatus:    string(contracts.RunRunning),
+		VerifyTarget: strings.TrimSpace(opt.VerifyTarget),
+		SnapshotID:   strings.TrimSpace(opt.SnapshotID),
+		BaseCommit:   strings.TrimSpace(opt.BaseCommit),
+	}, nil
+}
+
+func (p *testExecutionHostProject) GetRun(ctx context.Context, runID uint) (*NodeRunView, error) {
+	return &NodeRunView{
+		RunID:          runID,
+		TaskRunID:      runID,
+		ProjectKey:     "demo",
+		RequestID:      fmt.Sprintf("run-%d", runID),
+		RunStatus:      string(contracts.RunRunning),
+		LifecycleStage: "running",
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}, nil
+}
+
+func (p *testExecutionHostProject) GetRunLogs(ctx context.Context, runID uint, lines int) (NodeRunLogs, error) {
+	return NodeRunLogs{Found: true, RunID: runID, Tail: "remote logs"}, nil
+}
+
+func (p *testExecutionHostProject) ListRunArtifacts(ctx context.Context, runID uint) (NodeRunArtifacts, error) {
+	return NodeRunArtifacts{Found: true, RunID: runID}, nil
+}
+
 func (p *testExecutionHostProject) RunSubagentJob(ctx context.Context, taskRunID uint, opt SubagentRunOptions) error {
 	p.mu.Lock()
 	p.runSubagentCalls++

@@ -388,10 +388,24 @@ func (m model) refreshCmd() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		views, err := m.p.ListTicketViews(ctx)
+		routes := make(map[uint]app.TaskRouteInfo, len(views))
+		for _, view := range views {
+			if view.TaskRunID == 0 {
+				continue
+			}
+			route, ok, rerr := m.p.GetTaskRouteInfo(ctx, view.TaskRunID)
+			if rerr != nil {
+				return refreshedMsg{Err: rerr}
+			}
+			if ok {
+				routes[view.TaskRunID] = route
+			}
+		}
 		merges, merr := m.p.ListMergeItems(ctx, app.ListMergeOptions{Limit: 200})
 		tickets, terr := m.p.ListTickets(ctx, true)
 		return refreshedMsg{
 			Views:           views,
+			Routes:          routes,
 			MergeItems:      merges,
 			ArchivedTickets: tickets,
 			MergeErr:        merr,
@@ -413,10 +427,30 @@ func (m model) manualRefreshCmd(ticketID uint) tea.Cmd {
 		defer cancel()
 
 		views, err := m.p.ListTicketViews(ctx)
+		routes := make(map[uint]app.TaskRouteInfo, len(views))
+		for _, view := range views {
+			if view.TaskRunID == 0 {
+				continue
+			}
+			route, ok, rerr := m.p.GetTaskRouteInfo(ctx, view.TaskRunID)
+			if rerr != nil {
+				return refreshedMsg{
+					Err:        rerr,
+					Manual:     true,
+					TicketID:   ticketID,
+					StartedAt:  started,
+					FinishedAt: time.Now(),
+				}
+			}
+			if ok {
+				routes[view.TaskRunID] = route
+			}
+		}
 		merges, merr := m.p.ListMergeItems(ctx, app.ListMergeOptions{Limit: 200})
 		tickets, terr := m.p.ListTickets(ctx, true)
 		return refreshedMsg{
 			Views:           views,
+			Routes:          routes,
 			MergeItems:      merges,
 			ArchivedTickets: tickets,
 			MergeErr:        merr,

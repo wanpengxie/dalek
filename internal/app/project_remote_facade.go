@@ -13,10 +13,15 @@ type RemoteProject interface {
 	Health(ctx context.Context) error
 	SubmitDispatch(ctx context.Context, req DaemonDispatchSubmitRequest) (DaemonDispatchSubmitReceipt, error)
 	SubmitWorkerRun(ctx context.Context, req DaemonWorkerRunSubmitRequest) (DaemonWorkerRunSubmitReceipt, error)
+	SubmitRun(ctx context.Context, req DaemonRunSubmitRequest) (DaemonRunSubmitReceipt, error)
 	SubmitSubagentRun(ctx context.Context, req DaemonSubagentSubmitRequest) (DaemonSubagentSubmitReceipt, error)
 	SubmitNote(ctx context.Context, req DaemonNoteSubmitRequest) (DaemonNoteSubmitReceipt, error)
 	SendProjectText(ctx context.Context, req DaemonGatewaySendRequest) (DaemonGatewaySendResponse, error)
 	CancelRun(ctx context.Context, runID uint) (DaemonRunCancelResult, error)
+	GetRun(ctx context.Context, runID uint) (*DaemonRunStatus, error)
+	ListRunEvents(ctx context.Context, runID uint, limit int) ([]DaemonRunEvent, error)
+	GetRunLogs(ctx context.Context, runID uint, lines int) (DaemonRunLogs, error)
+	GetRunArtifacts(ctx context.Context, runID uint) (DaemonRunArtifacts, error)
 }
 
 type DaemonRemoteProject struct {
@@ -37,6 +42,14 @@ func NewDaemonRemoteProject(client *DaemonAPIClient, project string) (*DaemonRem
 
 func NewDaemonRemoteProjectFromHome(h *Home, project string) (*DaemonRemoteProject, error) {
 	client, err := NewDaemonAPIClientFromHome(h)
+	if err != nil {
+		return nil, err
+	}
+	return NewDaemonRemoteProject(client, project)
+}
+
+func NewDaemonRemoteProjectFromBaseURL(baseURL, project string) (*DaemonRemoteProject, error) {
+	client, err := NewDaemonAPIClient(DaemonAPIClientConfig{BaseURL: strings.TrimSpace(baseURL)})
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +86,14 @@ func (r *DaemonRemoteProject) SubmitWorkerRun(ctx context.Context, req DaemonWor
 	return r.client.SubmitWorkerRun(ctx, req)
 }
 
+func (r *DaemonRemoteProject) SubmitRun(ctx context.Context, req DaemonRunSubmitRequest) (DaemonRunSubmitReceipt, error) {
+	if r == nil || r.client == nil {
+		return DaemonRunSubmitReceipt{}, fmt.Errorf("remote project 未初始化")
+	}
+	req.Project = r.Project()
+	return r.client.SubmitRun(ctx, req)
+}
+
 func (r *DaemonRemoteProject) SubmitSubagentRun(ctx context.Context, req DaemonSubagentSubmitRequest) (DaemonSubagentSubmitReceipt, error) {
 	if r == nil || r.client == nil {
 		return DaemonSubagentSubmitReceipt{}, fmt.Errorf("remote project 未初始化")
@@ -102,4 +123,32 @@ func (r *DaemonRemoteProject) CancelRun(ctx context.Context, runID uint) (Daemon
 		return DaemonRunCancelResult{}, fmt.Errorf("remote project 未初始化")
 	}
 	return r.client.CancelRun(ctx, runID)
+}
+
+func (r *DaemonRemoteProject) GetRun(ctx context.Context, runID uint) (*DaemonRunStatus, error) {
+	if r == nil || r.client == nil {
+		return nil, fmt.Errorf("remote project 未初始化")
+	}
+	return r.client.GetRun(ctx, runID)
+}
+
+func (r *DaemonRemoteProject) ListRunEvents(ctx context.Context, runID uint, limit int) ([]DaemonRunEvent, error) {
+	if r == nil || r.client == nil {
+		return nil, fmt.Errorf("remote project 未初始化")
+	}
+	return r.client.ListRunEvents(ctx, runID, limit)
+}
+
+func (r *DaemonRemoteProject) GetRunLogs(ctx context.Context, runID uint, lines int) (DaemonRunLogs, error) {
+	if r == nil || r.client == nil {
+		return DaemonRunLogs{}, fmt.Errorf("remote project 未初始化")
+	}
+	return r.client.GetRunLogs(ctx, runID, lines)
+}
+
+func (r *DaemonRemoteProject) GetRunArtifacts(ctx context.Context, runID uint) (DaemonRunArtifacts, error) {
+	if r == nil || r.client == nil {
+		return DaemonRunArtifacts{}, fmt.Errorf("remote project 未初始化")
+	}
+	return r.client.GetRunArtifacts(ctx, runID)
 }

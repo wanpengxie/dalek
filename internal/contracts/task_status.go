@@ -16,6 +16,7 @@ const (
 	TaskTypeSubagentRun     = "subagent_run"
 	TaskTypeChannelTurn     = "channel_turn"
 	TaskTypeRunVerify       = "run_verify"
+	TaskTypeDevRemote       = "dev_remote"
 )
 
 type TaskOrchestrationState string

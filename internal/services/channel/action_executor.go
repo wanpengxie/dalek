@@ -24,9 +24,10 @@ type ActionResult struct {
 }
 
 type ActionExecutor struct {
-	ticketSvc TicketActionService
-	pmSvc     PMActionService
-	workerSvc WorkerActionService
+	ticketSvc      TicketActionService
+	pmSvc          PMActionService
+	workerSvc      WorkerActionService
+	taskRequestSvc TaskRequestActionService
 }
 
 type TicketActionService interface {
@@ -63,11 +64,43 @@ type WorkerActionService interface {
 	StopTicket(ctx context.Context, ticketID uint) error
 }
 
-func NewActionExecutor(ticketSvc TicketActionService, pmSvc PMActionService, workerSvc WorkerActionService) *ActionExecutor {
+type SubmitTaskRequestActionInput struct {
+	TicketID      uint
+	RequestID     string
+	Prompt        string
+	VerifyTarget  string
+	ForceRole     string
+	RemoteBaseURL string
+	RemoteProject string
+}
+
+type SubmitTaskRequestActionResult struct {
+	Accepted      bool
+	Role          string
+	RoleSource    string
+	RouteReason   string
+	RouteMode     string
+	RouteTarget   string
+	TaskRunID     uint
+	RemoteRunID   uint
+	RequestID     string
+	TicketID      uint
+	WorkerID      uint
+	VerifyTarget  string
+	LinkedRunID   uint
+	LinkedSummary string
+}
+
+type TaskRequestActionService interface {
+	SubmitTaskRequest(ctx context.Context, in SubmitTaskRequestActionInput) (SubmitTaskRequestActionResult, error)
+}
+
+func NewActionExecutor(ticketSvc TicketActionService, pmSvc PMActionService, workerSvc WorkerActionService, taskRequestSvc TaskRequestActionService) *ActionExecutor {
 	return &ActionExecutor{
-		ticketSvc: ticketSvc,
-		pmSvc:     pmSvc,
-		workerSvc: workerSvc,
+		ticketSvc:      ticketSvc,
+		pmSvc:          pmSvc,
+		workerSvc:      workerSvc,
+		taskRequestSvc: taskRequestSvc,
 	}
 }
 
@@ -75,7 +108,7 @@ func (e *ActionExecutor) Execute(ctx context.Context, action contracts.TurnActio
 	if ctx == nil {
 		return ActionResult{}, fmt.Errorf("action executor: context 不能为空")
 	}
-	if e == nil || e.ticketSvc == nil || e.pmSvc == nil || e.workerSvc == nil {
+	if e == nil {
 		return ActionResult{}, fmt.Errorf("action executor 依赖未完成注入")
 	}
 
@@ -108,12 +141,17 @@ func (e *ActionExecutor) Execute(ctx context.Context, action contracts.TurnActio
 		return e.executeApproveMerge(ctx, action)
 	case contracts.ActionRejectMerge:
 		return e.executeRejectMerge(ctx, action)
+	case contracts.ActionSubmitTaskRequest:
+		return e.executeSubmitTaskRequest(ctx, action)
 	default:
 		return ActionResult{}, fmt.Errorf("不支持的 action: %s", name)
 	}
 }
 
 func (e *ActionExecutor) executeListTickets(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.ticketSvc == nil {
+		return ActionResult{}, fmt.Errorf("list_tickets 依赖未注入")
+	}
 	includeArchived := actionArgBool(action.Args, false, "include_archived", "includeArchived")
 	limit := actionArgInt(action.Args, 20, 1, 200, "limit")
 	tickets, err := e.ticketSvc.List(ctx, includeArchived)
@@ -148,6 +186,9 @@ func (e *ActionExecutor) executeListTickets(ctx context.Context, action contract
 }
 
 func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.ticketSvc == nil {
+		return ActionResult{}, fmt.Errorf("ticket_detail 依赖未注入")
+	}
 	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
 	if err != nil {
 		return ActionResult{}, err
@@ -196,6 +237,9 @@ func (e *ActionExecutor) executeTicketDetail(ctx context.Context, action contrac
 }
 
 func (e *ActionExecutor) executeCreateTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.ticketSvc == nil {
+		return ActionResult{}, fmt.Errorf("create_ticket 依赖未注入")
+	}
 	title := actionArgString(action.Args, "title", "name")
 	if title == "" {
 		return ActionResult{}, fmt.Errorf("create_ticket 缺少 title")
@@ -231,6 +275,9 @@ func (e *ActionExecutor) executeCreateTicket(ctx context.Context, action contrac
 }
 
 func (e *ActionExecutor) executeStartTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.pmSvc == nil {
+		return ActionResult{}, fmt.Errorf("start_ticket 依赖未注入")
+	}
 	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
 	if err != nil {
 		return ActionResult{}, err
@@ -260,6 +307,9 @@ func (e *ActionExecutor) executeStartTicket(ctx context.Context, action contract
 }
 
 func (e *ActionExecutor) executeDispatchTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.pmSvc == nil {
+		return ActionResult{}, fmt.Errorf("dispatch_ticket 依赖未注入")
+	}
 	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
 	if err != nil {
 		return ActionResult{}, err
@@ -285,6 +335,9 @@ func (e *ActionExecutor) executeDispatchTicket(ctx context.Context, action contr
 }
 
 func (e *ActionExecutor) executeInterruptTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.workerSvc == nil {
+		return ActionResult{}, fmt.Errorf("interrupt_ticket 依赖未注入")
+	}
 	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
 	if err != nil {
 		return ActionResult{}, err
@@ -311,6 +364,9 @@ func (e *ActionExecutor) executeInterruptTicket(ctx context.Context, action cont
 }
 
 func (e *ActionExecutor) executeStopTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.workerSvc == nil {
+		return ActionResult{}, fmt.Errorf("stop_ticket 依赖未注入")
+	}
 	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
 	if err != nil {
 		return ActionResult{}, err
@@ -326,6 +382,9 @@ func (e *ActionExecutor) executeStopTicket(ctx context.Context, action contracts
 }
 
 func (e *ActionExecutor) executeArchiveTicket(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.pmSvc == nil {
+		return ActionResult{}, fmt.Errorf("archive_ticket 依赖未注入")
+	}
 	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
 	if err != nil {
 		return ActionResult{}, err
@@ -341,6 +400,9 @@ func (e *ActionExecutor) executeArchiveTicket(ctx context.Context, action contra
 }
 
 func (e *ActionExecutor) executeListMergeItems(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.pmSvc == nil {
+		return ActionResult{}, fmt.Errorf("list_merge_items 依赖未注入")
+	}
 	limit := actionArgInt(action.Args, 20, 1, 200, "limit")
 	statusRaw := strings.ToLower(actionArgString(action.Args, "status"))
 	status := contracts.MergeStatus(statusRaw)
@@ -370,6 +432,9 @@ func (e *ActionExecutor) executeListMergeItems(ctx context.Context, action contr
 }
 
 func (e *ActionExecutor) executeApproveMerge(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.pmSvc == nil {
+		return ActionResult{}, fmt.Errorf("approve_merge 依赖未注入")
+	}
 	mergeItemID, err := actionArgUintRequired(action.Args, "merge_item_id", "mergeItemId", "id")
 	if err != nil {
 		return ActionResult{}, err
@@ -386,6 +451,9 @@ func (e *ActionExecutor) executeApproveMerge(ctx context.Context, action contrac
 }
 
 func (e *ActionExecutor) executeRejectMerge(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.pmSvc == nil {
+		return ActionResult{}, fmt.Errorf("reject_merge 依赖未注入")
+	}
 	mergeItemID, err := actionArgUintRequired(action.Args, "merge_item_id", "mergeItemId", "id")
 	if err != nil {
 		return ActionResult{}, err
@@ -399,6 +467,82 @@ func (e *ActionExecutor) executeRejectMerge(ctx context.Context, action contract
 		Success:    true,
 		Message:    fmt.Sprintf("已拒绝 merge#%d。", mergeItemID),
 	}, nil
+}
+
+func (e *ActionExecutor) executeSubmitTaskRequest(ctx context.Context, action contracts.TurnAction) (ActionResult, error) {
+	if e.taskRequestSvc == nil {
+		return ActionResult{}, fmt.Errorf("submit_task_request 依赖未注入")
+	}
+	ticketID, err := actionArgUintRequired(action.Args, "ticket_id", "ticketId", "id")
+	if err != nil {
+		return ActionResult{}, err
+	}
+	res, err := e.taskRequestSvc.SubmitTaskRequest(ctx, SubmitTaskRequestActionInput{
+		TicketID:      ticketID,
+		RequestID:     actionArgString(action.Args, "request_id", "requestId"),
+		Prompt:        actionArgString(action.Args, "prompt", "entry_prompt", "entryPrompt"),
+		VerifyTarget:  actionArgString(action.Args, "verify_target", "verifyTarget"),
+		ForceRole:     strings.ToLower(strings.TrimSpace(actionArgString(action.Args, "role"))),
+		RemoteBaseURL: actionArgString(action.Args, "remote_base_url", "remoteBaseURL"),
+		RemoteProject: actionArgString(action.Args, "remote_project", "remoteProject"),
+	})
+	if err != nil {
+		return ActionResult{}, err
+	}
+	msg := formatTaskRequestAcceptedMessage(res)
+	return ActionResult{
+		ActionName: contracts.ActionSubmitTaskRequest,
+		Success:    res.Accepted,
+		Message:    msg,
+		Data: map[string]any{
+			"task_request": map[string]any{
+				"accepted":       res.Accepted,
+				"role":           res.Role,
+				"role_source":    res.RoleSource,
+				"route_reason":   res.RouteReason,
+				"route_mode":     res.RouteMode,
+				"route_target":   res.RouteTarget,
+				"task_run_id":    res.TaskRunID,
+				"remote_run_id":  res.RemoteRunID,
+				"request_id":     res.RequestID,
+				"ticket_id":      res.TicketID,
+				"worker_id":      res.WorkerID,
+				"verify_target":  res.VerifyTarget,
+				"linked_run_id":  res.LinkedRunID,
+				"linked_summary": res.LinkedSummary,
+			},
+		},
+	}, nil
+}
+
+func formatTaskRequestAcceptedMessage(res SubmitTaskRequestActionResult) string {
+	lines := []string{
+		fmt.Sprintf("任务已受理：t%d", res.TicketID),
+		fmt.Sprintf("- role: %s", firstNonEmpty(strings.TrimSpace(res.Role), "-")),
+		fmt.Sprintf("- role_source: %s", firstNonEmpty(strings.TrimSpace(res.RoleSource), "-")),
+		fmt.Sprintf("- route: %s", firstNonEmpty(strings.TrimSpace(res.RouteTarget), strings.TrimSpace(res.RouteMode), "-")),
+	}
+	if reason := strings.TrimSpace(res.RouteReason); reason != "" {
+		lines = append(lines, fmt.Sprintf("- route_reason: %s", reason))
+	}
+	lines = append(lines, fmt.Sprintf("- task_run_id: %d", res.TaskRunID))
+	if rid := strings.TrimSpace(res.RequestID); rid != "" {
+		lines = append(lines, fmt.Sprintf("- request_id: %s", rid))
+	}
+	if res.RemoteRunID != 0 {
+		lines = append(lines, fmt.Sprintf("- remote_run_id: %d", res.RemoteRunID))
+	}
+	if target := strings.TrimSpace(res.VerifyTarget); target != "" {
+		lines = append(lines, fmt.Sprintf("- verify_target: %s", target))
+	}
+	if summary := strings.TrimSpace(res.LinkedSummary); summary != "" {
+		lines = append(lines, fmt.Sprintf("- linked_run_context: %s", summary))
+	}
+	lines = append(lines,
+		fmt.Sprintf("- show: dalek task show --id %d", res.TaskRunID),
+		fmt.Sprintf("- events: dalek task events --id %d", res.TaskRunID),
+	)
+	return strings.Join(lines, "\n")
 }
 
 func actionArgString(args map[string]any, keys ...string) string {
@@ -569,6 +713,15 @@ func clampInt(v, minValue, maxValue int) int {
 		return minValue
 	}
 	return v
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 type actionExecuteResult struct {

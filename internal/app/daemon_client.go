@@ -123,6 +123,87 @@ type DaemonRunCancelResult struct {
 	Reason    string
 }
 
+type DaemonRunSubmitRequest struct {
+	Project             string
+	RequestID           string
+	TicketID            uint
+	VerifyTarget        string
+	SnapshotID          string
+	BaseCommit          string
+	WorkspaceGeneration string
+}
+
+type DaemonRunSubmitReceipt struct {
+	Accepted            bool              `json:"accepted"`
+	Project             string            `json:"project"`
+	RunID               uint              `json:"run_id"`
+	TaskRunID           uint              `json:"task_run_id"`
+	RequestID           string            `json:"request_id"`
+	RunStatus           string            `json:"run_status"`
+	VerifyTarget        string            `json:"verify_target"`
+	SnapshotID          string            `json:"snapshot_id"`
+	BaseCommit          string            `json:"base_commit"`
+	WorkspaceGeneration string            `json:"source_workspace_generation"`
+	Query               map[string]string `json:"query,omitempty"`
+}
+
+type DaemonRunStatus struct {
+	RunID              uint       `json:"run_id"`
+	Project            string     `json:"project"`
+	OwnerType          string     `json:"owner_type"`
+	TaskType           string     `json:"task_type"`
+	TicketID           uint       `json:"ticket_id"`
+	WorkerID           uint       `json:"worker_id"`
+	OrchestrationState string     `json:"orchestration_state"`
+	RuntimeHealthState string     `json:"runtime_health_state"`
+	RuntimeNeedsUser   bool       `json:"runtime_needs_user"`
+	RuntimeSummary     string     `json:"runtime_summary"`
+	SemanticNextAction string     `json:"semantic_next_action"`
+	SemanticSummary    string     `json:"semantic_summary"`
+	ErrorCode          string     `json:"error_code"`
+	ErrorMessage       string     `json:"error_message"`
+	StartedAt          *time.Time `json:"started_at"`
+	FinishedAt         *time.Time `json:"finished_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+}
+
+type DaemonRunEvent struct {
+	ID            uint      `json:"id"`
+	TaskRunID     uint      `json:"task_run_id"`
+	EventType     string    `json:"event_type"`
+	FromStateJSON string    `json:"from_state_json"`
+	ToStateJSON   string    `json:"to_state_json"`
+	Note          string    `json:"note"`
+	PayloadJSON   string    `json:"payload_json"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type DaemonRunLogs struct {
+	Found bool   `json:"found"`
+	RunID uint   `json:"run_id"`
+	Tail  string `json:"tail"`
+}
+
+type DaemonRunArtifact struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	Size int64  `json:"size"`
+	Ref  string `json:"ref"`
+}
+
+type DaemonRunArtifactIssue struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Reason string `json:"reason"`
+}
+
+type DaemonRunArtifacts struct {
+	Found     bool                     `json:"found"`
+	RunID     uint                     `json:"run_id"`
+	Artifacts []DaemonRunArtifact      `json:"artifacts"`
+	Issues    []DaemonRunArtifactIssue `json:"issues"`
+}
+
 type daemonAPIError struct {
 	Error string `json:"error"`
 	Cause string `json:"cause"`
@@ -372,6 +453,120 @@ func (c *DaemonAPIClient) CancelRun(ctx context.Context, runID uint) (DaemonRunC
 		RequestID: strings.TrimSpace(out.RequestID),
 		Reason:    strings.TrimSpace(out.Reason),
 	}, nil
+}
+
+func (c *DaemonAPIClient) SubmitRun(ctx context.Context, req DaemonRunSubmitRequest) (DaemonRunSubmitReceipt, error) {
+	if c == nil {
+		return DaemonRunSubmitReceipt{}, fmt.Errorf("daemon client 为空")
+	}
+	payload := map[string]any{
+		"project":              strings.TrimSpace(req.Project),
+		"request_id":           strings.TrimSpace(req.RequestID),
+		"ticket_id":            req.TicketID,
+		"verify_target":        strings.TrimSpace(req.VerifyTarget),
+		"snapshot_id":          strings.TrimSpace(req.SnapshotID),
+		"base_commit":          strings.TrimSpace(req.BaseCommit),
+		"workspace_generation": strings.TrimSpace(req.WorkspaceGeneration),
+	}
+	var out DaemonRunSubmitReceipt
+	code, err := c.doJSON(ctx, http.MethodPost, "/api/runs", payload, &out)
+	if err != nil {
+		return DaemonRunSubmitReceipt{}, err
+	}
+	if code != http.StatusAccepted {
+		return DaemonRunSubmitReceipt{}, fmt.Errorf("run submit 响应码异常: %d", code)
+	}
+	return out, nil
+}
+
+func (c *DaemonAPIClient) GetRun(ctx context.Context, runID uint) (*DaemonRunStatus, error) {
+	if c == nil {
+		return nil, fmt.Errorf("daemon client 为空")
+	}
+	if runID == 0 {
+		return nil, fmt.Errorf("run_id 不能为空")
+	}
+	var out struct {
+		Run DaemonRunStatus `json:"run"`
+	}
+	code, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/api/runs/%d", runID), nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	if code == http.StatusNotFound {
+		return nil, nil
+	}
+	if code != http.StatusOK {
+		return nil, fmt.Errorf("run show 响应码异常: %d", code)
+	}
+	return &out.Run, nil
+}
+
+func (c *DaemonAPIClient) ListRunEvents(ctx context.Context, runID uint, limit int) ([]DaemonRunEvent, error) {
+	if c == nil {
+		return nil, fmt.Errorf("daemon client 为空")
+	}
+	if runID == 0 {
+		return nil, fmt.Errorf("run_id 不能为空")
+	}
+	path := fmt.Sprintf("/api/runs/%d/events", runID)
+	if limit > 0 {
+		path += fmt.Sprintf("?limit=%d", limit)
+	}
+	var out struct {
+		Events []DaemonRunEvent `json:"events"`
+	}
+	code, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	if err != nil {
+		return nil, err
+	}
+	if code != http.StatusOK {
+		return nil, fmt.Errorf("run events 响应码异常: %d", code)
+	}
+	if out.Events == nil {
+		return []DaemonRunEvent{}, nil
+	}
+	return out.Events, nil
+}
+
+func (c *DaemonAPIClient) GetRunLogs(ctx context.Context, runID uint, lines int) (DaemonRunLogs, error) {
+	if c == nil {
+		return DaemonRunLogs{}, fmt.Errorf("daemon client 为空")
+	}
+	if runID == 0 {
+		return DaemonRunLogs{}, fmt.Errorf("run_id 不能为空")
+	}
+	path := fmt.Sprintf("/api/runs/%d/logs", runID)
+	if lines > 0 {
+		path += fmt.Sprintf("?lines=%d", lines)
+	}
+	var out DaemonRunLogs
+	code, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	if err != nil {
+		return DaemonRunLogs{}, err
+	}
+	if code != http.StatusOK {
+		return DaemonRunLogs{}, fmt.Errorf("run logs 响应码异常: %d", code)
+	}
+	return out, nil
+}
+
+func (c *DaemonAPIClient) GetRunArtifacts(ctx context.Context, runID uint) (DaemonRunArtifacts, error) {
+	if c == nil {
+		return DaemonRunArtifacts{}, fmt.Errorf("daemon client 为空")
+	}
+	if runID == 0 {
+		return DaemonRunArtifacts{}, fmt.Errorf("run_id 不能为空")
+	}
+	var out DaemonRunArtifacts
+	code, err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/api/runs/%d/artifacts", runID), nil, &out)
+	if err != nil {
+		return DaemonRunArtifacts{}, err
+	}
+	if code != http.StatusOK {
+		return DaemonRunArtifacts{}, fmt.Errorf("run artifacts 响应码异常: %d", code)
+	}
+	return out, nil
 }
 
 func (c *DaemonAPIClient) doJSON(ctx context.Context, method, path string, payload any, out any) (int, error) {

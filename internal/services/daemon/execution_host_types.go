@@ -59,6 +59,10 @@ type ExecutionHostProject interface {
 	SubmitDispatchTicket(ctx context.Context, ticketID uint, opt DispatchSubmitOptions) (DispatchSubmission, error)
 	RunDispatchJob(ctx context.Context, jobID uint, opt DispatchRunOptions) error
 	DirectDispatchWorker(ctx context.Context, ticketID uint, opt WorkerRunOptions) (WorkerRunResult, error)
+	SubmitRun(ctx context.Context, opt NodeRunSubmitOptions) (NodeRunSubmission, error)
+	GetRun(ctx context.Context, runID uint) (*NodeRunView, error)
+	GetRunLogs(ctx context.Context, runID uint, lines int) (NodeRunLogs, error)
+	ListRunArtifacts(ctx context.Context, runID uint) (NodeRunArtifacts, error)
 	SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptions) (SubagentSubmission, error)
 	RunSubagentJob(ctx context.Context, taskRunID uint, opt SubagentRunOptions) error
 	FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*RunStatus, error)

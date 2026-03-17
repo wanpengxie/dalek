@@ -135,3 +135,47 @@ type TaskEvent struct {
 }
 
 type TaskCancelResult = tasksvc.CancelRunResult
+
+type TaskRouteInfo struct {
+	Role        string
+	RoleSource  string
+	RouteReason string
+	RouteMode   string
+	RouteTarget string
+	RemoteRunID uint
+	RequestID   string
+}
+
+type TaskRequestRole string
+
+const (
+	TaskRequestRoleDev TaskRequestRole = "dev"
+	TaskRequestRoleRun TaskRequestRole = "run"
+)
+
+type SubmitTaskRequestOptions struct {
+	TicketID      uint
+	RequestID     string
+	Prompt        string
+	VerifyTarget  string
+	RemoteBaseURL string
+	RemoteProject string
+	ForceRole     TaskRequestRole
+}
+
+type TaskRequestSubmission struct {
+	Accepted      bool
+	Role          string
+	RoleSource    string
+	RouteReason   string
+	RouteMode     string
+	RouteTarget   string
+	TaskRunID     uint
+	RemoteRunID   uint
+	RequestID     string
+	TicketID      uint
+	WorkerID      uint
+	VerifyTarget  string
+	LinkedRunID   uint
+	LinkedSummary string
+}

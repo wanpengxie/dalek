@@ -71,6 +71,7 @@ type tickMsg struct{}
 
 type refreshedMsg struct {
 	Views           []app.TicketView
+	Routes          map[uint]app.TaskRouteInfo
 	MergeItems      []contracts.MergeItem
 	ArchivedTickets []contracts.Ticket
 	MergeErr        error
@@ -188,6 +189,7 @@ type model struct {
 	tableLayout     tableLayout
 	rowRefs         []rowRef
 	viewsByID       map[uint]app.TicketView
+	routesByRunID   map[uint]app.TaskRouteInfo
 	ticketsByID     map[uint]contracts.Ticket
 	mergeItems      []contracts.MergeItem
 	archivedTickets []contracts.Ticket
@@ -302,6 +304,7 @@ func newModel(p *app.Project, home *app.Home, projectName string) model {
 		tableLayout:     layout,
 		rowRefs:         nil,
 		viewsByID:       map[uint]app.TicketView{},
+		routesByRunID:   map[uint]app.TaskRouteInfo{},
 		ticketsByID:     map[uint]contracts.Ticket{},
 		mergeItems:      nil,
 		archivedTickets: nil,
@@ -447,6 +450,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 		m.lastRefresh = time.Now()
 		m.mergeItems = msg.MergeItems
+		if msg.Routes == nil {
+			m.routesByRunID = map[uint]app.TaskRouteInfo{}
+		} else {
+			m.routesByRunID = msg.Routes
+		}
 		m.archivedTickets = msg.ArchivedTickets
 		if msg.MergeErr != nil {
 			m.mergeErr = msg.MergeErr.Error()
@@ -1213,6 +1221,33 @@ func (m model) inspectorLeftView(panelW int) string {
 	}
 	runtimeState := formatRuntimeState(v)
 	sessionState := formatSessionState(v)
+	routeSummary := "-"
+	routeReason := "-"
+	if route, ok := m.routesByRunID[v.TaskRunID]; ok {
+		role := strings.TrimSpace(route.Role)
+		if role == "" {
+			role = "-"
+		}
+		routeTarget := strings.TrimSpace(route.RouteTarget)
+		if routeTarget == "" {
+			routeTarget = strings.TrimSpace(route.RouteMode)
+		}
+		if routeTarget == "" {
+			routeTarget = "-"
+		}
+		routeSummary = role + "  " + routeTarget
+		roleSource := strings.TrimSpace(route.RoleSource)
+		if roleSource == "" {
+			roleSource = "-"
+		}
+		routeReason = roleSource
+		if reason := strings.TrimSpace(route.RouteReason); reason != "" {
+			routeReason += "  " + reason
+		}
+		if route.RemoteRunID != 0 {
+			routeSummary += fmt.Sprintf("  remote=r%d", route.RemoteRunID)
+		}
+	}
 
 	lines := []string{
 		panelTitle(fmt.Sprintf("元信息  t%d · dispatch/running", t.ID)),
@@ -1221,8 +1256,10 @@ func (m model) inspectorLeftView(panelW int) string {
 		kvLine("标签:", labelOrDash(t.Label), innerW),
 		kvLine("流程:", m.dispatchProcessState(v), innerW),
 		kvLine("run:", runID+"  runtime="+runtimeState, innerW),
+		kvLine("route:", routeSummary, innerW),
 		kvLine("phase:", semPhase+"  next="+semNext, innerW),
 		kvLine("semantic:", semSummary, innerW),
+		kvLine("route_reason:", routeReason, innerW),
 		kvLine("last_event:", eventType+"  @ "+timeAndAge(v.LastEventAt), innerW),
 		kvLine("runtime_observed:", timeAndAge(v.RuntimeObservedAt)+"  result="+summary, innerW),
 		kvLine("worker:", worker+"  "+lifecycle+"  "+runtimeRef+"  "+sessionState, innerW),
@@ -1280,6 +1317,26 @@ func (m model) inspectorMiddleView(panelW int) string {
 	if runtimeSummary == "" {
 		runtimeSummary = "-"
 	}
+	routeSummary := "-"
+	routeReason := "-"
+	if route, ok := m.routesByRunID[v.TaskRunID]; ok {
+		routeSummary = oneLine(strings.TrimSpace(route.Role))
+		if routeTarget := strings.TrimSpace(route.RouteTarget); routeTarget != "" {
+			routeSummary = strings.TrimSpace(routeSummary + "  " + routeTarget)
+		} else if routeMode := strings.TrimSpace(route.RouteMode); routeMode != "" {
+			routeSummary = strings.TrimSpace(routeSummary + "  " + routeMode)
+		}
+		if routeSummary == "" {
+			routeSummary = "-"
+		}
+		routeReason = oneLine(strings.TrimSpace(route.RouteReason))
+		if routeReason == "" {
+			routeReason = oneLine(strings.TrimSpace(route.RoleSource))
+		}
+		if routeReason == "" {
+			routeReason = "-"
+		}
+	}
 
 	lines := []string{
 		panelTitle(fmt.Sprintf("PM事实观察  t%d", v.Ticket.ID)),
@@ -1287,6 +1344,8 @@ func (m model) inspectorMiddleView(panelW int) string {
 		kvLine("流程:", m.dispatchProcessState(v), innerW),
 		kvLine("last_event:", eventType+"  @ "+timeAndAge(v.LastEventAt), innerW),
 		kvLine("next_action:", semNext, innerW),
+		kvLine("route:", routeSummary, innerW),
+		kvLine("route_reason:", routeReason, innerW),
 		kvLine("semantic:", semSummary, innerW),
 		kvLine("runtime:", runtimeSummary, innerW),
 		kvLine("event_note:", eventNote, innerW),

@@ -122,6 +122,7 @@ func (s *InternalAPI) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/worker-run/submit", s.withInternalAccess(s.handleWorkerRunSubmit))
 	mux.HandleFunc("/api/subagent/submit", s.withInternalAccess(s.handleSubagentSubmit))
 	mux.HandleFunc("/api/notes", s.withInternalAccess(s.handleNoteSubmit))
+	mux.HandleFunc("/api/runs", s.withInternalAccess(s.handleRunSubmit))
 	mux.HandleFunc("/api/runs/", s.withInternalAccess(s.handleRuns))
 	mux.HandleFunc("/api/node/register", s.withNodeAgentAccess(s.handleNodeRegister))
 	mux.HandleFunc("/api/node/heartbeat", s.withNodeAgentAccess(s.handleNodeHeartbeat))
@@ -780,6 +781,16 @@ type noteSubmitPayload struct {
 	Text    string `json:"text"`
 }
 
+type runSubmitPayload struct {
+	Project             string `json:"project"`
+	RequestID           string `json:"request_id"`
+	TicketID            uint   `json:"ticket_id"`
+	VerifyTarget        string `json:"verify_target"`
+	SnapshotID          string `json:"snapshot_id"`
+	BaseCommit          string `json:"base_commit"`
+	WorkspaceGeneration string `json:"workspace_generation"`
+}
+
 func (s *InternalAPI) handleDispatchSubmit(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
@@ -930,6 +941,57 @@ func (s *InternalAPI) handleNoteSubmit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *InternalAPI) handleRunSubmit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+		return
+	}
+	var payload runSubmitPayload
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	projectName := strings.TrimSpace(payload.Project)
+	if projectName == "" {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", "project 不能为空")
+		return
+	}
+	project, err := s.host.resolver.OpenProject(projectName)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "open_project_failed", err.Error())
+		return
+	}
+	submission, err := project.SubmitRun(r.Context(), NodeRunSubmitOptions{
+		RequestID:    strings.TrimSpace(payload.RequestID),
+		TicketID:     payload.TicketID,
+		VerifyTarget: strings.TrimSpace(payload.VerifyTarget),
+		SnapshotID:   strings.TrimSpace(payload.SnapshotID),
+		BaseCommit:   strings.TrimSpace(payload.BaseCommit),
+	})
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "submit_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"accepted":                    true,
+		"project":                     projectName,
+		"run_id":                      submission.RunID,
+		"task_run_id":                 submission.TaskRunID,
+		"request_id":                  submission.RequestID,
+		"run_status":                  submission.RunStatus,
+		"verify_target":               submission.VerifyTarget,
+		"snapshot_id":                 submission.SnapshotID,
+		"base_commit":                 submission.BaseCommit,
+		"source_workspace_generation": payload.WorkspaceGeneration,
+		"query": map[string]string{
+			"show":      fmt.Sprintf("dalek run show --id %d", submission.RunID),
+			"logs":      fmt.Sprintf("dalek run logs --id %d", submission.RunID),
+			"artifacts": fmt.Sprintf("dalek run artifact --id %d", submission.RunID),
+			"cancel":    fmt.Sprintf("dalek run cancel --id %d", submission.RunID),
+		},
+	})
+}
+
 func (s *InternalAPI) handleRuns(w http.ResponseWriter, r *http.Request) {
 	runID, tail, ok := parseRunRoute(r.URL.Path)
 	if !ok {
@@ -941,6 +1003,10 @@ func (s *InternalAPI) handleRuns(w http.ResponseWriter, r *http.Request) {
 		s.handleRunShow(w, r, runID)
 	case r.Method == http.MethodGet && tail == "events":
 		s.handleRunEvents(w, r, runID)
+	case r.Method == http.MethodGet && tail == "logs":
+		s.handleRunLogs(w, r, runID)
+	case r.Method == http.MethodGet && tail == "artifacts":
+		s.handleRunArtifacts(w, r, runID)
 	case r.Method == http.MethodPost && tail == "cancel":
 		s.handleRunCancel(w, r, runID)
 	default:
@@ -998,6 +1064,58 @@ func (s *InternalAPI) handleRunCancel(w http.ResponseWriter, r *http.Request, ru
 		"request_id": result.RequestID,
 		"reason":     result.Reason,
 	})
+}
+
+func (s *InternalAPI) handleRunLogs(w http.ResponseWriter, r *http.Request, runID uint) {
+	lines := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("lines")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			lines = n
+		}
+	}
+	status, err := s.host.GetRunStatus(r.Context(), runID)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	if status == nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "run 不存在")
+		return
+	}
+	project, err := s.host.resolver.OpenProject(status.Project)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "open_project_failed", err.Error())
+		return
+	}
+	logs, err := project.GetRunLogs(r.Context(), runID, lines)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, logs)
+}
+
+func (s *InternalAPI) handleRunArtifacts(w http.ResponseWriter, r *http.Request, runID uint) {
+	status, err := s.host.GetRunStatus(r.Context(), runID)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	if status == nil {
+		writeAPIError(w, http.StatusNotFound, "not_found", "run 不存在")
+		return
+	}
+	project, err := s.host.resolver.OpenProject(status.Project)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "open_project_failed", err.Error())
+		return
+	}
+	artifacts, err := project.ListRunArtifacts(r.Context(), runID)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "query_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, artifacts)
 }
 
 func parseRunRoute(path string) (uint, string, bool) {

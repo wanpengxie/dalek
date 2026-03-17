@@ -27,6 +27,16 @@ func TestRunModel_RenderDetail_IncludesTaskStatusSummary(t *testing.T) {
 			LastEventNote:     "upload failed",
 		},
 	}
+	m.routes = map[uint]app.TaskRouteInfo{
+		7: {
+			Role:        "run",
+			RoleSource:  "auto_route_prompt",
+			RouteReason: "prompt matched verify/test keywords",
+			RouteMode:   "remote",
+			RouteTarget: "http://c.example",
+			RemoteRunID: 701,
+		},
+	}
 	m.table.SetRows(runRows(m.tableRows))
 
 	detail := m.renderDetail()
@@ -39,6 +49,12 @@ func TestRunModel_RenderDetail_IncludesTaskStatusSummary(t *testing.T) {
 		"run_artifact_upload_failed",
 		"last_note:",
 		"upload failed",
+		"role_source:",
+		"auto_route_prompt",
+		"route_reason:",
+		"prompt matched verify/test keywords",
+		"remote_run_id:",
+		"701",
 	} {
 		if !strings.Contains(detail, want) {
 			t.Fatalf("detail missing %q in %q", want, detail)

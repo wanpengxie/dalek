@@ -533,8 +533,7 @@ func assembleProject(cp *core.Project) *Project {
 	runSvc := runsvc.New(cp.DB, taskSvc, runTargetCatalog, snapshotApply)
 	subagentSvc := subagentsvc.New(cp, taskSvc, cp.Logger)
 	channelSvc := channelsvc.New(cp)
-	channelSvc.SetActionExecutor(newChannelActionExecutor(ticketSvc, pmSvc, workerSvc))
-	return &Project{
+	project := &Project{
 		core:        cp,
 		ticket:      ticketSvc,
 		ticketQuery: ticketQuerySvc,
@@ -550,6 +549,8 @@ func assembleProject(cp *core.Project) *Project {
 		task:        taskSvc,
 		channel:     channelSvc,
 	}
+	channelSvc.SetActionExecutor(newChannelActionExecutor(project, ticketSvc, pmSvc, workerSvc))
+	return project
 }
 
 func buildRunTargetCatalog(cfg repo.Config) runexecsvc.TargetCatalog {

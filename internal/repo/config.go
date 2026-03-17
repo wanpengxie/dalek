@@ -19,6 +19,7 @@ type Config struct {
 	ManagerCommand      string                     `json:"manager_command"`
 	PMDispatchTimeoutMS int                        `json:"pm_dispatch_timeout_ms"`
 	GatewayAgent        GatewayAgentConfig         `json:"gateway_agent"`
+	MultiNode           MultiNodeConfig            `json:"multi_node"`
 	RunTargets          map[string]RunTargetConfig `json:"run_targets,omitempty"`
 	Notebook            NotebookConfig             `json:"notebook"`
 
@@ -46,6 +47,15 @@ type GatewayAgentConfig struct {
 	Output        string `json:"output"`
 	ResumeOutput  string `json:"resume_output"`
 	TurnTimeoutMS int    `json:"turn_timeout_ms"`
+}
+
+type MultiNodeConfig struct {
+	AutoRoute                bool   `json:"auto_route"`
+	DevBaseURL               string `json:"dev_base_url,omitempty"`
+	DevProjectName           string `json:"dev_project_name,omitempty"`
+	RunBaseURL               string `json:"run_base_url,omitempty"`
+	RunProjectName           string `json:"run_project_name,omitempty"`
+	AutoLinkLatestRunFailure bool   `json:"auto_link_latest_run_failure"`
 }
 
 type RunTargetConfig struct {
@@ -128,6 +138,7 @@ func (c Config) WithDefaults() Config {
 	out.WorkerAgent = normalizeAgentExecConfig(out.WorkerAgent)
 	out.PMAgent = normalizeAgentExecConfig(out.PMAgent)
 	out.GatewayAgent = normalizeGatewayAgentConfig(out.GatewayAgent)
+	out.MultiNode = normalizeMultiNodeConfig(out.MultiNode)
 	out.RunTargets = normalizeRunTargetConfigs(out.RunTargets)
 	if len(out.RunTargets) == 0 {
 		out.RunTargets = defaultRunTargetConfigs()
@@ -221,27 +232,48 @@ func normalizeGatewayAgentConfig(in GatewayAgentConfig) GatewayAgentConfig {
 func defaultRunTargetConfigs() map[string]RunTargetConfig {
 	return map[string]RunTargetConfig{
 		"test": {
-			Description: "Run the default project test suite.",
-			Command:     []string{"go", "test", "./..."},
-			TimeoutMS:   20 * 60 * 1000,
-			PreflightCommand: []string{"go", "test", "./..."},
+			Description:        "Run the default project test suite.",
+			Command:            []string{"go", "test", "./..."},
+			TimeoutMS:          20 * 60 * 1000,
+			PreflightCommand:   []string{"go", "test", "./..."},
 			PreflightTimeoutMS: 2 * 60 * 1000,
 		},
 		"lint": {
-			Description: "Run the default project linter entrypoint.",
-			Command:     []string{"golangci-lint", "run"},
-			TimeoutMS:   10 * 60 * 1000,
-			PreflightCommand: []string{"golangci-lint", "run"},
+			Description:        "Run the default project linter entrypoint.",
+			Command:            []string{"golangci-lint", "run"},
+			TimeoutMS:          10 * 60 * 1000,
+			PreflightCommand:   []string{"golangci-lint", "run"},
 			PreflightTimeoutMS: 60 * 1000,
 		},
 		"build": {
-			Description: "Run the default project build entrypoint.",
-			Command:     []string{"go", "build", "./..."},
-			TimeoutMS:   15 * 60 * 1000,
-			PreflightCommand: []string{"go", "build", "./..."},
+			Description:        "Run the default project build entrypoint.",
+			Command:            []string{"go", "build", "./..."},
+			TimeoutMS:          15 * 60 * 1000,
+			PreflightCommand:   []string{"go", "build", "./..."},
 			PreflightTimeoutMS: 60 * 1000,
 		},
 	}
+}
+
+func normalizeMultiNodeConfig(in MultiNodeConfig) MultiNodeConfig {
+	out := in
+	out.DevBaseURL = strings.TrimSpace(out.DevBaseURL)
+	out.DevProjectName = strings.TrimSpace(out.DevProjectName)
+	out.RunBaseURL = strings.TrimSpace(out.RunBaseURL)
+	out.RunProjectName = strings.TrimSpace(out.RunProjectName)
+	if out.DevProjectName == "" {
+		out.DevProjectName = ""
+	}
+	if out.RunProjectName == "" {
+		out.RunProjectName = ""
+	}
+	if out.DevBaseURL == "" && out.RunBaseURL == "" {
+		out.AutoRoute = false
+	}
+	if !out.AutoLinkLatestRunFailure {
+		out.AutoLinkLatestRunFailure = true
+	}
+	return out
 }
 
 func normalizeRunTargetConfigs(in map[string]RunTargetConfig) map[string]RunTargetConfig {
@@ -448,6 +480,21 @@ func MergeConfig(oldCfg, override Config) Config {
 	}
 	if override.GatewayAgent.TurnTimeoutMS > 0 {
 		out.GatewayAgent.TurnTimeoutMS = override.GatewayAgent.TurnTimeoutMS
+	}
+	if override.MultiNode.AutoRoute {
+		out.MultiNode.AutoRoute = true
+	}
+	if strings.TrimSpace(override.MultiNode.DevBaseURL) != "" {
+		out.MultiNode.DevBaseURL = strings.TrimSpace(override.MultiNode.DevBaseURL)
+	}
+	if strings.TrimSpace(override.MultiNode.DevProjectName) != "" {
+		out.MultiNode.DevProjectName = strings.TrimSpace(override.MultiNode.DevProjectName)
+	}
+	if strings.TrimSpace(override.MultiNode.RunBaseURL) != "" {
+		out.MultiNode.RunBaseURL = strings.TrimSpace(override.MultiNode.RunBaseURL)
+	}
+	if strings.TrimSpace(override.MultiNode.RunProjectName) != "" {
+		out.MultiNode.RunProjectName = strings.TrimSpace(override.MultiNode.RunProjectName)
 	}
 	if len(override.RunTargets) > 0 {
 		out.RunTargets = normalizeRunTargetConfigs(override.RunTargets)

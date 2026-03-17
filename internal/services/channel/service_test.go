@@ -114,6 +114,76 @@ func TestProcessInbound_ListTicketsAndOutboxSent(t *testing.T) {
 	}
 }
 
+func TestProcessInbound_DirectTaskRequestCommandBypassesAgent(t *testing.T) {
+	installFakeClaudeBinary(t, true)
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+	repoRoot := t.TempDir()
+	svc := New(&core.Project{
+		Name:     "demo",
+		Key:      "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		Config: repo.Config{
+			GatewayAgent: repo.GatewayAgentConfig{
+				Mode: "cli",
+			},
+		},
+		DB:          db,
+		TaskRuntime: task.NewRuntimeFactory(),
+	})
+	svc.SetActionExecutor(NewActionExecutor(nil, nil, nil, testTaskRequestActionAdapter{
+		submit: func(ctx context.Context, in SubmitTaskRequestActionInput) (SubmitTaskRequestActionResult, error) {
+			_ = ctx
+			if in.TicketID != 12 {
+				t.Fatalf("unexpected ticket id: %d", in.TicketID)
+			}
+			if in.Prompt != "继续修复 verify 失败" {
+				t.Fatalf("unexpected prompt: %q", in.Prompt)
+			}
+			return SubmitTaskRequestActionResult{
+				Accepted:    true,
+				Role:        "dev",
+				RoleSource:  "prompt_default",
+				RouteReason: "prompt provided without verify target",
+				RouteMode:   "remote",
+				RouteTarget: "http://b.example",
+				TaskRunID:   88,
+				RequestID:   "gw-req-1",
+				TicketID:    in.TicketID,
+			}, nil
+		},
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := svc.ProcessInbound(ctx, contracts.InboundEnvelope{
+		Schema:             contracts.ChannelInboundSchemaV1,
+		ChannelType:        contracts.ChannelTypeCLI,
+		Adapter:            "cli.local",
+		PeerConversationID: "conv-task-request",
+		PeerMessageID:      "msg-task-request",
+		SenderID:           "u1",
+		Text:               "/task request --ticket 12 --prompt \"继续修复 verify 失败\"",
+		ReceivedAt:         time.Now().UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatalf("ProcessInbound failed: %v", err)
+	}
+	if !strings.Contains(result.ReplyText, "任务已受理") {
+		t.Fatalf("unexpected reply: %q", result.ReplyText)
+	}
+	if !strings.Contains(result.ReplyText, "- task_run_id: 88") {
+		t.Fatalf("reply should contain run id, got=%q", result.ReplyText)
+	}
+	if !strings.Contains(result.ReplyText, "- route: http://b.example") {
+		t.Fatalf("reply should contain route target, got=%q", result.ReplyText)
+	}
+}
+
 func TestProcessInbound_IdempotentByAdapterAndPeerMessageID(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
 	db, err := store.OpenAndMigrate(dbPath)
@@ -1297,6 +1367,19 @@ func TestBuildPMAgentPrompt_WithSenderName(t *testing.T) {
 	}
 }
 
+func TestBuildGatewayAgentInstructionPrompt(t *testing.T) {
+	got := buildGatewayAgentInstructionPrompt("[sender: Alice (u1)]\n请继续开发 t12")
+	if !strings.Contains(got, "submit_task_request") {
+		t.Fatalf("expected submit_task_request hint, got=%q", got)
+	}
+	if !strings.Contains(got, "dispatch_ticket") {
+		t.Fatalf("expected dispatch_ticket fallback hint, got=%q", got)
+	}
+	if !strings.Contains(got, "[user message]") || !strings.Contains(got, "请继续开发 t12") {
+		t.Fatalf("expected original message embedded, got=%q", got)
+	}
+}
+
 func TestBuildPMAgentPrompt_WithSenderIDOnly(t *testing.T) {
 	got := buildPMAgentPrompt(contracts.ChannelMessage{
 		SenderID:    "ou_test_2",
@@ -1435,6 +1518,17 @@ func (a testWorkerActionAdapter) StopTicket(ctx context.Context, ticketID uint) 
 	return a.svc.StopTicket(ctx, ticketID)
 }
 
+type testTaskRequestActionAdapter struct {
+	submit func(ctx context.Context, in SubmitTaskRequestActionInput) (SubmitTaskRequestActionResult, error)
+}
+
+func (a testTaskRequestActionAdapter) SubmitTaskRequest(ctx context.Context, in SubmitTaskRequestActionInput) (SubmitTaskRequestActionResult, error) {
+	if a.submit == nil {
+		return SubmitTaskRequestActionResult{}, fmt.Errorf("task request adapter 未配置")
+	}
+	return a.submit(ctx, in)
+}
+
 func newChannelServiceForTestProject(p *core.Project) *Service {
 	svc := New(p)
 	if p == nil || p.DB == nil {
@@ -1447,6 +1541,11 @@ func newChannelServiceForTestProject(p *core.Project) *Service {
 		testTicketActionAdapter{svc: ticketSvc},
 		testPMActionAdapter{svc: pmSvc},
 		testWorkerActionAdapter{svc: workerSvc},
+		testTaskRequestActionAdapter{submit: func(ctx context.Context, in SubmitTaskRequestActionInput) (SubmitTaskRequestActionResult, error) {
+			_ = ctx
+			_ = in
+			return SubmitTaskRequestActionResult{}, fmt.Errorf("task request adapter 未配置")
+		}},
 	))
 	return svc
 }

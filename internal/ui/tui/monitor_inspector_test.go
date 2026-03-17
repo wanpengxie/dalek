@@ -43,6 +43,14 @@ func TestInspectorLeftView_ShowsDispatchRunningProcess(t *testing.T) {
 		LastEventAt:        &now,
 	}
 	m.applyViews([]app.TicketView{view})
+	m.routesByRunID[42] = app.TaskRouteInfo{
+		Role:        "dev",
+		RoleSource:  "auto_route_prompt",
+		RouteReason: "prompt matched development keywords",
+		RouteMode:   "remote",
+		RouteTarget: "http://b.example",
+		RemoteRunID: 4201,
+	}
 	for i, ref := range m.rowRefs {
 		if ref.kind == rowTicket && ref.ticketID == view.Ticket.ID {
 			m.table.SetCursor(i)
@@ -60,6 +68,12 @@ func TestInspectorLeftView_ShowsDispatchRunningProcess(t *testing.T) {
 	}
 	if !strings.Contains(got, "run: r42") {
 		t.Fatalf("should render run id, got=%q", got)
+	}
+	if !strings.Contains(got, "route: dev  http://b.example  remote=r4201") {
+		t.Fatalf("should render route info, got=%q", got)
+	}
+	if !strings.Contains(got, "route_reason: auto_route_prompt  prompt matched development keywords") {
+		t.Fatalf("should render route reason, got=%q", got)
 	}
 	if !strings.Contains(got, "last_event: task_dispatched") {
 		t.Fatalf("should render last event, got=%q", got)
@@ -84,6 +98,13 @@ func TestInspectorRightView_SimplifiesTailToRecentLines(t *testing.T) {
 		SessionAlive: true,
 	}
 	m.applyViews([]app.TicketView{view})
+	m.routesByRunID[view.TaskRunID] = app.TaskRouteInfo{
+		Role:        "run",
+		RoleSource:  "auto_route_prompt",
+		RouteReason: "prompt matched verify/test keywords",
+		RouteMode:   "remote",
+		RouteTarget: "http://c.example",
+	}
 	for i, ref := range m.rowRefs {
 		if ref.kind == rowTicket && ref.ticketID == view.Ticket.ID {
 			m.table.SetCursor(i)
@@ -122,6 +143,7 @@ func TestInspectorMiddleView_ShowsEventNoteFacts(t *testing.T) {
 		},
 		SessionAlive:       true,
 		DerivedStatus:      contracts.TicketActive,
+		TaskRunID:          303,
 		LastEventType:      "task_stream",
 		LastEventNote:      "读取 ticket 相关模型并准备修改",
 		SemanticNextAction: "continue",
@@ -130,6 +152,13 @@ func TestInspectorMiddleView_ShowsEventNoteFacts(t *testing.T) {
 		LastEventAt:        &now,
 	}
 	m.applyViews([]app.TicketView{view})
+	m.routesByRunID[303] = app.TaskRouteInfo{
+		Role:        "run",
+		RoleSource:  "auto_route_prompt",
+		RouteReason: "prompt matched verify/test keywords",
+		RouteMode:   "remote",
+		RouteTarget: "http://c.example",
+	}
 	for i, ref := range m.rowRefs {
 		if ref.kind == rowTicket && ref.ticketID == view.Ticket.ID {
 			m.table.SetCursor(i)
@@ -146,6 +175,12 @@ func TestInspectorMiddleView_ShowsEventNoteFacts(t *testing.T) {
 	}
 	if !strings.Contains(got, "next_action: continue") {
 		t.Fatalf("should render next_action in facts panel, got=%q", got)
+	}
+	if !strings.Contains(got, "route: run  http://c.example") {
+		t.Fatalf("should render route in facts panel, got=%q", got)
+	}
+	if !strings.Contains(got, "route_reason: prompt matched verify/test keywords") {
+		t.Fatalf("should render route reason in facts panel, got=%q", got)
 	}
 }
 
