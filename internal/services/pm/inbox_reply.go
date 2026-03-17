@@ -138,7 +138,7 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 		if attempt <= 0 {
 			attempt = 1
 		}
-		if err := s.focusSubmitItemRun(
+		submitResult, err := s.focusSubmitItemRun(
 			ctx,
 			*focusRun,
 			*focusItem,
@@ -148,8 +148,18 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 			attempt,
 			prompt,
 			&replyInbox,
-		); err != nil {
+		)
+		if err != nil {
 			return InboxReplyResult{}, err
+		}
+		if submitResult.UsedLocalFallback {
+			snapshot, err = s.focusLoadTicketSnapshot(ctx, item.TicketID)
+			if err != nil {
+				return InboxReplyResult{}, err
+			}
+			if _, cerr := s.focusConvergeBlockedItemToTicketTruth(ctx, *focusRun, *focusItem, snapshot); cerr != nil {
+				return InboxReplyResult{}, cerr
+			}
 		}
 		// 重新加载 focus view 获取最新状态
 		view, err := s.FocusGet(ctx, focusRun.ID)
@@ -167,16 +177,20 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 		if updatedItem == nil {
 			return InboxReplyResult{}, fmt.Errorf("focus batch#%d 缺少 focus item#%d", focusRun.ID, focusItem.ID)
 		}
-		if strings.TrimSpace(updatedItem.Status) == contracts.FocusItemBlocked {
+		nextAction := strings.TrimSpace(strings.ToLower(submitResult.NextAction))
+		if strings.TrimSpace(updatedItem.Status) == contracts.FocusItemBlocked && nextAction != string(contracts.NextWaitUser) {
 			lastError := strings.TrimSpace(updatedItem.LastError)
 			if lastError == "" {
 				lastError = fmt.Sprintf("focus item t%d 回复后仍处于 blocked", item.TicketID)
 			}
 			return InboxReplyResult{}, fmt.Errorf("%s", lastError)
 		}
-		workerID := item.WorkerID
+		workerID := submitResult.WorkerID
 		if updatedItem.CurrentWorkerID != nil && *updatedItem.CurrentWorkerID != 0 {
 			workerID = *updatedItem.CurrentWorkerID
+		}
+		if workerID == 0 {
+			workerID = item.WorkerID
 		}
 		return InboxReplyResult{
 			InboxID:     item.ID,
@@ -184,6 +198,8 @@ func (s *Service) ReplyInboxItem(ctx context.Context, id uint, rawAction, reply 
 			WorkerID:    workerID,
 			Action:      action,
 			Mode:        inboxReplyModeFocus,
+			RunID:       submitResult.RunID,
+			NextAction:  strings.TrimSpace(submitResult.NextAction),
 			FocusID:     focusRun.ID,
 			Accepted:    true,
 			FocusedItem: updatedItem.ID,
@@ -730,6 +746,7 @@ func (s *Service) upsertNeedsUserInboxItemTx(ctx context.Context, tx *gorm.DB, i
 			Where("id = ?", existing.ID).
 			Updates(map[string]any{
 				"key":                 key,
+				"status":              contracts.InboxOpen,
 				"severity":            item.Severity,
 				"reason":              item.Reason,
 				"title":               title,

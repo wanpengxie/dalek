@@ -33,6 +33,13 @@ type focusTicketSnapshot struct {
 	ActiveRun *contracts.TaskRun
 }
 
+type focusSubmitItemRunResult struct {
+	WorkerID          uint
+	RunID             uint
+	NextAction        string
+	UsedLocalFallback bool
+}
+
 func (s *Service) AdvanceFocusController(ctx context.Context) error {
 	return s.FocusTick(ctx)
 }
@@ -527,25 +534,63 @@ func (s *Service) focusRestartOrBlock(ctx context.Context, run contracts.FocusRu
 	})
 }
 
-func (s *Service) focusSubmitItemRun(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, worker *contracts.Worker, eventKind, eventSummary string, attempt int, prompt string, consumeInbox *contracts.InboxItem) error {
+func (s *Service) focusSubmitItemRun(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, worker *contracts.Worker, eventKind, eventSummary string, attempt int, prompt string, consumeInbox *contracts.InboxItem) (focusSubmitItemRunResult, error) {
 	submitter := s.getWorkerRunSubmitter()
-	if submitter == nil {
-		return s.focusBlockItem(ctx, run, item, focusBlockedReasonSubmitFailed, "worker run submitter 未配置")
-	}
 	ticket, err := s.focusLoadTicketOnly(ctx, item.TicketID)
 	if err != nil {
-		return s.focusBlockItem(ctx, run, item, focusBlockedReasonSubmitFailed, err.Error())
+		return focusSubmitItemRunResult{}, s.focusBlockItem(ctx, run, item, focusBlockedReasonSubmitFailed, err.Error())
 	}
 	baseBranch, err := requiredWorkerBaseBranch(ticket)
 	if err != nil {
-		return s.focusBlockItem(ctx, run, item, focusBlockedReasonSubmitFailed, err.Error())
+		return focusSubmitItemRunResult{}, s.focusBlockItem(ctx, run, item, focusBlockedReasonSubmitFailed, err.Error())
+	}
+	if submitter == nil {
+		autoStart := false
+		runResult, err := s.RunTicketWorker(ctx, item.TicketID, WorkerRunOptions{
+			EntryPrompt: strings.TrimSpace(prompt),
+			AutoStart:   &autoStart,
+			BaseBranch:  baseBranch,
+		})
+		if err != nil {
+			return focusSubmitItemRunResult{}, err
+		}
+		workerID := runResult.WorkerID
+		if workerID == 0 && worker != nil {
+			workerID = worker.ID
+		}
+		if workerID == 0 && item.CurrentWorkerID != nil {
+			workerID = *item.CurrentWorkerID
+		}
+		if strings.TrimSpace(eventKind) != "" {
+			eventPayload := map[string]any{
+				"ticket_id":   item.TicketID,
+				"worker_id":   workerID,
+				"task_run_id": runResult.RunID,
+				"attempt":     attempt,
+				"next_action": strings.TrimSpace(runResult.LastNextAction),
+			}
+			if consumeInbox != nil {
+				for key, value := range inboxReplyAuditPayload(*consumeInbox, consumeInbox.ReplyAction, consumeInbox.ReplyMarkdown) {
+					eventPayload[key] = value
+				}
+			}
+			if err := s.focusAppendEvent(ctx, run.ID, item.ID, eventKind, eventSummary, eventPayload); err != nil {
+				return focusSubmitItemRunResult{}, err
+			}
+		}
+		return focusSubmitItemRunResult{
+			WorkerID:          workerID,
+			RunID:             runResult.RunID,
+			NextAction:        strings.TrimSpace(runResult.LastNextAction),
+			UsedLocalFallback: true,
+		}, nil
 	}
 	submission, err := submitter.SubmitTicketWorkerRun(context.WithoutCancel(ctx), item.TicketID, WorkerRunSubmitOptions{
 		BaseBranch: baseBranch,
 		Prompt:     strings.TrimSpace(prompt),
 	})
 	if err != nil {
-		return s.focusBlockItem(ctx, run, item, focusBlockedReasonSubmitFailed, err.Error())
+		return focusSubmitItemRunResult{}, s.focusBlockItem(ctx, run, item, focusBlockedReasonSubmitFailed, err.Error())
 	}
 	workerID := submission.WorkerID
 	if workerID == 0 && worker != nil {
@@ -566,7 +611,7 @@ func (s *Service) focusSubmitItemRun(ctx context.Context, run contracts.FocusRun
 	}
 	_, db, err := s.require()
 	if err != nil {
-		return err
+		return focusSubmitItemRunResult{}, err
 	}
 	eventPayload := map[string]any{
 		"ticket_id":   item.TicketID,
@@ -607,10 +652,13 @@ func (s *Service) focusSubmitItemRun(ctx context.Context, run contracts.FocusRun
 		return err
 	})
 	if err != nil {
-		return err
+		return focusSubmitItemRunResult{}, err
 	}
 	s.projectWake()
-	return nil
+	return focusSubmitItemRunResult{
+		WorkerID: workerID,
+		RunID:    submission.TaskRunID,
+	}, nil
 }
 
 func (s *Service) focusAdoptExecutingItem(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, snapshot focusTicketSnapshot) error {

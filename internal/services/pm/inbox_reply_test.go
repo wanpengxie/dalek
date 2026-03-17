@@ -453,6 +453,318 @@ func TestReplyInboxItem_FocusBatchResumesImmediatelyAndKeepsSerialOrder(t *testi
 	assertFocusReplyPayload(t, resumedPayload, tk1.ID, inbox.ID, "continue", "资料已放到 /tmp/context.md，请继续执行。")
 }
 
+func TestReplyInboxItem_FocusBatchFallsBackToLocalRunWhenSubmitterMissing(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, p.DB, "reply-inbox-focus-local-fallback-1")
+	tk2 := createTicket(t, p.DB, "reply-inbox-focus-local-fallback-2")
+	worker, err := svc.StartTicket(ctx, tk1.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk1.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketBlocked,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket blocked failed: %v", err)
+	}
+
+	focusRes, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID, tk2.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	view, err := svc.FocusGet(ctx, focusRes.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	item1 := focusItemByTicketID(view.Items, tk1.ID)
+	if item1 == nil {
+		t.Fatalf("expected focus item for t%d", tk1.ID)
+	}
+	if err := p.DB.Model(&contracts.FocusRun{}).Where("id = ?", focusRes.FocusID).Updates(map[string]any{
+		"status":     contracts.FocusBlocked,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set focus blocked failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.FocusRunItem{}).Where("id = ?", item1.ID).Updates(map[string]any{
+		"status":         contracts.FocusItemBlocked,
+		"blocked_reason": focusBlockedReasonNeedsUser,
+		"updated_at":     time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set focus item blocked failed: %v", err)
+	}
+
+	inbox := contracts.InboxItem{
+		Key:              inboxKeyNeedsUser(worker.ID),
+		Status:           contracts.InboxOpen,
+		Severity:         contracts.InboxBlocker,
+		Reason:           contracts.InboxNeedsUser,
+		Title:            "需要你输入",
+		Body:             "请根据 /tmp/context.md 继续推进",
+		TicketID:         tk1.ID,
+		WorkerID:         worker.ID,
+		OriginTaskRunID:  31,
+		CurrentTaskRunID: 31,
+		WaitRoundCount:   1,
+	}
+	if err := p.DB.Create(&inbox).Error; err != nil {
+		t.Fatalf("create needs_user inbox failed: %v", err)
+	}
+
+	runID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk1.ID, worker.ID)
+	doneReport := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   worker.ID,
+		TicketID:   tk1.ID,
+		TaskRunID:  runID,
+		HeadSHA:    testWorkerDoneHeadSHA,
+		Summary:    "focus local fallback done",
+		NextAction: string(contracts.NextDone),
+	}
+	if err := svc.ApplyWorkerReport(ctx, doneReport, "test-runtime"); err != nil {
+		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	}
+	writeWorkerLoopStateForTest(t, worker.WorktreePath, "done", "focus local fallback done", nil, true, testWorkerDoneHeadSHA, "clean")
+
+	var capturedPrompt string
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		capturedPrompt = prompt
+		return &fakeAgentRunHandle{
+			runID:  runID,
+			result: agentexec.AgentRunResult{ExitCode: 0},
+		}, nil
+	}
+
+	result, err := svc.ReplyInboxItem(ctx, inbox.ID, string(contracts.InboxReplyContinue), "资料已放到 /tmp/context.md，请继续执行。")
+	if err != nil {
+		t.Fatalf("ReplyInboxItem failed: %v", err)
+	}
+	if result.Mode != inboxReplyModeFocus {
+		t.Fatalf("expected mode=%s, got=%s", inboxReplyModeFocus, result.Mode)
+	}
+	if result.FocusID != focusRes.FocusID {
+		t.Fatalf("expected focus_id=%d, got=%d", focusRes.FocusID, result.FocusID)
+	}
+	if result.RunID != runID {
+		t.Fatalf("expected run_id=%d, got=%d", runID, result.RunID)
+	}
+	if result.NextAction != string(contracts.NextDone) {
+		t.Fatalf("expected next_action=done, got=%s", result.NextAction)
+	}
+	if result.WorkerID != worker.ID {
+		t.Fatalf("expected worker_id=%d, got=%d", worker.ID, result.WorkerID)
+	}
+
+	after, err := svc.FocusGet(ctx, focusRes.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet after reply failed: %v", err)
+	}
+	afterItem1 := focusItemByTicketID(after.Items, tk1.ID)
+	afterItem2 := focusItemByTicketID(after.Items, tk2.ID)
+	if after.Run.Status != contracts.FocusRunning {
+		t.Fatalf("expected focus running after local fallback done, got=%s", after.Run.Status)
+	}
+	if afterItem1 == nil || afterItem1.Status != contracts.FocusItemMerging {
+		t.Fatalf("expected first item enter merging after local fallback done, got=%+v", afterItem1)
+	}
+	if afterItem2 == nil || afterItem2.Status != contracts.FocusItemPending {
+		t.Fatalf("expected second item stays pending, got=%+v", afterItem2)
+	}
+	if !strings.Contains(capturedPrompt, "资料已放到 /tmp/context.md") {
+		t.Fatalf("expected local fallback prompt contains reply markdown, got:\n%s", capturedPrompt)
+	}
+	if !strings.Contains(capturedPrompt, "当前动作：continue") {
+		t.Fatalf("expected local fallback prompt contains explicit action, got:\n%s", capturedPrompt)
+	}
+
+	var inboxAfter contracts.InboxItem
+	if err := p.DB.First(&inboxAfter, inbox.ID).Error; err != nil {
+		t.Fatalf("reload inbox failed: %v", err)
+	}
+	if inboxAfter.Status != contracts.InboxDone {
+		t.Fatalf("expected inbox done after local fallback done, got=%s", inboxAfter.Status)
+	}
+	if inboxAfter.ChainResolvedAt == nil {
+		t.Fatalf("expected done flow resolve needs_user chain")
+	}
+
+	var resumedEvent contracts.FocusEvent
+	if err := p.DB.Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?", focusRes.FocusID, item1.ID, contracts.FocusEventItemRestarted).First(&resumedEvent).Error; err != nil {
+		t.Fatalf("load focus resumed event failed: %v", err)
+	}
+	resumedPayload := decodeJSONMapForTest(t, resumedEvent.PayloadJSON)
+	assertFocusReplyPayload(t, resumedPayload, tk1.ID, inbox.ID, "continue", "资料已放到 /tmp/context.md，请继续执行。")
+	if got := strings.TrimSpace(resumedPayload["next_action"].(string)); got != string(contracts.NextDone) {
+		t.Fatalf("expected resumed event next_action=done, got=%q payload=%+v", got, resumedPayload)
+	}
+}
+
+func TestReplyInboxItem_FocusBatchLocalFallbackAllowsWaitUserResult(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, p.DB, "reply-inbox-focus-local-wait-1")
+	tk2 := createTicket(t, p.DB, "reply-inbox-focus-local-wait-2")
+	worker, err := svc.StartTicket(ctx, tk1.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk1.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketBlocked,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket blocked failed: %v", err)
+	}
+
+	focusRes, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID, tk2.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	view, err := svc.FocusGet(ctx, focusRes.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	item1 := focusItemByTicketID(view.Items, tk1.ID)
+	if item1 == nil {
+		t.Fatalf("expected focus item for t%d", tk1.ID)
+	}
+	if err := p.DB.Model(&contracts.FocusRun{}).Where("id = ?", focusRes.FocusID).Updates(map[string]any{
+		"status":     contracts.FocusBlocked,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set focus blocked failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.FocusRunItem{}).Where("id = ?", item1.ID).Updates(map[string]any{
+		"status":         contracts.FocusItemBlocked,
+		"blocked_reason": focusBlockedReasonNeedsUser,
+		"last_error":     "waiting for inbox reply",
+		"updated_at":     time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set focus item blocked failed: %v", err)
+	}
+
+	inbox := contracts.InboxItem{
+		Key:              inboxKeyNeedsUser(worker.ID),
+		Status:           contracts.InboxOpen,
+		Severity:         contracts.InboxBlocker,
+		Reason:           contracts.InboxNeedsUser,
+		Title:            "需要你输入",
+		Body:             "请根据 /tmp/context.md 继续推进",
+		TicketID:         tk1.ID,
+		WorkerID:         worker.ID,
+		OriginTaskRunID:  41,
+		CurrentTaskRunID: 41,
+		WaitRoundCount:   1,
+	}
+	if err := p.DB.Create(&inbox).Error; err != nil {
+		t.Fatalf("create needs_user inbox failed: %v", err)
+	}
+
+	runID := createBoundPMWorkerRunForReport(t, svc, strings.TrimSpace(p.Key), tk1.ID, worker.ID)
+	waitReport := contracts.WorkerReport{
+		Schema:     contracts.WorkerReportSchemaV1,
+		ProjectKey: strings.TrimSpace(p.Key),
+		WorkerID:   worker.ID,
+		TicketID:   tk1.ID,
+		TaskRunID:  runID,
+		Summary:    "focus local fallback wait_user",
+		NeedsUser:  true,
+		Blockers:   []string{"请补充 /tmp/context.md 的格式说明"},
+		NextAction: string(contracts.NextWaitUser),
+	}
+	if err := svc.ApplyWorkerReport(ctx, waitReport, "test-runtime"); err != nil {
+		t.Fatalf("ApplyWorkerReport failed: %v", err)
+	}
+	writeWorkerLoopStateForTest(t, worker.WorktreePath, "wait_user", "focus local fallback wait_user", []string{"请补充 /tmp/context.md 的格式说明"}, false, testWorkerDoneHeadSHA, "clean")
+
+	var capturedPrompt string
+	svc.sdkHandleLauncher = func(ctx context.Context, ticket contracts.Ticket, worker contracts.Worker, prompt string) (agentexec.AgentRunHandle, error) {
+		capturedPrompt = prompt
+		return &fakeAgentRunHandle{
+			runID:  runID,
+			result: agentexec.AgentRunResult{ExitCode: 0},
+		}, nil
+	}
+
+	result, err := svc.ReplyInboxItem(ctx, inbox.ID, string(contracts.InboxReplyContinue), "资料已放到 /tmp/context.md，请继续执行。")
+	if err != nil {
+		t.Fatalf("ReplyInboxItem failed: %v", err)
+	}
+	if result.Mode != inboxReplyModeFocus {
+		t.Fatalf("expected mode=%s, got=%s", inboxReplyModeFocus, result.Mode)
+	}
+	if result.RunID != runID {
+		t.Fatalf("expected run_id=%d, got=%d", runID, result.RunID)
+	}
+	if result.NextAction != string(contracts.NextWaitUser) {
+		t.Fatalf("expected next_action=wait_user, got=%s", result.NextAction)
+	}
+
+	after, err := svc.FocusGet(ctx, focusRes.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet after reply failed: %v", err)
+	}
+	afterItem1 := focusItemByTicketID(after.Items, tk1.ID)
+	afterItem2 := focusItemByTicketID(after.Items, tk2.ID)
+	if after.Run.Status != contracts.FocusBlocked {
+		t.Fatalf("expected focus remain blocked after local fallback wait_user, got=%s", after.Run.Status)
+	}
+	if afterItem1 == nil || afterItem1.Status != contracts.FocusItemBlocked {
+		t.Fatalf("expected first item remain blocked after local fallback wait_user, got=%+v", afterItem1)
+	}
+	if afterItem2 == nil || afterItem2.Status != contracts.FocusItemPending {
+		t.Fatalf("expected second item stays pending, got=%+v", afterItem2)
+	}
+	if !strings.Contains(capturedPrompt, "资料已放到 /tmp/context.md") {
+		t.Fatalf("expected local fallback prompt contains reply markdown, got:\n%s", capturedPrompt)
+	}
+	if !strings.Contains(capturedPrompt, "当前动作：continue") {
+		t.Fatalf("expected local fallback prompt contains explicit action, got:\n%s", capturedPrompt)
+	}
+
+	var inboxAfter contracts.InboxItem
+	if err := p.DB.First(&inboxAfter, inbox.ID).Error; err != nil {
+		t.Fatalf("reload inbox failed: %v", err)
+	}
+	if inboxAfter.Status != contracts.InboxOpen {
+		t.Fatalf("expected original inbox reopen after local fallback wait_user, got=%s", inboxAfter.Status)
+	}
+	if inboxAfter.WaitRoundCount != 2 {
+		t.Fatalf("expected wait_round_count=2 after local fallback wait_user, got=%d", inboxAfter.WaitRoundCount)
+	}
+	if inboxAfter.CurrentTaskRunID != runID {
+		t.Fatalf("expected current_task_run_id=%d, got=%d", runID, inboxAfter.CurrentTaskRunID)
+	}
+	if inboxAfter.ReplyAction != contracts.InboxReplyNone {
+		t.Fatalf("expected reply action reset after local fallback wait_user, got=%s", inboxAfter.ReplyAction)
+	}
+	if inboxAfter.ReplyConsumedAt != nil {
+		t.Fatalf("expected reopened inbox not marked consumed")
+	}
+	if !strings.Contains(inboxAfter.Body, "请补充 /tmp/context.md 的格式说明") {
+		t.Fatalf("expected reopened inbox carry latest blocker, got=%q", inboxAfter.Body)
+	}
+
+	var resumedEvent contracts.FocusEvent
+	if err := p.DB.Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?", focusRes.FocusID, item1.ID, contracts.FocusEventItemRestarted).First(&resumedEvent).Error; err != nil {
+		t.Fatalf("load focus resumed event failed: %v", err)
+	}
+	resumedPayload := decodeJSONMapForTest(t, resumedEvent.PayloadJSON)
+	assertFocusReplyPayload(t, resumedPayload, tk1.ID, inbox.ID, "continue", "资料已放到 /tmp/context.md，请继续执行。")
+	if got := strings.TrimSpace(resumedPayload["next_action"].(string)); got != string(contracts.NextWaitUser) {
+		t.Fatalf("expected resumed event next_action=wait_user, got=%q payload=%+v", got, resumedPayload)
+	}
+}
+
 func TestReplyInboxItem_FocusBatchReturnsErrorWhenResumeRemainsBlocked(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
