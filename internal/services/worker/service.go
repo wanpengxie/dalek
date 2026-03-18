@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"dalek/internal/contracts"
 	"dalek/internal/infra"
@@ -23,8 +24,10 @@ type TicketReader interface {
 }
 
 type Service struct {
-	p       *core.Project
-	tickets TicketReader
+	p                 *core.Project
+	tickets           TicketReader
+	controlMu         sync.RWMutex
+	ticketLoopControl TicketLoopControl
 }
 
 func New(p *core.Project, tickets TicketReader) *Service {

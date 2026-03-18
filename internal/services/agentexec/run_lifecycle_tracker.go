@@ -134,15 +134,37 @@ func (t *RunLifecycleTracker) Finish(ctx context.Context, result AgentRunResult,
 		return
 	}
 	if isCanceledError(execErr) || isCanceledError(contextErr(ctx)) {
-		if err := t.base.Runtime.MarkRunCanceled(writeCtx, t.runID, "agent_canceled", msg, now); err != nil {
+		cancelCause := contracts.TaskCancelCauseFromError(context.Cause(ctx))
+		if summary := cancelCause.Summary(); summary != "" {
+			switch strings.TrimSpace(msg) {
+			case "", context.Canceled.Error(), context.DeadlineExceeded.Error():
+				msg = summary
+			default:
+				if !strings.Contains(msg, summary) {
+					msg = summary + ": " + msg
+				}
+			}
+		}
+		errorCode := cancelCause.ErrorCode()
+		if err := t.base.Runtime.MarkRunCanceled(writeCtx, t.runID, errorCode, msg, now); err != nil {
 			slog.Warn("lifecycle_tracker: MarkRunCanceled failed during cleanup", "run_id", t.runID, "err", err)
+		}
+		toState := map[string]any{
+			"orchestration_state": contracts.TaskCanceled,
+			"error_code":          errorCode,
+		}
+		payload := map[string]any{}
+		if cancelCause.Valid() {
+			toState["cancel_cause"] = string(cancelCause)
+			payload["cancel_cause"] = string(cancelCause)
 		}
 		_ = t.base.Runtime.AppendEvent(writeCtx, contracts.TaskEventInput{
 			TaskRunID: t.runID,
 			EventType: "task_canceled",
 			FromState: map[string]any{"orchestration_state": contracts.TaskRunning},
-			ToState:   map[string]any{"orchestration_state": contracts.TaskCanceled},
+			ToState:   toState,
 			Note:      msg,
+			Payload:   payload,
 			CreatedAt: now,
 		})
 		slog.Info("lifecycle_tracker: run canceled", "run_id", t.runID, "msg", msg)

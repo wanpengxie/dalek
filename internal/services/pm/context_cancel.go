@@ -16,17 +16,19 @@ func newCancelOnlyContext(parent context.Context) (context.Context, context.Canc
 	if parent != nil {
 		base = context.WithoutCancel(parent)
 	}
-	childCtx, childCancel := context.WithCancel(base)
+	childCtx, childCancel := context.WithCancelCause(base)
 	if parent == nil {
-		return childCtx, childCancel
+		return childCtx, func() {
+			childCancel(context.Canceled)
+		}
 	}
 	stop := context.AfterFunc(parent, func() {
 		if errors.Is(parent.Err(), context.Canceled) {
-			childCancel()
+			childCancel(context.Cause(parent))
 		}
 	})
 	return childCtx, func() {
 		stop()
-		childCancel()
+		childCancel(context.Canceled)
 	}
 }

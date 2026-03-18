@@ -325,7 +325,7 @@ type executionRunHandle struct {
 	model       string
 
 	ctx    context.Context
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
 
 	phase             string
 	cancelRequestedAt *time.Time

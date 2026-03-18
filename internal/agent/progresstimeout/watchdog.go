@@ -38,7 +38,7 @@ func Is(err error) bool {
 
 type Watchdog struct {
 	timeout time.Duration
-	cancel  context.CancelFunc
+	cancel  context.CancelCauseFunc
 	notify  chan struct{}
 	done    chan struct{}
 
@@ -50,7 +50,7 @@ type Watchdog struct {
 func New(parent context.Context, timeout time.Duration) (context.Context, *Watchdog) {
 	parent = ensureContext(parent)
 	timeout = normalizeTimeout(timeout)
-	runCtx, cancel := context.WithCancel(parent)
+	runCtx, cancel := context.WithCancelCause(parent)
 	now := time.Now()
 	w := &Watchdog{
 		timeout:  timeout,
@@ -101,10 +101,14 @@ func (w *Watchdog) Touch() *time.Time {
 }
 
 func (w *Watchdog) Cancel() {
+	w.CancelCause(context.Canceled)
+}
+
+func (w *Watchdog) CancelCause(cause error) {
 	if w == nil || w.cancel == nil {
 		return
 	}
-	w.cancel()
+	w.cancel(cause)
 }
 
 func (w *Watchdog) Stop() {

@@ -90,13 +90,14 @@ func (h *ExecutionHost) Stop(ctx context.Context) error {
 
 	for _, handle := range handles {
 		h.markHandleReady(handle)
-		if handle.kind == runKindWorker {
-			executionTicketLoopControlSink{host: h, handle: handle}.LoopCancelRequested()
+		if err := h.cancelHandle(ctx, handle, contracts.TaskCancelCauseDaemonShutdown); err != nil {
+			h.logger.Warn("execution host stop cancel handle failed",
+				"request_id", handle.requestID,
+				"project", handle.project,
+				"ticket_id", handle.ticketID,
+				"error", err,
+			)
 		}
-		if handle.cancel != nil {
-			handle.cancel()
-		}
-		h.maybeTerminateTicketRun(handle, nil)
 	}
 
 	done := make(chan struct{})
@@ -241,7 +242,7 @@ func (h *ExecutionHost) submitTicketRun(ctx context.Context, req ticketRunSubmit
 		requestID = NewRequestID(req.requestPrefix)
 	}
 
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancelCause(context.Background())
 	handle := &executionRunHandle{
 		kind:          req.kind,
 		project:       projectName,
@@ -261,7 +262,7 @@ func (h *ExecutionHost) submitTicketRun(ctx context.Context, req ticketRunSubmit
 	h.mu.Lock()
 	if existing := h.requests[requestID]; existing != nil {
 		h.mu.Unlock()
-		cancel()
+		cancel(context.Canceled)
 		if existing.kind == req.kind && existing.project == projectName && existing.ticketID == req.ticketID {
 			return existing, nil
 		}
@@ -270,16 +271,16 @@ func (h *ExecutionHost) submitTicketRun(ctx context.Context, req ticketRunSubmit
 	if existing := h.ticketLoops[h.ticketLoopKey(req.kind, projectName, req.ticketID)]; existing != nil {
 		if err := h.bindHandleRequestLocked(existing, requestID, false); err != nil {
 			h.mu.Unlock()
-			cancel()
+			cancel(context.Canceled)
 			return nil, err
 		}
 		h.mu.Unlock()
-		cancel()
+		cancel(context.Canceled)
 		return existing, nil
 	}
 	if err := h.bindHandleRequestLocked(handle, requestID, retainRequest); err != nil {
 		h.mu.Unlock()
-		cancel()
+		cancel(context.Canceled)
 		return nil, err
 	}
 	h.ticketLoops[h.ticketLoopKey(req.kind, projectName, req.ticketID)] = handle
@@ -402,7 +403,7 @@ func (h *ExecutionHost) SubmitSubagentRun(ctx context.Context, req SubagentSubmi
 	h.mu.Lock()
 	existing := h.runs[runID]
 	if existing == nil {
-		runCtx, cancel := context.WithCancel(context.Background())
+		runCtx, cancel := context.WithCancelCause(context.Background())
 		handle := &executionRunHandle{
 			kind:        runKindSubagent,
 			project:     projectName,
@@ -547,7 +548,7 @@ func (h *ExecutionHost) CancelTaskRun(ctx context.Context, runID uint) (CancelRe
 	handle := h.runs[runID]
 	h.mu.RUnlock()
 	if handle != nil {
-		if err := h.cancelHandle(ctx, handle); err != nil {
+		if err := h.cancelHandle(ctx, handle, contracts.TaskCancelCauseUnknown); err != nil {
 			return CancelResult{}, err
 		}
 		return CancelResult{
@@ -573,7 +574,7 @@ func (h *ExecutionHost) CancelTaskRun(ctx context.Context, runID uint) (CancelRe
 		return CancelResult{Found: false, Canceled: false}, nil
 	}
 	if live, ok := h.lookupLiveTicketLoop(runKindWorker, projectName, status.TicketID); ok {
-		if err := h.cancelHandle(ctx, live); err != nil {
+		if err := h.cancelHandle(ctx, live, contracts.TaskCancelCauseUnknown); err != nil {
 			return CancelResult{}, err
 		}
 		return CancelResult{
@@ -639,6 +640,10 @@ func (h *ExecutionHost) ProbeTicketLoop(ctx context.Context, project string, tic
 }
 
 func (h *ExecutionHost) CancelTicketLoop(ctx context.Context, project string, ticketID uint) (CancelResult, error) {
+	return h.CancelTicketLoopWithCause(ctx, project, ticketID, contracts.TaskCancelCauseUnknown)
+}
+
+func (h *ExecutionHost) CancelTicketLoopWithCause(ctx context.Context, project string, ticketID uint, cause contracts.TaskCancelCause) (CancelResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -652,7 +657,7 @@ func (h *ExecutionHost) CancelTicketLoop(ctx context.Context, project string, ti
 			Reason:   "ticket loop 不存在",
 		}, nil
 	}
-	if err := h.cancelHandle(ctx, handle); err != nil {
+	if err := h.cancelHandle(ctx, handle, cause); err != nil {
 		return CancelResult{}, err
 	}
 	return CancelResult{
@@ -665,7 +670,7 @@ func (h *ExecutionHost) CancelTicketLoop(ctx context.Context, project string, ti
 	}, nil
 }
 
-func (h *ExecutionHost) cancelHandle(ctx context.Context, handle *executionRunHandle) error {
+func (h *ExecutionHost) cancelHandle(ctx context.Context, handle *executionRunHandle, cause contracts.TaskCancelCause) error {
 	if h == nil || handle == nil {
 		return nil
 	}
@@ -676,14 +681,16 @@ func (h *ExecutionHost) cancelHandle(ctx context.Context, handle *executionRunHa
 		executionTicketLoopControlSink{host: h, handle: handle}.LoopCancelRequested()
 	}
 	if handle.cancel != nil {
-		handle.cancel()
-	}
-	if handle.runID != 0 {
-		if _, _, err := h.cancelTaskRunInProject(ctx, handle.project, handle.runID); err != nil {
-			return err
-		}
+		handle.cancel(cancelCauseError(cause))
 	}
 	return nil
+}
+
+func cancelCauseError(cause contracts.TaskCancelCause) error {
+	if cause.Valid() {
+		return cause
+	}
+	return context.Canceled
 }
 
 func (h *ExecutionHost) cancelTaskRunInProject(ctx context.Context, projectName string, runID uint) (TaskRunCancelResult, bool, error) {

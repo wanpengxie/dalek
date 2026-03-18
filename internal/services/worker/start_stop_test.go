@@ -14,6 +14,27 @@ import (
 	tasksvc "dalek/internal/services/task"
 )
 
+type stubTicketLoopControl struct {
+	calls []struct {
+		ticketID uint
+		cause    contracts.TaskCancelCause
+	}
+	result TicketLoopCancelResult
+	err    error
+}
+
+func (s *stubTicketLoopControl) CancelTicketLoop(ctx context.Context, ticketID uint, cause contracts.TaskCancelCause) (TicketLoopCancelResult, error) {
+	_ = ctx
+	s.calls = append(s.calls, struct {
+		ticketID uint
+		cause    contracts.TaskCancelCause
+	}{ticketID: ticketID, cause: cause})
+	if s.err != nil {
+		return TicketLoopCancelResult{}, s.err
+	}
+	return s.result, nil
+}
+
 func TestStartTicket_CreatesWorkerAndRuntimeAnchor(t *testing.T) {
 	svc, p, fGit := newServiceForTest(t)
 
@@ -330,5 +351,108 @@ func TestStopWorker_UpdatesWorkerAndTicket(t *testing.T) {
 	}
 	if strings.TrimSpace(latest.LastEventType) != "task_canceled" {
 		t.Fatalf("expected last event task_canceled, got=%s", latest.LastEventType)
+	}
+}
+
+func TestStopWorker_UsesTicketLoopControlWhenAvailable(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctrl := &stubTicketLoopControl{
+		result: TicketLoopCancelResult{Found: true, Canceled: true},
+	}
+	svc.SetTicketLoopControl(ctrl)
+
+	tk := createTicket(t, p.DB, "ticket-stop-daemon")
+	w, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicketResources failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("mark worker running failed: %v", err)
+	}
+
+	if err := svc.StopWorker(context.Background(), w.ID); err != nil {
+		t.Fatalf("StopWorker failed: %v", err)
+	}
+	if len(ctrl.calls) != 1 {
+		t.Fatalf("expected 1 cancel call, got=%d", len(ctrl.calls))
+	}
+	if ctrl.calls[0].ticketID != tk.ID {
+		t.Fatalf("expected cancel ticket_id=%d, got=%d", tk.ID, ctrl.calls[0].ticketID)
+	}
+	if ctrl.calls[0].cause != contracts.TaskCancelCauseUserStop {
+		t.Fatalf("expected user_stop cause, got=%s", ctrl.calls[0].cause)
+	}
+
+	var got contracts.Worker
+	if err := p.DB.First(&got, w.ID).Error; err != nil {
+		t.Fatalf("query worker failed: %v", err)
+	}
+	if got.Status != contracts.WorkerRunning {
+		t.Fatalf("expected worker status unchanged without legacy fallback, got=%s", got.Status)
+	}
+}
+
+func TestInterruptWorker_UsesTicketLoopControlWhenAvailable(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctrl := &stubTicketLoopControl{
+		result: TicketLoopCancelResult{Found: true, Canceled: true},
+	}
+	svc.SetTicketLoopControl(ctrl)
+
+	tk := createTicket(t, p.DB, "ticket-interrupt-daemon")
+	w, err := svc.StartTicketResources(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicketResources failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("mark worker running failed: %v", err)
+	}
+	rt := tasksvc.New(p.DB)
+	now := time.Now().UTC().Truncate(time.Second)
+	run, err := rt.CreateRun(context.Background(), contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
+		ProjectKey:         p.Key,
+		TicketID:           tk.ID,
+		WorkerID:           w.ID,
+		SubjectType:        "ticket",
+		SubjectID:          fmt.Sprintf("%d", tk.ID),
+		RequestID:          "interrupt-worker-run-1",
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("create task run failed: %v", err)
+	}
+
+	res, err := svc.InterruptWorker(context.Background(), w.ID)
+	if err != nil {
+		t.Fatalf("InterruptWorker failed: %v", err)
+	}
+	if res.Mode != "ticket_loop_cancel" {
+		t.Fatalf("expected ticket_loop_cancel mode, got=%s", res.Mode)
+	}
+	if res.TaskRunID != run.ID {
+		t.Fatalf("expected task_run_id=%d, got=%d", run.ID, res.TaskRunID)
+	}
+	if len(ctrl.calls) != 1 {
+		t.Fatalf("expected 1 cancel call, got=%d", len(ctrl.calls))
+	}
+	if ctrl.calls[0].cause != contracts.TaskCancelCauseUserInterrupt {
+		t.Fatalf("expected user_interrupt cause, got=%s", ctrl.calls[0].cause)
+	}
+
+	var runAfter contracts.TaskRun
+	if err := p.DB.First(&runAfter, run.ID).Error; err != nil {
+		t.Fatalf("load task run failed: %v", err)
+	}
+	if runAfter.OrchestrationState != contracts.TaskRunning {
+		t.Fatalf("expected run state unchanged without legacy fallback, got=%s", runAfter.OrchestrationState)
 	}
 }

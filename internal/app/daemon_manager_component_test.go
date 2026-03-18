@@ -252,6 +252,11 @@ func (s *stubManagerExecutionHost) CancelTicketLoop(_ context.Context, project s
 	return daemonsvc.CancelResult{Found: strings.TrimSpace(project) != "" && ticketID != 0, Canceled: ticketID != 0}, nil
 }
 
+func (s *stubManagerExecutionHost) CancelTicketLoopWithCause(ctx context.Context, project string, ticketID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error) {
+	_ = cause
+	return s.CancelTicketLoop(ctx, project, ticketID)
+}
+
 func (s *stubManagerExecutionHost) snapshot() []daemonsvc.TicketLoopSubmitRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -280,6 +285,11 @@ func (s *stubWarmupExecutionHost) CancelTaskRun(_ context.Context, runID uint) (
 
 func (s *stubWarmupExecutionHost) CancelTicketLoop(_ context.Context, project string, ticketID uint) (daemonsvc.CancelResult, error) {
 	return daemonsvc.CancelResult{Found: strings.TrimSpace(project) != "" && ticketID != 0, Canceled: ticketID != 0}, nil
+}
+
+func (s *stubWarmupExecutionHost) CancelTicketLoopWithCause(ctx context.Context, project string, ticketID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error) {
+	_ = cause
+	return s.CancelTicketLoop(ctx, project, ticketID)
 }
 
 func (s *stubWarmupExecutionHost) WarmupRunProjectIndex(project string, runIDs []uint) int {

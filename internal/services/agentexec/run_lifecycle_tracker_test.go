@@ -203,3 +203,36 @@ func TestRunLifecycleTracker_FinishCanceled(t *testing.T) {
 		t.Fatalf("expected task_canceled event, got=%q", got)
 	}
 }
+
+func TestRunLifecycleTracker_FinishCanceledWithCause(t *testing.T) {
+	rt := &fakeLifecycleRuntime{}
+	tracker := NewRunLifecycleTracker(BaseConfig{Runtime: rt})
+	if _, err := tracker.Start(context.Background(), `{"provider":"sdk"}`, "sdk:codex", nil, "started"); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(contracts.TaskCancelCauseUserInterrupt)
+	tracker.Finish(ctx, AgentRunResult{ExitCode: 1}, context.Canceled, "ignored")
+
+	if len(rt.canceled) != 1 {
+		t.Fatalf("expected 1 canceled call, got=%d", len(rt.canceled))
+	}
+	if got := rt.canceled[0].code; got != string(contracts.TaskCancelCauseUserInterrupt) {
+		t.Fatalf("expected user_interrupt code, got=%q", got)
+	}
+	if !strings.Contains(rt.canceled[0].msg, "ticket interrupted by user") {
+		t.Fatalf("expected cause summary in cancel message, got=%q", rt.canceled[0].msg)
+	}
+	last := rt.events[len(rt.events)-1]
+	if got := last.EventType; got != "task_canceled" {
+		t.Fatalf("expected task_canceled event, got=%q", got)
+	}
+	payload, ok := last.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("expected payload map, got=%T", last.Payload)
+	}
+	if got := payload["cancel_cause"]; got != string(contracts.TaskCancelCauseUserInterrupt) {
+		t.Fatalf("expected cancel_cause payload, got=%v", got)
+	}
+}

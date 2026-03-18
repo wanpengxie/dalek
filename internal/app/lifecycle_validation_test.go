@@ -294,6 +294,11 @@ func (h *acceptingLifecycleManagerHost) CancelTicketLoop(ctx context.Context, pr
 	}, nil
 }
 
+func (h *acceptingLifecycleManagerHost) CancelTicketLoopWithCause(ctx context.Context, project string, ticketID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error) {
+	_ = cause
+	return h.CancelTicketLoop(ctx, project, ticketID)
+}
+
 func (h *acceptingLifecycleManagerHost) SubmittedTicketIDs() []uint {
 	if h == nil {
 		return nil

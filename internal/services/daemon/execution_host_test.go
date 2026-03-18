@@ -115,6 +115,7 @@ type testExecutionHostProject struct {
 	terminateRunByID  map[uint]TaskRunTerminalResult
 	terminateRunErr   error
 	lastTerminateNote string
+	lastCancelCause   string
 
 	directDispatchDelay        time.Duration
 	directDispatchStarted      chan struct{}
@@ -174,6 +175,9 @@ func (p *testExecutionHostProject) DirectDispatchWorker(ctx context.Context, tic
 	p.mu.Unlock()
 	notifyExecutionStarted(started)
 	if err := waitExecutionRelease(ctx, delay, release, ignoreCancel); err != nil {
+		if errors.Is(err, context.Canceled) {
+			p.recordCanceledRun(runID, ticketID, contracts.TaskCancelCauseFromError(context.Cause(ctx)))
+		}
 		return WorkerRunResult{}, err
 	}
 	return WorkerRunResult{
@@ -181,6 +185,49 @@ func (p *testExecutionHostProject) DirectDispatchWorker(ctx context.Context, tic
 		WorkerID: 401,
 		RunID:    runID,
 	}, nil
+}
+
+func (p *testExecutionHostProject) recordCanceledRun(runID, ticketID uint, cause contracts.TaskCancelCause) {
+	if runID == 0 {
+		return
+	}
+	now := time.Now()
+	note := cause.Summary()
+	if strings.TrimSpace(note) == "" {
+		note = "execution canceled"
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.lastCancelCause = strings.TrimSpace(string(cause))
+	if p.statusByRun == nil {
+		p.statusByRun = map[uint]*RunStatus{}
+	}
+	status := p.statusByRun[runID]
+	if status == nil {
+		status = &RunStatus{
+			RunID:     runID,
+			Project:   "demo",
+			TicketID:  ticketID,
+			WorkerID:  401,
+			UpdatedAt: now,
+		}
+		p.statusByRun[runID] = status
+	}
+	status.OrchestrationState = string(contracts.TaskCanceled)
+	status.ErrorCode = cause.ErrorCode()
+	status.ErrorMessage = note
+	status.UpdatedAt = now
+	status.FinishedAt = &now
+	if p.eventsByRun == nil {
+		p.eventsByRun = map[uint][]RunEvent{}
+	}
+	p.eventsByRun[runID] = append(p.eventsByRun[runID], RunEvent{
+		ID:        uint(len(p.eventsByRun[runID]) + 1),
+		TaskRunID: runID,
+		EventType: "task_canceled",
+		Note:      note,
+		CreatedAt: now,
+	})
 }
 
 func (p *testExecutionHostProject) SubmitSubagentRun(ctx context.Context, opt SubagentSubmitOptions) (SubagentSubmission, error) {
@@ -1663,8 +1710,11 @@ func TestExecutionHost_Stop_TerminalizesRunningRunWithoutTerminalFact(t *testing
 	if err := host.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}
-	if got := project.TerminateRunCallCount(); got != 1 {
-		t.Fatalf("expected terminate run called once, got=%d", got)
+	if got := project.TerminateRunCallCount(); got != 0 {
+		t.Fatalf("expected terminate run skipped after cancel terminal, got=%d", got)
+	}
+	if got := strings.TrimSpace(project.lastCancelCause); got != string(contracts.TaskCancelCauseDaemonShutdown) {
+		t.Fatalf("expected daemon shutdown cause, got=%q", got)
 	}
 
 	status, err := project.GetTaskStatus(context.Background(), runID)
@@ -1674,8 +1724,11 @@ func TestExecutionHost_Stop_TerminalizesRunningRunWithoutTerminalFact(t *testing
 	if status == nil {
 		t.Fatalf("expected task status exists")
 	}
-	if got := strings.TrimSpace(status.OrchestrationState); got != string(contracts.TaskFailed) {
-		t.Fatalf("expected run failed after host stop, got=%q", got)
+	if got := strings.TrimSpace(status.OrchestrationState); got != string(contracts.TaskCanceled) {
+		t.Fatalf("expected run canceled after host stop, got=%q", got)
+	}
+	if got := strings.TrimSpace(status.ErrorCode); got != string(contracts.TaskCancelCauseDaemonShutdown) {
+		t.Fatalf("expected daemon_shutdown error code, got=%q", got)
 	}
 
 	events, err := project.ListTaskEvents(context.Background(), runID, 10)
@@ -1683,11 +1736,11 @@ func TestExecutionHost_Stop_TerminalizesRunningRunWithoutTerminalFact(t *testing
 		t.Fatalf("ListTaskEvents failed: %v", err)
 	}
 	if len(events) == 0 {
-		t.Fatalf("expected synthetic terminal event")
+		t.Fatalf("expected cancel terminal event")
 	}
 	last := events[len(events)-1]
-	if got := strings.TrimSpace(last.EventType); got != "worker_loop_terminated" {
-		t.Fatalf("expected worker_loop_terminated event, got=%q", got)
+	if got := strings.TrimSpace(last.EventType); got != "task_canceled" {
+		t.Fatalf("expected task_canceled event, got=%q", got)
 	}
 }
 
@@ -1766,7 +1819,7 @@ func TestExecutionHost_CancelTicketLoop_CancelsLiveLoop(t *testing.T) {
 		t.Fatalf("worker-run goroutine not started")
 	}
 
-	res, err := host.CancelTicketLoop(context.Background(), "demo", 1)
+	res, err := host.CancelTicketLoopWithCause(context.Background(), "demo", 1, contracts.TaskCancelCauseUserInterrupt)
 	if err != nil {
 		t.Fatalf("CancelTicketLoop failed: %v", err)
 	}
@@ -1788,6 +1841,9 @@ func TestExecutionHost_CancelTicketLoop_CancelsLiveLoop(t *testing.T) {
 	}
 	if !cleared {
 		t.Fatalf("expected live ticket loop cleared after cancel")
+	}
+	if got := strings.TrimSpace(project.lastCancelCause); got != string(contracts.TaskCancelCauseUserInterrupt) {
+		t.Fatalf("expected user_interrupt cause, got=%q", got)
 	}
 	if err := host.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop failed: %v", err)

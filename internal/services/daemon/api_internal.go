@@ -592,7 +592,16 @@ func (s *InternalAPI) handleTicketLoopCancel(w http.ResponseWriter, r *http.Requ
 		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	result, err := s.host.CancelTicketLoop(r.Context(), projectName, ticketID)
+	causeRaw := strings.TrimSpace(r.URL.Query().Get("cause"))
+	cause := contracts.TaskCancelCauseUnknown
+	if causeRaw != "" {
+		cause = contracts.ParseTaskCancelCause(causeRaw)
+		if !cause.Valid() {
+			writeAPIError(w, http.StatusBadRequest, "bad_request", fmt.Sprintf("未知 cancel cause: %s", causeRaw))
+			return
+		}
+	}
+	result, err := s.host.CancelTicketLoopWithCause(r.Context(), projectName, ticketID, cause)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "cancel_failed", err.Error())
 		return

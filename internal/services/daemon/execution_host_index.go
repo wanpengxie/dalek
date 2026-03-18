@@ -289,7 +289,7 @@ func (h *ExecutionHost) finalizeHandle(handle *executionRunHandle) {
 	}
 	h.mu.Unlock()
 	if handle.cancel != nil {
-		handle.cancel()
+		handle.cancel(context.Canceled)
 	}
 	handle.doneOnce.Do(func() {
 		if handle.done != nil {

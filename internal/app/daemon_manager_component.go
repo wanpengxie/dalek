@@ -11,6 +11,7 @@ import (
 	"dalek/internal/contracts"
 	daemonsvc "dalek/internal/services/daemon"
 	pmsvc "dalek/internal/services/pm"
+	workersvc "dalek/internal/services/worker"
 )
 
 const defaultDaemonManagerTickInterval = 30 * time.Second
@@ -19,6 +20,7 @@ type managerExecutionHost interface {
 	SubmitTicketLoop(ctx context.Context, req daemonsvc.TicketLoopSubmitRequest) (daemonsvc.TicketLoopSubmitReceipt, error)
 	CancelTaskRun(ctx context.Context, runID uint) (daemonsvc.CancelResult, error)
 	CancelTicketLoop(ctx context.Context, project string, ticketID uint) (daemonsvc.CancelResult, error)
+	CancelTicketLoopWithCause(ctx context.Context, project string, ticketID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error)
 }
 
 type managerRunProjectIndexWarmer interface {
@@ -348,6 +350,10 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 		return
 	}
 	if m.host != nil && p != nil && p.pm != nil {
+		p.worker.SetTicketLoopControl(daemonManagerWorkerLoopControl{
+			projectName: projectName,
+			host:        m.host,
+		})
 		p.pm.SetWorkerRunSubmitter(daemonManagerWorkerRunSubmitter{
 			projectName: projectName,
 			host:        m.host,
@@ -399,6 +405,11 @@ type daemonManagerWorkerRunSubmitter struct {
 	host        managerExecutionHost
 }
 
+type daemonManagerWorkerLoopControl struct {
+	projectName string
+	host        managerExecutionHost
+}
+
 type daemonManagerFocusLoopControl struct {
 	projectName string
 	host        managerExecutionHost
@@ -430,6 +441,25 @@ func (s daemonManagerWorkerRunSubmitter) SubmitTicketWorkerRun(ctx context.Conte
 	}, nil
 }
 
+func (c daemonManagerWorkerLoopControl) CancelTicketLoop(ctx context.Context, ticketID uint, cause contracts.TaskCancelCause) (workersvc.TicketLoopCancelResult, error) {
+	if c.host == nil || ticketID == 0 {
+		return workersvc.TicketLoopCancelResult{}, nil
+	}
+	projectName := strings.TrimSpace(c.projectName)
+	if projectName == "" {
+		return workersvc.TicketLoopCancelResult{}, nil
+	}
+	res, err := c.host.CancelTicketLoopWithCause(ctx, projectName, ticketID, cause)
+	if err != nil {
+		return workersvc.TicketLoopCancelResult{}, err
+	}
+	return workersvc.TicketLoopCancelResult{
+		Found:    res.Found,
+		Canceled: res.Canceled,
+		Reason:   strings.TrimSpace(res.Reason),
+	}, nil
+}
+
 func (c daemonManagerFocusLoopControl) CancelTaskRun(ctx context.Context, runID uint) error {
 	if c.host == nil || runID == 0 {
 		return nil
@@ -446,6 +476,6 @@ func (c daemonManagerFocusLoopControl) CancelTicketLoop(ctx context.Context, tic
 	if projectName == "" {
 		return nil
 	}
-	_, err := c.host.CancelTicketLoop(ctx, projectName, ticketID)
+	_, err := c.host.CancelTicketLoopWithCause(ctx, projectName, ticketID, contracts.TaskCancelCauseFocusCancel)
 	return err
 }

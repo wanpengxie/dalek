@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// StopWorker 停止一个 worker 并更新 DB 状态。
+// StopWorker 优先终止 live ticket loop；daemon 不可用时回落到 legacy DB 收口。
 func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 	p, err := s.require()
 	if err != nil {
@@ -28,10 +28,24 @@ func (s *Service) StopWorker(ctx context.Context, workerID uint) error {
 	if err := db.First(&w, workerID).Error; err != nil {
 		return err
 	}
+	if res, attempted, cancelErr := s.cancelTicketLoop(ctx, w.TicketID, contracts.TaskCancelCauseUserStop); attempted {
+		if cancelErr == nil && res.Canceled {
+			return nil
+		}
+	}
 
+	return s.stopWorkerLegacy(ctx, w)
+}
+
+func (s *Service) stopWorkerLegacy(ctx context.Context, w contracts.Worker) error {
+	p, err := s.require()
+	if err != nil {
+		return err
+	}
+	db := p.DB
 	now := time.Now()
 	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", workerID).Updates(map[string]any{
+		if err := tx.WithContext(ctx).Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
 			"status":     contracts.WorkerStopped,
 			"stopped_at": &now,
 		}).Error; err != nil {

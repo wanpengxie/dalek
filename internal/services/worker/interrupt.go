@@ -52,6 +52,21 @@ func (s *Service) InterruptWorker(ctx context.Context, workerID uint) (Interrupt
 	if err != nil {
 		return InterruptResult{}, err
 	}
+	if res, attempted, cancelErr := s.cancelTicketLoop(ctx, w.TicketID, contracts.TaskCancelCauseUserInterrupt); attempted {
+		if cancelErr == nil && res.Canceled {
+			taskRunID := uint(0)
+			if run != nil {
+				taskRunID = run.ID
+			}
+			return InterruptResult{
+				TicketID:  w.TicketID,
+				WorkerID:  w.ID,
+				Mode:      "ticket_loop_cancel",
+				TaskRunID: taskRunID,
+				LogPath:   strings.TrimSpace(w.LogPath),
+			}, nil
+		}
+	}
 	if run == nil {
 		return InterruptResult{}, fmt.Errorf("worker 当前没有可中断的活跃任务: w%d", workerID)
 	}

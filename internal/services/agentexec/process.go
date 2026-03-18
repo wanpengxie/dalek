@@ -145,7 +145,9 @@ func (h *processHandle) Wait(ctx context.Context) (AgentRunResult, error) {
 	case <-ctx.Done():
 		slog.Info("process_handle: context canceled during wait, canceling process",
 			"run_id", h.runID, "err", ctx.Err())
-		_ = h.Cancel()
+		if h.watchdog != nil {
+			h.watchdog.CancelCause(context.Cause(ctx))
+		}
 		return AgentRunResult{}, ctx.Err()
 	}
 }

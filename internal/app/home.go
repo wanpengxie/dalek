@@ -361,6 +361,14 @@ func (h *Home) openProject(rp RegisteredProject) (*Project, error) {
 		return nil, err
 	}
 	p := assembleProject(cp)
+	p.worker.SetTicketLoopControl(projectDaemonWorkerLoopControl{
+		home:        h,
+		projectName: name,
+	})
+	p.pm.SetFocusLoopControl(projectDaemonFocusLoopControl{
+		home:        h,
+		projectName: name,
+	})
 	h.wireStatusChangeHook(p, name)
 	return p, nil
 }

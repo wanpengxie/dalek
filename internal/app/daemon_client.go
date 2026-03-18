@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"dalek/internal/contracts"
+
 	"gorm.io/gorm"
 )
 
@@ -560,6 +562,10 @@ func (c *DaemonAPIClient) ProbeTicketLoop(ctx context.Context, project string, t
 }
 
 func (c *DaemonAPIClient) CancelTicketLoop(ctx context.Context, project string, ticketID uint) (DaemonTicketLoopCancelResult, error) {
+	return c.CancelTicketLoopWithCause(ctx, project, ticketID, contracts.TaskCancelCauseUnknown)
+}
+
+func (c *DaemonAPIClient) CancelTicketLoopWithCause(ctx context.Context, project string, ticketID uint, cause contracts.TaskCancelCause) (DaemonTicketLoopCancelResult, error) {
 	if c == nil {
 		return DaemonTicketLoopCancelResult{}, fmt.Errorf("daemon client 为空")
 	}
@@ -578,6 +584,9 @@ func (c *DaemonAPIClient) CancelTicketLoop(ctx context.Context, project string, 
 		Reason    string `json:"reason"`
 	}
 	path := fmt.Sprintf("/api/ticket-loops/%d/cancel?project=%s", ticketID, url.QueryEscape(strings.TrimSpace(project)))
+	if cause.Valid() {
+		path += "&cause=" + url.QueryEscape(string(cause))
+	}
 	code, err := c.doJSON(ctx, http.MethodPost, path, nil, &out)
 	if err != nil {
 		return DaemonTicketLoopCancelResult{}, err
