@@ -284,6 +284,11 @@ func (h *acceptingLifecycleManagerHost) CancelTaskRun(ctx context.Context, runID
 	return daemonsvc.CancelResult{Found: runID != 0, Canceled: runID != 0}, nil
 }
 
+func (h *acceptingLifecycleManagerHost) CancelTaskRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error) {
+	_ = cause
+	return h.CancelTaskRun(ctx, runID)
+}
+
 func (h *acceptingLifecycleManagerHost) CancelTicketLoop(ctx context.Context, project string, ticketID uint) (daemonsvc.CancelResult, error) {
 	_ = ctx
 	return daemonsvc.CancelResult{

@@ -605,6 +605,10 @@ func (c *DaemonAPIClient) CancelTicketLoopWithCause(ctx context.Context, project
 }
 
 func (c *DaemonAPIClient) CancelTaskRun(ctx context.Context, runID uint) (DaemonTaskRunCancelResult, error) {
+	return c.CancelTaskRunWithCause(ctx, runID, contracts.TaskCancelCauseUnknown)
+}
+
+func (c *DaemonAPIClient) CancelTaskRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause) (DaemonTaskRunCancelResult, error) {
 	if c == nil {
 		return DaemonTaskRunCancelResult{}, fmt.Errorf("daemon client 为空")
 	}
@@ -620,6 +624,12 @@ func (c *DaemonAPIClient) CancelTaskRun(ctx context.Context, runID uint) (Daemon
 		Reason    string `json:"reason"`
 	}
 	path := fmt.Sprintf("/api/task-runs/%d/cancel", runID)
+	if cause != contracts.TaskCancelCauseUnknown {
+		if !cause.Valid() {
+			return DaemonTaskRunCancelResult{}, fmt.Errorf("未知 cancel cause: %s", cause)
+		}
+		path += "?cause=" + url.QueryEscape(string(cause))
+	}
 	code, err := c.doJSON(ctx, http.MethodPost, path, nil, &out)
 	if err != nil {
 		return DaemonTaskRunCancelResult{}, err

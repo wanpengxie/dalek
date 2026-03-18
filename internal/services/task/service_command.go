@@ -59,6 +59,10 @@ func (s *Service) FinishAgentRun(ctx context.Context, runID uint, exitCode int, 
 }
 
 func (s *Service) CancelRun(ctx context.Context, runID uint, now time.Time) (CancelRunResult, error) {
+	return s.CancelRunWithCause(ctx, runID, contracts.TaskCancelCauseUnknown, now)
+}
+
+func (s *Service) CancelRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause, now time.Time) (CancelRunResult, error) {
 	if s == nil {
 		return CancelRunResult{}, fmt.Errorf("task service 为空")
 	}
@@ -103,9 +107,18 @@ func (s *Service) CancelRun(ctx context.Context, runID uint, now time.Time) (Can
 		return result, nil
 	}
 
-	reason := "canceled by task cancel command"
-	if err := s.MarkRunCanceled(ctx, runID, "manual_cancel", reason, now); err != nil {
+	errorCode, reason, payload := cancelRunCauseMetadata(cause)
+	if err := s.MarkRunCanceled(ctx, runID, errorCode, reason, now); err != nil {
 		return CancelRunResult{}, err
+	}
+	toState := map[string]any{
+		"orchestration_state": contracts.TaskCanceled,
+	}
+	if strings.TrimSpace(errorCode) != "" {
+		toState["error_code"] = errorCode
+	}
+	if cause.Valid() {
+		toState["cancel_cause"] = string(cause)
 	}
 	if err := s.AppendEvent(ctx, contracts.TaskEventInput{
 		TaskRunID: runID,
@@ -113,11 +126,9 @@ func (s *Service) CancelRun(ctx context.Context, runID uint, now time.Time) (Can
 		FromState: map[string]any{
 			"orchestration_state": fromState,
 		},
-		ToState: map[string]any{
-			"orchestration_state": contracts.TaskCanceled,
-		},
+		ToState:   toState,
 		Note:      reason,
-		Payload:   map[string]any{"source": "dalek task cancel"},
+		Payload:   payload,
 		CreatedAt: now,
 	}); err != nil {
 		return CancelRunResult{}, err
@@ -126,4 +137,19 @@ func (s *Service) CancelRun(ctx context.Context, runID uint, now time.Time) (Can
 	result.Canceled = true
 	result.ToState = string(contracts.TaskCanceled)
 	return result, nil
+}
+
+func cancelRunCauseMetadata(cause contracts.TaskCancelCause) (string, string, map[string]any) {
+	payload := map[string]any{
+		"source": "dalek task cancel",
+	}
+	if cause.Valid() {
+		payload["cancel_cause"] = string(cause)
+		reason := strings.TrimSpace(cause.Summary())
+		if reason == "" {
+			reason = "task canceled by user"
+		}
+		return string(cause), reason, payload
+	}
+	return "manual_cancel", "canceled by task cancel command", payload
 }

@@ -301,10 +301,14 @@ func (p *daemonProjectAdapter) ListTaskEvents(ctx context.Context, runID uint, l
 }
 
 func (p *daemonProjectAdapter) CancelTaskRun(ctx context.Context, runID uint) (daemonsvc.TaskRunCancelResult, error) {
+	return p.CancelTaskRunWithCause(ctx, runID, contracts.TaskCancelCauseUnknown)
+}
+
+func (p *daemonProjectAdapter) CancelTaskRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause) (daemonsvc.TaskRunCancelResult, error) {
 	if p == nil || p.project == nil {
 		return daemonsvc.TaskRunCancelResult{}, fmt.Errorf("daemon project 为空")
 	}
-	result, err := p.project.CancelTaskRun(ctx, runID)
+	result, err := p.project.CancelTaskRunWithCause(ctx, runID, cause)
 	if err != nil {
 		return daemonsvc.TaskRunCancelResult{}, err
 	}

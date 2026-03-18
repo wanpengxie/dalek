@@ -199,6 +199,79 @@ func TestCheckZombieWorkers_MaxRetries_BlockTicket(t *testing.T) {
 	}
 }
 
+func TestCheckZombieWorkers_UserStopDoesNotConvergeExecutionLost(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "zombie-user-stop")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerStopped,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set worker stopped failed: %v", err)
+	}
+	rt, run := createWorkerRunForManagerTickTest(t, svc, p, tk.ID, w.ID, "zombie-user-stop")
+	if err := rt.AppendEvent(context.Background(), contracts.TaskEventInput{
+		TaskRunID: run.ID,
+		EventType: "task_canceled",
+		ToState: map[string]any{
+			"orchestration_state": contracts.TaskCanceled,
+			"cancel_cause":        contracts.TaskCancelCauseUserStop,
+			"error_code":          contracts.TaskCancelCauseUserStop,
+		},
+		Note: "用户主动停止 ticket",
+		Payload: map[string]any{
+			"cancel_cause": contracts.TaskCancelCauseUserStop,
+		},
+		CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("append task_canceled event failed: %v", err)
+	}
+
+	out := svc.checkZombieWorkers(context.Background(), p.DB, rt)
+	if out.Blocked != 1 {
+		t.Fatalf("expected blocked=1, got=%d errors=%v", out.Blocked, out.Errors)
+	}
+	if out.Illegal != 0 {
+		t.Fatalf("expected illegal=0, got=%d", out.Illegal)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketBlocked {
+		t.Fatalf("expected ticket blocked, got=%s", ticket.WorkflowStatus)
+	}
+
+	snapshot, err := svc.RebuildTicketLifecycleSnapshot(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("RebuildTicketLifecycleSnapshot failed: %v", err)
+	}
+	if snapshot.Explanation == nil || snapshot.Explanation.BlockedReason != ticketBlockedReasonUserStopped {
+		t.Fatalf("expected blocked_reason=%s, got=%+v", ticketBlockedReasonUserStopped, snapshot.Explanation)
+	}
+
+	var lostCount int64
+	if err := p.DB.Model(&contracts.TicketLifecycleEvent{}).
+		Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionLost).
+		Count(&lostCount).Error; err != nil {
+		t.Fatalf("count execution_lost lifecycle failed: %v", err)
+	}
+	if lostCount != 0 {
+		t.Fatalf("expected no execution_lost lifecycle, got=%d", lostCount)
+	}
+}
+
 func TestManagerTick_SkipsQueuedRetryDuringBackoff(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 

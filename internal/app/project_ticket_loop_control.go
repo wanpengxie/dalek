@@ -39,12 +39,12 @@ type projectDaemonFocusLoopControl struct {
 	projectName string
 }
 
-func (c projectDaemonFocusLoopControl) CancelTaskRun(ctx context.Context, runID uint) error {
+func (c projectDaemonFocusLoopControl) CancelTaskRun(ctx context.Context, runID uint, cause contracts.TaskCancelCause) error {
 	client, err := NewDaemonAPIClientFromHome(c.home)
 	if err != nil {
 		return err
 	}
-	_, err = client.CancelTaskRun(ctx, runID)
+	_, err = client.CancelTaskRunWithCause(ctx, runID, cause)
 	return err
 }
 

@@ -550,7 +550,16 @@ func (s *InternalAPI) handleTaskRunEvents(w http.ResponseWriter, r *http.Request
 }
 
 func (s *InternalAPI) handleTaskRunCancel(w http.ResponseWriter, r *http.Request, runID uint) {
-	result, err := s.host.CancelTaskRun(r.Context(), runID)
+	causeRaw := strings.TrimSpace(r.URL.Query().Get("cause"))
+	cause := contracts.TaskCancelCauseUnknown
+	if causeRaw != "" {
+		cause = contracts.ParseTaskCancelCause(causeRaw)
+		if !cause.Valid() {
+			writeAPIError(w, http.StatusBadRequest, "bad_request", fmt.Sprintf("未知 cancel cause: %s", causeRaw))
+			return
+		}
+	}
+	result, err := s.host.CancelTaskRunWithCause(r.Context(), runID, cause)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "cancel_failed", err.Error())
 		return

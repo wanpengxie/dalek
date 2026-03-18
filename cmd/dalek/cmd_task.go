@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"dalek/internal/app"
+	"dalek/internal/contracts"
 )
 
 type taskStatusPublic struct {
@@ -356,7 +357,7 @@ func cmdTaskCancel(args []string) {
 	p := mustOpenProjectWithOutput(out, *home, *proj)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	taskStatus, statusErr := p.GetTaskStatus(ctx, uint(*runID))
+	_, statusErr := p.GetTaskStatus(ctx, uint(*runID))
 
 	daemonWarning := ""
 	if _, daemonClient, derr := openDaemonClient(*home); derr != nil {
@@ -366,22 +367,8 @@ func cmdTaskCancel(args []string) {
 		)
 	} else if statusErr != nil {
 		daemonWarning = fmt.Sprintf("读取 task 状态失败，已降级为仅标记数据库（%s）", strings.TrimSpace(statusErr.Error()))
-	} else if taskStatus != nil && strings.TrimSpace(strings.ToLower(taskStatus.OwnerType)) == "worker" && taskStatus.TicketID != 0 {
-		cancelRes, cerr := daemonClient.CancelTicketLoop(ctx, strings.TrimSpace(p.Name()), taskStatus.TicketID)
-		if cerr != nil {
-			daemonWarning = fmt.Sprintf(
-				"daemon ticket-loop cancel 调用失败，已降级为仅标记数据库；若 daemon 仍在执行，任务可能继续运行（%s）",
-				strings.TrimSpace(cerr.Error()),
-			)
-		} else if !cancelRes.Canceled {
-			reason := strings.TrimSpace(cancelRes.Reason)
-			if reason == "" {
-				reason = "ticket loop 不在当前 daemon 执行上下文中"
-			}
-			daemonWarning = fmt.Sprintf("daemon 未确认 ticket loop 取消信号（%s），已降级为仅标记数据库", reason)
-		}
 	} else {
-		cancelRes, cerr := daemonClient.CancelTaskRun(ctx, uint(*runID))
+		cancelRes, cerr := daemonClient.CancelTaskRunWithCause(ctx, uint(*runID), contracts.TaskCancelCauseUserCancel)
 		if cerr != nil {
 			daemonWarning = fmt.Sprintf("daemon task-run cancel 调用失败，已降级为仅标记数据库；若 daemon 仍在执行，任务可能继续运行（%s）", strings.TrimSpace(cerr.Error()))
 		} else if !cancelRes.Canceled {
@@ -393,7 +380,7 @@ func cmdTaskCancel(args []string) {
 		}
 	}
 
-	result, err := p.CancelTaskRun(ctx, uint(*runID))
+	result, err := p.CancelTaskRunWithCause(ctx, uint(*runID), contracts.TaskCancelCauseUserCancel)
 	if err != nil {
 		cause := strings.TrimSpace(err.Error())
 		if daemonWarning != "" {

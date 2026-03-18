@@ -293,10 +293,40 @@ func (s *Service) reconcileZombieStateDrift(ctx context.Context, db *gorm.DB, no
 			continue
 		}
 		if w.Status != contracts.WorkerRunning {
+			taskRunID, rerr := latestWorkerTaskRunIDTx(ctx, db, w.ID)
+			if rerr != nil {
+				out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检读取最后 task run 失败：t%d w%d: %v", t.ID, w.ID, rerr))
+				continue
+			}
+			cancelCause, cerr := latestTaskCancelCause(ctx, db, w.ID, taskRunID)
+			if cerr != nil {
+				out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检读取 cancel cause 失败：t%d w%d: %v", t.ID, w.ID, cerr))
+				continue
+			}
+			if isUserInitiatedTaskCancelCause(cancelCause) {
+				blocked, err := s.convergeUserInitiatedTaskCancel(ctx, userInitiatedTaskCancelInput{
+					TicketID:  t.ID,
+					WorkerID:  w.ID,
+					TaskRunID: taskRunID,
+					Cause:     cancelCause,
+					Source:    "pm.zombie",
+					Reason:    userInitiatedTaskCancelSummary(cancelCause),
+					Now:       now,
+				})
+				if err != nil {
+					out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检处理用户终止失败：t%d w%d: %v", t.ID, w.ID, err))
+					continue
+				}
+				if blocked {
+					out.Blocked++
+				}
+				continue
+			}
 			reason := fmt.Sprintf("ticket active 但 worker 不在 running（status=%s）", strings.TrimSpace(string(w.Status)))
 			outcome, err := s.convergeExecutionLost(ctx, executionLossInput{
 				TicketID:        t.ID,
 				WorkerID:        w.ID,
+				TaskRunID:       taskRunID,
 				Source:          "pm.zombie",
 				ObservationKind: "unexpected_exit",
 				FailureCode:     "active_worker_not_running",

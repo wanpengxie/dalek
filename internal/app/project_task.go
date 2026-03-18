@@ -139,10 +139,14 @@ func (p *Project) FinishAgentRun(ctx context.Context, runID uint, exitCode int) 
 }
 
 func (p *Project) CancelTaskRun(ctx context.Context, runID uint) (TaskCancelResult, error) {
+	return p.CancelTaskRunWithCause(ctx, runID, contracts.TaskCancelCauseUnknown)
+}
+
+func (p *Project) CancelTaskRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause) (TaskCancelResult, error) {
 	if p == nil || p.task == nil {
 		return TaskCancelResult{}, fmt.Errorf("project task service 为空")
 	}
-	res, err := p.task.CancelRun(ctx, runID, time.Now())
+	res, err := p.task.CancelRunWithCause(ctx, runID, cause, time.Now())
 	if err != nil {
 		return TaskCancelResult{}, err
 	}
