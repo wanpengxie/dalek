@@ -341,14 +341,25 @@ func createActiveDeliverRunForRecovery(t *testing.T, p *Project, ticketID uint, 
 	if err != nil {
 		t.Fatalf("create active deliver run failed: %v", err)
 	}
+	if err := p.task.AppendEvent(ctx, contracts.TaskEventInput{
+		TaskRunID: run.ID,
+		EventType: "task_started",
+		ToState: map[string]any{
+			"orchestration_state": contracts.TaskRunning,
+		},
+		Note:      "credible active deliver run",
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("append task_started failed: %v", err)
+	}
 	return *worker, run
 }
 
-func TestIntegration_DaemonRecovery_RepairsQueuedProjectionFromActiveWorkerRun(t *testing.T) {
+func TestIntegration_DaemonRecovery_FailsOrphanedActiveWorkerRun(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
 
-	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery active run", "startup recovery should repair queued projection from active deliver run")
+	tk, err := p.CreateTicketWithDescription(ctx, "integration recovery active run", "startup recovery should fail orphaned active deliver run")
 	if err != nil {
 		t.Fatalf("CreateTicket failed: %v", err)
 	}
@@ -361,16 +372,27 @@ func TestIntegration_DaemonRecovery_RepairsQueuedProjectionFromActiveWorkerRun(t
 	if err := mustProjectDB(t, p).WithContext(ctx).First(&ticket, tk.ID).Error; err != nil {
 		t.Fatalf("load ticket failed: %v", err)
 	}
-	if ticket.WorkflowStatus != contracts.TicketActive {
-		t.Fatalf("expected queued projection repaired to active, got=%s", ticket.WorkflowStatus)
+	if ticket.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected ticket remain queued after orphan reconcile, got=%s", ticket.WorkflowStatus)
 	}
 
 	var worker contracts.Worker
 	if err := mustProjectDB(t, p).WithContext(ctx).First(&worker, w.ID).Error; err != nil {
 		t.Fatalf("load worker failed: %v", err)
 	}
-	if worker.Status != contracts.WorkerRunning {
-		t.Fatalf("expected worker marked running from active run recovery, got=%s", worker.Status)
+	if worker.Status != contracts.WorkerStopped {
+		t.Fatalf("expected worker remain stopped after orphan reconcile, got=%s", worker.Status)
+	}
+
+	runAfter, err := p.task.FindRunByID(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("FindRunByID failed: %v", err)
+	}
+	if runAfter == nil || runAfter.OrchestrationState != contracts.TaskFailed {
+		t.Fatalf("expected orphaned run failed, got=%+v", runAfter)
+	}
+	if strings.TrimSpace(runAfter.ErrorCode) != "orphaned_by_crash" {
+		t.Fatalf("expected orphaned run error_code=orphaned_by_crash, got=%q", runAfter.ErrorCode)
 	}
 
 	st, err := p.GetPMState(ctx)
@@ -380,21 +402,31 @@ func TestIntegration_DaemonRecovery_RepairsQueuedProjectionFromActiveWorkerRun(t
 	if st.LastRecoveryAt == nil || st.LastRecoveryTaskRuns == 0 {
 		t.Fatalf("recovery summary not persisted: %+v", st)
 	}
-	var repaired contracts.TicketLifecycleEvent
+
+	var repairedCount int64
 	if err := mustProjectDB(t, p).WithContext(ctx).
+		Model(&contracts.TicketLifecycleEvent{}).
 		Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleRepaired).
-		Order("id desc").
-		First(&repaired).Error; err != nil {
-		t.Fatalf("expected recovery repaired lifecycle event: %v", err)
+		Count(&repairedCount).Error; err != nil {
+		t.Fatalf("count repaired lifecycle failed: %v", err)
 	}
-	if strings.TrimSpace(repaired.Source) != "pm.recovery.active_run" {
-		t.Fatalf("unexpected recovery event source: %q", repaired.Source)
+	if repairedCount != 0 {
+		t.Fatalf("expected no repaired lifecycle event after orphan reconcile, got=%d", repairedCount)
 	}
-	if got := strings.TrimSpace(fmt.Sprint(repaired.PayloadJSON["target_workflow"])); got != string(contracts.TicketActive) {
-		t.Fatalf("expected repaired target_workflow=active, got=%q", got)
+
+	events, err := p.ListTaskEvents(ctx, run.ID, 20)
+	if err != nil {
+		t.Fatalf("ListTaskEvents failed: %v", err)
 	}
-	if got := uintFromAny(repaired.PayloadJSON["task_run_id"]); got != run.ID {
-		t.Fatalf("expected repaired task_run_id=%d, got=%d", run.ID, got)
+	foundFailed := false
+	for _, ev := range events {
+		if strings.TrimSpace(ev.EventType) == "task_failed" && strings.Contains(ev.PayloadJSON, `"reason":"orphaned_by_crash"`) {
+			foundFailed = true
+			break
+		}
+	}
+	if !foundFailed {
+		t.Fatalf("expected task_failed event with orphaned_by_crash payload, got=%v", events)
 	}
 }
 

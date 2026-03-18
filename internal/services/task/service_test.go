@@ -176,6 +176,193 @@ func TestService_WorkerActiveRunLifecycle(t *testing.T) {
 	}
 }
 
+func TestService_ReconcileOrphanedExecutionHostRuns_FailsWorkerAndSubagentOnly(t *testing.T) {
+	svc := newTaskServiceForTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	workerRun, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
+		ProjectKey:         "demo",
+		TicketID:           31,
+		WorkerID:           41,
+		SubjectType:        "ticket",
+		SubjectID:          "31",
+		RequestID:          "reconcile-worker-running",
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(worker) failed: %v", err)
+	}
+	pendingWorkerRun, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
+		ProjectKey:         "demo",
+		TicketID:           32,
+		WorkerID:           42,
+		SubjectType:        "ticket",
+		SubjectID:          "32",
+		RequestID:          "reconcile-worker-pending",
+		OrchestrationState: contracts.TaskPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(pendingWorker) failed: %v", err)
+	}
+	activeWorkerRun, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
+		ProjectKey:         "demo",
+		TicketID:           33,
+		WorkerID:           43,
+		SubjectType:        "ticket",
+		SubjectID:          "33",
+		RequestID:          "reconcile-worker-live",
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(activeWorker) failed: %v", err)
+	}
+	if err := svc.AppendEvent(ctx, contracts.TaskEventInput{
+		TaskRunID: activeWorkerRun.ID,
+		EventType: "task_started",
+		ToState: map[string]any{
+			"orchestration_state": contracts.TaskRunning,
+		},
+		Note:      "worker run with prior signal",
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("AppendEvent(task_started) failed: %v", err)
+	}
+	subagentRun, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerSubagent,
+		TaskType:           contracts.TaskTypeSubagentRun,
+		ProjectKey:         "demo",
+		SubjectType:        "project",
+		SubjectID:          "demo",
+		RequestID:          "reconcile-subagent",
+		OrchestrationState: contracts.TaskPending,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(subagent) failed: %v", err)
+	}
+	if err := svc.AppendEvent(ctx, contracts.TaskEventInput{
+		TaskRunID: subagentRun.ID,
+		EventType: "task_enqueued",
+		ToState: map[string]any{
+			"orchestration_state": contracts.TaskPending,
+		},
+		Note:      "subagent queued",
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("AppendEvent(subagent task_enqueued) failed: %v", err)
+	}
+	if err := svc.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
+		TaskRunID:  subagentRun.ID,
+		State:      contracts.TaskHealthIdle,
+		Summary:    "subagent queued",
+		Source:     "test",
+		ObservedAt: now,
+	}); err != nil {
+		t.Fatalf("AppendRuntimeSample(subagent) failed: %v", err)
+	}
+	if err := svc.AppendSemanticReport(ctx, contracts.TaskSemanticReportInput{
+		TaskRunID:  subagentRun.ID,
+		Phase:      contracts.TaskPhasePlanning,
+		Milestone:  "queued",
+		NextAction: "continue",
+		Summary:    "subagent accepted",
+		ReportedAt: now,
+	}); err != nil {
+		t.Fatalf("AppendSemanticReport(subagent) failed: %v", err)
+	}
+	channelRun, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerChannel,
+		TaskType:           contracts.TaskTypeChannelTurn,
+		ProjectKey:         "demo",
+		SubjectType:        "channel_conversation",
+		SubjectID:          "conv-1",
+		RequestID:          "reconcile-channel",
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun(channel) failed: %v", err)
+	}
+
+	reconciled, err := svc.ReconcileOrphanedExecutionHostRuns(ctx, now)
+	if err != nil {
+		t.Fatalf("ReconcileOrphanedExecutionHostRuns failed: %v", err)
+	}
+	if reconciled != 4 {
+		t.Fatalf("expected 4 reconciled runs, got=%d", reconciled)
+	}
+
+	workerStatus, err := svc.GetStatusByRunID(ctx, workerRun.ID)
+	if err != nil {
+		t.Fatalf("GetStatusByRunID(worker) failed: %v", err)
+	}
+	if workerStatus == nil || workerStatus.OrchestrationState != string(contracts.TaskFailed) {
+		t.Fatalf("expected worker run failed, got=%+v", workerStatus)
+	}
+	if workerStatus.ErrorCode != orphanedByCrashErrorCode {
+		t.Fatalf("expected worker error_code=%q, got=%q", orphanedByCrashErrorCode, workerStatus.ErrorCode)
+	}
+	pendingWorkerStatus, err := svc.GetStatusByRunID(ctx, pendingWorkerRun.ID)
+	if err != nil {
+		t.Fatalf("GetStatusByRunID(pendingWorker) failed: %v", err)
+	}
+	if pendingWorkerStatus == nil || pendingWorkerStatus.OrchestrationState != string(contracts.TaskFailed) {
+		t.Fatalf("expected pending worker run failed, got=%+v", pendingWorkerStatus)
+	}
+	activeWorkerStatus, err := svc.GetStatusByRunID(ctx, activeWorkerRun.ID)
+	if err != nil {
+		t.Fatalf("GetStatusByRunID(activeWorker) failed: %v", err)
+	}
+	if activeWorkerStatus == nil || activeWorkerStatus.OrchestrationState != string(contracts.TaskFailed) {
+		t.Fatalf("expected active worker run failed, got=%+v", activeWorkerStatus)
+	}
+	subagentStatus, err := svc.GetStatusByRunID(ctx, subagentRun.ID)
+	if err != nil {
+		t.Fatalf("GetStatusByRunID(subagent) failed: %v", err)
+	}
+	if subagentStatus == nil || subagentStatus.OrchestrationState != string(contracts.TaskFailed) {
+		t.Fatalf("expected subagent run failed, got=%+v", subagentStatus)
+	}
+	channelStatus, err := svc.GetStatusByRunID(ctx, channelRun.ID)
+	if err != nil {
+		t.Fatalf("GetStatusByRunID(channel) failed: %v", err)
+	}
+	if channelStatus == nil || channelStatus.OrchestrationState != string(contracts.TaskRunning) {
+		t.Fatalf("expected channel run untouched, got=%+v", channelStatus)
+	}
+
+	events, err := svc.ListEvents(ctx, workerRun.ID, 10)
+	if err != nil {
+		t.Fatalf("ListEvents(worker) failed: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatalf("expected worker task_failed event")
+	}
+	last := events[len(events)-1]
+	if last.EventType != "task_failed" {
+		t.Fatalf("expected latest worker event task_failed, got=%s", last.EventType)
+	}
+	if got := last.PayloadJSON["reason"]; got != orphanedByCrashErrorCode {
+		t.Fatalf("expected payload reason=%q, got=%v", orphanedByCrashErrorCode, got)
+	}
+
+	second, err := svc.ReconcileOrphanedExecutionHostRuns(ctx, now.Add(10*time.Minute))
+	if err != nil {
+		t.Fatalf("second ReconcileOrphanedExecutionHostRuns failed: %v", err)
+	}
+	if second != 0 {
+		t.Fatalf("expected second reconcile to be idempotent, got=%d", second)
+	}
+}
+
 func TestService_MarkRunSucceeded_DoesNotOverrideCanceled(t *testing.T) {
 	svc := newTaskServiceForTest(t)
 	ctx := context.Background()

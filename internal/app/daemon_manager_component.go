@@ -43,9 +43,9 @@ type daemonManagerComponent struct {
 }
 
 type recoveryProjectSummary struct {
-	ActiveRunRepairs int
-	Notes            int
-	Workers          int
+	TaskRuns int
+	Notes    int
+	Workers  int
 }
 
 func newDaemonManagerComponent(home *Home, logger *slog.Logger, registries ...*ProjectRegistry) *daemonManagerComponent {
@@ -163,7 +163,7 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			continue
 		}
 		p, err := m.registry.Open(name)
-		if err != nil || p == nil || p.core == nil || p.core.DB == nil || p.pm == nil || p.worker == nil {
+		if err != nil || p == nil || p.core == nil || p.core.DB == nil || p.pm == nil || p.task == nil || p.worker == nil {
 			if err != nil {
 				m.logf("recovery open project failed: project=%s err=%v", name, err)
 			}
@@ -175,10 +175,15 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 		}
 		summary := recoveryProjectSummary{}
 
+		if reconciled, err := p.task.ReconcileOrphanedExecutionHostRuns(ctx, now); err != nil {
+			m.logf("recovery orphaned execution runs failed: project=%s err=%v", name, err)
+		} else {
+			summary.TaskRuns += reconciled
+		}
 		if repaired, err := p.pm.RecoverActiveTaskRuns(ctx, name, now, nil); err != nil {
 			m.logf("recovery active runs failed: project=%s err=%v", name, err)
 		} else {
-			summary.ActiveRunRepairs = repaired
+			summary.TaskRuns += repaired
 		}
 		if rolled, err := p.RecoverStuckShapingNotes(ctx, 5*time.Minute); err != nil {
 			m.logf("recovery note shaping failed: project=%s err=%v", name, err)
@@ -194,14 +199,14 @@ func (m *daemonManagerComponent) runRecovery(ctx context.Context) {
 			summary.Workers = fixed
 		}
 		if pmErr == nil && pmState.ID != 0 {
-			if err := p.pm.UpdateRecoverySummary(ctx, pmState.ID, now, summary.ActiveRunRepairs, summary.Notes, summary.Workers); err != nil {
+			if err := p.pm.UpdateRecoverySummary(ctx, pmState.ID, now, summary.TaskRuns, summary.Notes, summary.Workers); err != nil {
 				m.logf("recovery summary persist failed: project=%s err=%v", name, err)
 			}
 		}
 		m.logf(
-			"recovery summary: project=%s active_run_repairs=%d reopened_notes=%d fixed_workers=%d",
+			"recovery summary: project=%s task_run_repairs=%d reopened_notes=%d fixed_workers=%d",
 			name,
-			summary.ActiveRunRepairs,
+			summary.TaskRuns,
 			summary.Notes,
 			summary.Workers,
 		)
