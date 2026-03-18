@@ -69,7 +69,7 @@ func createWorkerDeliverRunForLifecycleTest(t *testing.T, p *Project, ticketID, 
 		WorkerID:           workerID,
 		SubjectType:        "ticket",
 		SubjectID:          fmt.Sprintf("%d", ticketID),
-		RequestID:          fmt.Sprintf("%s-%d", strings.TrimSpace(prefix), now.UnixNano()),
+		RequestID:          fmt.Sprintf("%s-t%d-w%d-%d", strings.TrimSpace(prefix), ticketID, workerID, time.Now().UnixNano()),
 		OrchestrationState: contracts.TaskRunning,
 		StartedAt:          &now,
 	})
@@ -218,6 +218,27 @@ func waitForTicketWorkflowForLifecycleTest(t *testing.T, p *Project, ticketID ui
 	tk := loadTicketForLifecycleTest(t, p, ticketID)
 	t.Fatalf("ticket state not reached within %s: ticket=%d workflow=%s integration=%s want_workflow=%s want_integration=%s", timeout, ticketID, tk.WorkflowStatus, tk.IntegrationStatus, wantWorkflow, wantIntegration)
 	return contracts.Ticket{}
+}
+
+func waitForLatestWorkerRunForLifecycleTest(t *testing.T, p *Project, ticketID uint, timeout time.Duration) *TaskStatus {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		run, err := p.FindLatestWorkerRun(context.Background(), ticketID, 0)
+		if err != nil {
+			t.Fatalf("FindLatestWorkerRun(%d) failed while waiting: %v", ticketID, err)
+		}
+		if run != nil && run.RunID != 0 {
+			return run
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	run, err := p.FindLatestWorkerRun(context.Background(), ticketID, 0)
+	if err != nil {
+		t.Fatalf("FindLatestWorkerRun(%d) failed after timeout: %v", ticketID, err)
+	}
+	t.Fatalf("latest worker run not reached within %s: ticket=%d run=%+v", timeout, ticketID, run)
+	return nil
 }
 
 type acceptingLifecycleManagerHost struct {
@@ -809,7 +830,7 @@ func TestIntegration_Lifecycle_ProjectApplyWorkerReportDoesNotAdvanceWorkflow(t 
 	assertLifecycleConsistentForLifecycleTest(t, p, tk.ID, contracts.TicketQueued, contracts.IntegrationNone)
 }
 
-func TestIntegration_Lifecycle_DaemonStartRecoveryAndTickConvergesQueuedAndActiveTickets(t *testing.T) {
+func TestIntegration_Lifecycle_DaemonStartRecoveryAndTickConvergesQueuedAndOrphanedTickets(t *testing.T) {
 	h, p := newIntegrationHomeProject(t)
 	ctx := context.Background()
 
@@ -823,7 +844,7 @@ func TestIntegration_Lifecycle_DaemonStartRecoveryAndTickConvergesQueuedAndActiv
 		t.Fatalf("StartTicket(queued) failed: %v", err)
 	}
 
-	driftTicket, err := p.CreateTicketWithDescription(ctx, "daemon-active-drift", "active run should be repaired during recovery")
+	driftTicket, err := p.CreateTicketWithDescription(ctx, "daemon-orphaned-drift", "orphaned active run should be failed before first tick")
 	if err != nil {
 		t.Fatalf("CreateTicket(drift) failed: %v", err)
 	}
@@ -849,31 +870,45 @@ func TestIntegration_Lifecycle_DaemonStartRecoveryAndTickConvergesQueuedAndActiv
 	waitForTicketWorkflowForLifecycleTest(t, p, driftTicket.ID, contracts.TicketActive, contracts.IntegrationNone, 3*time.Second)
 
 	submitted := host.SubmittedTicketIDs()
-	if len(submitted) != 1 || submitted[0] != queuedTicket.ID {
-		t.Fatalf("expected host to activate only queued ticket t%d, got=%v", queuedTicket.ID, submitted)
+	hasQueued := false
+	hasDrift := false
+	for _, id := range submitted {
+		if id == queuedTicket.ID {
+			hasQueued = true
+		}
+		if id == driftTicket.ID {
+			hasDrift = true
+		}
+	}
+	if !hasQueued || !hasDrift {
+		t.Fatalf("expected host submissions include queued=%d and drift=%d, got=%v", queuedTicket.ID, driftTicket.ID, submitted)
 	}
 	if got := countLifecycleEventsForLifecycleTest(t, p, queuedTicket.ID, contracts.TicketLifecycleActivated); got != 1 {
 		t.Fatalf("expected queued ticket activated exactly once, got=%d", got)
 	}
-	if got := countLifecycleEventsForLifecycleTest(t, p, driftTicket.ID, contracts.TicketLifecycleRepaired); got != 1 {
-		t.Fatalf("expected drift ticket repaired exactly once, got=%d", got)
+	if got := countLifecycleEventsForLifecycleTest(t, p, driftTicket.ID, contracts.TicketLifecycleActivated); got != 1 {
+		t.Fatalf("expected drift ticket reactivated exactly once, got=%d", got)
+	}
+	if got := countLifecycleEventsForLifecycleTest(t, p, driftTicket.ID, contracts.TicketLifecycleRepaired); got != 0 {
+		t.Fatalf("expected no repaired lifecycle for orphaned drift run, got=%d", got)
 	}
 
-	runStatus, err := p.FindLatestWorkerRun(ctx, queuedTicket.ID, 0)
-	if err != nil {
-		t.Fatalf("FindLatestWorkerRun(queued) failed: %v", err)
+	driftRunAfter := loadTaskRunForLifecycleTest(t, p, driftRun.ID)
+	if driftRunAfter.OrchestrationState != contracts.TaskFailed {
+		t.Fatalf("expected original drift run failed during startup recovery, got=%s", driftRunAfter.OrchestrationState)
 	}
-	if runStatus == nil || runStatus.RunID == 0 {
-		t.Fatalf("expected queued ticket to have accepted worker run after daemon tick")
+	if strings.TrimSpace(driftRunAfter.ErrorCode) != "orphaned_by_crash" {
+		t.Fatalf("expected original drift run error_code=orphaned_by_crash, got=%q", driftRunAfter.ErrorCode)
 	}
+
+	runStatus := waitForLatestWorkerRunForLifecycleTest(t, p, queuedTicket.ID, 3*time.Second)
 	if got := loadWorkerForLifecycleTest(t, p, runStatus.WorkerID); got.Status != contracts.WorkerRunning {
 		t.Fatalf("expected queued ticket worker running after daemon tick, got=%s", got.Status)
 	}
-	if repaired := latestLifecycleEventForLifecycleTest(t, p, driftTicket.ID, contracts.TicketLifecycleRepaired); strings.TrimSpace(repaired.Source) != "pm.recovery.active_run" {
-		t.Fatalf("expected drift repaired by recovery source pm.recovery.active_run, got=%q", repaired.Source)
-	}
-	if got := uintFromAny(latestLifecycleEventForLifecycleTest(t, p, driftTicket.ID, contracts.TicketLifecycleRepaired).PayloadJSON["task_run_id"]); got != driftRun.ID {
-		t.Fatalf("expected repaired task_run_id=%d, got=%d", driftRun.ID, got)
+
+	driftStatus := waitForLatestWorkerRunForLifecycleTest(t, p, driftTicket.ID, 3*time.Second)
+	if driftStatus.RunID == driftRun.ID {
+		t.Fatalf("expected drift ticket to use a new worker run instead of stale run=%d", driftRun.ID)
 	}
 
 	assertLifecycleConsistentForLifecycleTest(t, p, queuedTicket.ID, contracts.TicketActive, contracts.IntegrationNone)
