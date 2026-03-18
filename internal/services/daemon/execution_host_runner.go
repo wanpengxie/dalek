@@ -137,7 +137,7 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 }
 
 func (h *ExecutionHost) maybeTerminateTicketRun(handle *executionRunHandle, project ExecutionHostProject) {
-	if h == nil || handle == nil || project == nil || handle.kind != runKindWorker {
+	if h == nil || handle == nil || handle.kind != runKindWorker {
 		return
 	}
 	queryBase := context.Background()
@@ -156,6 +156,22 @@ func (h *ExecutionHost) maybeTerminateTicketRun(handle *executionRunHandle, proj
 	h.mu.RUnlock()
 	if runID == 0 {
 		return
+	}
+	var err error
+	if project == nil {
+		if h.resolver == nil {
+			return
+		}
+		project, err = h.resolver.OpenProject(projectName)
+		if err != nil {
+			h.logger.Warn("execution host ticket run terminal probe open project failed",
+				"run_id", runID,
+				"project", projectName,
+				"request_id", requestID,
+				"error", err,
+			)
+			return
+		}
 	}
 
 	status, err := project.GetTaskStatus(ctx, runID)

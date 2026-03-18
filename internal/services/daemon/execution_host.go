@@ -90,9 +90,13 @@ func (h *ExecutionHost) Stop(ctx context.Context) error {
 
 	for _, handle := range handles {
 		h.markHandleReady(handle)
+		if handle.kind == runKindWorker {
+			executionTicketLoopControlSink{host: h, handle: handle}.LoopCancelRequested()
+		}
 		if handle.cancel != nil {
 			handle.cancel()
 		}
+		h.maybeTerminateTicketRun(handle, nil)
 	}
 
 	done := make(chan struct{})
