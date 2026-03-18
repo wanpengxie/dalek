@@ -1902,6 +1902,66 @@ func TestExecutionHost_ProbeTicketLoop_ReportsCancelingSnapshot(t *testing.T) {
 	}
 }
 
+func TestExecutionHost_CancelTaskRunWithCause_PropagatesToLiveWorkerLoop(t *testing.T) {
+	project := &testExecutionHostProject{
+		directDispatchStarted: make(chan struct{}, 1),
+		directDispatchDelay:   5 * time.Second,
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	receipt, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "worker-live-task-cancel",
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
+	}
+	if receipt.TaskRunID == 0 {
+		t.Fatalf("expected task_run_id on submit receipt")
+	}
+
+	select {
+	case <-project.directDispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("worker-run goroutine not started")
+	}
+
+	res, err := host.CancelTaskRunWithCause(context.Background(), receipt.TaskRunID, contracts.TaskCancelCauseUserCancel)
+	if err != nil {
+		t.Fatalf("CancelTaskRunWithCause failed: %v", err)
+	}
+	if !res.Found || !res.Canceled {
+		t.Fatalf("expected found=true canceled=true, got=%+v", res)
+	}
+	if got := strings.TrimSpace(res.RequestID); got != "worker-live-task-cancel" {
+		t.Fatalf("unexpected request_id: got=%q", got)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	cleared := false
+	for time.Now().Before(deadline) {
+		if !host.ProbeTicketLoop(context.Background(), "demo", 1).Found {
+			cleared = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !cleared {
+		t.Fatalf("expected live ticket loop cleared after cancel")
+	}
+	if got := strings.TrimSpace(project.lastCancelCause); got != string(contracts.TaskCancelCauseUserCancel) {
+		t.Fatalf("expected user_cancel cause, got=%q", got)
+	}
+	if err := host.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+}
+
 func containsProject(projects []string, target string) bool {
 	target = strings.TrimSpace(target)
 	for _, project := range projects {

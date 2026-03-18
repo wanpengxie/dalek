@@ -208,6 +208,13 @@ func (s *Service) focusTickExecutingItem(ctx context.Context, run contracts.Focu
 		if snapshot.ActiveRun == nil && snapshot.Worker != nil {
 			switch snapshot.Worker.Status {
 			case contracts.WorkerStopped, contracts.WorkerFailed:
+				cause, cerr := s.focusLatestTaskCancelCause(ctx, item, snapshot)
+				if cerr != nil {
+					return cerr
+				}
+				if isUserInitiatedTaskCancelCause(cause) {
+					return s.focusStopItem(ctx, run, item, userInitiatedTaskCancelSummary(cause))
+				}
 				return s.focusHandleBlockedExecution(ctx, run, item, snapshot)
 			}
 		}
@@ -503,9 +510,50 @@ func (s *Service) focusResolveHandoffBlockedItem(ctx context.Context, run contra
 func (s *Service) focusHandleBlockedExecution(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, snapshot focusTicketSnapshot) error {
 	// ticket blocked = needs_user，直接 block focus item；其他情况尝试重启
 	if contracts.CanonicalTicketWorkflowStatus(snapshot.Ticket.WorkflowStatus) == contracts.TicketBlocked {
+		lifecycleSnapshot, err := s.RebuildTicketLifecycleSnapshot(ctx, item.TicketID)
+		if err != nil {
+			return err
+		}
+		if lifecycleSnapshot.Explanation != nil && isUserInitiatedBlockedReason(lifecycleSnapshot.Explanation.BlockedReason) {
+			reason := strings.TrimSpace(lifecycleSnapshot.Explanation.Reason)
+			if reason == "" {
+				reason = "用户主动停止 ticket"
+			}
+			return s.focusStopItem(ctx, run, item, reason)
+		}
 		return s.focusBlockItem(ctx, run, item, focusBlockedReasonNeedsUser, "ticket 需要用户介入")
 	}
 	return s.focusRestartOrBlock(ctx, run, item, snapshot, item.CurrentAttempt+1)
+}
+
+func (s *Service) focusLatestTaskCancelCause(ctx context.Context, item contracts.FocusRunItem, snapshot focusTicketSnapshot) (contracts.TaskCancelCause, error) {
+	_, db, err := s.require()
+	if err != nil {
+		return contracts.TaskCancelCauseUnknown, err
+	}
+	taskRunID := focusTaskRunID(snapshot.ActiveRun)
+	if taskRunID == 0 && item.CurrentTaskRunID != nil {
+		taskRunID = *item.CurrentTaskRunID
+	}
+	return latestTaskCancelCause(ctx, db, focusWorkerID(snapshot.Worker), taskRunID)
+}
+
+func (s *Service) focusStopItem(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, reason string) error {
+	now := time.Now()
+	if err := s.focusUpdateRunAndItem(ctx, run.ID, &item.ID, map[string]any{
+		"status":      contracts.FocusRunning,
+		"finished_at": nil,
+		"updated_at":  now,
+	}, map[string]any{
+		"status":         contracts.FocusItemStopped,
+		"finished_at":    &now,
+		"updated_at":     now,
+		"blocked_reason": "",
+		"last_error":     strings.TrimSpace(reason),
+	}, "", "", nil); err != nil {
+		return err
+	}
+	return s.focusPromoteNextPendingItem(ctx, run.ID)
 }
 
 func (s *Service) focusRestartOrBlock(ctx context.Context, run contracts.FocusRun, item contracts.FocusRunItem, snapshot focusTicketSnapshot, nextAttempt int) error {
@@ -1172,7 +1220,7 @@ func (s *Service) focusRequestCancel(ctx context.Context, item contracts.FocusRu
 	}
 	if item.CurrentTaskRunID != nil && *item.CurrentTaskRunID != 0 {
 		if ctrl != nil {
-			if err := ctrl.CancelTaskRun(context.WithoutCancel(ctx), *item.CurrentTaskRunID); err != nil {
+			if err := ctrl.CancelTaskRun(context.WithoutCancel(ctx), *item.CurrentTaskRunID, contracts.TaskCancelCauseFocusCancel); err != nil {
 				return err
 			}
 		}

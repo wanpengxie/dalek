@@ -535,6 +535,10 @@ func (h *ExecutionHost) ListRunEvents(ctx context.Context, runID uint, limit int
 }
 
 func (h *ExecutionHost) CancelTaskRun(ctx context.Context, runID uint) (CancelResult, error) {
+	return h.CancelTaskRunWithCause(ctx, runID, contracts.TaskCancelCauseUnknown)
+}
+
+func (h *ExecutionHost) CancelTaskRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause) (CancelResult, error) {
 	if h == nil || h.resolver == nil {
 		return CancelResult{}, fmt.Errorf("execution host 未初始化")
 	}
@@ -544,11 +548,14 @@ func (h *ExecutionHost) CancelTaskRun(ctx context.Context, runID uint) (CancelRe
 	if runID == 0 {
 		return CancelResult{}, fmt.Errorf("run_id 不能为空")
 	}
+	if !cause.Valid() {
+		cause = contracts.TaskCancelCauseUnknown
+	}
 	h.mu.RLock()
 	handle := h.runs[runID]
 	h.mu.RUnlock()
 	if handle != nil {
-		if err := h.cancelHandle(ctx, handle, contracts.TaskCancelCauseUnknown); err != nil {
+		if err := h.cancelHandle(ctx, handle, cause); err != nil {
 			return CancelResult{}, err
 		}
 		return CancelResult{
@@ -574,7 +581,7 @@ func (h *ExecutionHost) CancelTaskRun(ctx context.Context, runID uint) (CancelRe
 		return CancelResult{Found: false, Canceled: false}, nil
 	}
 	if live, ok := h.lookupLiveTicketLoop(runKindWorker, projectName, status.TicketID); ok {
-		if err := h.cancelHandle(ctx, live, contracts.TaskCancelCauseUnknown); err != nil {
+		if err := h.cancelHandle(ctx, live, cause); err != nil {
 			return CancelResult{}, err
 		}
 		return CancelResult{
@@ -586,7 +593,7 @@ func (h *ExecutionHost) CancelTaskRun(ctx context.Context, runID uint) (CancelRe
 			Reason:    "ticket loop cancel signal sent",
 		}, nil
 	}
-	if canceled, ok, err := h.cancelTaskRunInProject(ctx, projectName, runID); err != nil {
+	if canceled, ok, err := h.cancelTaskRunInProject(ctx, projectName, runID, cause); err != nil {
 		return CancelResult{}, err
 	} else if ok {
 		return CancelResult{
@@ -693,7 +700,7 @@ func cancelCauseError(cause contracts.TaskCancelCause) error {
 	return context.Canceled
 }
 
-func (h *ExecutionHost) cancelTaskRunInProject(ctx context.Context, projectName string, runID uint) (TaskRunCancelResult, bool, error) {
+func (h *ExecutionHost) cancelTaskRunInProject(ctx context.Context, projectName string, runID uint, cause contracts.TaskCancelCause) (TaskRunCancelResult, bool, error) {
 	if h == nil || h.resolver == nil || runID == 0 {
 		return TaskRunCancelResult{}, false, nil
 	}
@@ -703,6 +710,13 @@ func (h *ExecutionHost) cancelTaskRunInProject(ctx context.Context, projectName 
 	project, err := h.resolver.OpenProject(strings.TrimSpace(projectName))
 	if err != nil {
 		return TaskRunCancelResult{}, false, err
+	}
+	if causeCanceler, ok := project.(executionHostTaskRunCauseCanceler); ok && causeCanceler != nil {
+		result, err := causeCanceler.CancelTaskRunWithCause(ctx, runID, cause)
+		if err != nil {
+			return TaskRunCancelResult{}, true, err
+		}
+		return result, true, nil
 	}
 	canceler, ok := project.(executionHostTaskRunCanceler)
 	if !ok || canceler == nil {

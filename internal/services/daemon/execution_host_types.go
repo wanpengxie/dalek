@@ -268,6 +268,10 @@ type executionHostTaskRunCanceler interface {
 	CancelTaskRun(ctx context.Context, runID uint) (TaskRunCancelResult, error)
 }
 
+type executionHostTaskRunCauseCanceler interface {
+	CancelTaskRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause) (TaskRunCancelResult, error)
+}
+
 type TaskRunTerminalResult struct {
 	RunID      uint
 	Found      bool

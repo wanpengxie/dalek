@@ -19,6 +19,7 @@ const defaultDaemonManagerTickInterval = 30 * time.Second
 type managerExecutionHost interface {
 	SubmitTicketLoop(ctx context.Context, req daemonsvc.TicketLoopSubmitRequest) (daemonsvc.TicketLoopSubmitReceipt, error)
 	CancelTaskRun(ctx context.Context, runID uint) (daemonsvc.CancelResult, error)
+	CancelTaskRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error)
 	CancelTicketLoop(ctx context.Context, project string, ticketID uint) (daemonsvc.CancelResult, error)
 	CancelTicketLoopWithCause(ctx context.Context, project string, ticketID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error)
 }
@@ -460,11 +461,11 @@ func (c daemonManagerWorkerLoopControl) CancelTicketLoop(ctx context.Context, ti
 	}, nil
 }
 
-func (c daemonManagerFocusLoopControl) CancelTaskRun(ctx context.Context, runID uint) error {
+func (c daemonManagerFocusLoopControl) CancelTaskRun(ctx context.Context, runID uint, cause contracts.TaskCancelCause) error {
 	if c.host == nil || runID == 0 {
 		return nil
 	}
-	_, err := c.host.CancelTaskRun(ctx, runID)
+	_, err := c.host.CancelTaskRunWithCause(ctx, runID, cause)
 	return err
 }
 

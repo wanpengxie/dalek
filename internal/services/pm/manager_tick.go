@@ -337,6 +337,10 @@ func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRu
 					out.InboxUpserts++
 				}
 			}
+		case "task_canceled":
+			if err := s.consumeTaskCanceledEvent(ctx, ev); err != nil {
+				out.Errors = append(out.Errors, err.Error())
+			}
 		case "worker_loop_terminated":
 			if err := s.consumeWorkerLoopTerminatedEvent(ctx, ev); err != nil {
 				out.Errors = append(out.Errors, err.Error())
@@ -803,6 +807,28 @@ func (s *Service) consumeWorkerLoopTerminatedEvent(ctx context.Context, ev contr
 		Reason:          reason,
 		Payload:         extra,
 		Now:             ev.CreatedAt,
+	})
+	return err
+}
+
+func (s *Service) consumeTaskCanceledEvent(ctx context.Context, ev contracts.TaskEventScopeRow) error {
+	cause := taskCancelCauseFromEvent(ev)
+	if !isUserInitiatedTaskCancelCause(cause) {
+		return nil
+	}
+	reason := taskEventBody(ev)
+	if reason == "" {
+		reason = userInitiatedTaskCancelSummary(cause)
+	}
+	_, err := s.convergeUserInitiatedTaskCancel(ctx, userInitiatedTaskCancelInput{
+		TicketID:  ev.TicketID,
+		WorkerID:  ev.WorkerID,
+		TaskRunID: ev.TaskRunID,
+		Cause:     cause,
+		Source:    "pm.task_canceled",
+		Reason:    reason,
+		EventID:   ev.ID,
+		Now:       ev.CreatedAt,
 	})
 	return err
 }

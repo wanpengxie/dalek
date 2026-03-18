@@ -17,13 +17,15 @@ import (
 type stubFocusLoopControl struct {
 	mu              sync.Mutex
 	cancelRunIDs    []uint
+	cancelRunCauses []contracts.TaskCancelCause
 	cancelTicketIDs []uint
 }
 
-func (s *stubFocusLoopControl) CancelTaskRun(ctx context.Context, runID uint) error {
+func (s *stubFocusLoopControl) CancelTaskRun(ctx context.Context, runID uint, cause contracts.TaskCancelCause) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cancelRunIDs = append(s.cancelRunIDs, runID)
+	s.cancelRunCauses = append(s.cancelRunCauses, cause)
 	return nil
 }
 
@@ -39,6 +41,14 @@ func (s *stubFocusLoopControl) RunIDs() []uint {
 	defer s.mu.Unlock()
 	out := make([]uint, len(s.cancelRunIDs))
 	copy(out, s.cancelRunIDs)
+	return out
+}
+
+func (s *stubFocusLoopControl) RunCauses() []contracts.TaskCancelCause {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]contracts.TaskCancelCause, len(s.cancelRunCauses))
+	copy(out, s.cancelRunCauses)
 	return out
 }
 
@@ -241,6 +251,9 @@ func TestAdvanceFocusController_CancelingStopsActiveTicket(t *testing.T) {
 	if got := ctrl.RunIDs(); len(got) != 1 || got[0] != run.ID {
 		t.Fatalf("expected cancel task request for run %d, got=%v", run.ID, got)
 	}
+	if got := ctrl.RunCauses(); len(got) != 1 || got[0] != contracts.TaskCancelCauseFocusCancel {
+		t.Fatalf("expected cancel run cause focus_cancel, got=%v", got)
+	}
 	if got := ctrl.TicketIDs(); len(got) != 1 || got[0] != tk.ID {
 		t.Fatalf("expected cancel ticket request for t%d, got=%v", tk.ID, got)
 	}
@@ -277,6 +290,83 @@ func TestAdvanceFocusController_CancelingStopsActiveTicket(t *testing.T) {
 	item = focusItemByTicketID(view.Items, tk.ID)
 	if item == nil || item.Status != contracts.FocusItemCanceled {
 		t.Fatalf("expected item canceled after execution terminal, got=%+v", item)
+	}
+}
+
+func TestAdvanceFocusController_UserStopStopsItemInsteadOfRestart(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "focus-user-stop")
+	w, err := svc.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	run := createWorkerTaskRun(t, p.DB, tk.ID, w.ID, "focus-user-stop-run")
+	if _, err := svc.acceptWorkerRun(ctx, tk.ID, w, run.ID, "test.focus.user_stop", contracts.TicketLifecycleActorSystem, nil); err != nil {
+		t.Fatalf("acceptWorkerRun failed: %v", err)
+	}
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController adopt failed: %v", err)
+	}
+
+	rt, err := svc.taskRuntime()
+	if err != nil {
+		t.Fatalf("taskRuntime failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.TaskRun{}).Where("id = ?", run.ID).Updates(map[string]any{
+		"orchestration_state": contracts.TaskCanceled,
+		"error_code":          contracts.TaskCancelCauseUserStop,
+		"finished_at":         time.Now(),
+		"updated_at":          time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set task run canceled failed: %v", err)
+	}
+	if err := rt.AppendEvent(ctx, contracts.TaskEventInput{
+		TaskRunID: run.ID,
+		EventType: "task_canceled",
+		ToState: map[string]any{
+			"orchestration_state": contracts.TaskCanceled,
+			"cancel_cause":        contracts.TaskCancelCauseUserStop,
+			"error_code":          contracts.TaskCancelCauseUserStop,
+		},
+		Note: "用户主动停止 ticket",
+		Payload: map[string]any{
+			"cancel_cause": contracts.TaskCancelCauseUserStop,
+		},
+		CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("append task_canceled event failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerStopped,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set worker stopped failed: %v", err)
+	}
+
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("AdvanceFocusController user-stop failed: %v", err)
+	}
+
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	item := focusItemByTicketID(view.Items, tk.ID)
+	if item == nil || item.Status != contracts.FocusItemStopped {
+		t.Fatalf("expected item stopped after user stop, got=%+v", item)
+	}
+	if view.Run.Status != contracts.FocusRunning {
+		t.Fatalf("expected focus run keep running after single item stop, got=%s", view.Run.Status)
 	}
 }
 

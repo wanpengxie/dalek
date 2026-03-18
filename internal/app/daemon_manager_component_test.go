@@ -248,6 +248,11 @@ func (s *stubManagerExecutionHost) CancelTaskRun(_ context.Context, runID uint) 
 	return daemonsvc.CancelResult{Found: runID != 0, Canceled: runID != 0}, nil
 }
 
+func (s *stubManagerExecutionHost) CancelTaskRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error) {
+	_ = cause
+	return s.CancelTaskRun(ctx, runID)
+}
+
 func (s *stubManagerExecutionHost) CancelTicketLoop(_ context.Context, project string, ticketID uint) (daemonsvc.CancelResult, error) {
 	return daemonsvc.CancelResult{Found: strings.TrimSpace(project) != "" && ticketID != 0, Canceled: ticketID != 0}, nil
 }
@@ -281,6 +286,11 @@ func (s *stubWarmupExecutionHost) SubmitTicketLoop(_ context.Context, req daemon
 
 func (s *stubWarmupExecutionHost) CancelTaskRun(_ context.Context, runID uint) (daemonsvc.CancelResult, error) {
 	return daemonsvc.CancelResult{Found: runID != 0, Canceled: runID != 0}, nil
+}
+
+func (s *stubWarmupExecutionHost) CancelTaskRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error) {
+	_ = cause
+	return s.CancelTaskRun(ctx, runID)
 }
 
 func (s *stubWarmupExecutionHost) CancelTicketLoop(_ context.Context, project string, ticketID uint) (daemonsvc.CancelResult, error) {

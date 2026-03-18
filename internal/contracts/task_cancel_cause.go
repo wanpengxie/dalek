@@ -11,15 +11,19 @@ const (
 	TaskCancelCauseUnknown        TaskCancelCause = ""
 	TaskCancelCauseUserStop       TaskCancelCause = "user_stop"
 	TaskCancelCauseUserInterrupt  TaskCancelCause = "user_interrupt"
+	TaskCancelCauseUserCancel     TaskCancelCause = "user_cancel"
 	TaskCancelCauseFocusCancel    TaskCancelCause = "focus_cancel"
 	TaskCancelCauseDaemonShutdown TaskCancelCause = "daemon_shutdown"
+	TaskCancelCauseSuperseded     TaskCancelCause = "superseded"
 )
 
 var (
 	ErrUserStop       error = TaskCancelCauseUserStop
 	ErrUserInterrupt  error = TaskCancelCauseUserInterrupt
+	ErrUserCancel     error = TaskCancelCauseUserCancel
 	ErrFocusCancel    error = TaskCancelCauseFocusCancel
 	ErrDaemonShutdown error = TaskCancelCauseDaemonShutdown
+	ErrSuperseded     error = TaskCancelCauseSuperseded
 )
 
 func (c TaskCancelCause) Error() string {
@@ -28,7 +32,7 @@ func (c TaskCancelCause) Error() string {
 
 func (c TaskCancelCause) Valid() bool {
 	switch c {
-	case TaskCancelCauseUserStop, TaskCancelCauseUserInterrupt, TaskCancelCauseFocusCancel, TaskCancelCauseDaemonShutdown:
+	case TaskCancelCauseUserStop, TaskCancelCauseUserInterrupt, TaskCancelCauseUserCancel, TaskCancelCauseFocusCancel, TaskCancelCauseDaemonShutdown, TaskCancelCauseSuperseded:
 		return true
 	default:
 		return false
@@ -41,10 +45,14 @@ func ParseTaskCancelCause(raw string) TaskCancelCause {
 		return TaskCancelCauseUserStop
 	case string(TaskCancelCauseUserInterrupt):
 		return TaskCancelCauseUserInterrupt
+	case string(TaskCancelCauseUserCancel):
+		return TaskCancelCauseUserCancel
 	case string(TaskCancelCauseFocusCancel):
 		return TaskCancelCauseFocusCancel
 	case string(TaskCancelCauseDaemonShutdown):
 		return TaskCancelCauseDaemonShutdown
+	case string(TaskCancelCauseSuperseded):
+		return TaskCancelCauseSuperseded
 	default:
 		return TaskCancelCauseUnknown
 	}
@@ -74,10 +82,14 @@ func (c TaskCancelCause) Summary() string {
 		return "ticket stopped by user"
 	case TaskCancelCauseUserInterrupt:
 		return "ticket interrupted by user"
+	case TaskCancelCauseUserCancel:
+		return "task canceled by user"
 	case TaskCancelCauseFocusCancel:
 		return "ticket loop canceled by focus controller"
 	case TaskCancelCauseDaemonShutdown:
 		return "ticket loop canceled by daemon shutdown"
+	case TaskCancelCauseSuperseded:
+		return "worker run superseded"
 	default:
 		return ""
 	}

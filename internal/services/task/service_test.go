@@ -3,7 +3,9 @@ package task
 import (
 	"context"
 	"dalek/internal/contracts"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -980,5 +982,58 @@ func TestService_CancelRun(t *testing.T) {
 	}
 	if len(evs) != 1 || evs[0].EventType != "task_canceled" {
 		t.Fatalf("expected last event task_canceled, got=%+v", evs)
+	}
+}
+
+func TestService_CancelRunWithCause(t *testing.T) {
+	svc := newTaskServiceForTest(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	run, err := svc.CreateRun(ctx, contracts.TaskRunCreateInput{
+		OwnerType:          contracts.TaskOwnerWorker,
+		TaskType:           contracts.TaskTypeDeliverTicket,
+		ProjectKey:         "demo",
+		TicketID:           94,
+		WorkerID:           104,
+		SubjectType:        "ticket",
+		SubjectID:          "94",
+		RequestID:          "req-cancel-run-cause",
+		OrchestrationState: contracts.TaskRunning,
+		StartedAt:          &now,
+	})
+	if err != nil {
+		t.Fatalf("CreateRun failed: %v", err)
+	}
+
+	cancelAt := now.Add(1 * time.Minute)
+	got, err := svc.CancelRunWithCause(ctx, run.ID, contracts.TaskCancelCauseUserCancel, cancelAt)
+	if err != nil {
+		t.Fatalf("CancelRunWithCause failed: %v", err)
+	}
+	if !got.Found || !got.Canceled || got.ToState != string(contracts.TaskCanceled) {
+		t.Fatalf("unexpected cancel result: %+v", got)
+	}
+
+	status, err := svc.GetStatusByRunID(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("GetStatusByRunID failed: %v", err)
+	}
+	if status == nil || status.OrchestrationState != string(contracts.TaskCanceled) {
+		t.Fatalf("expected canceled state, got=%+v", status)
+	}
+	if got := strings.TrimSpace(status.ErrorCode); got != string(contracts.TaskCancelCauseUserCancel) {
+		t.Fatalf("expected error_code=user_cancel, got=%q", got)
+	}
+
+	evs, err := svc.ListEvents(ctx, run.ID, 1)
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(evs) != 1 || evs[0].EventType != "task_canceled" {
+		t.Fatalf("expected last event task_canceled, got=%+v", evs)
+	}
+	if got := strings.TrimSpace(fmt.Sprint(evs[0].PayloadJSON["cancel_cause"])); got != string(contracts.TaskCancelCauseUserCancel) {
+		t.Fatalf("expected payload cancel_cause=user_cancel, got=%q", got)
 	}
 }
