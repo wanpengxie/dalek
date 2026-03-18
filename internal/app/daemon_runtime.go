@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"dalek/internal/contracts"
 	daemonsvc "dalek/internal/services/daemon"
@@ -314,6 +315,172 @@ func (p *daemonProjectAdapter) CancelTaskRun(ctx context.Context, runID uint) (d
 		Reason:    strings.TrimSpace(result.Reason),
 		FromState: strings.TrimSpace(result.FromState),
 		ToState:   strings.TrimSpace(result.ToState),
+	}, nil
+}
+
+func (p *daemonProjectAdapter) TerminateTaskRun(ctx context.Context, runID uint, reason string) (daemonsvc.TaskRunTerminalResult, error) {
+	if p == nil || p.project == nil || p.project.task == nil {
+		return daemonsvc.TaskRunTerminalResult{}, fmt.Errorf("daemon project 为空")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if runID == 0 {
+		return daemonsvc.TaskRunTerminalResult{}, fmt.Errorf("run_id 不能为空")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = fmt.Sprintf("execution host terminated task run %d", runID)
+	}
+
+	status, err := p.project.task.GetStatusByRunID(ctx, runID)
+	if err != nil {
+		return daemonsvc.TaskRunTerminalResult{}, err
+	}
+	if status == nil {
+		return daemonsvc.TaskRunTerminalResult{
+			RunID:  runID,
+			Found:  false,
+			Reason: fmt.Sprintf("task run #%d 不存在", runID),
+		}, nil
+	}
+
+	fromState := strings.TrimSpace(status.OrchestrationState)
+	if fromState == "" {
+		fromState = string(contracts.TaskRunning)
+	}
+	normalizedState := strings.TrimSpace(strings.ToLower(fromState))
+	normalizedError := strings.TrimSpace(strings.ToLower(status.ErrorCode))
+	if status.OwnerType != string(contracts.TaskOwnerWorker) || strings.TrimSpace(status.TaskType) != contracts.TaskTypeDeliverTicket {
+		return daemonsvc.TaskRunTerminalResult{
+			RunID:      runID,
+			Found:      true,
+			Terminated: false,
+			Reason:     fmt.Sprintf("task run 不是 worker deliver run: owner=%s task_type=%s", strings.TrimSpace(status.OwnerType), strings.TrimSpace(status.TaskType)),
+			FromState:  fromState,
+			ToState:    fromState,
+		}, nil
+	}
+	switch strings.TrimSpace(strings.ToLower(status.SemanticNextAction)) {
+	case string(contracts.NextDone), string(contracts.NextWaitUser):
+		return daemonsvc.TaskRunTerminalResult{
+			RunID:      runID,
+			Found:      true,
+			Terminated: false,
+			Reason:     fmt.Sprintf("task run 已有语义终态 next_action=%s", strings.TrimSpace(status.SemanticNextAction)),
+			FromState:  fromState,
+			ToState:    fromState,
+		}, nil
+	}
+	switch normalizedState {
+	case string(contracts.TaskSucceeded), string(contracts.TaskFailed):
+		return daemonsvc.TaskRunTerminalResult{
+			RunID:      runID,
+			Found:      true,
+			Terminated: false,
+			Reason:     fmt.Sprintf("task run 已结束，当前状态=%s", fromState),
+			FromState:  fromState,
+			ToState:    fromState,
+		}, nil
+	case string(contracts.TaskCanceled):
+		if normalizedError != "agent_canceled" {
+			return daemonsvc.TaskRunTerminalResult{
+				RunID:      runID,
+				Found:      true,
+				Terminated: false,
+				Reason:     fmt.Sprintf("task run 已取消，error_code=%s", strings.TrimSpace(status.ErrorCode)),
+				FromState:  fromState,
+				ToState:    fromState,
+			}, nil
+		}
+	}
+
+	now := time.Now()
+	if p.project.worker != nil && status.WorkerID != 0 {
+		worker, werr := p.project.worker.WorkerByID(ctx, status.WorkerID)
+		if werr != nil {
+			return daemonsvc.TaskRunTerminalResult{}, werr
+		}
+		if worker != nil {
+			if err := p.project.worker.MarkWorkerRuntimeNotAlive(ctx, *worker, now); err != nil {
+				return daemonsvc.TaskRunTerminalResult{}, err
+			}
+		}
+	}
+	allowedStates := []contracts.TaskOrchestrationState{contracts.TaskPending, contracts.TaskRunning}
+	if normalizedState == string(contracts.TaskCanceled) {
+		allowedStates = append(allowedStates, contracts.TaskCanceled)
+	}
+	res := p.project.core.DB.WithContext(ctx).Model(&contracts.TaskRun{}).
+		Where("id = ? AND orchestration_state IN ?", runID, allowedStates).
+		Updates(map[string]any{
+			"orchestration_state": contracts.TaskFailed,
+			"error_code":          "worker_loop_terminated",
+			"error_message":       reason,
+			"runner_id":           "",
+			"lease_expires_at":    nil,
+			"finished_at":         &now,
+		})
+	if res.Error != nil {
+		return daemonsvc.TaskRunTerminalResult{}, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return daemonsvc.TaskRunTerminalResult{
+			RunID:      runID,
+			Found:      true,
+			Terminated: false,
+			Reason:     "task run 未发生可覆盖的状态变更",
+			FromState:  fromState,
+			ToState:    fromState,
+		}, nil
+	}
+	if err := p.project.task.AppendRuntimeSample(ctx, contracts.TaskRuntimeSampleInput{
+		TaskRunID:  runID,
+		State:      contracts.TaskHealthDead,
+		NeedsUser:  false,
+		Summary:    reason,
+		Source:     "daemon.execution_host",
+		ObservedAt: now,
+		Metrics: map[string]any{
+			"ticket_id": status.TicketID,
+			"worker_id": status.WorkerID,
+			"source":    "daemon.execution_host",
+			"reason":    reason,
+		},
+	}); err != nil {
+		return daemonsvc.TaskRunTerminalResult{}, err
+	}
+	if err := p.project.task.AppendEvent(ctx, contracts.TaskEventInput{
+		TaskRunID: runID,
+		EventType: "worker_loop_terminated",
+		FromState: map[string]any{
+			"orchestration_state": fromState,
+		},
+		ToState: map[string]any{
+			"orchestration_state":  contracts.TaskFailed,
+			"runtime_health_state": contracts.TaskHealthDead,
+		},
+		Note: reason,
+		Payload: map[string]any{
+			"source":           "daemon.execution_host",
+			"failure_code":     "worker_loop_failed",
+			"observation_kind": "unexpected_exit",
+			"summary":          reason,
+			"ticket_id":        status.TicketID,
+			"worker_id":        status.WorkerID,
+		},
+		CreatedAt: now,
+	}); err != nil {
+		return daemonsvc.TaskRunTerminalResult{}, err
+	}
+	return daemonsvc.TaskRunTerminalResult{
+		RunID:      runID,
+		Found:      true,
+		Terminated: true,
+		EventType:  "worker_loop_terminated",
+		Reason:     reason,
+		FromState:  fromState,
+		ToState:    string(contracts.TaskFailed),
 	}, nil
 }
 

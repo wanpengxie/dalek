@@ -111,6 +111,10 @@ type testExecutionHostProject struct {
 	cancelRunCalls    int
 	cancelRunByID     map[uint]TaskRunCancelResult
 	cancelRunErr      error
+	terminateRunCalls int
+	terminateRunByID  map[uint]TaskRunTerminalResult
+	terminateRunErr   error
+	lastTerminateNote string
 
 	directDispatchDelay        time.Duration
 	directDispatchStarted      chan struct{}
@@ -303,15 +307,79 @@ func (p *testExecutionHostProject) CancelRunCallCount() int {
 	return p.cancelRunCalls
 }
 
+func (p *testExecutionHostProject) TerminateTaskRun(ctx context.Context, runID uint, reason string) (TaskRunTerminalResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.terminateRunCalls++
+	p.lastTerminateNote = strings.TrimSpace(reason)
+	if p.terminateRunErr != nil {
+		return TaskRunTerminalResult{}, p.terminateRunErr
+	}
+	if p.terminateRunByID != nil {
+		if res, ok := p.terminateRunByID[runID]; ok {
+			if res.RunID == 0 {
+				res.RunID = runID
+			}
+			return res, nil
+		}
+	}
+	if p.statusByRun == nil {
+		p.statusByRun = map[uint]*RunStatus{}
+	}
+	status := p.statusByRun[runID]
+	if status == nil {
+		return TaskRunTerminalResult{
+			RunID:  runID,
+			Found:  false,
+			Reason: fmt.Sprintf("task run #%d 不存在", runID),
+		}, nil
+	}
+	fromState := strings.TrimSpace(status.OrchestrationState)
+	if fromState == "" {
+		fromState = string(contracts.TaskRunning)
+	}
+	now := time.Now()
+	status.OrchestrationState = string(contracts.TaskFailed)
+	status.ErrorCode = "worker_loop_terminated"
+	status.ErrorMessage = strings.TrimSpace(reason)
+	status.FinishedAt = &now
+	status.UpdatedAt = now
+	if p.eventsByRun == nil {
+		p.eventsByRun = map[uint][]RunEvent{}
+	}
+	p.eventsByRun[runID] = append(p.eventsByRun[runID], RunEvent{
+		ID:        uint(len(p.eventsByRun[runID]) + 1),
+		TaskRunID: runID,
+		EventType: "worker_loop_terminated",
+		Note:      strings.TrimSpace(reason),
+		CreatedAt: now,
+	})
+	return TaskRunTerminalResult{
+		RunID:      runID,
+		Found:      true,
+		Terminated: true,
+		EventType:  "worker_loop_terminated",
+		Reason:     strings.TrimSpace(reason),
+		FromState:  fromState,
+		ToState:    string(contracts.TaskFailed),
+	}, nil
+}
+
+func (p *testExecutionHostProject) TerminateRunCallCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.terminateRunCalls
+}
+
 func (p *testExecutionHostProject) FindLatestWorkerRun(ctx context.Context, ticketID uint, afterRunID uint) (*RunStatus, error) {
 	p.mu.Lock()
 	runID := p.workerRunID
 	directDispatchCalls := p.directDispatchCalls
 	p.mu.Unlock()
+	if afterRunID == 0 && directDispatchCalls == 0 {
+		return nil, nil
+	}
 	if runID == 0 {
-		if afterRunID == 0 && directDispatchCalls == 0 {
-			return nil, nil
-		}
 		runID = 501
 	}
 	if afterRunID >= runID {
@@ -1548,6 +1616,124 @@ func TestExecutionHost_CancelTaskRun_UsesProjectTaskCancelerForHistoricalRun(t *
 	}
 	if got := host.scanFallbackCount.Load(); got != 0 {
 		t.Fatalf("expected no fallback scan for indexed cancel lookup, got=%d", got)
+	}
+}
+
+func TestExecutionHost_Stop_TerminalizesRunningRunWithoutTerminalFact(t *testing.T) {
+	runID := uint(501)
+	project := &testExecutionHostProject{
+		directDispatchStarted: make(chan struct{}, 1),
+		directDispatchDelay:   5 * time.Second,
+		statusByRun: map[uint]*RunStatus{
+			runID: {
+				RunID:              runID,
+				Project:            "demo",
+				TicketID:           1,
+				WorkerID:           401,
+				OrchestrationState: string(contracts.TaskRunning),
+				UpdatedAt:          time.Now(),
+			},
+		},
+		eventsByRun: map[uint][]RunEvent{},
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	receipt, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "worker-stop-terminalize",
+		Prompt:    "继续执行任务",
+	})
+	if err != nil {
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
+	}
+	if receipt.TaskRunID != runID {
+		t.Fatalf("unexpected task_run_id: got=%d want=%d", receipt.TaskRunID, runID)
+	}
+
+	select {
+	case <-project.directDispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("worker-run goroutine not started")
+	}
+
+	if err := host.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if got := project.TerminateRunCallCount(); got != 1 {
+		t.Fatalf("expected terminate run called once, got=%d", got)
+	}
+
+	status, err := project.GetTaskStatus(context.Background(), runID)
+	if err != nil {
+		t.Fatalf("GetTaskStatus failed: %v", err)
+	}
+	if status == nil {
+		t.Fatalf("expected task status exists")
+	}
+	if got := strings.TrimSpace(status.OrchestrationState); got != string(contracts.TaskFailed) {
+		t.Fatalf("expected run failed after host stop, got=%q", got)
+	}
+
+	events, err := project.ListTaskEvents(context.Background(), runID, 10)
+	if err != nil {
+		t.Fatalf("ListTaskEvents failed: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatalf("expected synthetic terminal event")
+	}
+	last := events[len(events)-1]
+	if got := strings.TrimSpace(last.EventType); got != "worker_loop_terminated" {
+		t.Fatalf("expected worker_loop_terminated event, got=%q", got)
+	}
+}
+
+func TestExecutionHost_Stop_SkipsTerminalizeWhenSemanticTerminalExists(t *testing.T) {
+	runID := uint(501)
+	project := &testExecutionHostProject{
+		directDispatchStarted: make(chan struct{}, 1),
+		directDispatchDelay:   5 * time.Second,
+		statusByRun: map[uint]*RunStatus{
+			runID: {
+				RunID:              runID,
+				Project:            "demo",
+				TicketID:           1,
+				WorkerID:           401,
+				OrchestrationState: string(contracts.TaskRunning),
+				SemanticNextAction: string(contracts.NextWaitUser),
+				UpdatedAt:          time.Now(),
+			},
+		},
+		eventsByRun: map[uint][]RunEvent{},
+	}
+	host, err := NewExecutionHost(&testExecutionHostResolver{project: project}, ExecutionHostOptions{})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+
+	if _, err := host.SubmitTicketLoop(context.Background(), TicketLoopSubmitRequest{
+		Project:   "demo",
+		TicketID:  1,
+		RequestID: "worker-stop-skip-terminalize",
+		Prompt:    "继续执行任务",
+	}); err != nil {
+		t.Fatalf("SubmitTicketLoop failed: %v", err)
+	}
+
+	select {
+	case <-project.directDispatchStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("worker-run goroutine not started")
+	}
+
+	if err := host.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if got := project.TerminateRunCallCount(); got != 0 {
+		t.Fatalf("expected terminalizer skipped when semantic terminal exists, got=%d", got)
 	}
 }
 

@@ -671,6 +671,79 @@ func TestIntegration_CancelTaskRun_TerminalRunNotCanceled(t *testing.T) {
 	}
 }
 
+func TestIntegration_DaemonProjectAdapter_TerminateTaskRun_FailsRunningRunAndAppendsEvent(t *testing.T) {
+	p := newIntegrationProject(t)
+	adapter := &daemonProjectAdapter{project: p}
+
+	tk, err := p.CreateTicketWithDescription(context.Background(), "adapter-terminate-worker-run", "terminate worker run should emit host terminal event")
+	if err != nil {
+		t.Fatalf("CreateTicketWithDescription failed: %v", err)
+	}
+	worker, err := p.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if worker == nil {
+		t.Fatalf("expected worker exists")
+	}
+	markTicketWorkerActiveForLifecycleTest(t, p, tk.ID, worker.ID)
+	run := createWorkerDeliverRunForLifecycleTest(t, p, tk.ID, worker.ID, fmt.Sprintf("host-terminate-%d", time.Now().UnixNano()))
+
+	res, err := adapter.TerminateTaskRun(context.Background(), run.ID, "execution host terminated task run")
+	if err != nil {
+		t.Fatalf("TerminateTaskRun failed: %v", err)
+	}
+	if !res.Found || !res.Terminated {
+		t.Fatalf("unexpected terminate result: %+v", res)
+	}
+	if strings.TrimSpace(res.EventType) != "worker_loop_terminated" {
+		t.Fatalf("unexpected event_type: %q", res.EventType)
+	}
+	if strings.TrimSpace(res.FromState) != string(contracts.TaskRunning) {
+		t.Fatalf("unexpected from_state: %q", res.FromState)
+	}
+	if strings.TrimSpace(res.ToState) != string(contracts.TaskFailed) {
+		t.Fatalf("unexpected to_state: %q", res.ToState)
+	}
+
+	runAfter, err := p.task.FindRunByID(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("FindRunByID failed: %v", err)
+	}
+	if runAfter == nil {
+		t.Fatalf("expected task run exists")
+	}
+	if runAfter.OrchestrationState != contracts.TaskFailed {
+		t.Fatalf("unexpected orchestration_state: got=%s want=%s", runAfter.OrchestrationState, contracts.TaskFailed)
+	}
+	if strings.TrimSpace(runAfter.ErrorCode) != "worker_loop_terminated" {
+		t.Fatalf("unexpected error_code: %q", runAfter.ErrorCode)
+	}
+
+	latestWorker, err := p.LatestWorker(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("LatestWorker failed: %v", err)
+	}
+	if latestWorker == nil {
+		t.Fatalf("expected latest worker exists")
+	}
+	if latestWorker.Status != contracts.WorkerStopped {
+		t.Fatalf("expected worker stopped after terminate task run, got=%s", latestWorker.Status)
+	}
+
+	events, err := p.task.ListEvents(context.Background(), run.ID, 20)
+	if err != nil {
+		t.Fatalf("ListEvents failed: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatalf("expected terminal event appended")
+	}
+	last := events[len(events)-1]
+	if strings.TrimSpace(last.EventType) != "worker_loop_terminated" {
+		t.Fatalf("unexpected event_type: %s", last.EventType)
+	}
+}
+
 func TestIntegration_NoteShapingSkillMissingRollsBackToOpen(t *testing.T) {
 	p := newIntegrationProject(t)
 	skillPath := p.NotebookShapingSkillPath()

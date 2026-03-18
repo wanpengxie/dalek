@@ -71,6 +71,80 @@ func TestConsumeTaskEvents_CreatesIncidentAndNeedsUserInbox(t *testing.T) {
 	}
 }
 
+func TestConsumeTaskEvents_WorkerLoopTerminatedConvergesExecutionLost(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	st, err := svc.getOrInitPMState(context.Background())
+	if err != nil {
+		t.Fatalf("getOrInitPMState failed: %v", err)
+	}
+
+	tk := createTicket(t, p.DB, "manager-tick-worker-loop-terminated")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	rt, run := createWorkerRunForManagerTickTest(t, svc, p, tk.ID, w.ID, "worker-loop-terminated")
+	now := time.Now()
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      now,
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerStopped,
+		"updated_at": now,
+	}).Error; err != nil {
+		t.Fatalf("set worker stopped failed: %v", err)
+	}
+	if err := rt.AppendEvent(context.Background(), contracts.TaskEventInput{
+		TaskRunID: run.ID,
+		EventType: "worker_loop_terminated",
+		ToState: map[string]any{
+			"orchestration_state":  contracts.TaskFailed,
+			"runtime_health_state": contracts.TaskHealthDead,
+		},
+		Note: "daemon stop terminated worker loop",
+		Payload: map[string]any{
+			"source":           "daemon.execution_host",
+			"failure_code":     "worker_loop_failed",
+			"observation_kind": "unexpected_exit",
+			"summary":          "daemon stop terminated worker loop",
+			"phase":            "running",
+			"request_id":       "worker-loop-terminated-test",
+		},
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("append worker_loop_terminated event failed: %v", err)
+	}
+
+	out := svc.consumeTaskEvents(context.Background(), rt, st, 0)
+	if out.EventsConsumed != 1 {
+		t.Fatalf("expected events consumed=1, got=%d", out.EventsConsumed)
+	}
+	if len(out.Errors) != 0 {
+		t.Fatalf("expected no consume errors, got=%v", out.Errors)
+	}
+
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("reload ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketQueued {
+		t.Fatalf("expected ticket queued after worker_loop_terminated, got=%s", ticket.WorkflowStatus)
+	}
+
+	var lostCount int64
+	if err := p.DB.Model(&contracts.TicketLifecycleEvent{}).
+		Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionLost).
+		Count(&lostCount).Error; err != nil {
+		t.Fatalf("count execution_lost lifecycle failed: %v", err)
+	}
+	if lostCount != 1 {
+		t.Fatalf("expected exactly 1 execution_lost lifecycle, got=%d", lostCount)
+	}
+}
+
 func TestScanRunningWorkers_TracksBlockedAndProgressable(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	st, err := svc.getOrInitPMState(context.Background())

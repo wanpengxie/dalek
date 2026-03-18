@@ -337,6 +337,10 @@ func (s *Service) consumeTaskEvents(ctx context.Context, taskRuntime core.TaskRu
 					out.InboxUpserts++
 				}
 			}
+		case "worker_loop_terminated":
+			if err := s.consumeWorkerLoopTerminatedEvent(ctx, ev); err != nil {
+				out.Errors = append(out.Errors, err.Error())
+			}
 		}
 	}
 	return out
@@ -761,6 +765,46 @@ func taskEventBody(ev contracts.TaskEventScopeRow) string {
 		return summary
 	}
 	return strings.TrimSpace(ev.PayloadJSON.String())
+}
+
+func (s *Service) consumeWorkerLoopTerminatedEvent(ctx context.Context, ev contracts.TaskEventScopeRow) error {
+	payload := map[string]any(ev.PayloadJSON)
+	source := strings.TrimSpace(mapString(payload, "source"))
+	if source == "" {
+		source = "pm.manager_tick"
+	}
+	reason := taskEventBody(ev)
+	if reason == "" {
+		reason = "worker loop terminated before terminal closure"
+	}
+	extra := map[string]any{
+		"event_id":   ev.ID,
+		"event_type": strings.TrimSpace(ev.EventType),
+	}
+	if phase := strings.TrimSpace(mapString(payload, "phase")); phase != "" {
+		extra["phase"] = phase
+	}
+	if requestID := strings.TrimSpace(mapString(payload, "request_id")); requestID != "" {
+		extra["request_id"] = requestID
+	}
+	if summary := strings.TrimSpace(mapString(payload, "summary")); summary != "" {
+		extra["summary"] = summary
+	}
+	if cancelRequested, ok := mapBool(payload, "cancel_requested"); ok {
+		extra["cancel_requested"] = cancelRequested
+	}
+	_, err := s.convergeExecutionLost(ctx, executionLossInput{
+		TicketID:        ev.TicketID,
+		WorkerID:        ev.WorkerID,
+		TaskRunID:       ev.TaskRunID,
+		Source:          source,
+		ObservationKind: strings.TrimSpace(mapString(payload, "observation_kind")),
+		FailureCode:     strings.TrimSpace(mapString(payload, "failure_code")),
+		Reason:          reason,
+		Payload:         extra,
+		Now:             ev.CreatedAt,
+	})
+	return err
 }
 
 func parseTaskEventSignals(ev contracts.TaskEventScopeRow) (needsUser bool, runtimeHealth string, nextAction string, summary string) {

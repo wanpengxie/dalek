@@ -268,6 +268,20 @@ type executionHostTaskRunCanceler interface {
 	CancelTaskRun(ctx context.Context, runID uint) (TaskRunCancelResult, error)
 }
 
+type TaskRunTerminalResult struct {
+	RunID      uint
+	Found      bool
+	Terminated bool
+	EventType  string
+	Reason     string
+	FromState  string
+	ToState    string
+}
+
+type executionHostTaskRunTerminator interface {
+	TerminateTaskRun(ctx context.Context, runID uint, reason string) (TaskRunTerminalResult, error)
+}
+
 type ExecutionHostOptions struct {
 	Logger        *slog.Logger
 	MaxConcurrent int

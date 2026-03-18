@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,8 +13,12 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 	if handle == nil {
 		return
 	}
+	var project ExecutionHostProject
 	defer h.wg.Done()
 	defer h.finalizeHandle(handle)
+	defer func() {
+		h.maybeTerminateTicketRun(handle, project)
+	}()
 	defer h.notifyRunSettled(handle.project)
 
 	runLabel := "worker run"
@@ -32,7 +37,8 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 	}
 	defer h.releaseSlot()
 
-	project, err := h.resolver.OpenProject(handle.project)
+	var err error
+	project, err = h.resolver.OpenProject(handle.project)
 	if err != nil {
 		sink.LoopErrored(err)
 		h.logger.Warn("execution host ticket run open project failed",
@@ -127,6 +133,92 @@ func (h *ExecutionHost) executeTicketRun(handle *executionRunHandle) {
 		case <-probeTicker.C:
 			attachLatestRun(context.Background())
 		}
+	}
+}
+
+func (h *ExecutionHost) maybeTerminateTicketRun(handle *executionRunHandle, project ExecutionHostProject) {
+	if h == nil || handle == nil || project == nil || handle.kind != runKindWorker {
+		return
+	}
+	queryBase := context.Background()
+	if handle.ctx != nil {
+		queryBase = context.WithoutCancel(handle.ctx)
+	}
+	ctx, cancel := context.WithTimeout(queryBase, 5*time.Second)
+	defer cancel()
+
+	h.mu.RLock()
+	runID := handle.runID
+	projectName := handle.project
+	ticketID := handle.ticketID
+	requestID := handle.requestID
+	phase := strings.TrimSpace(handle.phase)
+	h.mu.RUnlock()
+	if runID == 0 {
+		return
+	}
+
+	status, err := project.GetTaskStatus(ctx, runID)
+	if err != nil {
+		h.logger.Warn("execution host ticket run terminal probe failed",
+			"run_id", runID,
+			"project", projectName,
+			"request_id", requestID,
+			"error", err,
+		)
+		return
+	}
+	if executionHostRunHasTerminalFact(status) {
+		return
+	}
+	terminator, ok := project.(executionHostTaskRunTerminator)
+	if !ok || terminator == nil {
+		h.logger.Warn("execution host ticket run missing terminalizer",
+			"run_id", runID,
+			"project", projectName,
+			"request_id", requestID,
+		)
+		return
+	}
+	reason := fmt.Sprintf("execution host terminated ticket loop before terminal closure: project=%s ticket=%d run=%d request_id=%s phase=%s",
+		projectName, ticketID, runID, requestID, phase)
+	result, err := terminator.TerminateTaskRun(ctx, runID, reason)
+	if err != nil {
+		h.logger.Warn("execution host ticket run terminalize failed",
+			"run_id", runID,
+			"project", projectName,
+			"request_id", requestID,
+			"error", err,
+		)
+		return
+	}
+	if !result.Found || !result.Terminated {
+		return
+	}
+	h.logger.Info("execution host ticket run terminalized",
+		"run_id", runID,
+		"project", projectName,
+		"ticket_id", ticketID,
+		"request_id", requestID,
+		"event_type", strings.TrimSpace(result.EventType),
+	)
+}
+
+func executionHostRunHasTerminalFact(status *RunStatus) bool {
+	if status == nil {
+		return false
+	}
+	switch strings.TrimSpace(strings.ToLower(status.OrchestrationState)) {
+	case "succeeded", "failed":
+		return true
+	case "canceled":
+		return strings.TrimSpace(strings.ToLower(status.ErrorCode)) != "agent_canceled"
+	}
+	switch strings.TrimSpace(strings.ToLower(status.SemanticNextAction)) {
+	case "done", "wait_user":
+		return true
+	default:
+		return false
 	}
 }
 
