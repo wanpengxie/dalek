@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -73,6 +74,12 @@ func (s *Service) ensureWorkerBootstrap(ctx context.Context, t contracts.Ticket,
 	if err != nil {
 		return repo.ContractPaths{}, err
 	}
+
+	// 复制 control/ 和 pm/ 到 worktree，使 worker 可访问控制策略和 PM 上下文
+	if err := copyControlAndPMToWorktree(p.Layout, paths.Dir); err != nil {
+		return repo.ContractPaths{}, err
+	}
+
 	now := time.Now()
 	gitFacts := repo.InspectWorktreeGitBaseline(ctx, strings.TrimSpace(w.WorktreePath), p.Git)
 
@@ -238,6 +245,24 @@ func ensureBootstrapFile(path, content string, mode os.FileMode, opt bootstrapFi
 	}
 	if err := os.WriteFile(path, []byte(content), mode); err != nil {
 		return fmt.Errorf("写入 bootstrap 文件失败(%s): %w", path, err)
+	}
+	return nil
+}
+
+// copyControlAndPMToWorktree 将主仓库的 control/ 和 pm/ 递归复制到 worktree 的 .dalek/ 下。
+// 源目录不存在时静默跳过，每次 bootstrap 都刷新覆盖。
+func copyControlAndPMToWorktree(layout repo.Layout, worktreeDalekDir string) error {
+	dirs := []struct {
+		src string
+		dst string
+	}{
+		{src: layout.ControlDir, dst: filepath.Join(worktreeDalekDir, "control")},
+		{src: layout.PMDir, dst: filepath.Join(worktreeDalekDir, "pm")},
+	}
+	for _, d := range dirs {
+		if err := repo.CopyDirRecursive(d.src, d.dst); err != nil {
+			return fmt.Errorf("复制 %s 到 worktree 失败: %w", d.src, err)
+		}
 	}
 	return nil
 }

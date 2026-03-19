@@ -150,15 +150,120 @@ func TestEnsureWorkerBootstrap_UsesControlWorkerTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read .dalek dir failed: %v", err)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("worker bootstrap should only materialize agent-kernel.md and state.json, got=%d", len(entries))
-	}
 	seen := map[string]bool{}
 	for _, entry := range entries {
 		seen[entry.Name()] = true
 	}
 	if !seen["agent-kernel.md"] || !seen["state.json"] {
-		t.Fatalf("worker bootstrap output mismatch, got=%v", seen)
+		t.Fatalf("worker bootstrap must contain agent-kernel.md and state.json, got=%v", seen)
+	}
+	// control/ is copied from repo root during bootstrap
+	if !seen["control"] {
+		t.Fatalf("worker bootstrap should copy control/ from repo root, got=%v", seen)
+	}
+}
+
+func TestEnsureWorkerBootstrap_CopiesControlAndPMToWorktree(t *testing.T) {
+	svc, project, _ := newServiceForTest(t)
+
+	worktree := filepath.Join(t.TempDir(), "worker-worktree-copy")
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatalf("mkdir worktree failed: %v", err)
+	}
+	mustRun(t, worktree, "git", "init")
+	mustRun(t, worktree, "git", "config", "user.name", "Test User")
+	mustRun(t, worktree, "git", "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(worktree, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRun(t, worktree, "git", "add", "README.md")
+	mustRun(t, worktree, "git", "commit", "-m", "initial commit")
+
+	// Create pm/ in repo root with a plan.md
+	pmDir := project.Layout.PMDir
+	if err := os.MkdirAll(pmDir, 0o755); err != nil {
+		t.Fatalf("mkdir pm dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pmDir, "plan.md"), []byte("# Plan\ntest plan"), 0o644); err != nil {
+		t.Fatalf("write plan.md failed: %v", err)
+	}
+
+	// Ensure control/ has content (already created by EnsureControlPlaneSeed in NewTestProject)
+	controlSkillFile := filepath.Join(project.Layout.ControlSkillsDir, "test-skill.md")
+	if err := os.WriteFile(controlSkillFile, []byte("# Test Skill"), 0o644); err != nil {
+		t.Fatalf("write test skill failed: %v", err)
+	}
+
+	ticket := contracts.Ticket{
+		Title:          "copy test",
+		Description:    "test description",
+		WorkflowStatus: contracts.TicketBacklog,
+	}
+	if err := project.DB.Create(&ticket).Error; err != nil {
+		t.Fatalf("create ticket failed: %v", err)
+	}
+	worker := contracts.Worker{
+		TicketID:     ticket.ID,
+		Status:       contracts.WorkerStopped,
+		WorktreePath: worktree,
+		Branch:       "ticket-copy-test",
+		LogPath:      filepath.Join(worktree, "worker.log"),
+	}
+	if err := project.DB.Create(&worker).Error; err != nil {
+		t.Fatalf("create worker failed: %v", err)
+	}
+
+	paths, err := svc.ensureWorkerBootstrap(context.Background(), ticket, worker, "", workerBootstrapModeFirstBootstrap)
+	if err != nil {
+		t.Fatalf("ensureWorkerBootstrap failed: %v", err)
+	}
+
+	// Verify control/ was copied
+	wtControlDir := filepath.Join(paths.Dir, "control")
+	if _, err := os.Stat(wtControlDir); err != nil {
+		t.Fatalf("control/ should exist in worktree .dalek/: %v", err)
+	}
+	wtSkillFile := filepath.Join(wtControlDir, "skills", "test-skill.md")
+	raw, err := os.ReadFile(wtSkillFile)
+	if err != nil {
+		t.Fatalf("read copied skill file failed: %v", err)
+	}
+	if string(raw) != "# Test Skill" {
+		t.Fatalf("copied skill content mismatch: got=%q", string(raw))
+	}
+
+	// Verify pm/ was copied
+	wtPMDir := filepath.Join(paths.Dir, "pm")
+	if _, err := os.Stat(wtPMDir); err != nil {
+		t.Fatalf("pm/ should exist in worktree .dalek/: %v", err)
+	}
+	planRaw, err := os.ReadFile(filepath.Join(wtPMDir, "plan.md"))
+	if err != nil {
+		t.Fatalf("read copied plan.md failed: %v", err)
+	}
+	if string(planRaw) != "# Plan\ntest plan" {
+		t.Fatalf("copied plan content mismatch: got=%q", string(planRaw))
+	}
+}
+
+func TestCopyControlAndPMToWorktree_MissingSrcSilent(t *testing.T) {
+	// When control/ and pm/ don't exist in repo root, no error
+	layout := repo.NewLayout(filepath.Join(t.TempDir(), "empty-repo"))
+	dst := filepath.Join(t.TempDir(), "wt-dalek")
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := copyControlAndPMToWorktree(layout, dst); err != nil {
+		t.Fatalf("expected no error for missing src dirs, got: %v", err)
+	}
+
+	// Neither control/ nor pm/ should exist in dst
+	if _, err := os.Stat(filepath.Join(dst, "control")); !os.IsNotExist(err) {
+		t.Fatalf("control/ should not be created when src is missing")
+	}
+	if _, err := os.Stat(filepath.Join(dst, "pm")); !os.IsNotExist(err) {
+		t.Fatalf("pm/ should not be created when src is missing")
 	}
 }
 
