@@ -354,7 +354,7 @@ func (p *testExecutionHostProject) CancelRunCallCount() int {
 	return p.cancelRunCalls
 }
 
-func (p *testExecutionHostProject) TerminateTaskRun(ctx context.Context, runID uint, reason string) (TaskRunTerminalResult, error) {
+func (p *testExecutionHostProject) TerminateTaskRun(ctx context.Context, runID uint, cause contracts.TaskCancelCause, reason string) (TaskRunTerminalResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.terminateRunCalls++

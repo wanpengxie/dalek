@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"dalek/internal/contracts"
 	pmsvc "dalek/internal/services/pm"
 )
 
@@ -196,9 +197,10 @@ func (h *ExecutionHost) maybeTerminateTicketRun(handle *executionRunHandle, proj
 		)
 		return
 	}
+	cause := contracts.TaskCancelCauseFromError(context.Cause(handle.ctx))
 	reason := fmt.Sprintf("execution host terminated ticket loop before terminal closure: project=%s ticket=%d run=%d request_id=%s phase=%s",
 		projectName, ticketID, runID, requestID, phase)
-	result, err := terminator.TerminateTaskRun(ctx, runID, reason)
+	result, err := terminator.TerminateTaskRun(ctx, runID, cause, reason)
 	if err != nil {
 		h.logger.Warn("execution host ticket run terminalize failed",
 			"run_id", runID,

@@ -283,7 +283,7 @@ type TaskRunTerminalResult struct {
 }
 
 type executionHostTaskRunTerminator interface {
-	TerminateTaskRun(ctx context.Context, runID uint, reason string) (TaskRunTerminalResult, error)
+	TerminateTaskRun(ctx context.Context, runID uint, cause contracts.TaskCancelCause, reason string) (TaskRunTerminalResult, error)
 }
 
 type ExecutionHostOptions struct {

@@ -721,7 +721,7 @@ func TestIntegration_DaemonProjectAdapter_TerminateTaskRun_FailsRunningRunAndApp
 	markTicketWorkerActiveForLifecycleTest(t, p, tk.ID, worker.ID)
 	run := createWorkerDeliverRunForLifecycleTest(t, p, tk.ID, worker.ID, fmt.Sprintf("host-terminate-%d", time.Now().UnixNano()))
 
-	res, err := adapter.TerminateTaskRun(context.Background(), run.ID, "execution host terminated task run")
+	res, err := adapter.TerminateTaskRun(context.Background(), run.ID, contracts.TaskCancelCauseUnknown, "execution host terminated task run")
 	if err != nil {
 		t.Fatalf("TerminateTaskRun failed: %v", err)
 	}

@@ -797,6 +797,20 @@ func (s *Service) consumeWorkerLoopTerminatedEvent(ctx context.Context, ev contr
 	if cancelRequested, ok := mapBool(payload, "cancel_requested"); ok {
 		extra["cancel_requested"] = cancelRequested
 	}
+	cancelCause := contracts.ParseTaskCancelCause(mapString(payload, "cancel_cause"))
+	if isUserInitiatedTaskCancelCause(cancelCause) {
+		_, err := s.convergeUserInitiatedTaskCancel(ctx, userInitiatedTaskCancelInput{
+			TicketID:  ev.TicketID,
+			WorkerID:  ev.WorkerID,
+			TaskRunID: ev.TaskRunID,
+			Cause:     cancelCause,
+			Source:    source,
+			Reason:    reason,
+			EventID:   ev.ID,
+			Now:       ev.CreatedAt,
+		})
+		return err
+	}
 	_, err := s.convergeExecutionLost(ctx, executionLossInput{
 		TicketID:        ev.TicketID,
 		WorkerID:        ev.WorkerID,

@@ -322,7 +322,7 @@ func (p *daemonProjectAdapter) CancelTaskRunWithCause(ctx context.Context, runID
 	}, nil
 }
 
-func (p *daemonProjectAdapter) TerminateTaskRun(ctx context.Context, runID uint, reason string) (daemonsvc.TaskRunTerminalResult, error) {
+func (p *daemonProjectAdapter) TerminateTaskRun(ctx context.Context, runID uint, cause contracts.TaskCancelCause, reason string) (daemonsvc.TaskRunTerminalResult, error) {
 	if p == nil || p.project == nil || p.project.task == nil {
 		return daemonsvc.TaskRunTerminalResult{}, fmt.Errorf("daemon project 为空")
 	}
@@ -415,11 +415,15 @@ func (p *daemonProjectAdapter) TerminateTaskRun(ctx context.Context, runID uint,
 	if normalizedState == string(contracts.TaskCanceled) {
 		allowedStates = append(allowedStates, contracts.TaskCanceled)
 	}
+	errorCode := "worker_loop_terminated"
+	if cause.Valid() {
+		errorCode = cause.ErrorCode()
+	}
 	res := p.project.core.DB.WithContext(ctx).Model(&contracts.TaskRun{}).
 		Where("id = ? AND orchestration_state IN ?", runID, allowedStates).
 		Updates(map[string]any{
 			"orchestration_state": contracts.TaskFailed,
-			"error_code":          "worker_loop_terminated",
+			"error_code":          errorCode,
 			"error_message":       reason,
 			"runner_id":           "",
 			"lease_expires_at":    nil,
@@ -467,7 +471,8 @@ func (p *daemonProjectAdapter) TerminateTaskRun(ctx context.Context, runID uint,
 		Note: reason,
 		Payload: map[string]any{
 			"source":           "daemon.execution_host",
-			"failure_code":     "worker_loop_failed",
+			"failure_code":     errorCode,
+			"cancel_cause":     string(cause),
 			"observation_kind": "unexpected_exit",
 			"summary":          reason,
 			"ticket_id":        status.TicketID,
