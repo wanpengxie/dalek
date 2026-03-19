@@ -798,43 +798,25 @@ func (s *Service) consumeWorkerLoopTerminatedEvent(ctx context.Context, ev contr
 		extra["cancel_requested"] = cancelRequested
 	}
 	cancelCause := contracts.ParseTaskCancelCause(mapString(payload, "cancel_cause"))
-	if isUserInitiatedTaskCancelCause(cancelCause) {
-		_, err := s.convergeUserInitiatedTaskCancel(ctx, userInitiatedTaskCancelInput{
-			TicketID:  ev.TicketID,
-			WorkerID:  ev.WorkerID,
-			TaskRunID: ev.TaskRunID,
-			Cause:     cancelCause,
-			Source:    source,
-			Reason:    reason,
-			EventID:   ev.ID,
-			Now:       ev.CreatedAt,
-		})
-		return err
-	}
-	_, err := s.convergeExecutionLost(ctx, executionLossInput{
+	return s.convergeHandlerTermination(ctx, handlerTerminationInput{
 		TicketID:        ev.TicketID,
 		WorkerID:        ev.WorkerID,
 		TaskRunID:       ev.TaskRunID,
+		Cause:           cancelCause,
 		Source:          source,
+		Reason:          reason,
+		EventID:         ev.ID,
+		Now:             ev.CreatedAt,
 		ObservationKind: strings.TrimSpace(mapString(payload, "observation_kind")),
 		FailureCode:     strings.TrimSpace(mapString(payload, "failure_code")),
-		Reason:          reason,
 		Payload:         extra,
-		Now:             ev.CreatedAt,
 	})
-	return err
 }
 
 func (s *Service) consumeTaskCanceledEvent(ctx context.Context, ev contracts.TaskEventScopeRow) error {
 	cause := taskCancelCauseFromEvent(ev)
-	if !isUserInitiatedTaskCancelCause(cause) {
-		return nil
-	}
 	reason := taskEventBody(ev)
-	if reason == "" {
-		reason = userInitiatedTaskCancelSummary(cause)
-	}
-	_, err := s.convergeUserInitiatedTaskCancel(ctx, userInitiatedTaskCancelInput{
+	return s.convergeHandlerTermination(ctx, handlerTerminationInput{
 		TicketID:  ev.TicketID,
 		WorkerID:  ev.WorkerID,
 		TaskRunID: ev.TaskRunID,
@@ -844,7 +826,6 @@ func (s *Service) consumeTaskCanceledEvent(ctx context.Context, ev contracts.Tas
 		EventID:   ev.ID,
 		Now:       ev.CreatedAt,
 	})
-	return err
 }
 
 func parseTaskEventSignals(ev contracts.TaskEventScopeRow) (needsUser bool, runtimeHealth string, nextAction string, summary string) {

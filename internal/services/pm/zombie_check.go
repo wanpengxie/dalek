@@ -303,49 +303,49 @@ func (s *Service) reconcileZombieStateDrift(ctx context.Context, db *gorm.DB, no
 				out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检读取 cancel cause 失败：t%d w%d: %v", t.ID, w.ID, cerr))
 				continue
 			}
-			if isUserInitiatedTaskCancelCause(cancelCause) {
-				blocked, err := s.convergeUserInitiatedTaskCancel(ctx, userInitiatedTaskCancelInput{
-					TicketID:  t.ID,
-					WorkerID:  w.ID,
-					TaskRunID: taskRunID,
-					Cause:     cancelCause,
-					Source:    "pm.zombie",
-					Reason:    userInitiatedTaskCancelSummary(cancelCause),
-					Now:       now,
-				})
-				if err != nil {
-					out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检处理用户终止失败：t%d w%d: %v", t.ID, w.ID, err))
-					continue
-				}
-				if blocked {
-					out.Blocked++
-				}
-				continue
-			}
 			reason := fmt.Sprintf("ticket active 但 worker 不在 running（status=%s）", strings.TrimSpace(string(w.Status)))
-			outcome, err := s.convergeExecutionLost(ctx, executionLossInput{
+			if err := s.convergeHandlerTermination(ctx, handlerTerminationInput{
 				TicketID:        t.ID,
 				WorkerID:        w.ID,
 				TaskRunID:       taskRunID,
+				Cause:           cancelCause,
 				Source:          "pm.zombie",
+				Reason:          reason,
+				Now:             now,
 				ObservationKind: "unexpected_exit",
 				FailureCode:     "active_worker_not_running",
-				Reason:          reason,
 				Payload: map[string]any{
 					"ticket_workflow": string(status),
 					"worker_status":   string(w.Status),
 				},
-				Now: now,
-			})
-			if err != nil {
+			}); err != nil {
 				out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检处理非法状态失败：t%d w%d: %v", t.ID, w.ID, err))
 				continue
 			}
-			if outcome.Requeued || outcome.Escalated {
-				out.Illegal++
-			}
-			if outcome.Escalated {
-				out.Blocked++
+			// user-initiated 的 blocked 是预期行为，不算 illegal；
+			// 非 user-initiated（execution lost）才是异常状态漂移。
+			if isUserInitiatedTaskCancelCause(cancelCause) {
+				// 读取 ticket 判断是否已 blocked
+				var afterTicket contracts.Ticket
+				if err := db.WithContext(ctx).Select("id", "workflow_status").First(&afterTicket, t.ID).Error; err == nil {
+					if contracts.CanonicalTicketWorkflowStatus(afterTicket.WorkflowStatus) == contracts.TicketBlocked {
+						out.Blocked++
+					}
+				}
+			} else {
+				// 读取 ticket 判断最终状态
+				var afterTicket contracts.Ticket
+				if err := db.WithContext(ctx).Select("id", "workflow_status").First(&afterTicket, t.ID).Error; err != nil {
+					out.Errors = append(out.Errors, fmt.Sprintf("zombie 状态巡检读取收敛后 ticket 失败：t%d: %v", t.ID, err))
+					continue
+				}
+				afterStatus := contracts.CanonicalTicketWorkflowStatus(afterTicket.WorkflowStatus)
+				if afterStatus != status {
+					out.Illegal++
+					if afterStatus == contracts.TicketBlocked {
+						out.Blocked++
+					}
+				}
 			}
 		}
 	}
