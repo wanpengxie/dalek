@@ -232,7 +232,6 @@ next_action 语义：
 <acceptance_criteria>
 验收标准（提交 done 前必须满足）：
 1. 至少完成以下检查：需求与验收口径对齐、关键路径测试通过、必要的 lint/构建通过、风险与边界场景有结论、文档与变更说明已更新、提交历史可审计且无无关改动。
-2. 提交 `next_action=done` 前，必须先与本地主线分支同步：在当前分支执行 `git merge --no-edit main`；如产生冲突，解决后重跑关键验证；无法在沙盒内安全解决冲突时使用 `wait_user` 请求 PM 介入。
 </acceptance_criteria>
 
 <workspace_baseline>
@@ -247,8 +246,7 @@ next_action 语义：
   3. 保持改动可审计：有意义改动要 commit。
   4. 禁止只更新单一状态面：状态变更必须同时落到 Kernel + state.json + git 检查点。
   5. Feature 从"开发完成"到"可提 PR"前，至少完成以下检查：需求与验收口径对齐、关键路径测试通过、必要的 lint/构建通过、风险与边界场景有结论、文档与变更说明已更新、提交历史可审计且无无关改动。
-  6. 提交 `next_action=done` 前，必须先与本地主线分支同步：在当前分支执行 `git merge --no-edit main`；如产生冲突，解决后重跑关键验证；无法在沙盒内安全解决冲突时使用 `wait_user` 请求 PM 介入。
-  7. 只有在第 5、6 条完成后才能使用 `next_action=done`；未满足时应使用 `continue`，有外部依赖阻塞时使用 `wait_user`。
+  6. 只有在第 5 条完成后才能使用 `next_action=done`；未满足时应使用 `continue`，有外部依赖阻塞时使用 `wait_user`。
   8. 当 `DALEK_DISPATCH_DEPTH` 不为 `0` 时，禁止执行 `dalek ticket dispatch` 或 `dalek worker run`（包括通过 tmux/脚本间接触发）；必须在当前 worktree 直接执行所需 skills/命令自行推进任务，不得二次派发。仅在存在外部依赖且无法自行完成时，才允许 `report --next wait_user` 请求人工介入。
   9. `<discovery>` 区块为空时，禁止修改任何业务代码；必须先完成 `<initialization>` 步骤。
   10. `state.json.phases.next_action` 必须与最后一次 `dalek worker report` 保持一致。
