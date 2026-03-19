@@ -89,7 +89,7 @@ func TestPlanControlPlaneSeedUpdate_DetectSkillDrift(t *testing.T) {
 		t.Fatalf("write drift skill failed: %v", err)
 	}
 
-	changes, err := PlanControlPlaneSeedUpdate(layout, "alpha")
+	changes, err := PlanControlPlaneSeedUpdate(layout, "alpha", false)
 	if err != nil {
 		t.Fatalf("PlanControlPlaneSeedUpdate failed: %v", err)
 	}
@@ -104,7 +104,6 @@ func TestPlanControlPlaneSeedUpdate_DetectSkillDrift(t *testing.T) {
 		t.Fatalf("expected drifted skill in plan changes, got=%+v", changes)
 	}
 }
-
 
 func TestUpdateControlPlaneSeed_OverwriteSkillsKeepKnowledge(t *testing.T) {
 	repoRoot := t.TempDir()
@@ -124,7 +123,7 @@ func TestUpdateControlPlaneSeed_OverwriteSkillsKeepKnowledge(t *testing.T) {
 	if err := os.WriteFile(knowledgePath, []byte("user-knowledge\n"), 0o644); err != nil {
 		t.Fatalf("write knowledge failed: %v", err)
 	}
-	changes, err := UpdateControlPlaneSeed(layout, "alpha")
+	changes, err := UpdateControlPlaneSeed(layout, "alpha", false)
 	if err != nil {
 		t.Fatalf("UpdateControlPlaneSeed failed: %v", err)
 	}
@@ -153,5 +152,108 @@ func TestUpdateControlPlaneSeed_OverwriteSkillsKeepKnowledge(t *testing.T) {
 	}
 	if !foundSkillUpdate {
 		t.Fatalf("expected skill update in changes, got=%+v", changes)
+	}
+}
+
+func TestPlanControlPlaneSeedUpdate_NonForceSkipsAgentUserAndBootstrapDrift(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := NewLayout(repoRoot)
+	if err := EnsureControlPlaneSeed(layout, "alpha"); err != nil {
+		t.Fatalf("EnsureControlPlaneSeed failed: %v", err)
+	}
+
+	if err := os.WriteFile(layout.ProjectAgentUserPath, []byte("local-user\n"), 0o644); err != nil {
+		t.Fatalf("write agent-user drift failed: %v", err)
+	}
+	if err := os.WriteFile(layout.ProjectBootstrapPath, []byte("#!/usr/bin/env bash\necho local\n"), 0o755); err != nil {
+		t.Fatalf("write bootstrap drift failed: %v", err)
+	}
+
+	nonForceChanges, err := PlanControlPlaneSeedUpdate(layout, "alpha", false)
+	if err != nil {
+		t.Fatalf("PlanControlPlaneSeedUpdate non-force failed: %v", err)
+	}
+	for _, change := range nonForceChanges {
+		if change.Path == layout.ProjectAgentUserPath || change.Path == layout.ProjectBootstrapPath {
+			t.Fatalf("non-force plan should not include agent-user/bootstrap drift, got=%+v", nonForceChanges)
+		}
+	}
+
+	forceChanges, err := PlanControlPlaneSeedUpdate(layout, "alpha", true)
+	if err != nil {
+		t.Fatalf("PlanControlPlaneSeedUpdate force failed: %v", err)
+	}
+	foundUser := false
+	foundBootstrap := false
+	for _, change := range forceChanges {
+		if change.Path == layout.ProjectAgentUserPath && change.Action == "update" {
+			foundUser = true
+		}
+		if change.Path == layout.ProjectBootstrapPath && change.Action == "update" {
+			foundBootstrap = true
+		}
+	}
+	if !foundUser || !foundBootstrap {
+		t.Fatalf("force plan should include agent-user/bootstrap drift, got=%+v", forceChanges)
+	}
+}
+
+func TestUpdateControlPlaneSeed_NonForceKeepsAgentUserAndBootstrap(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := NewLayout(repoRoot)
+	if err := EnsureControlPlaneSeed(layout, "alpha"); err != nil {
+		t.Fatalf("EnsureControlPlaneSeed failed: %v", err)
+	}
+
+	const wantUser = "local-user\n"
+	const wantBootstrap = "#!/usr/bin/env bash\necho local\n"
+	if err := os.WriteFile(layout.ProjectAgentUserPath, []byte(wantUser), 0o644); err != nil {
+		t.Fatalf("write agent-user drift failed: %v", err)
+	}
+	if err := os.WriteFile(layout.ProjectBootstrapPath, []byte(wantBootstrap), 0o755); err != nil {
+		t.Fatalf("write bootstrap drift failed: %v", err)
+	}
+
+	changes, err := UpdateControlPlaneSeed(layout, "alpha", false)
+	if err != nil {
+		t.Fatalf("UpdateControlPlaneSeed non-force failed: %v", err)
+	}
+	for _, change := range changes {
+		if change.Path == layout.ProjectAgentUserPath || change.Path == layout.ProjectBootstrapPath {
+			t.Fatalf("non-force update should not report agent-user/bootstrap changes, got=%+v", changes)
+		}
+	}
+
+	gotUser, err := os.ReadFile(layout.ProjectAgentUserPath)
+	if err != nil {
+		t.Fatalf("read agent-user failed: %v", err)
+	}
+	if string(gotUser) != wantUser {
+		t.Fatalf("agent-user should stay untouched in non-force mode, got=%q", string(gotUser))
+	}
+	gotBootstrap, err := os.ReadFile(layout.ProjectBootstrapPath)
+	if err != nil {
+		t.Fatalf("read bootstrap failed: %v", err)
+	}
+	if string(gotBootstrap) != wantBootstrap {
+		t.Fatalf("bootstrap should stay untouched in non-force mode, got=%q", string(gotBootstrap))
+	}
+
+	if _, err := UpdateControlPlaneSeed(layout, "alpha", true); err != nil {
+		t.Fatalf("UpdateControlPlaneSeed force failed: %v", err)
+	}
+	gotUser, err = os.ReadFile(layout.ProjectAgentUserPath)
+	if err != nil {
+		t.Fatalf("read agent-user after force failed: %v", err)
+	}
+	if string(gotUser) == wantUser {
+		t.Fatalf("force update should overwrite agent-user")
+	}
+	gotBootstrap, err = os.ReadFile(layout.ProjectBootstrapPath)
+	if err != nil {
+		t.Fatalf("read bootstrap after force failed: %v", err)
+	}
+	if string(gotBootstrap) == wantBootstrap {
+		t.Fatalf("force update should overwrite bootstrap")
 	}
 }

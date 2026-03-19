@@ -17,6 +17,14 @@
 - 入口文件注入块修复（`AGENTS.md` / `CLAUDE.md`）
 - 项目 dalek 版本写入 `.dalek/.dalek_project.json`
 
+默认（非 `--force`）模式下：
+- 不覆盖已有 `.dalek/agent-user.md`
+- 不覆盖已有 `.dalek/bootstrap.sh`
+- 不改写 `.dalek/control/knowledge/` 与 `.dalek/pm/`
+
+`--force` 模式下：
+- 允许重刷 `.dalek/agent-user.md` 与 `.dalek/bootstrap.sh`
+
 ## 2. 快速执行（推荐顺序）
 
 1. 查看当前 binary 版本
@@ -52,7 +60,7 @@ dalek daemon restart
 ## 3. 常用参数
 
 - `--dry-run`：只预览，不写入
-- `--force`：即使项目记录版本与当前 binary 一致，也强制执行升级
+- `--force`：即使项目记录版本与当前 binary 一致，也强制执行升级；并允许重刷 `.dalek/agent-user.md` / `.dalek/bootstrap.sh`
 - `--project` / `-p`：指定项目名（不传则从当前目录推断）
 - `--home`：指定 dalek home
 - `-o json`：机器可读输出，便于 CI/脚本使用

@@ -137,13 +137,13 @@ func (h *Home) UpgradeProject(ctx context.Context, opt UpgradeOptions) (UpgradeR
 		}
 	}
 
-	controlChanges, err := repo.PlanControlPlaneSeedUpdate(layout, projectRef.Name)
+	controlChanges, err := repo.PlanControlPlaneSeedUpdate(layout, projectRef.Name, opt.Force)
 	if err != nil {
 		return res, &UpgradeFailure{Result: res, Err: err}
 	}
 	res.Changes = convertControlChanges(controlChanges)
 
-	backupSources := collectBackupSources(layout)
+	backupSources := collectBackupSources(layout, opt.Force)
 	if opt.DryRun {
 		res.Backups = previewBackupTargets(layout, backupSources)
 		sort.Strings(res.Backups)
@@ -176,7 +176,7 @@ func (h *Home) UpgradeProject(ctx context.Context, opt UpgradeOptions) (UpgradeR
 		return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("写入项目配置失败: %w", err)}
 	}
 
-	appliedControlChanges, err := repo.UpdateControlPlaneSeed(layout, projectRef.Name)
+	appliedControlChanges, err := repo.UpdateControlPlaneSeed(layout, projectRef.Name, opt.Force)
 	if err != nil {
 		return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("更新 control plane 失败: %w", err)}
 	}
@@ -328,7 +328,7 @@ func convertControlChanges(in []repo.ControlPlaneChange) []UpgradeChange {
 	return out
 }
 
-func collectBackupSources(layout repo.Layout) []string {
+func collectBackupSources(layout repo.Layout, force bool) []string {
 	seen := make(map[string]struct{})
 	var out []string
 	appendIfExists := func(path string) {
@@ -348,28 +348,31 @@ func collectBackupSources(layout repo.Layout) []string {
 	}
 	appendIfExists(layout.DBPath)
 	appendIfExists(layout.ConfigPath)
+	appendIfExists(repo.ProjectMetaPath(layout))
 	appendIfExists(filepath.Join(layout.RepoRoot, "CLAUDE.md"))
 	appendIfExists(filepath.Join(layout.RepoRoot, "AGENTS.md"))
-	// control 目录整体备份
-	_ = filepath.Walk(layout.ControlDir, func(path string, info os.FileInfo, err error) error {
+	appendIfExists(layout.ProjectGitignorePath)
+	appendIfExists(filepath.Join(layout.RepoRoot, ".gitignore"))
+	// 仅备份 upgrade 会实际重写的 control 范围。
+	_ = filepath.Walk(layout.ControlWorkerDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
 		appendIfExists(path)
 		return nil
 	})
-	// PM 目录备份
-	_ = filepath.Walk(layout.PMDir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(layout.ControlSkillsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil
 		}
 		appendIfExists(path)
 		return nil
 	})
-	// 项目级 agent 文件
 	appendIfExists(layout.ProjectAgentKernelPath)
-	appendIfExists(layout.ProjectAgentUserPath)
-	appendIfExists(layout.ProjectBootstrapPath)
+	if force {
+		appendIfExists(layout.ProjectAgentUserPath)
+		appendIfExists(layout.ProjectBootstrapPath)
+	}
 	sort.Strings(out)
 	return out
 }

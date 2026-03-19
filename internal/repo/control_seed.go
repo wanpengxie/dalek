@@ -60,7 +60,7 @@ func EnsureControlPlaneSeed(layout Layout, projectName string) error {
 	return nil
 }
 
-func PlanControlPlaneSeedUpdate(layout Layout, projectName string) ([]ControlPlaneChange, error) {
+func PlanControlPlaneSeedUpdate(layout Layout, projectName string, force bool) ([]ControlPlaneChange, error) {
 	if strings.TrimSpace(layout.ProjectDir) == "" {
 		return nil, fmt.Errorf("project_dir 为空")
 	}
@@ -79,30 +79,27 @@ func PlanControlPlaneSeedUpdate(layout Layout, projectName string) ([]ControlPla
 	changes = append(changes, skillChanges...)
 
 	planSpecs := []struct {
-		path    string
-		content string
+		path        string
+		content     string
+		allowUpdate bool
 	}{
-		{path: layout.ProjectAgentKernelPath, content: defaultControlProjectAgentKernelTemplate(layout, projectName)},
-		{path: layout.ProjectAgentUserPath, content: defaultControlProjectAgentUserTemplate(layout, projectName)},
-		{path: layout.ProjectBootstrapPath, content: defaultProjectBootstrapTemplate()},
+		{path: layout.ProjectAgentKernelPath, content: defaultControlProjectAgentKernelTemplate(layout, projectName), allowUpdate: true},
+		{path: layout.ProjectAgentUserPath, content: defaultControlProjectAgentUserTemplate(layout, projectName), allowUpdate: force},
+		{path: layout.ProjectBootstrapPath, content: defaultProjectBootstrapTemplate(), allowUpdate: force},
 	}
 	for _, spec := range planSpecs {
-		differs, err := fileContentDiffers(spec.path, spec.content)
+		change, err := planTemplateFileChange(spec.path, spec.content, spec.allowUpdate)
 		if err != nil {
 			return nil, err
 		}
-		if differs {
-			action := "create"
-			if _, statErr := os.Stat(spec.path); statErr == nil {
-				action = "update"
-			}
-			changes = append(changes, ControlPlaneChange{Path: spec.path, Action: action})
+		if change != nil {
+			changes = append(changes, *change)
 		}
 	}
 	return changes, nil
 }
 
-func UpdateControlPlaneSeed(layout Layout, projectName string) ([]ControlPlaneChange, error) {
+func UpdateControlPlaneSeed(layout Layout, projectName string, force bool) ([]ControlPlaneChange, error) {
 	if strings.TrimSpace(layout.ProjectDir) == "" {
 		return nil, fmt.Errorf("project_dir 为空")
 	}
@@ -120,29 +117,22 @@ func UpdateControlPlaneSeed(layout Layout, projectName string) ([]ControlPlaneCh
 	changes = append(changes, skillChanges...)
 
 	forceSpecs := []struct {
-		path    string
-		content string
-		mode    os.FileMode
+		path        string
+		content     string
+		mode        os.FileMode
+		allowUpdate bool
 	}{
-		{path: layout.ProjectAgentKernelPath, content: defaultControlProjectAgentKernelTemplate(layout, projectName), mode: 0o644},
-		{path: layout.ProjectAgentUserPath, content: defaultControlProjectAgentUserTemplate(layout, projectName), mode: 0o644},
-		{path: layout.ProjectBootstrapPath, content: defaultProjectBootstrapTemplate(), mode: 0o755},
+		{path: layout.ProjectAgentKernelPath, content: defaultControlProjectAgentKernelTemplate(layout, projectName), mode: 0o644, allowUpdate: true},
+		{path: layout.ProjectAgentUserPath, content: defaultControlProjectAgentUserTemplate(layout, projectName), mode: 0o644, allowUpdate: force},
+		{path: layout.ProjectBootstrapPath, content: defaultProjectBootstrapTemplate(), mode: 0o755, allowUpdate: force},
 	}
 	for _, spec := range forceSpecs {
-		existed := true
-		if _, statErr := os.Stat(spec.path); statErr != nil {
-			existed = false
-		}
-		changed, writeErr := writeFileForce(spec.path, spec.content, spec.mode)
+		change, writeErr := applyTemplateFileChange(spec.path, spec.content, spec.mode, spec.allowUpdate)
 		if writeErr != nil {
 			return nil, writeErr
 		}
-		if changed {
-			action := "create"
-			if existed {
-				action = "update"
-			}
-			changes = append(changes, ControlPlaneChange{Path: spec.path, Action: action})
+		if change != nil {
+			changes = append(changes, *change)
 		}
 	}
 
@@ -422,4 +412,55 @@ func readFileStringIfExists(path string) (string, bool, error) {
 		return "", false, nil
 	}
 	return "", false, fmt.Errorf("读取文件失败(%s): %w", path, err)
+}
+
+func planTemplateFileChange(path, content string, allowUpdate bool) (*ControlPlaneChange, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &ControlPlaneChange{Path: path, Action: "create"}, nil
+		}
+		return nil, fmt.Errorf("读取文件失败(%s): %w", path, err)
+	}
+	if string(raw) == content {
+		return nil, nil
+	}
+	if !allowUpdate {
+		return nil, nil
+	}
+	return &ControlPlaneChange{Path: path, Action: "update"}, nil
+}
+
+func applyTemplateFileChange(path, content string, perm os.FileMode, allowUpdate bool) (*ControlPlaneChange, error) {
+	existed := true
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			existed = false
+		} else {
+			return nil, err
+		}
+	}
+	var (
+		changed bool
+		err     error
+	)
+	if existed {
+		if !allowUpdate {
+			return nil, nil
+		}
+		changed, err = writeFileForce(path, content, perm)
+	} else {
+		changed, err = writeFileIfMissing(path, content, perm)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return nil, nil
+	}
+	action := "create"
+	if existed {
+		action = "update"
+	}
+	return &ControlPlaneChange{Path: path, Action: action}, nil
 }
