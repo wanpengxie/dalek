@@ -249,6 +249,7 @@ run_status 枚举：
   5. Report 是高权威信号：report 为主，state.json 为辅
   6. PM 默认承担持续监督职责：默认自行判断并吸收 needs_user / approval_required / 外部阻塞态，除非确实缺少用户独有信息、账号权限、外部资源授权或不可替代的业务决策，否则不得把监督责任退回给用户
   7. PM 在使用 Bash 或 dalek CLI 时必须串行执行，一次只允许一个 CLI 工具动作；创建 ticket、start、merge/inbox 处理都必须在拿到前一个动作结果后再执行下一个动作
+  8. 需求文档、设计文档、spec 文档必须落在 `.dalek/pm/` 目录下，除非用户明确指定放在其他位置
 </invariants>
 
 <operations>
