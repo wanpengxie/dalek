@@ -260,7 +260,7 @@ func cmdTicketCreate(args []string) {
 		fmt.Fprintln(os.Stderr, "创建新 ticket")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Usage:")
-		fmt.Fprintln(os.Stderr, "  dalek ticket create --title <title> --desc <description> [--label <label>|-l <label>] [--priority <high|medium|low|none>] [--target-ref refs/heads/main]")
+		fmt.Fprintln(os.Stderr, "  dalek ticket create --title <title> --desc <description> [--label <label>|-l <label>] [--priority <high|medium|low|none>] [--target-ref refs/heads/main] [--force]")
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintln(os.Stderr, "Flags:")
 		fs.PrintDefaults()
@@ -268,6 +268,7 @@ func cmdTicketCreate(args []string) {
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  dalek ticket create --title \"实现功能X\" --desc \"需求文档在 /tmp/PRD.md\"")
 		fmt.Fprintln(os.Stderr, "  dalek ticket create -t \"修复 Bug\" -d \"详情见 issue #42\" -l \"bugfix\" --priority high --target-ref refs/heads/release -o json")
+		fmt.Fprintln(os.Stderr, "  dalek ticket create -t \"跨分支任务\" -d \"描述\" --target-ref refs/heads/main --force  # 覆盖分支不匹配校验")
 	}
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
 	proj := fs.String("project", globalProject, "项目名（可选）")
@@ -280,6 +281,7 @@ func cmdTicketCreate(args []string) {
 	fs.StringVar(label, "l", "", "ticket 标签（可选，单标签）")
 	priorityName := fs.String("priority", "none", "优先级（可选：high|medium|low|none，默认 none）")
 	targetRef := fs.String("target-ref", "", "目标集成 ref（可选；支持 refs/heads/* 或短分支名）")
+	force := fs.Bool("force", false, "覆盖 target-ref 与当前分支不匹配的校验")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
 	parseFlagSetOrExit(fs, args, globalOutput, "ticket create 参数解析失败", "运行 dalek ticket create --help 查看参数")
 	if strings.TrimSpace(*projShort) != "" {
@@ -316,7 +318,7 @@ func cmdTicketCreate(args []string) {
 	p := mustOpenProjectWithOutput(out, *home, *proj)
 	ctx, cancel := projectCtx(10 * time.Second)
 	defer cancel()
-	t, err := p.CreateTicketWithDescriptionAndLabelAndPriorityAndTarget(ctx, *title, *desc, *label, priority, *targetRef)
+	t, err := p.CreateTicketWithDescriptionAndLabelAndPriorityAndTargetForce(ctx, *title, *desc, *label, priority, *targetRef, *force)
 	if err != nil {
 		exitRuntimeError(out,
 			"创建 ticket 失败",

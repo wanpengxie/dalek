@@ -55,8 +55,26 @@ func CurrentBranchTargetRef(currentBranch string, currentErr error) (string, err
 }
 
 func ResolveCreateTargetRef(explicitRef, currentBranch string, currentErr error) (string, error) {
+	return ResolveCreateTargetRefWithForce(explicitRef, currentBranch, currentErr, false)
+}
+
+func ResolveCreateTargetRefWithForce(explicitRef, currentBranch string, currentErr error, force bool) (string, error) {
 	if strings.TrimSpace(explicitRef) != "" {
-		return NormalizeTargetRefInput(explicitRef)
+		normalized, err := NormalizeTargetRefInput(explicitRef)
+		if err != nil {
+			return "", err
+		}
+		if !force {
+			currentRef, curErr := CurrentBranchTargetRef(currentBranch, currentErr)
+			if curErr == nil && currentRef != normalized {
+				return "", fmt.Errorf(
+					"target-ref 不匹配：--target-ref %s 与当前分支 %s 不一致。"+
+						"如果确实要在其他分支上创建 ticket，请添加 --force 参数覆盖此校验。",
+					normalized, currentRef,
+				)
+			}
+		}
+		return normalized, nil
 	}
 	targetRef, err := CurrentBranchTargetRef(currentBranch, currentErr)
 	if err != nil {
