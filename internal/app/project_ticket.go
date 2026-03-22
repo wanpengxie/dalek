@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"dalek/internal/contracts"
 	"dalek/internal/ticketatomic"
@@ -47,15 +46,19 @@ func (p *Project) CreateTicketWithDescriptionAndLabelAndPriority(ctx context.Con
 }
 
 func (p *Project) CreateTicketWithDescriptionAndLabelAndPriorityAndTarget(ctx context.Context, title, description, label string, priority int, targetRef string) (*contracts.Ticket, error) {
+	return p.CreateTicketWithDescriptionAndLabelAndPriorityAndTargetForce(ctx, title, description, label, priority, targetRef, false)
+}
+
+func (p *Project) CreateTicketWithDescriptionAndLabelAndPriorityAndTargetForce(ctx context.Context, title, description, label string, priority int, targetRef string, force bool) (*contracts.Ticket, error) {
 	if p == nil || p.ticket == nil {
 		return nil, fmt.Errorf("project ticket service 为空")
 	}
 	currentBranch := ""
 	var currentErr error
-	if strings.TrimSpace(targetRef) == "" && p != nil && p.core != nil && p.core.Git != nil {
+	if p != nil && p.core != nil && p.core.Git != nil {
 		currentBranch, currentErr = p.core.Git.CurrentBranch(p.core.RepoRoot)
 	}
-	normalized, err := ticketatomic.ResolveCreateTargetRef(targetRef, currentBranch, currentErr)
+	normalized, err := ticketatomic.ResolveCreateTargetRefWithForce(targetRef, currentBranch, currentErr, force)
 	if err != nil {
 		return nil, err
 	}

@@ -37,6 +37,65 @@ func TestResolveCreateTargetRef(t *testing.T) {
 	})
 }
 
+func TestResolveCreateTargetRefWithForce(t *testing.T) {
+	t.Run("mismatch without force is rejected", func(t *testing.T) {
+		_, err := ResolveCreateTargetRefWithForce("refs/heads/main", "feature/x", nil, false)
+		if err == nil || !strings.Contains(err.Error(), "target-ref 不匹配") {
+			t.Fatalf("expected mismatch error, got=%v", err)
+		}
+	})
+
+	t.Run("mismatch with force succeeds", func(t *testing.T) {
+		got, err := ResolveCreateTargetRefWithForce("refs/heads/main", "feature/x", nil, true)
+		if err != nil {
+			t.Fatalf("ResolveCreateTargetRefWithForce failed: %v", err)
+		}
+		if got != "refs/heads/main" {
+			t.Fatalf("unexpected target ref: %q", got)
+		}
+	})
+
+	t.Run("matching ref without force succeeds", func(t *testing.T) {
+		got, err := ResolveCreateTargetRefWithForce("refs/heads/feature/x", "feature/x", nil, false)
+		if err != nil {
+			t.Fatalf("ResolveCreateTargetRefWithForce failed: %v", err)
+		}
+		if got != "refs/heads/feature/x" {
+			t.Fatalf("unexpected target ref: %q", got)
+		}
+	})
+
+	t.Run("short name matching without force succeeds", func(t *testing.T) {
+		got, err := ResolveCreateTargetRefWithForce("main", "main", nil, false)
+		if err != nil {
+			t.Fatalf("ResolveCreateTargetRefWithForce failed: %v", err)
+		}
+		if got != "refs/heads/main" {
+			t.Fatalf("unexpected target ref: %q", got)
+		}
+	})
+
+	t.Run("explicit ref with detached HEAD skips mismatch check", func(t *testing.T) {
+		got, err := ResolveCreateTargetRefWithForce("release/v1", "", errors.New("detached HEAD"), false)
+		if err != nil {
+			t.Fatalf("ResolveCreateTargetRefWithForce failed: %v", err)
+		}
+		if got != "refs/heads/release/v1" {
+			t.Fatalf("unexpected target ref: %q", got)
+		}
+	})
+
+	t.Run("no explicit ref falls back to current branch", func(t *testing.T) {
+		got, err := ResolveCreateTargetRefWithForce("", "feature/current", nil, false)
+		if err != nil {
+			t.Fatalf("ResolveCreateTargetRefWithForce failed: %v", err)
+		}
+		if got != "refs/heads/feature/current" {
+			t.Fatalf("unexpected target ref: %q", got)
+		}
+	})
+}
+
 func TestResolveStartBase(t *testing.T) {
 	t.Run("frozen target ref becomes base branch", func(t *testing.T) {
 		res, err := ResolveStartBase(contracts.Ticket{ID: 1, TargetBranch: "refs/heads/main"}, "", "feature/current", nil)
