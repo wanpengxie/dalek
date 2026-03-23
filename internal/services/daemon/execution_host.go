@@ -768,6 +768,27 @@ func (h *ExecutionHost) ListProjectInbox(ctx context.Context, projectName string
 	})
 }
 
+func (h *ExecutionHost) FocusAddTickets(ctx context.Context, projectName string, in contracts.FocusAddTicketsInput) (contracts.FocusAddTicketsResult, error) {
+	if h == nil || h.resolver == nil {
+		return contracts.FocusAddTicketsResult{}, fmt.Errorf("execution host 未初始化")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	project, err := h.resolver.OpenProject(strings.TrimSpace(projectName))
+	if err != nil {
+		return contracts.FocusAddTicketsResult{}, err
+	}
+	result, err := project.FocusAddTickets(ctx, in)
+	if err != nil {
+		return contracts.FocusAddTicketsResult{}, err
+	}
+	if h.onRunSettled != nil {
+		h.onRunSettled(strings.TrimSpace(projectName))
+	}
+	return result, nil
+}
+
 func (h *ExecutionHost) FocusStart(ctx context.Context, projectName string, in contracts.FocusStartInput) (contracts.FocusStartResult, error) {
 	if h == nil || h.resolver == nil {
 		return contracts.FocusStartResult{}, fmt.Errorf("execution host 未初始化")

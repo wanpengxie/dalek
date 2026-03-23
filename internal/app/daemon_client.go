@@ -81,6 +81,12 @@ type DaemonFocusStartRequest struct {
 	FocusStartInput
 }
 
+type DaemonFocusAddTicketsRequest struct {
+	Project   string
+	TicketIDs []uint
+	RequestID string
+}
+
 type DaemonFocusStopRequest struct {
 	Project   string
 	FocusID   uint
@@ -241,6 +247,26 @@ func (c *DaemonAPIClient) FocusStart(ctx context.Context, req DaemonFocusStartRe
 	}
 	if code != http.StatusAccepted && code != http.StatusOK {
 		return FocusStartResult{}, fmt.Errorf("focus start 响应码异常: %d", code)
+	}
+	return out, nil
+}
+
+func (c *DaemonAPIClient) FocusAddTickets(ctx context.Context, req DaemonFocusAddTicketsRequest) (FocusAddTicketsResult, error) {
+	if c == nil {
+		return FocusAddTicketsResult{}, fmt.Errorf("daemon client 为空")
+	}
+	payload := map[string]any{
+		"project":    strings.TrimSpace(req.Project),
+		"ticket_ids": append([]uint(nil), req.TicketIDs...),
+		"request_id": strings.TrimSpace(req.RequestID),
+	}
+	var out FocusAddTicketsResult
+	code, err := c.doJSON(ctx, http.MethodPost, "/api/v1/focus/add", payload, &out)
+	if err != nil {
+		return FocusAddTicketsResult{}, err
+	}
+	if code != http.StatusOK {
+		return FocusAddTicketsResult{}, fmt.Errorf("focus add tickets 响应码异常: %d", code)
 	}
 	return out, nil
 }

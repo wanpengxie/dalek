@@ -42,6 +42,48 @@ func cmdManagerRunBatch(out cliOutputFormat, home, proj, ticketsFlag string, bud
 	tailFocusRun(out, daemonClient, p.Name(), result.FocusID)
 }
 
+func cmdManagerAdd(args []string) {
+	fs := flag.NewFlagSet("manager add", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.Usage = func() {
+		printSubcommandUsage(
+			fs,
+			"向当前 active focus 热插入 tickets",
+			"dalek manager add --tickets 29,30 [--output text|json]",
+			"dalek manager add --tickets 29,30",
+			"dalek manager add --tickets 29,30 -o json",
+		)
+	}
+	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
+	proj := fs.String("project", globalProject, "项目名（可选）")
+	projShort := fs.String("p", globalProject, "项目名（可选）")
+	tickets := fs.String("tickets", "", "要追加的 ticket IDs，逗号分隔: 29,30")
+	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
+	parseFlagSetOrExit(fs, args, globalOutput, "manager add 参数解析失败", "运行 dalek manager add --help 查看参数")
+	if strings.TrimSpace(*projShort) != "" {
+		*proj = strings.TrimSpace(*projShort)
+	}
+	out := parseOutputOrExit(*output, true)
+
+	p := mustOpenProjectWithOutput(out, *home, *proj)
+	_, daemonClient := mustOpenDaemonClient(out, *home)
+	ticketIDs := parseManagerFocusTicketIDs(out, *tickets)
+
+	result, err := daemonClient.FocusAddTickets(context.Background(), app.DaemonFocusAddTicketsRequest{
+		Project:   p.Name(),
+		TicketIDs: ticketIDs,
+	})
+	if err != nil {
+		exitManagerFocusDaemonError(out, "添加 tickets 到 focus", err)
+	}
+	if out == outputJSON {
+		printJSONOrExit(result)
+		return
+	}
+	fmt.Printf("focus add 完成: focus_id=%d added=%d skipped=%d added_ids=%v skipped_ids=%v\n",
+		result.FocusID, result.AddedCount, result.SkippedCount, result.AddedIDs, result.SkippedIDs)
+}
+
 func cmdManagerShow(args []string) {
 	fs := flag.NewFlagSet("manager show", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

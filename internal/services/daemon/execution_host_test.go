@@ -561,6 +561,10 @@ func (p *testExecutionHostProject) GetTicketViewByID(ctx context.Context, ticket
 	return nil, gorm.ErrRecordNotFound
 }
 
+func (p *testExecutionHostProject) FocusAddTickets(ctx context.Context, in contracts.FocusAddTicketsInput) (contracts.FocusAddTicketsResult, error) {
+	return contracts.FocusAddTicketsResult{}, nil
+}
+
 func (p *testExecutionHostProject) FocusStart(ctx context.Context, in contracts.FocusStartInput) (contracts.FocusStartResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
