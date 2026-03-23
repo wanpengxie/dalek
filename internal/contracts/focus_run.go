@@ -98,6 +98,20 @@ type FocusPollResult struct {
 	Events []FocusEvent `json:"events"`
 }
 
+type FocusAddTicketsInput struct {
+	TicketIDs []uint `json:"ticket_ids"`
+	RequestID string `json:"request_id"`
+}
+
+type FocusAddTicketsResult struct {
+	FocusID      uint         `json:"focus_id"`
+	AddedCount   int          `json:"added_count"`
+	SkippedCount int          `json:"skipped_count"`
+	AddedIDs     []uint       `json:"added_ids"`
+	SkippedIDs   []uint       `json:"skipped_ids"`
+	View         FocusRunView `json:"view"`
+}
+
 const (
 	FocusModeBatch = "batch"
 	FocusModePlan  = "plan"
@@ -147,6 +161,7 @@ const (
 	FocusEventMergeObserved          = "merge.observed"
 	FocusEventIntegrationCreated     = "integration_ticket.created"
 	FocusEventHandoffResolved        = "handoff.resolved"
+	FocusEventScopeTicketsAdded      = "scope.tickets_added"
 )
 
 // IsTerminal 判断 focus run 是否已终结。

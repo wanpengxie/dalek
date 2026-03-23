@@ -198,6 +198,13 @@ func (p *daemonProjectAdapter) GetTicketViewByID(ctx context.Context, ticketID u
 	return p.project.GetTicketViewByID(ctx, ticketID)
 }
 
+func (p *daemonProjectAdapter) FocusAddTickets(ctx context.Context, in contracts.FocusAddTicketsInput) (contracts.FocusAddTicketsResult, error) {
+	if p == nil || p.project == nil {
+		return contracts.FocusAddTicketsResult{}, fmt.Errorf("daemon project 为空")
+	}
+	return p.project.FocusAddTickets(ctx, in)
+}
+
 func (p *daemonProjectAdapter) FocusStart(ctx context.Context, in contracts.FocusStartInput) (contracts.FocusStartResult, error) {
 	if p == nil || p.project == nil {
 		return contracts.FocusStartResult{}, fmt.Errorf("daemon project 为空")

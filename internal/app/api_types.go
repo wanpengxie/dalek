@@ -48,6 +48,8 @@ type FocusStartInput = contracts.FocusStartInput
 type FocusStartResult = contracts.FocusStartResult
 type FocusRunView = contracts.FocusRunView
 type FocusPollResult = contracts.FocusPollResult
+type FocusAddTicketsInput = contracts.FocusAddTicketsInput
+type FocusAddTicketsResult = contracts.FocusAddTicketsResult
 type CreateIntegrationTicketInput = contracts.CreateIntegrationTicketInput
 type CreateIntegrationTicketResult = contracts.CreateIntegrationTicketResult
 

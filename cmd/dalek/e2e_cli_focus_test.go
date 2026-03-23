@@ -28,6 +28,10 @@ func TestCLI_ManagerFocusCommands_DaemonUnavailable(t *testing.T) {
 			args: []string{"-home", home, "-project", "demo", "manager", "run", "--mode", "batch", "--tickets", "1"},
 		},
 		{
+			name: "add",
+			args: []string{"-home", home, "-project", "demo", "manager", "add", "--tickets", "1"},
+		},
+		{
 			name: "stop",
 			args: []string{"-home", home, "-project", "demo", "manager", "stop", "--focus-id", "1"},
 		},

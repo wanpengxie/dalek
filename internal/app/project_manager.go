@@ -63,6 +63,13 @@ func (p *Project) FocusCancel(ctx context.Context, focusID uint, requestID strin
 	return p.pm.FocusCancel(ctx, focusID, requestID)
 }
 
+func (p *Project) FocusAddTickets(ctx context.Context, in FocusAddTicketsInput) (FocusAddTicketsResult, error) {
+	if p == nil || p.pm == nil {
+		return FocusAddTicketsResult{}, fmt.Errorf("project pm service 为空")
+	}
+	return p.pm.FocusAddTickets(ctx, in)
+}
+
 func (p *Project) CreateIntegrationTicket(ctx context.Context, in CreateIntegrationTicketInput) (CreateIntegrationTicketResult, error) {
 	if p == nil || p.pm == nil {
 		return CreateIntegrationTicketResult{}, fmt.Errorf("project pm service 为空")

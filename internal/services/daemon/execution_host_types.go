@@ -63,6 +63,7 @@ type ExecutionHostProject interface {
 	ListTaskEvents(ctx context.Context, runID uint, limit int) ([]RunEvent, error)
 	ListTicketViews(ctx context.Context) ([]TicketView, error)
 	GetTicketViewByID(ctx context.Context, ticketID uint) (*TicketView, error)
+	FocusAddTickets(ctx context.Context, in contracts.FocusAddTicketsInput) (contracts.FocusAddTicketsResult, error)
 	FocusStart(ctx context.Context, in contracts.FocusStartInput) (contracts.FocusStartResult, error)
 	FocusGet(ctx context.Context, focusID uint) (contracts.FocusRunView, error)
 	FocusPoll(ctx context.Context, focusID, sinceEventID uint) (contracts.FocusPollResult, error)

@@ -1191,6 +1191,199 @@ func prepareFocusMergeSuccessTicket(t *testing.T, svc *Service, p *core.Project,
 	return targetBranch
 }
 
+func TestFocusAddTickets_HotInsertNewTickets(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, p.DB, "focus-original-1")
+	tk2 := createTicket(t, p.DB, "focus-original-2")
+	tk3 := createTicket(t, p.DB, "focus-new-3")
+	tk4 := createTicket(t, p.DB, "focus-new-4")
+
+	// 创建初始 focus（scope = tk1, tk2）
+	startRes, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID, tk2.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+	if len(startRes.View.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(startRes.View.Items))
+	}
+
+	// 热插入 tk3, tk4
+	addRes, err := svc.FocusAddTickets(ctx, contracts.FocusAddTicketsInput{
+		TicketIDs: []uint{tk3.ID, tk4.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusAddTickets failed: %v", err)
+	}
+	if addRes.FocusID != startRes.FocusID {
+		t.Fatalf("expected same focus_id=%d, got=%d", startRes.FocusID, addRes.FocusID)
+	}
+	if addRes.AddedCount != 2 {
+		t.Fatalf("expected added_count=2, got=%d", addRes.AddedCount)
+	}
+	if addRes.SkippedCount != 0 {
+		t.Fatalf("expected skipped_count=0, got=%d", addRes.SkippedCount)
+	}
+
+	// 验证 view 包含 4 个 items
+	view := addRes.View
+	if len(view.Items) != 4 {
+		t.Fatalf("expected 4 items after add, got=%d", len(view.Items))
+	}
+
+	// 验证新增 items 状态为 pending，且 seq 正确
+	item3 := focusItemByTicketID(view.Items, tk3.ID)
+	if item3 == nil {
+		t.Fatalf("expected tk3 in items")
+	}
+	if item3.Status != contracts.FocusItemPending {
+		t.Fatalf("expected tk3 pending, got=%s", item3.Status)
+	}
+	if item3.Seq != 3 {
+		t.Fatalf("expected tk3 seq=3, got=%d", item3.Seq)
+	}
+	item4 := focusItemByTicketID(view.Items, tk4.ID)
+	if item4 == nil {
+		t.Fatalf("expected tk4 in items")
+	}
+	if item4.Seq != 4 {
+		t.Fatalf("expected tk4 seq=4, got=%d", item4.Seq)
+	}
+}
+
+func TestFocusAddTickets_IdempotentSkipExisting(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, p.DB, "focus-existing-1")
+	tk2 := createTicket(t, p.DB, "focus-new-2")
+
+	_, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	// 添加 tk1（已存在）+ tk2（新）
+	addRes, err := svc.FocusAddTickets(ctx, contracts.FocusAddTicketsInput{
+		TicketIDs: []uint{tk1.ID, tk2.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusAddTickets failed: %v", err)
+	}
+	if addRes.AddedCount != 1 {
+		t.Fatalf("expected added_count=1, got=%d", addRes.AddedCount)
+	}
+	if addRes.SkippedCount != 1 {
+		t.Fatalf("expected skipped_count=1, got=%d", addRes.SkippedCount)
+	}
+	if len(addRes.SkippedIDs) != 1 || addRes.SkippedIDs[0] != tk1.ID {
+		t.Fatalf("expected skipped_ids=[%d], got=%v", tk1.ID, addRes.SkippedIDs)
+	}
+	if len(addRes.View.Items) != 2 {
+		t.Fatalf("expected 2 items, got=%d", len(addRes.View.Items))
+	}
+}
+
+func TestFocusAddTickets_NoActiveFocusReturnsError(t *testing.T) {
+	svc, _, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	_, err := svc.FocusAddTickets(ctx, contracts.FocusAddTicketsInput{
+		TicketIDs: []uint{999},
+	})
+	if err == nil {
+		t.Fatalf("expected error when no active focus")
+	}
+	if !strings.Contains(err.Error(), "当前无 active focus") {
+		t.Fatalf("expected 'no active focus' error, got: %v", err)
+	}
+}
+
+func TestFocusAddTickets_RejectsDoneTicket(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, p.DB, "focus-scope")
+	tkDone := createTicket(t, p.DB, "focus-done-ticket")
+	p.DB.Model(&contracts.Ticket{}).Where("id = ?", tkDone.ID).Update("workflow_status", contracts.TicketDone)
+
+	_, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	_, err = svc.FocusAddTickets(ctx, contracts.FocusAddTicketsInput{
+		TicketIDs: []uint{tkDone.ID},
+	})
+	if err == nil {
+		t.Fatalf("expected error for done ticket")
+	}
+	if !strings.Contains(err.Error(), "不可接入 focus") {
+		t.Fatalf("expected rejection error, got: %v", err)
+	}
+}
+
+func TestFocusAddTickets_EmptyTicketIDs(t *testing.T) {
+	svc, _, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	_, err := svc.FocusAddTickets(ctx, contracts.FocusAddTicketsInput{
+		TicketIDs: []uint{},
+	})
+	if err == nil {
+		t.Fatalf("expected error for empty ticket IDs")
+	}
+	if !strings.Contains(err.Error(), "不能为空") {
+		t.Fatalf("expected 'empty' error, got: %v", err)
+	}
+}
+
+func TestFocusAddTickets_AllSkippedNoEvent(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, p.DB, "focus-all-skipped")
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	// 全部幂等跳过
+	addRes, err := svc.FocusAddTickets(ctx, contracts.FocusAddTicketsInput{
+		TicketIDs: []uint{tk1.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusAddTickets failed: %v", err)
+	}
+	if addRes.AddedCount != 0 {
+		t.Fatalf("expected added_count=0, got=%d", addRes.AddedCount)
+	}
+	if addRes.SkippedCount != 1 {
+		t.Fatalf("expected skipped_count=1, got=%d", addRes.SkippedCount)
+	}
+
+	// 确认没有追加 scope.tickets_added 事件
+	var events []contracts.FocusEvent
+	p.DB.Where("focus_run_id = ? AND kind = ?", res.FocusID, contracts.FocusEventScopeTicketsAdded).Find(&events)
+	if len(events) != 0 {
+		t.Fatalf("expected no scope.tickets_added event for all-skipped case, got=%d", len(events))
+	}
+}
+
 func focusItemByTicketID(items []contracts.FocusRunItem, ticketID uint) *contracts.FocusRunItem {
 	for i := range items {
 		if items[i].TicketID == ticketID {
