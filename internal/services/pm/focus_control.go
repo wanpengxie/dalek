@@ -130,6 +130,161 @@ func (s *Service) FocusStart(ctx context.Context, in contracts.FocusStartInput) 
 	return out, nil
 }
 
+// FocusAddTickets 将新 tickets 热插入到当前 active focus 的 pending queue。
+// 已在 scope 内的 ticket 幂等忽略。不存在 active focus 时报错。
+func (s *Service) FocusAddTickets(ctx context.Context, in contracts.FocusAddTicketsInput) (contracts.FocusAddTicketsResult, error) {
+	_, db, err := s.require()
+	if err != nil {
+		return contracts.FocusAddTicketsResult{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ticketIDs := normalizeFocusTicketIDs(in.TicketIDs)
+	if len(ticketIDs) == 0 {
+		return contracts.FocusAddTicketsResult{}, fmt.Errorf("ticket IDs 不能为空")
+	}
+	requestID := strings.TrimSpace(in.RequestID)
+	if requestID == "" {
+		requestID = newPMRequestID("focus_add")
+	}
+
+	projectKey := strings.TrimSpace(s.p.Key)
+	var result contracts.FocusAddTicketsResult
+
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. 查找 active focus
+		var active contracts.FocusRun
+		if txErr := tx.WithContext(ctx).
+			Where("project_key = ? AND status IN ?", projectKey, focusActiveStatuses).
+			Order("id desc").
+			First(&active).Error; txErr != nil {
+			if errors.Is(txErr, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("当前无 active focus，无法添加 tickets")
+			}
+			return fmt.Errorf("查询 active focus 失败: %w", txErr)
+		}
+		result.FocusID = active.ID
+
+		// 2. 加载已有 items，收集已在 scope 内的 ticket IDs
+		var existingItems []contracts.FocusRunItem
+		if err := tx.WithContext(ctx).
+			Where("focus_run_id = ?", active.ID).
+			Find(&existingItems).Error; err != nil {
+			return fmt.Errorf("查询 focus items 失败: %w", err)
+		}
+		existingTicketIDs := make(map[uint]struct{}, len(existingItems))
+		maxSeq := 0
+		for _, item := range existingItems {
+			existingTicketIDs[item.TicketID] = struct{}{}
+			if item.Seq > maxSeq {
+				maxSeq = item.Seq
+			}
+		}
+
+		// 3. 分拣：跳过已存在的，验证新 ticket 状态
+		var addedIDs, skippedIDs []uint
+		var newItems []contracts.FocusRunItem
+		for _, ticketID := range ticketIDs {
+			if _, exists := existingTicketIDs[ticketID]; exists {
+				skippedIDs = append(skippedIDs, ticketID)
+				continue
+			}
+
+			// 验证 ticket 存在且状态可接入
+			var ticket contracts.Ticket
+			if err := tx.WithContext(ctx).First(&ticket, ticketID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf("ticket t%d 不存在", ticketID)
+				}
+				return fmt.Errorf("查询 ticket t%d 失败: %w", ticketID, err)
+			}
+			ws := contracts.CanonicalTicketWorkflowStatus(ticket.WorkflowStatus)
+			switch ws {
+			case contracts.TicketBacklog, contracts.TicketQueued, contracts.TicketBlocked:
+				// 可接入
+			default:
+				return fmt.Errorf("ticket t%d 当前状态为 %s，不可接入 focus（仅支持 backlog/queued/blocked）", ticketID, ws)
+			}
+
+			maxSeq++
+			newItems = append(newItems, contracts.FocusRunItem{
+				FocusRunID: active.ID,
+				Seq:        maxSeq,
+				TicketID:   ticketID,
+				Status:     contracts.FocusItemPending,
+			})
+			addedIDs = append(addedIDs, ticketID)
+		}
+
+		if len(newItems) == 0 {
+			// 全部幂等跳过
+			result.AddedCount = 0
+			result.SkippedCount = len(skippedIDs)
+			result.AddedIDs = addedIDs
+			result.SkippedIDs = skippedIDs
+			return nil
+		}
+
+		// 4. 创建新 items
+		if err := tx.WithContext(ctx).Create(&newItems).Error; err != nil {
+			return fmt.Errorf("创建 focus items 失败: %w", err)
+		}
+
+		// 5. 更新 scope_ticket_ids JSON
+		allTicketIDs := make([]uint, 0, len(existingItems)+len(newItems))
+		for _, item := range existingItems {
+			allTicketIDs = append(allTicketIDs, item.TicketID)
+		}
+		allTicketIDs = append(allTicketIDs, addedIDs...)
+		scopeJSON, err := json.Marshal(allTicketIDs)
+		if err != nil {
+			return fmt.Errorf("序列化 scope 失败: %w", err)
+		}
+		now := time.Now()
+		if err := tx.WithContext(ctx).
+			Model(&contracts.FocusRun{}).
+			Where("id = ?", active.ID).
+			Updates(map[string]any{
+				"scope_ticket_ids": string(scopeJSON),
+				"updated_at":       now,
+			}).Error; err != nil {
+			return fmt.Errorf("更新 focus scope 失败: %w", err)
+		}
+
+		// 6. 追加审计事件
+		if _, err := appendFocusEventTx(ctx, tx, active.ID, nil,
+			contracts.FocusEventScopeTicketsAdded,
+			fmt.Sprintf("added %d tickets to focus scope", len(addedIDs)),
+			map[string]any{
+				"request_id":  requestID,
+				"added_ids":   addedIDs,
+				"skipped_ids": skippedIDs,
+			}, now); err != nil {
+			return err
+		}
+
+		result.AddedCount = len(addedIDs)
+		result.SkippedCount = len(skippedIDs)
+		result.AddedIDs = addedIDs
+		result.SkippedIDs = skippedIDs
+		return nil
+	})
+	if err != nil {
+		return contracts.FocusAddTicketsResult{}, err
+	}
+
+	// 获取最新 view
+	view, err := s.FocusGet(ctx, result.FocusID)
+	if err != nil {
+		return contracts.FocusAddTicketsResult{}, err
+	}
+	result.View = view
+	s.projectWake()
+	return result, nil
+}
+
 func (s *Service) FocusGet(ctx context.Context, focusID uint) (contracts.FocusRunView, error) {
 	_, db, err := s.require()
 	if err != nil {

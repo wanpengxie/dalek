@@ -24,6 +24,12 @@ type focusStartPayload struct {
 	RequestID      string `json:"request_id"`
 }
 
+type focusAddTicketsPayload struct {
+	Project   string `json:"project"`
+	TicketIDs []uint `json:"ticket_ids"`
+	RequestID string `json:"request_id"`
+}
+
 type focusActionPayload struct {
 	RequestID string `json:"request_id"`
 }
@@ -44,6 +50,13 @@ func (s *InternalAPI) handleFocus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleFocusStart(w, r)
+		return
+	case r.URL.Path == internalFocusRoot+"/add":
+		if r.Method != http.MethodPost {
+			writeAPIError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST")
+			return
+		}
+		s.handleFocusAddTickets(w, r)
 		return
 	}
 
@@ -202,6 +215,23 @@ func (s *InternalAPI) handleFocusCancel(w http.ResponseWriter, r *http.Request, 
 		"ok":       true,
 		"focus_id": focusID,
 	})
+}
+
+func (s *InternalAPI) handleFocusAddTickets(w http.ResponseWriter, r *http.Request) {
+	var payload focusAddTicketsPayload
+	if err := decodeJSONBody(r, &payload); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	result, err := s.host.FocusAddTickets(r.Context(), strings.TrimSpace(payload.Project), contracts.FocusAddTicketsInput{
+		TicketIDs: append([]uint(nil), payload.TicketIDs...),
+		RequestID: strings.TrimSpace(payload.RequestID),
+	})
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "add_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func parseFocusRoute(path string) (uint, string, bool) {

@@ -24,6 +24,8 @@ func cmdManager(args []string) {
 		cmdManagerTick(args[1:])
 	case "run":
 		cmdManagerRun(args[1:])
+	case "add":
+		cmdManagerAdd(args[1:])
 	case "show":
 		cmdManagerShow(args[1:])
 	case "stop":
@@ -51,6 +53,7 @@ func printManagerUsage() {
 		"status    查看 PM 状态",
 		"tick      执行一次调度循环",
 		"run       执行 focus（--mode batch）或单次调试（--sync-worker-run）",
+		"add       向当前 active focus 热插入 tickets",
 		"show      查看当前 focus 详情",
 		"stop      停止当前 focus",
 		"tail      查看 daemon focus 状态与事件",
