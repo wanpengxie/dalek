@@ -30,8 +30,19 @@ func (s *Service) FocusStart(ctx context.Context, in contracts.FocusStartInput) 
 	if mode == "" {
 		mode = contracts.FocusModeBatch
 	}
-	if mode != contracts.FocusModeBatch {
-		return contracts.FocusStartResult{}, fmt.Errorf("暂只支持 batch 模式")
+	if mode != contracts.FocusModeBatch && mode != contracts.FocusModeConvergent {
+		return contracts.FocusStartResult{}, fmt.Errorf("暂只支持 batch 或 convergent 模式")
+	}
+
+	// convergent 模式参数校验
+	maxPMRuns := in.MaxPMRuns
+	if mode == contracts.FocusModeConvergent {
+		if maxPMRuns <= 0 {
+			maxPMRuns = 5
+		}
+		if maxPMRuns > 10 {
+			return contracts.FocusStartResult{}, fmt.Errorf("max_pm_runs 不能超过 10（当前值: %d）", maxPMRuns)
+		}
 	}
 	scope := normalizeFocusTicketIDs(in.ScopeTicketIDs)
 	if len(scope) == 0 {
@@ -83,6 +94,12 @@ func (s *Service) FocusStart(ctx context.Context, in contracts.FocusStartInput) 
 			AgentBudgetMax: budget,
 			StartedAt:      &now,
 		}
+		// convergent 模式：设置专属字段
+		if mode == contracts.FocusModeConvergent {
+			focus.MaxPMRuns = maxPMRuns
+			focus.PMRunCount = 0
+			focus.ConvergentPhase = ""
+		}
 		if err := tx.WithContext(ctx).Create(&focus).Error; err != nil {
 			return err
 		}
@@ -101,12 +118,32 @@ func (s *Service) FocusStart(ctx context.Context, in contracts.FocusStartInput) 
 				return err
 			}
 		}
-		if _, err := appendFocusEventTx(ctx, tx, focus.ID, nil, "run.created", "focus run created", map[string]any{
+
+		// convergent 模式：创建 round 1 记录
+		if mode == contracts.FocusModeConvergent {
+			round1 := contracts.ConvergentRound{
+				FocusRunID:     focus.ID,
+				RoundNumber:    1,
+				BatchTicketIDs: string(scopeJSON),
+				BatchStatus:    "pending",
+				PMRunStatus:    "pending",
+				StartedAt:      &now,
+			}
+			if err := tx.WithContext(ctx).Create(&round1).Error; err != nil {
+				return err
+			}
+		}
+
+		eventPayload := map[string]any{
 			"mode":       mode,
 			"request_id": requestID,
 			"scope":      scope,
 			"budget":     budget,
-		}, now); err != nil {
+		}
+		if mode == contracts.FocusModeConvergent {
+			eventPayload["max_pm_runs"] = maxPMRuns
+		}
+		if _, err := appendFocusEventTx(ctx, tx, focus.ID, nil, "run.created", "focus run created", eventPayload, now); err != nil {
 			return err
 		}
 		created = true

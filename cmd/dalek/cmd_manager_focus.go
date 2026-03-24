@@ -42,6 +42,31 @@ func cmdManagerRunBatch(out cliOutputFormat, home, proj, ticketsFlag string, bud
 	tailFocusRun(out, daemonClient, p.Name(), result.FocusID)
 }
 
+func cmdManagerRunConvergent(out cliOutputFormat, home, proj, ticketsFlag string, budget, pmRuns int) {
+	p := mustOpenProjectWithOutput(out, home, proj)
+	_, daemonClient := mustOpenDaemonClient(out, home)
+	ticketIDs := parseManagerFocusTicketIDs(out, ticketsFlag)
+
+	result, err := daemonClient.FocusStart(context.Background(), app.DaemonFocusStartRequest{
+		Project: p.Name(),
+		FocusStartInput: app.FocusStartInput{
+			Mode:           "convergent",
+			ScopeTicketIDs: ticketIDs,
+			AgentBudget:    budget,
+			MaxPMRuns:      pmRuns,
+		},
+	})
+	if err != nil {
+		exitManagerFocusDaemonError(out, "启动 convergent focus", err)
+	}
+	if out == outputJSON {
+		printJSONOrExit(result)
+		return
+	}
+	fmt.Printf("focus convergent 已提交到 daemon: id=%d scope=%v budget=%d pm_runs=%d\n", result.FocusID, ticketIDs, budget, pmRuns)
+	tailFocusRun(out, daemonClient, p.Name(), result.FocusID)
+}
+
 func cmdManagerAdd(args []string) {
 	fs := flag.NewFlagSet("manager add", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -279,6 +304,13 @@ func renderFocusStatusLine(view app.FocusRunView) string {
 		view.Run.AgentBudget,
 		view.Run.AgentBudgetMax,
 	)
+	if strings.TrimSpace(view.Run.Mode) == "convergent" {
+		phase := strings.TrimSpace(view.Run.ConvergentPhase)
+		if phase == "" {
+			phase = "(init)"
+		}
+		line += fmt.Sprintf("  convergent_phase=%s  pm_runs=%d/%d", phase, view.Run.PMRunCount, view.Run.MaxPMRuns)
+	}
 	if strings.TrimSpace(view.Run.Summary) != "" {
 		line += "  summary=" + strings.TrimSpace(view.Run.Summary)
 	}

@@ -173,6 +173,132 @@ func TestCreateIntegrationTicket_RejectsInvalidSourcesOrWeakEvidence(t *testing.
 	}
 }
 
+func TestFocusStart_ConvergentMode_CreatesRunAndRound(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "convergent-test-ticket")
+
+	result, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           "convergent",
+		ScopeTicketIDs: []uint{tk.ID},
+		AgentBudget:    5,
+		MaxPMRuns:      7,
+	})
+	if err != nil {
+		t.Fatalf("FocusStart convergent failed: %v", err)
+	}
+	if !result.Created {
+		t.Fatal("expected created=true")
+	}
+
+	// 验证 FocusRun 字段
+	var run contracts.FocusRun
+	if err := p.DB.First(&run, result.FocusID).Error; err != nil {
+		t.Fatalf("load focus run failed: %v", err)
+	}
+	if run.Mode != "convergent" {
+		t.Fatalf("expected mode=convergent, got=%s", run.Mode)
+	}
+	if run.MaxPMRuns != 7 {
+		t.Fatalf("expected max_pm_runs=7, got=%d", run.MaxPMRuns)
+	}
+	if run.PMRunCount != 0 {
+		t.Fatalf("expected pm_run_count=0, got=%d", run.PMRunCount)
+	}
+	if run.ConvergentPhase != "" {
+		t.Fatalf("expected convergent_phase empty, got=%q", run.ConvergentPhase)
+	}
+
+	// 验证 ConvergentRound
+	var round contracts.ConvergentRound
+	if err := p.DB.Where("focus_run_id = ?", run.ID).First(&round).Error; err != nil {
+		t.Fatalf("load convergent round failed: %v", err)
+	}
+	if round.RoundNumber != 1 {
+		t.Fatalf("expected round_number=1, got=%d", round.RoundNumber)
+	}
+	if round.BatchStatus != "pending" {
+		t.Fatalf("expected batch_status=pending, got=%s", round.BatchStatus)
+	}
+}
+
+func TestFocusStart_ConvergentMode_DefaultMaxPMRuns(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "convergent-default-pm-runs")
+
+	result, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           "convergent",
+		ScopeTicketIDs: []uint{tk.ID},
+		AgentBudget:    5,
+		// MaxPMRuns not set → default 5
+	})
+	if err != nil {
+		t.Fatalf("FocusStart convergent failed: %v", err)
+	}
+
+	var run contracts.FocusRun
+	if err := p.DB.First(&run, result.FocusID).Error; err != nil {
+		t.Fatalf("load focus run failed: %v", err)
+	}
+	if run.MaxPMRuns != 5 {
+		t.Fatalf("expected default max_pm_runs=5, got=%d", run.MaxPMRuns)
+	}
+}
+
+func TestFocusStart_ConvergentMode_RejectsExcessivePMRuns(t *testing.T) {
+	svc, _, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	_, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           "convergent",
+		ScopeTicketIDs: []uint{1},
+		AgentBudget:    5,
+		MaxPMRuns:      15,
+	})
+	if err == nil {
+		t.Fatal("expected error for max_pm_runs > 10")
+	}
+	if !strings.Contains(err.Error(), "max_pm_runs") {
+		t.Fatalf("expected error about max_pm_runs, got: %v", err)
+	}
+}
+
+func TestFocusStart_BatchMode_Unchanged(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "batch-regression-test")
+
+	result, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           "batch",
+		ScopeTicketIDs: []uint{tk.ID},
+		AgentBudget:    5,
+	})
+	if err != nil {
+		t.Fatalf("FocusStart batch failed: %v", err)
+	}
+	if !result.Created {
+		t.Fatal("expected created=true")
+	}
+
+	var run contracts.FocusRun
+	if err := p.DB.First(&run, result.FocusID).Error; err != nil {
+		t.Fatalf("load focus run failed: %v", err)
+	}
+	if run.Mode != "batch" {
+		t.Fatalf("expected mode=batch, got=%s", run.Mode)
+	}
+	// batch 模式不应有 convergent round
+	var roundCount int64
+	p.DB.Model(&contracts.ConvergentRound{}).Where("focus_run_id = ?", run.ID).Count(&roundCount)
+	if roundCount != 0 {
+		t.Fatalf("expected no convergent rounds for batch mode, got=%d", roundCount)
+	}
+}
+
 func prepareIntegrationSourceTicket(t *testing.T, db *gorm.DB, ticketID uint, workflow contracts.TicketWorkflowStatus, integration contracts.IntegrationStatus, targetRef string) {
 	t.Helper()
 	if err := db.Model(&contracts.Ticket{}).

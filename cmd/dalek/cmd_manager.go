@@ -311,7 +311,8 @@ func cmdManagerRun(args []string) {
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
 	proj := fs.String("project", globalProject, "项目名（可选）")
 	projShort := fs.String("p", globalProject, "项目名（可选）")
-	mode := fs.String("mode", "", "focus 模式: batch")
+	mode := fs.String("mode", "", "focus 模式: batch | convergent")
+	pmRuns := fs.Int("pm-runs", 5, "convergent 模式 PM run 最大次数（1-10，默认 5）")
 	tickets := fs.String("tickets", "", "batch scope ticket IDs，逗号分隔: 1,2,3")
 	budget := fs.Int("budget", 10, "PM agent 最大调用次数")
 	_ = fs.Duration("interval", 15*time.Second, "已废弃")
@@ -333,9 +334,18 @@ func cmdManagerRun(args []string) {
 		return
 	}
 
+	// --mode convergent: 启动 convergent focus
+	if strings.TrimSpace(*mode) == "convergent" {
+		if *pmRuns < 1 || *pmRuns > 10 {
+			exitUsageError(out, fmt.Sprintf("--pm-runs 值 %d 超出范围", *pmRuns), "--pm-runs 取值范围 1-10", "示例: dalek manager run --mode convergent --tickets 1,2 --pm-runs 5")
+		}
+		cmdManagerRunConvergent(out, *home, *proj, *tickets, *budget, *pmRuns)
+		return
+	}
+
 	if !*syncWorkerRun {
 		exitRuntimeError(out,
-			"请指定 --mode batch 启动 focus，或使用 --sync-worker-run 进行单次调试",
+			"请指定 --mode batch|convergent 启动 focus，或使用 --sync-worker-run 进行单次调试",
 			"示例: dalek manager run --mode batch --tickets 1,2,3",
 			"示例: dalek manager run --once --sync-worker-run --worker-run-timeout 120m",
 		)

@@ -22,6 +22,7 @@ type focusStartPayload struct {
 	ScopeTicketIDs []uint `json:"scope_ticket_ids"`
 	AgentBudget    int    `json:"agent_budget"`
 	RequestID      string `json:"request_id"`
+	MaxPMRuns      int    `json:"max_pm_runs,omitempty"`
 }
 
 type focusAddTicketsPayload struct {
@@ -90,6 +91,7 @@ func (s *InternalAPI) handleFocusStart(w http.ResponseWriter, r *http.Request) {
 		ScopeTicketIDs: append([]uint(nil), payload.ScopeTicketIDs...),
 		AgentBudget:    payload.AgentBudget,
 		RequestID:      strings.TrimSpace(payload.RequestID),
+		MaxPMRuns:      payload.MaxPMRuns,
 	})
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "start_failed", err.Error())

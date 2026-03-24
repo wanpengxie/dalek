@@ -81,6 +81,9 @@ type FocusStartInput struct {
 	ScopeTicketIDs []uint `json:"scope_ticket_ids"`
 	AgentBudget    int    `json:"agent_budget"`
 	RequestID      string `json:"request_id"`
+
+	// convergent 专属
+	MaxPMRuns int `json:"max_pm_runs,omitempty"` // 默认 5, 上限 10
 }
 
 type FocusStartResult struct {

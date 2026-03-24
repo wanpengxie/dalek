@@ -240,6 +240,9 @@ func (c *DaemonAPIClient) FocusStart(ctx context.Context, req DaemonFocusStartRe
 		"agent_budget":     req.AgentBudget,
 		"request_id":       strings.TrimSpace(req.RequestID),
 	}
+	if req.MaxPMRuns > 0 {
+		payload["max_pm_runs"] = req.MaxPMRuns
+	}
 	var out FocusStartResult
 	code, err := c.doJSON(ctx, http.MethodPost, "/api/v1/focus/start", payload, &out)
 	if err != nil {
