@@ -21,6 +21,11 @@ type FocusRun struct {
 	AgentBudget    int `json:"agent_budget"`
 	AgentBudgetMax int `json:"agent_budget_max"`
 
+	// convergent 模式扩展字段
+	MaxPMRuns       int    `gorm:"default:5" json:"max_pm_runs"`
+	PMRunCount      int    `gorm:"default:0" json:"pm_run_count"`
+	ConvergentPhase string `gorm:"type:varchar(32);default:''" json:"convergent_phase"` // "batch" | "pm_run" | ""
+
 	StartedAt  *time.Time `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at"`
 
@@ -113,8 +118,9 @@ type FocusAddTicketsResult struct {
 }
 
 const (
-	FocusModeBatch = "batch"
-	FocusModePlan  = "plan"
+	FocusModeBatch      = "batch"
+	FocusModePlan       = "plan"
+	FocusModeConvergent = "convergent"
 )
 
 const (
@@ -131,6 +137,8 @@ const (
 	FocusStopped   = "stopped"
 	FocusFailed    = "failed"
 	FocusCanceled  = "canceled"
+	FocusConverged = "converged"
+	FocusExhausted = "exhausted"
 )
 
 const (
@@ -162,12 +170,21 @@ const (
 	FocusEventIntegrationCreated     = "integration_ticket.created"
 	FocusEventHandoffResolved        = "handoff.resolved"
 	FocusEventScopeTicketsAdded      = "scope.tickets_added"
+
+	// convergent 模式事件
+	FocusEventConvergentRoundStarted = "convergent.round_started"
+	FocusEventConvergentBatchDone    = "convergent.batch_done"
+	FocusEventConvergentPMRunStarted = "convergent.pm_run_started"
+	FocusEventConvergentPMRunDone    = "convergent.pm_run_done"
+	FocusEventConvergentFixCreated   = "convergent.fix_created"
+	FocusEventConvergentConverged    = "convergent.converged"
+	FocusEventConvergentExhausted    = "convergent.exhausted"
 )
 
 // IsTerminal 判断 focus run 是否已终结。
 func (f FocusRun) IsTerminal() bool {
 	switch f.Status {
-	case FocusCompleted, FocusStopped, FocusFailed, FocusCanceled:
+	case FocusCompleted, FocusStopped, FocusFailed, FocusCanceled, FocusConverged, FocusExhausted:
 		return true
 	}
 	return false

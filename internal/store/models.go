@@ -14,6 +14,7 @@ type PMState = contracts.PMState
 type FocusRun = contracts.FocusRun
 type FocusRunItem = contracts.FocusRunItem
 type FocusEvent = contracts.FocusEvent
+type ConvergentRound = contracts.ConvergentRound
 type TaskRun = contracts.TaskRun
 type SubagentRun = contracts.SubagentRun
 type TaskRuntimeSample = contracts.TaskRuntimeSample

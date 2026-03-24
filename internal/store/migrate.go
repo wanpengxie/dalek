@@ -128,6 +128,11 @@ func storeMigrations() []Migration {
 			Name:    "ensure_inbox_reply_time_columns_datetime",
 			Up:      migrateEnsureInboxReplyTimeColumnsDateTime,
 		},
+		{
+			Version: 23,
+			Name:    "add_convergent_mode_schema",
+			Up:      migrateAddConvergentModeSchema,
+		},
 	}
 }
 
@@ -728,6 +733,44 @@ func migrateEnsureInboxReplyTimeColumnsDateTime(db *gorm.DB) error {
 		if err := migrateEnsureTableColumnDateTime(db, "inbox_items", col); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func migrateAddConvergentModeSchema(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	// 1. focus_runs 表新增 convergent 模式字段
+	addColumnIfMissing := func(table, col, ddl string) error {
+		has, err := tableHasColumn(db, table, col)
+		if err != nil {
+			return err
+		}
+		if has {
+			return nil
+		}
+		if err := db.Exec(ddl).Error; err != nil {
+			msg := strings.ToLower(strings.TrimSpace(err.Error()))
+			if strings.Contains(msg, "duplicate column name") {
+				return nil
+			}
+			return err
+		}
+		return nil
+	}
+	if err := addColumnIfMissing("focus_runs", "max_pm_runs", `ALTER TABLE focus_runs ADD COLUMN max_pm_runs INTEGER NOT NULL DEFAULT 5;`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing("focus_runs", "pm_run_count", `ALTER TABLE focus_runs ADD COLUMN pm_run_count INTEGER NOT NULL DEFAULT 0;`); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing("focus_runs", "convergent_phase", `ALTER TABLE focus_runs ADD COLUMN convergent_phase VARCHAR(32) NOT NULL DEFAULT '';`); err != nil {
+		return err
+	}
+	// 2. 新建 convergent_rounds 表
+	if err := db.AutoMigrate(&ConvergentRound{}); err != nil {
+		return err
 	}
 	return nil
 }
