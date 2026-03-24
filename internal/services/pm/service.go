@@ -43,6 +43,8 @@ type Service struct {
 	queueWakeCh       chan struct{}
 	queueConsumerOnce sync.Once
 
+	// pmSubmitter 用于 convergent 模式的 PM run 提交。
+	pmSubmitter PMRunSubmitter
 	// sdkHandleLauncher 用于测试注入，生产环境保持 nil（使用真实的 launchWorkerSDKHandle）。
 	sdkHandleLauncher workerSDKHandleLauncherFunc
 	// workerLoopClosureFallbackApplier 用于测试注入，生产环境保持 nil（使用真实 fallback）。

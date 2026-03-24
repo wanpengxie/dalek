@@ -41,7 +41,29 @@ type focusSubmitItemRunResult struct {
 }
 
 func (s *Service) AdvanceFocusController(ctx context.Context) error {
-	return s.FocusTick(ctx)
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	view, err := s.focusViewForDB(ctx, db, 0)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if view.Run.ID == 0 || view.Run.IsTerminal() {
+		return nil
+	}
+	switch strings.TrimSpace(view.Run.Mode) {
+	case contracts.FocusModeConvergent:
+		return s.ConvergentTick(ctx, view)
+	default:
+		return s.FocusTick(ctx)
+	}
 }
 
 func (s *Service) FocusTick(ctx context.Context) error {
