@@ -13,6 +13,7 @@ import (
 	"time"
 
 	daemonsvc "dalek/internal/services/daemon"
+	"dalek/internal/services/subagent"
 	"dalek/internal/store"
 )
 
@@ -519,5 +520,60 @@ func TestDaemonManagerComponent_WarmupRunProjectIndex_LoadsActiveRuns(t *testing
 	}
 	if !foundActive {
 		t.Fatalf("expected warmup includes active worker run %d, got=%v", activeRun.ID, warmed)
+	}
+}
+
+func TestDaemonManagerPMRunSubmitter_BridgesHostSubmitSubagentRun(t *testing.T) {
+	var captured daemonsvc.SubagentSubmitRequest
+	host := &stubManagerExecutionHost{}
+	// Override the stub to capture the request.
+	submitter := daemonManagerPMRunSubmitter{
+		projectName: "test-project",
+		host:        host,
+	}
+
+	ctx := context.Background()
+	result, err := submitter.Submit(ctx, subagent.SubmitInput{
+		RequestID: "req-42",
+		Provider:  "openai",
+		Model:     "gpt-4",
+		Prompt:    "review the code",
+	})
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+	if !result.Accepted {
+		t.Error("expected Accepted=true")
+	}
+	if result.TaskRunID == 0 {
+		t.Error("expected non-zero TaskRunID")
+	}
+	_ = captured
+}
+
+func TestDaemonManagerPMRunSubmitter_NilHost(t *testing.T) {
+	submitter := daemonManagerPMRunSubmitter{
+		projectName: "test-project",
+		host:        nil,
+	}
+	_, err := submitter.Submit(context.Background(), subagent.SubmitInput{
+		RequestID: "req-1",
+	})
+	if err == nil {
+		t.Error("expected error when host is nil")
+	}
+}
+
+func TestDaemonManagerPMRunSubmitter_EmptyProject(t *testing.T) {
+	host := &stubManagerExecutionHost{}
+	submitter := daemonManagerPMRunSubmitter{
+		projectName: "",
+		host:        host,
+	}
+	_, err := submitter.Submit(context.Background(), subagent.SubmitInput{
+		RequestID: "req-1",
+	})
+	if err == nil {
+		t.Error("expected error when project is empty")
 	}
 }

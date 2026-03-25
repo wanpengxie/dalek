@@ -503,6 +503,10 @@ func TestConvergentTickPMRun_SubmitFailed(t *testing.T) {
 	if reloaded.Status != contracts.FocusFailed {
 		t.Errorf("expected status=failed after submit error, got=%q", reloaded.Status)
 	}
+	rr := loadLatestRound(t, p.DB, run.ID)
+	if rr.PMRunStatus != "failed" {
+		t.Errorf("expected round pm_run_status=failed after submit error, got=%q", rr.PMRunStatus)
+	}
 }
 
 func TestConvergentTickPMRun_PollSucceeded_Converged(t *testing.T) {
@@ -543,6 +547,13 @@ func TestConvergentTickPMRun_PollSucceeded_Converged(t *testing.T) {
 	events := loadFocusEvents(t, p.DB, run.ID)
 	if !hasEvent(events, contracts.FocusEventConvergentConverged) {
 		t.Error("expected convergent.converged event")
+	}
+	rr := loadLatestRound(t, p.DB, run.ID)
+	if rr.PMRunStatus != "done" {
+		t.Errorf("expected round pm_run_status=done after converged, got=%q", rr.PMRunStatus)
+	}
+	if rr.Verdict != "converged" {
+		t.Errorf("expected round verdict=converged, got=%q", rr.Verdict)
 	}
 }
 
@@ -616,6 +627,13 @@ func TestConvergentTickPMRun_PollSucceeded_NeedsFix_NoTickets_Blocked(t *testing
 	if reloaded.Status != contracts.FocusBlocked {
 		t.Errorf("expected status=blocked, got=%q", reloaded.Status)
 	}
+	rr := loadLatestRound(t, p.DB, run.ID)
+	if rr.PMRunStatus != "done" {
+		t.Errorf("expected round pm_run_status=done after needs_fix/no-tickets, got=%q", rr.PMRunStatus)
+	}
+	if rr.Verdict != "needs_fix" {
+		t.Errorf("expected round verdict=needs_fix, got=%q", rr.Verdict)
+	}
 }
 
 func TestConvergentTickPMRun_PollFailed_RunFailed(t *testing.T) {
@@ -640,6 +658,10 @@ func TestConvergentTickPMRun_PollFailed_RunFailed(t *testing.T) {
 	reloaded := loadFocusRun(t, p.DB, run.ID)
 	if reloaded.Status != contracts.FocusFailed {
 		t.Errorf("expected status=failed, got=%q", reloaded.Status)
+	}
+	rr := loadLatestRound(t, p.DB, run.ID)
+	if rr.PMRunStatus != "failed" {
+		t.Errorf("expected round pm_run_status=failed after task failed, got=%q", rr.PMRunStatus)
 	}
 }
 
@@ -773,6 +795,10 @@ func TestConvergentHandleStop_PMRunPhase_Completed(t *testing.T) {
 	reloaded := loadFocusRun(t, p.DB, run.ID)
 	if reloaded.Status != contracts.FocusStopped {
 		t.Errorf("expected status=stopped, got=%q", reloaded.Status)
+	}
+	rr := loadLatestRound(t, p.DB, run.ID)
+	if rr.PMRunStatus != "done" {
+		t.Errorf("expected round pm_run_status=done after stop with succeeded task, got=%q", rr.PMRunStatus)
 	}
 }
 
