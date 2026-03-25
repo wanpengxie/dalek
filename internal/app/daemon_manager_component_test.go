@@ -262,6 +262,15 @@ func (s *stubManagerExecutionHost) CancelTicketLoopWithCause(ctx context.Context
 	return s.CancelTicketLoop(ctx, project, ticketID)
 }
 
+func (s *stubManagerExecutionHost) SubmitSubagentRun(_ context.Context, req daemonsvc.SubagentSubmitRequest) (daemonsvc.SubagentSubmitReceipt, error) {
+	return daemonsvc.SubagentSubmitReceipt{
+		Accepted:  true,
+		Project:   req.Project,
+		RequestID: req.RequestID,
+		TaskRunID: 1,
+	}, nil
+}
+
 func (s *stubManagerExecutionHost) snapshot() []daemonsvc.TicketLoopSubmitRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -300,6 +309,15 @@ func (s *stubWarmupExecutionHost) CancelTicketLoop(_ context.Context, project st
 func (s *stubWarmupExecutionHost) CancelTicketLoopWithCause(ctx context.Context, project string, ticketID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error) {
 	_ = cause
 	return s.CancelTicketLoop(ctx, project, ticketID)
+}
+
+func (s *stubWarmupExecutionHost) SubmitSubagentRun(_ context.Context, req daemonsvc.SubagentSubmitRequest) (daemonsvc.SubagentSubmitReceipt, error) {
+	return daemonsvc.SubagentSubmitReceipt{
+		Accepted:  true,
+		Project:   req.Project,
+		RequestID: req.RequestID,
+		TaskRunID: 1,
+	}, nil
 }
 
 func (s *stubWarmupExecutionHost) WarmupRunProjectIndex(project string, runIDs []uint) int {

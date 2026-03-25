@@ -11,6 +11,7 @@ import (
 	"dalek/internal/contracts"
 	daemonsvc "dalek/internal/services/daemon"
 	pmsvc "dalek/internal/services/pm"
+	"dalek/internal/services/subagent"
 	workersvc "dalek/internal/services/worker"
 )
 
@@ -18,6 +19,7 @@ const defaultDaemonManagerTickInterval = 30 * time.Second
 
 type managerExecutionHost interface {
 	SubmitTicketLoop(ctx context.Context, req daemonsvc.TicketLoopSubmitRequest) (daemonsvc.TicketLoopSubmitReceipt, error)
+	SubmitSubagentRun(ctx context.Context, req daemonsvc.SubagentSubmitRequest) (daemonsvc.SubagentSubmitReceipt, error)
 	CancelTaskRun(ctx context.Context, runID uint) (daemonsvc.CancelResult, error)
 	CancelTaskRunWithCause(ctx context.Context, runID uint, cause contracts.TaskCancelCause) (daemonsvc.CancelResult, error)
 	CancelTicketLoop(ctx context.Context, project string, ticketID uint) (daemonsvc.CancelResult, error)
@@ -363,6 +365,10 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 			projectName: projectName,
 			host:        m.host,
 		})
+		p.pm.SetPMRunSubmitter(daemonManagerPMRunSubmitter{
+			projectName: projectName,
+			host:        m.host,
+		})
 		p.pm.SetProjectWakeHook(func() {
 			m.NotifyProject(projectName)
 		})
@@ -407,6 +413,11 @@ type daemonManagerWorkerRunSubmitter struct {
 }
 
 type daemonManagerWorkerLoopControl struct {
+	projectName string
+	host        managerExecutionHost
+}
+
+type daemonManagerPMRunSubmitter struct {
 	projectName string
 	host        managerExecutionHost
 }
@@ -458,6 +469,34 @@ func (c daemonManagerWorkerLoopControl) CancelTicketLoop(ctx context.Context, ti
 		Found:    res.Found,
 		Canceled: res.Canceled,
 		Reason:   strings.TrimSpace(res.Reason),
+	}, nil
+}
+
+func (s daemonManagerPMRunSubmitter) Submit(ctx context.Context, in subagent.SubmitInput) (subagent.SubmitResult, error) {
+	if s.host == nil {
+		return subagent.SubmitResult{}, fmt.Errorf("PM run host 未初始化")
+	}
+	projectName := strings.TrimSpace(s.projectName)
+	if projectName == "" {
+		return subagent.SubmitResult{}, fmt.Errorf("project 不能为空")
+	}
+	receipt, err := s.host.SubmitSubagentRun(ctx, daemonsvc.SubagentSubmitRequest{
+		Project:   projectName,
+		RequestID: strings.TrimSpace(in.RequestID),
+		Provider:  strings.TrimSpace(in.Provider),
+		Model:     strings.TrimSpace(in.Model),
+		Prompt:    strings.TrimSpace(in.Prompt),
+	})
+	if err != nil {
+		return subagent.SubmitResult{}, err
+	}
+	return subagent.SubmitResult{
+		Accepted:   receipt.Accepted,
+		TaskRunID:  receipt.TaskRunID,
+		RequestID:  strings.TrimSpace(receipt.RequestID),
+		Provider:   strings.TrimSpace(receipt.Provider),
+		Model:      strings.TrimSpace(receipt.Model),
+		RuntimeDir: strings.TrimSpace(receipt.RuntimeDir),
 	}, nil
 }
 

@@ -304,6 +304,15 @@ func (h *acceptingLifecycleManagerHost) CancelTicketLoopWithCause(ctx context.Co
 	return h.CancelTicketLoop(ctx, project, ticketID)
 }
 
+func (h *acceptingLifecycleManagerHost) SubmitSubagentRun(_ context.Context, req daemonsvc.SubagentSubmitRequest) (daemonsvc.SubagentSubmitReceipt, error) {
+	return daemonsvc.SubagentSubmitReceipt{
+		Accepted:  true,
+		Project:   req.Project,
+		RequestID: req.RequestID,
+		TaskRunID: 1,
+	}, nil
+}
+
 func (h *acceptingLifecycleManagerHost) SubmittedTicketIDs() []uint {
 	if h == nil {
 		return nil
