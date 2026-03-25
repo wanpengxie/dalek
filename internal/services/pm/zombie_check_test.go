@@ -628,3 +628,128 @@ func TestManagerTick_ReportsZombieStateDriftStats(t *testing.T) {
 		t.Fatalf("expected zombie_blocked=0, got=%d errors=%v", res.ZombieBlocked, res.Errors)
 	}
 }
+
+// TestCheckZombieWorkers_TerminalClosureGrace_NotDead verifies that a worker
+// with a terminal task run (succeeded) and semantic_next_action=done is NOT
+// treated as dead during the closure grace window. This is the regression test
+// for the convergent zombie race bug where pm.zombie would requeue a ticket
+// whose worker loop closure was legitimately in progress.
+func TestCheckZombieWorkers_TerminalClosureGrace_NotDead(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "zombie-closure-grace")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("mark worker running failed: %v", err)
+	}
+
+	// Create a task run and mark it as succeeded with semantic done report.
+	rt, run := createWorkerRunForManagerTickTest(t, svc, p, tk.ID, w.ID, "zombie-closure-grace")
+	now := time.Now()
+	if err := rt.MarkRunSucceeded(context.Background(), run.ID, "", now); err != nil {
+		t.Fatalf("MarkRunSucceeded failed: %v", err)
+	}
+	// Append a recent semantic report with next_action=done.
+	if err := rt.AppendSemanticReport(context.Background(), contracts.TaskSemanticReportInput{
+		TaskRunID:  run.ID,
+		Phase:      contracts.TaskPhaseDone,
+		NextAction: string(contracts.NextDone),
+		Summary:    "task completed",
+		ReportedAt: now,
+	}); err != nil {
+		t.Fatalf("AppendSemanticReport failed: %v", err)
+	}
+
+	out := svc.checkZombieWorkers(context.Background(), p.DB, rt)
+	if out.Checked != 1 {
+		t.Fatalf("expected checked=1, got=%d", out.Checked)
+	}
+	// Key assertion: no recovery, no block — worker is considered alive.
+	if out.Recovered != 0 {
+		t.Fatalf("expected recovered=0 (closure grace), got=%d errors=%v", out.Recovered, out.Errors)
+	}
+	if out.Blocked != 0 {
+		t.Fatalf("expected blocked=0, got=%d", out.Blocked)
+	}
+
+	// Verify ticket is still active (not requeued).
+	var ticket contracts.Ticket
+	if err := p.DB.First(&ticket, tk.ID).Error; err != nil {
+		t.Fatalf("load ticket failed: %v", err)
+	}
+	if ticket.WorkflowStatus != contracts.TicketActive {
+		t.Fatalf("expected ticket still active, got=%s", ticket.WorkflowStatus)
+	}
+
+	// Verify no execution_lost lifecycle event was written.
+	var lostCount int64
+	p.DB.Model(&contracts.TicketLifecycleEvent{}).
+		Where("ticket_id = ? AND event_type = ?", tk.ID, contracts.TicketLifecycleExecutionLost).
+		Count(&lostCount)
+	if lostCount != 0 {
+		t.Fatalf("expected 0 execution_lost events, got=%d", lostCount)
+	}
+}
+
+// TestCheckZombieWorkers_TerminalClosureGrace_Expired verifies that if the
+// closure grace window has expired (semantic report is too old), zombie
+// detection proceeds normally and recovers the worker.
+func TestCheckZombieWorkers_TerminalClosureGrace_Expired(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+
+	tk := createTicket(t, p.DB, "zombie-closure-expired")
+	w, err := svc.StartTicket(context.Background(), tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("mark worker running failed: %v", err)
+	}
+
+	// Create a task run and mark it as succeeded with a stale semantic report
+	// (older than the closure grace window).
+	rt, run := createWorkerRunForManagerTickTest(t, svc, p, tk.ID, w.ID, "zombie-closure-expired")
+	staleAt := time.Now().Add(-(defaultZombieClosureGrace + time.Minute))
+	if err := rt.MarkRunSucceeded(context.Background(), run.ID, "", staleAt); err != nil {
+		t.Fatalf("MarkRunSucceeded failed: %v", err)
+	}
+	if err := rt.AppendSemanticReport(context.Background(), contracts.TaskSemanticReportInput{
+		TaskRunID:  run.ID,
+		Phase:      contracts.TaskPhaseDone,
+		NextAction: string(contracts.NextDone),
+		Summary:    "task completed long ago",
+		ReportedAt: staleAt,
+	}); err != nil {
+		t.Fatalf("AppendSemanticReport failed: %v", err)
+	}
+
+	out := svc.checkZombieWorkers(context.Background(), p.DB, rt)
+	if out.Checked != 1 {
+		t.Fatalf("expected checked=1, got=%d", out.Checked)
+	}
+	// Grace expired — zombie should recover the worker.
+	if out.Recovered != 1 {
+		t.Fatalf("expected recovered=1 (grace expired), got=%d errors=%v", out.Recovered, out.Errors)
+	}
+}

@@ -115,6 +115,11 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 				}
 			case isWorkerTaskRunActive(tv):
 				runtimeAlive = true
+			case isWithinTerminalClosureGrace(tv, now, defaultZombieClosureGrace):
+				// Task run is terminal (succeeded/failed/canceled) with a semantic
+				// done/wait_user, and the report is recent. Worker loop closure is
+				// legitimately in progress — do NOT treat as execution lost.
+				runtimeAlive = true
 			default:
 				state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
 				if state == "" {
@@ -563,6 +568,45 @@ func zombieVisibilityTimeoutReason(lastSeenAt time.Time, hasLastSeen bool, lease
 func isWorkerTaskRunActive(tv contracts.TaskStatusView) bool {
 	state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
 	return state == string(contracts.TaskPending) || state == string(contracts.TaskRunning)
+}
+
+// isWorkerTaskRunTerminalButClosing returns true when the task run has reached
+// a terminal orchestration state (succeeded/failed/canceled) AND the worker's
+// semantic report indicates a terminal next_action (done/wait_user).
+// This signals that the worker loop closure is in progress but has not yet
+// committed the ticket workflow transition. The zombie detector must NOT treat
+// this as "execution lost" during this legitimate grace window.
+func isWorkerTaskRunTerminalButClosing(tv contracts.TaskStatusView) bool {
+	state := strings.TrimSpace(strings.ToLower(tv.OrchestrationState))
+	switch state {
+	case string(contracts.TaskSucceeded), string(contracts.TaskFailed), string(contracts.TaskCanceled):
+	default:
+		return false
+	}
+	next := strings.TrimSpace(strings.ToLower(tv.SemanticNextAction))
+	return next == string(contracts.NextDone) || next == string(contracts.NextWaitUser)
+}
+
+// isWithinTerminalClosureGrace returns true when the task run is terminal with
+// a semantic done/wait_user and the semantic report is recent enough to be in
+// the closure grace window. If the report is older than the grace threshold,
+// the closure is assumed stuck and zombie recovery should proceed.
+func isWithinTerminalClosureGrace(tv contracts.TaskStatusView, now time.Time, grace time.Duration) bool {
+	if !isWorkerTaskRunTerminalButClosing(tv) {
+		return false
+	}
+	if grace <= 0 {
+		grace = defaultZombieClosureGrace
+	}
+	if tv.SemanticReportedAt != nil && !tv.SemanticReportedAt.IsZero() {
+		return now.Sub(*tv.SemanticReportedAt) < grace
+	}
+	// Fallback: if no semantic report timestamp, use latest activity.
+	lastSeen, ok := latestZombieActivityAt(tv)
+	if !ok {
+		return false
+	}
+	return now.Sub(lastSeen) < grace
 }
 
 func zombieRetryBackoff(retryCount int) time.Duration {
