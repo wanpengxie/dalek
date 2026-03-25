@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -305,5 +306,200 @@ func TestIntegration_FocusHandoff_StrictSerialDaemonOwnedE2E(t *testing.T) {
 	item2 := focusViewItemByTicketID(finalView.Items, tk2.ID)
 	if item2 == nil || item2.Status != contracts.FocusItemCompleted {
 		t.Fatalf("expected second focus item completed, got=%+v", item2)
+	}
+}
+
+// TestIntegration_ConvergentBatch_DaemonOwnedE2E verifies the convergent batch
+// end-to-end in a real daemon-owned execution path:
+//
+//	t1 starts → worker completes → merge → t2 starts → worker completes → merge → batch done → enter pm_run
+//
+// It also verifies that item.selected is emitted exactly once per item (no event storm).
+func TestIntegration_ConvergentBatch_DaemonOwnedE2E(t *testing.T) {
+	h, _ := newIntegrationHomeProject(t)
+	registry := NewProjectRegistry(h)
+	p, err := registry.Open("demo")
+	if err != nil {
+		t.Fatalf("registry Open failed: %v", err)
+	}
+	ctx := context.Background()
+
+	targetBranch := runGitForFocusRealIntegration(t, p.RepoRoot(), "branch", "--show-current")
+
+	tk1, err := p.CreateTicketWithDescription(ctx, "convergent batch t1", "first batch ticket")
+	if err != nil {
+		t.Fatalf("CreateTicket(t1) failed: %v", err)
+	}
+	tk2, err := p.CreateTicketWithDescription(ctx, "convergent batch t2", "second batch ticket")
+	if err != nil {
+		t.Fatalf("CreateTicket(t2) failed: %v", err)
+	}
+
+	var runMu sync.Mutex
+	runCounts := map[uint]int{}
+
+	p.pm.SetTaskRunner(integrationTaskRunnerFunc(func(ctx context.Context, req sdkrunner.Request, onEvent sdkrunner.EventHandler) (sdkrunner.Result, error) {
+		ticketID := requiredEnvUint(t, req.Env, "DALEK_TICKET_ID")
+		workerID := requiredEnvUint(t, req.Env, "DALEK_WORKER_ID")
+		worktreePath := strings.TrimSpace(req.WorkDir)
+
+		runMu.Lock()
+		runCounts[ticketID]++
+		runMu.Unlock()
+
+		// Each worker commits a unique file and reports done.
+		fileName := fmt.Sprintf("t%d.txt", ticketID)
+		headSHA := commitFileForFocusRealIntegration(t, worktreePath, fileName,
+			fmt.Sprintf("change from ticket %d\n", ticketID),
+			fmt.Sprintf("ticket %d worker change", ticketID))
+
+		writeWorkerLoopStateForIntegration(t, ticketID, workerID, worktreePath,
+			"done", fmt.Sprintf("ticket %d done", ticketID), nil, true, headSHA, "clean")
+		applyWorkerReportForIntegration(t, p, req,
+			"done", fmt.Sprintf("ticket %d done", ticketID), nil, false, false, headSHA)
+
+		if onEvent != nil {
+			onEvent(sdkrunner.Event{Type: "agent_message", Text: "convergent e2e"})
+		}
+		return sdkrunner.Result{
+			Provider:   "test",
+			OutputMode: sdkrunner.OutputModeJSONL,
+			Text:       "ok",
+		}, nil
+	}))
+
+	manager := newDaemonManagerComponent(h, nil, registry)
+	manager.interval = time.Hour
+	resolver := newDaemonProjectResolver(h, registry)
+	host, err := daemonsvc.NewExecutionHost(resolver, daemonsvc.ExecutionHostOptions{
+		OnRunSettled: manager.NotifyProject,
+	})
+	if err != nil {
+		t.Fatalf("NewExecutionHost failed: %v", err)
+	}
+	manager.setExecutionHost(host)
+
+	addr := reserveLoopbackAddr(t)
+	api, err := daemonsvc.NewInternalAPI(host, daemonsvc.InternalAPIConfig{ListenAddr: addr}, daemonsvc.InternalAPIOptions{})
+	if err != nil {
+		t.Fatalf("NewInternalAPI failed: %v", err)
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		_ = api.Stop(context.Background())
+		_ = manager.Stop(context.Background())
+		_ = host.Stop(context.Background())
+	})
+	if err := manager.Start(runCtx); err != nil {
+		t.Fatalf("manager Start failed: %v", err)
+	}
+	if err := api.Start(runCtx); err != nil {
+		t.Fatalf("InternalAPI Start failed: %v", err)
+	}
+	waitForManagerInitialTick(t, p, 3*time.Second)
+
+	client, err := NewDaemonAPIClient(DaemonAPIClientConfig{BaseURL: "http://" + addr})
+	if err != nil {
+		t.Fatalf("NewDaemonAPIClient failed: %v", err)
+	}
+
+	// Start convergent focus run with 2 tickets.
+	focusRes, err := client.FocusStart(ctx, DaemonFocusStartRequest{
+		Project: p.Name(),
+		FocusStartInput: FocusStartInput{
+			Mode:           contracts.FocusModeConvergent,
+			ScopeTicketIDs: []uint{tk1.ID, tk2.ID},
+			MaxPMRuns:      2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart convergent failed: %v", err)
+	}
+
+	// Wait for t1 to complete (worker runs + merge).
+	waitUntil(t, 15*time.Second, func() bool {
+		view, viewErr := p.FocusGet(ctx, focusRes.FocusID)
+		if viewErr != nil {
+			return false
+		}
+		item1 := focusViewItemByTicketID(view.Items, tk1.ID)
+		return item1 != nil && item1.Status == contracts.FocusItemCompleted
+	}, "t1 reaches completed")
+
+	// Clean up repo root to avoid clean-gate noise.
+	runGitForFocusRealIntegration(t, p.RepoRoot(), "checkout", targetBranch)
+	runGitForFocusRealIntegration(t, p.RepoRoot(), "reset", "--hard", "HEAD")
+	runGitForFocusRealIntegration(t, p.RepoRoot(), "clean", "-fd")
+
+	// Wait for t2 to start.
+	waitUntil(t, 10*time.Second, func() bool {
+		runMu.Lock()
+		defer runMu.Unlock()
+		return runCounts[tk2.ID] > 0
+	}, "t2 starts after t1 completes")
+
+	// Clean up again before t2 merge.
+	runGitForFocusRealIntegration(t, p.RepoRoot(), "checkout", targetBranch)
+	runGitForFocusRealIntegration(t, p.RepoRoot(), "reset", "--hard", "HEAD")
+	runGitForFocusRealIntegration(t, p.RepoRoot(), "clean", "-fd")
+
+	// Wait for t2 to complete.
+	waitUntil(t, 15*time.Second, func() bool {
+		view, viewErr := p.FocusGet(ctx, focusRes.FocusID)
+		if viewErr != nil {
+			return false
+		}
+		item2 := focusViewItemByTicketID(view.Items, tk2.ID)
+		return item2 != nil && item2.Status == contracts.FocusItemCompleted
+	}, "t2 reaches completed")
+
+	// Wait for convergent phase to transition to pm_run (batch done).
+	finalView := waitForFocusView(t, p, focusRes.FocusID, 10*time.Second, func(view FocusRunView) bool {
+		return strings.TrimSpace(view.Run.ConvergentPhase) == "pm_run" ||
+			view.Run.IsTerminal()
+	})
+
+	if strings.TrimSpace(finalView.Run.ConvergentPhase) != "pm_run" && !finalView.Run.IsTerminal() {
+		t.Fatalf("expected convergent phase=pm_run or terminal, got phase=%q status=%q",
+			finalView.Run.ConvergentPhase, finalView.Run.Status)
+	}
+
+	// The run must NOT be stuck at blocked.
+	if finalView.Run.Status == contracts.FocusBlocked {
+		t.Fatalf("convergent run should not be blocked after batch completion: %+v", finalView.Run)
+	}
+
+	// Verify item.selected event count: exactly 2 (one per ticket item).
+	db := mustProjectDB(t, p)
+	var selectedCount int64
+	db.Model(&contracts.FocusEvent{}).
+		Where("focus_run_id = ? AND kind = ?", focusRes.FocusID, contracts.FocusEventItemSelected).
+		Count(&selectedCount)
+	if selectedCount != 2 {
+		t.Errorf("expected exactly 2 item.selected events (one per item), got=%d", selectedCount)
+	}
+
+	// Verify both items completed.
+	finalItem1 := focusViewItemByTicketID(finalView.Items, tk1.ID)
+	finalItem2 := focusViewItemByTicketID(finalView.Items, tk2.ID)
+	if finalItem1 == nil || finalItem1.Status != contracts.FocusItemCompleted {
+		t.Errorf("expected t1 item completed, got=%+v", finalItem1)
+	}
+	if finalItem2 == nil || finalItem2.Status != contracts.FocusItemCompleted {
+		t.Errorf("expected t2 item completed, got=%+v", finalItem2)
+	}
+
+	// Verify run counts: each ticket should have exactly 1 worker run.
+	runMu.Lock()
+	t1Runs := runCounts[tk1.ID]
+	t2Runs := runCounts[tk2.ID]
+	runMu.Unlock()
+	if t1Runs != 1 {
+		t.Errorf("expected 1 run for t1, got=%d", t1Runs)
+	}
+	if t2Runs != 1 {
+		t.Errorf("expected 1 run for t2, got=%d", t2Runs)
 	}
 }

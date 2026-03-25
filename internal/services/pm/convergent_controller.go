@@ -180,12 +180,31 @@ func (s *Service) convergentTickBatch(ctx context.Context, run contracts.FocusRu
 	}
 
 	// If there's an active (non-terminal, non-pending) item in this round, tick it.
-	// But for convergent mode, a blocked item means the whole run is blocked.
+	// For blocked items, first delegate to the generic focus blocked self-healing
+	// logic (focusTickBlockedItem → focusConvergeBlockedItemToTicketTruth) which
+	// can recover items whose tickets are done+needs_merge or merged. Only if
+	// the item remains blocked after self-healing do we terminate the convergent run.
 	if view.ActiveItem != nil && roundTicketSet[view.ActiveItem.TicketID] {
 		activeStatus := strings.TrimSpace(view.ActiveItem.Status)
 		switch activeStatus {
 		case contracts.FocusItemBlocked:
-			return s.convergentSetTerminal(ctx, db, run, round, contracts.FocusBlocked, "batch item blocked")
+			if err := s.focusTickItem(ctx, run, *view.ActiveItem); err != nil {
+				return err
+			}
+			// Re-check item status after self-healing attempt.
+			var reloaded contracts.FocusRunItem
+			if err := db.WithContext(ctx).
+				Where("id = ?", view.ActiveItem.ID).
+				First(&reloaded).Error; err != nil {
+				return fmt.Errorf("convergent: reload item after blocked self-heal failed: %w", err)
+			}
+			if strings.TrimSpace(reloaded.Status) == contracts.FocusItemBlocked {
+				// Item is truly unrecoverable — terminate the convergent run.
+				return s.convergentSetTerminal(ctx, db, run, round, contracts.FocusBlocked, "batch item blocked")
+			}
+			// Item was healed (e.g. transitioned to merging/completed) — will be
+			// picked up by the next tick iteration.
+			return nil
 		case contracts.FocusItemFailed:
 			return s.convergentSetTerminal(ctx, db, run, round, contracts.FocusFailed, "batch item failed")
 		default:

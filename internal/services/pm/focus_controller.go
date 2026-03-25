@@ -127,12 +127,19 @@ func (s *Service) focusTickPendingItem(ctx context.Context, run contracts.FocusR
 	case contracts.FocusDesiredCanceling:
 		return s.focusSetRunTerminalWithOutstandingItems(ctx, run.ID, contracts.FocusCanceled, contracts.FocusItemCanceled)
 	}
-	// Guard: only emit item.selected when the item is first being selected
-	// (status is pending or empty). Already-queued items must not re-emit
-	// this event on every tick, otherwise focusAppendEvent → projectWake
-	// creates a tight self-wake loop.
+	// Guard: only emit item.selected once per activation attempt.
+	// Primary check: item status is already "queued" (fast path).
+	// Secondary check: if item is still "pending" but a prior tick already
+	// emitted item.selected (e.g. the subsequent status transition failed or
+	// was interrupted), verify via the events table. This prevents the
+	// focusAppendEvent → projectWake → re-tick → re-emit tight loop that
+	// causes item.selected event storms in real daemon event-wake paths.
 	alreadyQueued := strings.TrimSpace(item.Status) == contracts.FocusItemQueued
-	if !alreadyQueued {
+	alreadySelected := alreadyQueued
+	if !alreadySelected {
+		alreadySelected = s.focusItemAlreadySelectedInAttempt(ctx, run.ID, item.ID)
+	}
+	if !alreadySelected {
 		if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventItemSelected, "focus item selected", map[string]any{
 			"ticket_id": item.TicketID,
 			"seq":       item.Seq,
@@ -1178,6 +1185,27 @@ func (s *Service) focusAppendEvent(ctx context.Context, runID, itemID uint, kind
 		itemPtr = &itemID
 	}
 	return s.focusUpdateRunAndItem(ctx, runID, itemPtr, nil, nil, kind, summary, payload)
+}
+
+// focusItemAlreadySelectedInAttempt returns true if an item.selected event
+// has already been emitted for the given item in the current focus run.
+// This is a secondary dedup guard for the case where the item is still in
+// "pending" status but a prior tick already emitted the event (e.g. the
+// subsequent status transition was interrupted or failed).
+func (s *Service) focusItemAlreadySelectedInAttempt(ctx context.Context, runID, itemID uint) bool {
+	_, db, err := s.require()
+	if err != nil {
+		return false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var count int64
+	db.WithContext(ctx).Model(&contracts.FocusEvent{}).
+		Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?",
+			runID, itemID, contracts.FocusEventItemSelected).
+		Count(&count)
+	return count > 0
 }
 
 func (s *Service) focusRefreshExecutionBinding(ctx context.Context, runID, itemID uint, snapshot focusTicketSnapshot) error {

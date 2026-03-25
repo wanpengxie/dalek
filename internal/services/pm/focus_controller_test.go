@@ -1581,6 +1581,53 @@ func TestConvergentTick_QueuedItemNoRepeatedSelectedEvents(t *testing.T) {
 	}
 }
 
+// TestFocusTick_PendingItemNoRepeatedSelectedOnRetick verifies that even when
+// an item stays in "pending" status across multiple ticks (e.g. due to a
+// transient failure after event emission), item.selected is only emitted once.
+// This exercises the secondary DB-level dedup guard.
+func TestFocusTick_PendingItemNoRepeatedSelectedOnRetick(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "focus-pending-no-repeat")
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	// First tick: item transitions pending → queued, item.selected emitted.
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("first tick failed: %v", err)
+	}
+
+	// Force item back to pending (simulates a scenario where the status
+	// transition was lost/reverted, leaving the item in pending state).
+	if err := p.DB.Model(&contracts.FocusRunItem{}).
+		Where("focus_run_id = ?", res.FocusID).
+		Update("status", contracts.FocusItemPending).Error; err != nil {
+		t.Fatalf("force pending failed: %v", err)
+	}
+
+	// Tick again — the secondary DB dedup guard should prevent re-emission.
+	for i := 0; i < 5; i++ {
+		if err := svc.AdvanceFocusController(ctx); err != nil {
+			t.Fatalf("tick %d failed: %v", i+2, err)
+		}
+	}
+
+	var count int64
+	p.DB.Model(&contracts.FocusEvent{}).
+		Where("focus_run_id = ? AND kind = ?", res.FocusID, contracts.FocusEventItemSelected).
+		Count(&count)
+	if count != 1 {
+		t.Fatalf("expected exactly 1 item.selected event with DB-level dedup, got=%d", count)
+	}
+}
+
 func focusItemByTicketID(items []contracts.FocusRunItem, ticketID uint) *contracts.FocusRunItem {
 	for i := range items {
 		if items[i].TicketID == ticketID {

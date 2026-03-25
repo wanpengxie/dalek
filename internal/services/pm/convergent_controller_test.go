@@ -401,6 +401,91 @@ func TestConvergentTickBatch_ItemBlocked_RunBlocked(t *testing.T) {
 	}
 }
 
+// TestConvergentTickBatch_BlockedItemSelfHeals_DoneNeedsMerge verifies that a
+// convergent batch does NOT prematurely terminate when the active item is blocked
+// but the ticket has actually completed and needs merge. The generic focus
+// blocked self-healing should converge the item to "merging" instead.
+func TestConvergentTickBatch_BlockedItemSelfHeals_DoneNeedsMerge(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "conv-blocked-heals-needs-merge")
+	run, round := createConvergentRun(t, p.DB, []uint{tk.ID}, 5)
+
+	setConvergentPhase(t, p.DB, run.ID, "batch", contracts.FocusRunning)
+	setRoundBatchStatus(t, p.DB, round.ID, "running")
+	blockItem(t, p.DB, run.ID, tk.ID)
+
+	// Set ticket to done + needs_merge — the self-healing should recover.
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationNeedsMerge,
+	}).Error; err != nil {
+		t.Fatalf("set ticket done+needs_merge failed: %v", err)
+	}
+
+	view, _ := svc.focusViewForDB(ctx, p.DB, run.ID)
+	if err := svc.ConvergentTick(ctx, view); err != nil {
+		t.Fatalf("ConvergentTick blocked-self-heal failed: %v", err)
+	}
+
+	reloadedRun := loadFocusRun(t, p.DB, run.ID)
+	if reloadedRun.Status != contracts.FocusRunning {
+		t.Errorf("expected run status=running after self-heal, got=%q", reloadedRun.Status)
+	}
+
+	var reloadedItem contracts.FocusRunItem
+	if err := p.DB.Where("focus_run_id = ? AND ticket_id = ?", run.ID, tk.ID).First(&reloadedItem).Error; err != nil {
+		t.Fatalf("reload item failed: %v", err)
+	}
+	if reloadedItem.Status != contracts.FocusItemMerging {
+		t.Errorf("expected item status=merging after self-heal, got=%q", reloadedItem.Status)
+	}
+	if reloadedItem.BlockedReason != "" {
+		t.Errorf("expected blocked_reason cleared, got=%q", reloadedItem.BlockedReason)
+	}
+}
+
+// TestConvergentTickBatch_BlockedItemSelfHeals_DoneMerged verifies that a
+// convergent batch correctly completes a blocked item whose ticket is already merged.
+func TestConvergentTickBatch_BlockedItemSelfHeals_DoneMerged(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "conv-blocked-heals-merged")
+	run, round := createConvergentRun(t, p.DB, []uint{tk.ID}, 5)
+
+	setConvergentPhase(t, p.DB, run.ID, "batch", contracts.FocusRunning)
+	setRoundBatchStatus(t, p.DB, round.ID, "running")
+	blockItem(t, p.DB, run.ID, tk.ID)
+
+	// Set ticket to done + merged — the item should complete.
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationMerged,
+	}).Error; err != nil {
+		t.Fatalf("set ticket done+merged failed: %v", err)
+	}
+
+	view, _ := svc.focusViewForDB(ctx, p.DB, run.ID)
+	if err := svc.ConvergentTick(ctx, view); err != nil {
+		t.Fatalf("ConvergentTick blocked-self-heal-merged failed: %v", err)
+	}
+
+	reloadedRun := loadFocusRun(t, p.DB, run.ID)
+	if reloadedRun.Status != contracts.FocusRunning {
+		t.Errorf("expected run status=running after self-heal, got=%q", reloadedRun.Status)
+	}
+
+	var reloadedItem contracts.FocusRunItem
+	if err := p.DB.Where("focus_run_id = ? AND ticket_id = ?", run.ID, tk.ID).First(&reloadedItem).Error; err != nil {
+		t.Fatalf("reload item failed: %v", err)
+	}
+	if reloadedItem.Status != contracts.FocusItemCompleted {
+		t.Errorf("expected item status=completed after self-heal, got=%q", reloadedItem.Status)
+	}
+}
+
 func TestConvergentTickBatch_PMRunExhausted(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
