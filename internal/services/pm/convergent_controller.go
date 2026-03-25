@@ -81,9 +81,11 @@ func (s *Service) convergentStartNewRound(ctx context.Context, run contracts.Foc
 
 	// Find max seq in existing items.
 	var maxSeq int
-	db.WithContext(ctx).Model(&contracts.FocusRunItem{}).
+	if err := db.WithContext(ctx).Model(&contracts.FocusRunItem{}).
 		Where("focus_run_id = ?", run.ID).
-		Select("COALESCE(MAX(seq), 0)").Scan(&maxSeq)
+		Select("COALESCE(MAX(seq), 0)").Scan(&maxSeq).Error; err != nil {
+		return fmt.Errorf("convergent: 查询 max seq 失败: %w", err)
+	}
 
 	now := time.Now()
 	newRoundNumber := roundNumber + 1
@@ -374,6 +376,9 @@ func (s *Service) convergentSubmitPMRun(ctx context.Context, db *gorm.DB, run co
 }
 
 func (s *Service) convergentPollPMRun(ctx context.Context, db *gorm.DB, run contracts.FocusRun, round contracts.ConvergentRound) error {
+	if round.PMRunTaskRunID == nil {
+		return fmt.Errorf("convergent: PMRunTaskRunID is nil")
+	}
 	taskRunID := *round.PMRunTaskRunID
 
 	rt, err := s.taskRuntime()

@@ -74,6 +74,9 @@ func (s *Service) submitPMRun(ctx context.Context, submitter PMRunSubmitter, inp
 	}
 
 	// Resolve PM agent provider/model from config.
+	if s.p == nil {
+		return PMRunResult{}, fmt.Errorf("convergent: project config not initialized")
+	}
 	cfg := s.p.Config.WithDefaults().PMAgent
 	provider := strings.TrimSpace(cfg.Provider)
 	model := strings.TrimSpace(cfg.Model)
