@@ -335,7 +335,8 @@ func (s *Service) convergentSubmitPMRun(ctx context.Context, db *gorm.DB, run co
 	result, err := s.submitPMRun(ctx, submitter, input)
 	if err != nil {
 		return s.convergentSetTerminal(ctx, db, run, round, contracts.FocusFailed,
-			fmt.Sprintf("PM run 提交失败: %v", err))
+			fmt.Sprintf("PM run 提交失败: %v", err),
+			map[string]any{"pm_run_status": "failed"})
 	}
 
 	now := time.Now()
@@ -406,7 +407,8 @@ func (s *Service) convergentPollPMRun(ctx context.Context, db *gorm.DB, run cont
 				"round":       round.RoundNumber,
 				"task_run_id": taskRunID,
 				"status":      string(taskRun.OrchestrationState),
-			})
+			},
+			map[string]any{"pm_run_status": "failed"})
 
 	case contracts.TaskSucceeded:
 		return s.convergentHandlePMRunDone(ctx, db, run, round)
@@ -427,7 +429,8 @@ func (s *Service) convergentHandlePMRunDone(ctx context.Context, db *gorm.DB, ru
 		reviewDir, err = ensureReviewDir(repoRoot, run.ID, round.RoundNumber)
 		if err != nil {
 			return s.convergentSetTerminal(ctx, db, run, round, contracts.FocusFailed,
-				fmt.Sprintf("无法确定 review 目录: %v", err))
+				fmt.Sprintf("无法确定 review 目录: %v", err),
+				map[string]any{"pm_run_status": "failed"})
 		}
 	}
 
@@ -438,7 +441,8 @@ func (s *Service) convergentHandlePMRunDone(ctx context.Context, db *gorm.DB, ru
 			map[string]any{
 				"round": round.RoundNumber,
 				"error": err.Error(),
-			})
+			},
+			map[string]any{"pm_run_status": "failed"})
 	}
 
 	now := time.Now()
@@ -453,7 +457,8 @@ func (s *Service) convergentHandlePMRunDone(ctx context.Context, db *gorm.DB, ru
 				"total_pm_runs":    run.PMRunCount,
 				"original_tickets": scopeIDs,
 				"summary":          result.Summary,
-			})
+			},
+			map[string]any{"pm_run_status": "done", "verdict": "converged", "review_path": reviewDir})
 	}
 
 	// Not converged — needs fix.
@@ -464,7 +469,8 @@ func (s *Service) convergentHandlePMRunDone(ctx context.Context, db *gorm.DB, ru
 			map[string]any{
 				"round":   round.RoundNumber,
 				"verdict": "needs_fix",
-			})
+			},
+			map[string]any{"pm_run_status": "done", "verdict": "needs_fix", "review_path": reviewDir})
 	}
 
 	// Record fix tickets and prepare for new round.
@@ -542,7 +548,12 @@ func (s *Service) convergentHandleStop(ctx context.Context, run contracts.FocusR
 		}
 		switch taskRun.OrchestrationState {
 		case contracts.TaskSucceeded, contracts.TaskFailed, contracts.TaskCanceled:
-			return s.convergentSetTerminal(ctx, db, run, round, contracts.FocusStopped, "stopped after PM run completed")
+			pmStatus := "done"
+			if taskRun.OrchestrationState != contracts.TaskSucceeded {
+				pmStatus = "failed"
+			}
+			return s.convergentSetTerminal(ctx, db, run, round, contracts.FocusStopped, "stopped after PM run completed",
+				map[string]any{"pm_run_status": pmStatus})
 		default:
 			// Still running — wait for completion.
 			return nil
@@ -611,13 +622,20 @@ func convergentParseTicketIDs(raw string) ([]uint, error) {
 }
 
 // convergentSetTerminal moves the convergent run to a terminal state.
-func (s *Service) convergentSetTerminal(ctx context.Context, db *gorm.DB, run contracts.FocusRun, round contracts.ConvergentRound, status, reason string) error {
+// roundUpdates (optional) are extra fields merged into the round row update.
+func (s *Service) convergentSetTerminal(ctx context.Context, db *gorm.DB, run contracts.FocusRun, round contracts.ConvergentRound, status, reason string, roundUpdates ...map[string]any) error {
 	now := time.Now()
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).Model(&contracts.ConvergentRound{}).Where("id = ?", round.ID).Updates(map[string]any{
+		roundCols := map[string]any{
 			"finished_at": &now,
 			"updated_at":  now,
-		}).Error; err != nil {
+		}
+		for _, extra := range roundUpdates {
+			for k, v := range extra {
+				roundCols[k] = v
+			}
+		}
+		if err := tx.WithContext(ctx).Model(&contracts.ConvergentRound{}).Where("id = ?", round.ID).Updates(roundCols).Error; err != nil {
 			return err
 		}
 		if err := tx.WithContext(ctx).Model(&contracts.FocusRun{}).Where("id = ?", run.ID).Updates(map[string]any{
@@ -637,13 +655,20 @@ func (s *Service) convergentSetTerminal(ctx context.Context, db *gorm.DB, run co
 }
 
 // convergentSetTerminalWithEvent sets terminal state + appends an event.
-func (s *Service) convergentSetTerminalWithEvent(ctx context.Context, db *gorm.DB, run contracts.FocusRun, round contracts.ConvergentRound, status, eventKind, eventSummary string, payload map[string]any) error {
+// roundUpdates (optional) are extra fields merged into the round row update.
+func (s *Service) convergentSetTerminalWithEvent(ctx context.Context, db *gorm.DB, run contracts.FocusRun, round contracts.ConvergentRound, status, eventKind, eventSummary string, payload map[string]any, roundUpdates ...map[string]any) error {
 	now := time.Now()
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).Model(&contracts.ConvergentRound{}).Where("id = ?", round.ID).Updates(map[string]any{
+		roundCols := map[string]any{
 			"finished_at": &now,
 			"updated_at":  now,
-		}).Error; err != nil {
+		}
+		for _, extra := range roundUpdates {
+			for k, v := range extra {
+				roundCols[k] = v
+			}
+		}
+		if err := tx.WithContext(ctx).Model(&contracts.ConvergentRound{}).Where("id = ?", round.ID).Updates(roundCols).Error; err != nil {
 			return err
 		}
 		if err := tx.WithContext(ctx).Model(&contracts.FocusRun{}).Where("id = ?", run.ID).Updates(map[string]any{
