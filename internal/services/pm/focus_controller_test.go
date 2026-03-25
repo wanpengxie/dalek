@@ -1628,6 +1628,51 @@ func TestFocusTick_PendingItemNoRepeatedSelectedOnRetick(t *testing.T) {
 	}
 }
 
+// TestFocusTick_SelectedEventSilent_NoProjectWake verifies that the
+// item.selected event emission does NOT trigger projectWake, breaking the
+// item.selected → projectWake → re-tick → item.selected feedback loop.
+func TestFocusTick_SelectedEventSilent_NoProjectWake(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "focus-selected-silent")
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	// Track projectWake calls during the first tick (which emits item.selected).
+	wakeCalls := 0
+	svc.SetProjectWakeHook(func() {
+		wakeCalls++
+	})
+
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("first tick failed: %v", err)
+	}
+
+	// Verify item.selected was emitted.
+	var selectedCount int64
+	p.DB.Model(&contracts.FocusEvent{}).
+		Where("focus_run_id = ? AND kind = ?", res.FocusID, contracts.FocusEventItemSelected).
+		Count(&selectedCount)
+	if selectedCount != 1 {
+		t.Fatalf("expected 1 item.selected, got=%d", selectedCount)
+	}
+
+	// The item.selected event should NOT cause a projectWake.
+	// Only the subsequent state transition (pending→queued) should call
+	// projectWake. So we expect at most 1 wake call (from the state transition),
+	// not 2 (one from item.selected + one from state transition).
+	if wakeCalls > 1 {
+		t.Fatalf("expected at most 1 projectWake call (from state transition only), got=%d", wakeCalls)
+	}
+}
+
 func focusItemByTicketID(items []contracts.FocusRunItem, ticketID uint) *contracts.FocusRunItem {
 	for i := range items {
 		if items[i].TicketID == ticketID {

@@ -131,16 +131,21 @@ func (s *Service) focusTickPendingItem(ctx context.Context, run contracts.FocusR
 	// Primary check: item status is already "queued" (fast path).
 	// Secondary check: if item is still "pending" but a prior tick already
 	// emitted item.selected (e.g. the subsequent status transition failed or
-	// was interrupted), verify via the events table. This prevents the
-	// focusAppendEvent → projectWake → re-tick → re-emit tight loop that
-	// causes item.selected event storms in real daemon event-wake paths.
+	// was interrupted), verify via the events table.
+	// Uses focusAppendEventSilent (no projectWake) to break the
+	// item.selected → projectWake → re-tick → item.selected feedback loop.
+	// DB query errors abort the tick rather than silently allowing duplicates.
 	alreadyQueued := strings.TrimSpace(item.Status) == contracts.FocusItemQueued
 	alreadySelected := alreadyQueued
 	if !alreadySelected {
-		alreadySelected = s.focusItemAlreadySelectedInAttempt(ctx, run.ID, item.ID)
+		var checkErr error
+		alreadySelected, checkErr = s.focusItemAlreadySelectedInAttempt(ctx, run.ID, item.ID)
+		if checkErr != nil {
+			return checkErr
+		}
 	}
 	if !alreadySelected {
-		if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventItemSelected, "focus item selected", map[string]any{
+		if err := s.focusAppendEventSilent(ctx, run.ID, item.ID, contracts.FocusEventItemSelected, "focus item selected", map[string]any{
 			"ticket_id": item.TicketID,
 			"seq":       item.Seq,
 		}); err != nil {
@@ -1192,20 +1197,44 @@ func (s *Service) focusAppendEvent(ctx context.Context, runID, itemID uint, kind
 // This is a secondary dedup guard for the case where the item is still in
 // "pending" status but a prior tick already emitted the event (e.g. the
 // subsequent status transition was interrupted or failed).
-func (s *Service) focusItemAlreadySelectedInAttempt(ctx context.Context, runID, itemID uint) bool {
+// Returns an error on DB failure instead of silently defaulting to false,
+// which would allow duplicate item.selected emissions under high contention.
+func (s *Service) focusItemAlreadySelectedInAttempt(ctx context.Context, runID, itemID uint) (bool, error) {
 	_, db, err := s.require()
 	if err != nil {
-		return false
+		return false, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	var count int64
-	db.WithContext(ctx).Model(&contracts.FocusEvent{}).
+	if err := db.WithContext(ctx).Model(&contracts.FocusEvent{}).
 		Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?",
 			runID, itemID, contracts.FocusEventItemSelected).
-		Count(&count)
-	return count > 0
+		Count(&count).Error; err != nil {
+		return false, fmt.Errorf("focusItemAlreadySelectedInAttempt query failed: %w", err)
+	}
+	return count > 0, nil
+}
+
+// focusAppendEventSilent appends a focus event WITHOUT triggering projectWake.
+// This is specifically for item.selected to break the self-exciting feedback
+// loop: item.selected → projectWake → re-tick → item.selected.
+// The subsequent state transition will call projectWake naturally.
+func (s *Service) focusAppendEventSilent(ctx context.Context, runID, itemID uint, kind, summary string, payload any) error {
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var itemPtr *uint
+	if itemID != 0 {
+		itemPtr = &itemID
+	}
+	_, err = appendFocusEventTx(ctx, db, runID, itemPtr, strings.TrimSpace(kind), strings.TrimSpace(summary), payload, time.Now())
+	return err
 }
 
 func (s *Service) focusRefreshExecutionBinding(ctx context.Context, runID, itemID uint, snapshot focusTicketSnapshot) error {

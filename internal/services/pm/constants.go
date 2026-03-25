@@ -37,6 +37,7 @@ const (
 	managerStartTimeout = 5*time.Minute + 30*time.Second
 
 	defaultZombieStallThreshold  = 10 * time.Minute
+	defaultZombieClosureGrace    = 5 * time.Minute // grace window for terminal closure in progress
 	defaultZombieMaxRetries      = 3
 	defaultZombieRetryBackoff    = 60 * time.Second
 	defaultZombieRetryBackoffMax = 10 * time.Minute
