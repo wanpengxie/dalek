@@ -209,6 +209,9 @@ func (s *Service) RescanMergeStatus(ctx context.Context, ref string) (RescanResu
 		}
 		out.Results = append(out.Results, res)
 	}
+	// Always wake the project after rescan so that any newly-merged tickets
+	// (including those marked merged by external processes) trigger focus advancement.
+	s.projectWake()
 	return out, nil
 }
 

@@ -526,7 +526,29 @@ func (s *Service) focusResolveHandoffBlockedItem(ctx context.Context, run contra
 		return err
 	}
 	if contracts.CanonicalIntegrationStatus(replacement.IntegrationStatus) != contracts.IntegrationMerged {
-		return nil
+		// Proactively sync merge status for replacement ticket that is done but not yet observed as merged.
+		// This mirrors the pattern in focusTickAwaitingMergeObservation: resolve the target ref and call SyncRef
+		// so that the merge observation happens eagerly rather than waiting for the next external trigger.
+		if contracts.CanonicalTicketWorkflowStatus(replacement.WorkflowStatus) == contracts.TicketDone &&
+			contracts.CanonicalIntegrationStatus(replacement.IntegrationStatus) == contracts.IntegrationNeedsMerge {
+			targetRef := strings.TrimSpace(replacement.TargetBranch)
+			if targetRef == "" {
+				targetRef = s.targetBranchForTicket(ctx, replacementTicketID)
+			}
+			if newSHA, err := s.resolveRefCommit(ctx, targetRef); err == nil {
+				_, _ = s.SyncRef(ctx, targetRef, "", newSHA)
+			}
+			// Re-load replacement ticket to check if SyncRef marked it as merged.
+			replacement, err = s.focusLoadTicketOnly(ctx, replacementTicketID)
+			if err != nil {
+				return err
+			}
+			if contracts.CanonicalIntegrationStatus(replacement.IntegrationStatus) != contracts.IntegrationMerged {
+				return nil
+			}
+		} else {
+			return nil
+		}
 	}
 
 	source, err := s.focusLoadTicketOnly(ctx, item.TicketID)
