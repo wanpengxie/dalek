@@ -802,24 +802,73 @@ func TestConvergentHandleStop_PMRunPhase_Completed(t *testing.T) {
 	}
 }
 
-func TestConvergentHandleCancel(t *testing.T) {
+func TestConvergentHandleCancel_BatchPhase_RoundStatusUpdated(t *testing.T) {
 	svc, p, _ := newServiceForTest(t)
 	ctx := context.Background()
 
-	tk := createTicket(t, p.DB, "conv-cancel")
-	run, _ := createConvergentRun(t, p.DB, []uint{tk.ID}, 5)
+	tk := createTicket(t, p.DB, "conv-cancel-batch")
+	run, round := createConvergentRun(t, p.DB, []uint{tk.ID}, 5)
 
 	setConvergentPhase(t, p.DB, run.ID, "batch", contracts.FocusRunning)
+	setRoundBatchStatus(t, p.DB, round.ID, "running")
 	p.DB.Model(&contracts.FocusRun{}).Where("id = ?", run.ID).Update("desired_state", contracts.FocusDesiredCanceling)
 
 	view, _ := svc.focusViewForDB(ctx, p.DB, run.ID)
 	if err := svc.ConvergentTick(ctx, view); err != nil {
-		t.Fatalf("ConvergentTick cancel failed: %v", err)
+		t.Fatalf("ConvergentTick cancel-batch failed: %v", err)
 	}
 
 	reloaded := loadFocusRun(t, p.DB, run.ID)
 	if reloaded.Status != contracts.FocusCanceled {
-		t.Errorf("expected status=canceled, got=%q", reloaded.Status)
+		t.Errorf("expected run status=canceled, got=%q", reloaded.Status)
+	}
+
+	rr := loadLatestRound(t, p.DB, run.ID)
+	if rr.BatchStatus != "canceled" {
+		t.Errorf("expected round batch_status=canceled, got=%q", rr.BatchStatus)
+	}
+	if rr.FinishedAt == nil {
+		t.Error("expected round finished_at to be set after cancel")
+	}
+}
+
+func TestConvergentHandleCancel_PMRunPhase_RoundStatusUpdated(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "conv-cancel-pmrun")
+	run, round := createConvergentRun(t, p.DB, []uint{tk.ID}, 5)
+
+	setConvergentPhase(t, p.DB, run.ID, "pm_run", contracts.FocusRunning)
+	setRoundBatchStatus(t, p.DB, round.ID, "completed")
+	completeAllItems(t, p.DB, run.ID)
+
+	taskRun := createTaskRunForTest(t, p.DB, contracts.TaskRunning)
+	setPMRunTaskRunID(t, p.DB, round.ID, taskRun.ID)
+	p.DB.Model(&contracts.FocusRun{}).Where("id = ?", run.ID).Updates(map[string]any{
+		"desired_state": contracts.FocusDesiredCanceling,
+		"pm_run_count":  1,
+	})
+
+	view, _ := svc.focusViewForDB(ctx, p.DB, run.ID)
+	if err := svc.ConvergentTick(ctx, view); err != nil {
+		t.Fatalf("ConvergentTick cancel-pmrun failed: %v", err)
+	}
+
+	reloaded := loadFocusRun(t, p.DB, run.ID)
+	if reloaded.Status != contracts.FocusCanceled {
+		t.Errorf("expected run status=canceled, got=%q", reloaded.Status)
+	}
+
+	rr := loadLatestRound(t, p.DB, run.ID)
+	if rr.PMRunStatus != "canceled" {
+		t.Errorf("expected round pm_run_status=canceled, got=%q", rr.PMRunStatus)
+	}
+	if rr.PMRunStatus == "running" {
+		t.Error("round pm_run_status must NOT remain 'running' after cancel")
+	}
+	if rr.FinishedAt == nil {
+		t.Error("expected round finished_at to be set after cancel")
 	}
 }
 

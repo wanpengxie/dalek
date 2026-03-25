@@ -570,8 +570,10 @@ func (s *Service) convergentHandleCancel(ctx context.Context, run contracts.Focu
 		return err
 	}
 
+	phase := strings.TrimSpace(run.ConvergentPhase)
+
 	// Cancel active task runs if any.
-	if strings.TrimSpace(run.ConvergentPhase) == "pm_run" {
+	if phase == "pm_run" {
 		round, err := s.convergentCurrentRound(ctx, db, run.ID)
 		if err == nil && round.PMRunTaskRunID != nil {
 			if rt, err := s.taskRuntime(); err == nil {
@@ -589,7 +591,22 @@ func (s *Service) convergentHandleCancel(ctx context.Context, run contracts.Focu
 		}
 	}
 
-	return s.focusSetRunTerminalWithOutstandingItems(ctx, run.ID, contracts.FocusCanceled, contracts.FocusItemCanceled)
+	// Update round state to reflect cancellation, then terminate run + items.
+	round, err := s.convergentCurrentRound(ctx, db, run.ID)
+	if err != nil {
+		// No round found (shouldn't happen) — fall back to run-level terminal.
+		return s.focusSetRunTerminalWithOutstandingItems(ctx, run.ID, contracts.FocusCanceled, contracts.FocusItemCanceled)
+	}
+
+	var roundUpdates map[string]any
+	switch phase {
+	case "pm_run":
+		roundUpdates = map[string]any{"pm_run_status": "canceled"}
+	case "batch":
+		roundUpdates = map[string]any{"batch_status": "canceled"}
+	}
+
+	return s.convergentSetTerminal(ctx, db, run, round, contracts.FocusCanceled, "canceled by user", roundUpdates)
 }
 
 // ---------------------------------------------------------------------------
