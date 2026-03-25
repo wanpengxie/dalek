@@ -127,11 +127,18 @@ func (s *Service) focusTickPendingItem(ctx context.Context, run contracts.FocusR
 	case contracts.FocusDesiredCanceling:
 		return s.focusSetRunTerminalWithOutstandingItems(ctx, run.ID, contracts.FocusCanceled, contracts.FocusItemCanceled)
 	}
-	if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventItemSelected, "focus item selected", map[string]any{
-		"ticket_id": item.TicketID,
-		"seq":       item.Seq,
-	}); err != nil {
-		return err
+	// Guard: only emit item.selected when the item is first being selected
+	// (status is pending or empty). Already-queued items must not re-emit
+	// this event on every tick, otherwise focusAppendEvent → projectWake
+	// creates a tight self-wake loop.
+	alreadyQueued := strings.TrimSpace(item.Status) == contracts.FocusItemQueued
+	if !alreadyQueued {
+		if err := s.focusAppendEvent(ctx, run.ID, item.ID, contracts.FocusEventItemSelected, "focus item selected", map[string]any{
+			"ticket_id": item.TicketID,
+			"seq":       item.Seq,
+		}); err != nil {
+			return err
+		}
 	}
 	snapshot, err := s.focusLoadTicketSnapshot(ctx, item.TicketID)
 	if err != nil {
@@ -158,12 +165,24 @@ func (s *Service) focusTickPendingItem(ctx context.Context, run contracts.FocusR
 		if snapshot.ActiveRun != nil {
 			return s.focusAdoptExecutingItem(ctx, run, item, snapshot)
 		}
+		// Guard: if item is already queued and ticket is still queued with no
+		// active run, there is no state to advance — return nil to avoid
+		// a no-op focusQueueItem → projectWake tight loop.
+		if alreadyQueued {
+			return nil
+		}
 		return s.focusQueueItem(ctx, run, item, focusWorkerID(snapshot.Worker), focusNextAttempt(item.CurrentAttempt), false, "", "", nil)
 	case contracts.TicketBlocked:
 		return s.focusRestartOrBlock(ctx, run, item, snapshot, focusNextAttempt(item.CurrentAttempt))
 	case contracts.TicketArchived:
 		return s.focusBlockItem(ctx, run, item, focusBlockedReasonStartFailed, "ticket 已归档")
 	default:
+		// Guard: if item is already queued but ticket is still in its initial
+		// state (e.g. backlog), the start was already attempted — return nil
+		// to avoid re-starting and re-queuing in a tight loop.
+		if alreadyQueued {
+			return nil
+		}
 		baseBranch, berr := requiredWorkerBaseBranch(snapshot.Ticket)
 		if berr != nil {
 			return s.focusBlockItem(ctx, run, item, focusBlockedReasonStartFailed, berr.Error())

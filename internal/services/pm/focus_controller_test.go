@@ -1384,6 +1384,203 @@ func TestFocusAddTickets_AllSkippedNoEvent(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Regression: queued item must not emit repeated item.selected events (t137)
+// ---------------------------------------------------------------------------
+
+func TestFocusTick_QueuedItemNoRepeatedSelectedEvents(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "focus-queued-no-repeat")
+
+	// Start focus and advance once — item transitions pending → queued.
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("first tick failed: %v", err)
+	}
+
+	// Count item.selected events after first tick.
+	var firstCount int64
+	p.DB.Model(&contracts.FocusEvent{}).
+		Where("focus_run_id = ? AND kind = ?", res.FocusID, contracts.FocusEventItemSelected).
+		Count(&firstCount)
+	if firstCount != 1 {
+		t.Fatalf("expected exactly 1 item.selected after first tick, got=%d", firstCount)
+	}
+
+	// Tick multiple more times — item is already queued, no new events.
+	for i := 0; i < 5; i++ {
+		if err := svc.AdvanceFocusController(ctx); err != nil {
+			t.Fatalf("tick %d failed: %v", i+2, err)
+		}
+	}
+
+	var afterCount int64
+	p.DB.Model(&contracts.FocusEvent{}).
+		Where("focus_run_id = ? AND kind = ?", res.FocusID, contracts.FocusEventItemSelected).
+		Count(&afterCount)
+	if afterCount != 1 {
+		t.Fatalf("expected item.selected count to stay 1 after repeated ticks, got=%d", afterCount)
+	}
+}
+
+func TestFocusTick_QueuedItemNoProjectWakeLoop(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "focus-queued-no-wake-loop")
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	// First tick: pending → queued.
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("first tick failed: %v", err)
+	}
+
+	// Track projectWake calls during subsequent ticks.
+	wakeCalls := 0
+	svc.SetProjectWakeHook(func() {
+		wakeCalls++
+	})
+
+	// Subsequent ticks on queued item should NOT trigger projectWake.
+	for i := 0; i < 5; i++ {
+		if err := svc.AdvanceFocusController(ctx); err != nil {
+			t.Fatalf("tick %d failed: %v", i+2, err)
+		}
+	}
+
+	if wakeCalls > 0 {
+		t.Fatalf("expected 0 projectWake calls for already-queued item, got=%d", wakeCalls)
+	}
+
+	// Verify item is still queued and run is still active.
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+	item := focusItemByTicketID(view.Items, tk.ID)
+	if item == nil || item.Status != contracts.FocusItemQueued {
+		t.Fatalf("expected item queued, got=%+v", item)
+	}
+}
+
+func TestFocusTick_NormalTransitionNotBroken(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk1 := createTicket(t, p.DB, "focus-normal-transition-1")
+	tk2 := createTicket(t, p.DB, "focus-normal-transition-2")
+
+	// Pre-mark tk1 as done+merged so it completes immediately.
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk1.ID).Updates(map[string]any{
+		"workflow_status":    contracts.TicketDone,
+		"integration_status": contracts.IntegrationMerged,
+	}).Error; err != nil {
+		t.Fatalf("prep tk1 failed: %v", err)
+	}
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk1.ID, tk2.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	// First tick: tk1 completes, tk2 should be picked up.
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("first tick failed: %v", err)
+	}
+
+	view, err := svc.FocusGet(ctx, res.FocusID)
+	if err != nil {
+		t.Fatalf("FocusGet failed: %v", err)
+	}
+
+	item1 := focusItemByTicketID(view.Items, tk1.ID)
+	if item1 == nil || item1.Status != contracts.FocusItemCompleted {
+		t.Fatalf("expected tk1 completed, got=%+v", item1)
+	}
+
+	item2 := focusItemByTicketID(view.Items, tk2.ID)
+	if item2 == nil || item2.Status != contracts.FocusItemQueued {
+		t.Fatalf("expected tk2 queued after tk1 completion, got=%+v", item2)
+	}
+
+	// Verify item.selected was emitted for both items (one each).
+	var selectedCount int64
+	p.DB.Model(&contracts.FocusEvent{}).
+		Where("focus_run_id = ? AND kind = ?", res.FocusID, contracts.FocusEventItemSelected).
+		Count(&selectedCount)
+	if selectedCount != 2 {
+		t.Fatalf("expected 2 item.selected events (one per item), got=%d", selectedCount)
+	}
+}
+
+func TestConvergentTick_QueuedItemNoRepeatedSelectedEvents(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "convergent-queued-no-repeat")
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeConvergent,
+		ScopeTicketIDs: []uint{tk.ID},
+		MaxPMRuns:      3,
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	// First tick: starts the round and transitions to batch phase.
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("first tick failed: %v", err)
+	}
+
+	// Second tick: processes the pending item → queued.
+	if err := svc.AdvanceFocusController(ctx); err != nil {
+		t.Fatalf("second tick failed: %v", err)
+	}
+
+	var firstCount int64
+	p.DB.Model(&contracts.FocusEvent{}).
+		Where("focus_run_id = ? AND kind = ?", res.FocusID, contracts.FocusEventItemSelected).
+		Count(&firstCount)
+	if firstCount != 1 {
+		t.Fatalf("expected 1 item.selected after initial selection, got=%d", firstCount)
+	}
+
+	// Multiple further ticks — queued item should not re-emit.
+	for i := 0; i < 5; i++ {
+		if err := svc.AdvanceFocusController(ctx); err != nil {
+			t.Fatalf("tick %d failed: %v", i+3, err)
+		}
+	}
+
+	var afterCount int64
+	p.DB.Model(&contracts.FocusEvent{}).
+		Where("focus_run_id = ? AND kind = ?", res.FocusID, contracts.FocusEventItemSelected).
+		Count(&afterCount)
+	if afterCount != 1 {
+		t.Fatalf("expected item.selected count to stay 1 in convergent mode, got=%d", afterCount)
+	}
+}
+
 func focusItemByTicketID(items []contracts.FocusRunItem, ticketID uint) *contracts.FocusRunItem {
 	for i := range items {
 		if items[i].TicketID == ticketID {
