@@ -85,6 +85,10 @@ func RunDaemon(ctx context.Context, paths DaemonPaths, logger *slog.Logger) erro
 		notifierLogger := logger.With("project", strings.TrimSpace(projectName), "service", "pm_status_notifier")
 		return pmsvc.NewGatewayStatusNotifier(projectName, p.core.DB, internalSendDB, gatewayResolver, gatewaySender, notifierLogger)
 	})
+	manager.setConvergentNotifyFactory(func(projectName string, p *Project) pmsvc.ConvergentNotifier {
+		convergentLogger := logger.With("project", strings.TrimSpace(projectName), "service", "convergent_notifier")
+		return pmsvc.NewGatewayConvergentNotifier(projectName, internalSendDB, gatewayResolver, gatewaySender, convergentLogger)
+	})
 	internalAPI, err := daemonsvc.NewInternalAPI(host, daemonsvc.InternalAPIConfig{
 		ListenAddr: strings.TrimSpace(cfg.Daemon.Internal.Listen),
 	}, daemonsvc.InternalAPIOptions{

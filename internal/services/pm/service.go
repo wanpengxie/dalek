@@ -43,6 +43,8 @@ type Service struct {
 	queueWakeCh       chan struct{}
 	queueConsumerOnce sync.Once
 
+	// convergentNotifier 用于 convergent 模式 PM review 结果的飞书推送。
+	convergentNotifier ConvergentNotifier
 	// pmSubmitter 用于 convergent 模式的 PM run 提交。
 	pmSubmitter PMRunSubmitter
 	// sdkHandleLauncher 用于测试注入，生产环境保持 nil（使用真实的 launchWorkerSDKHandle）。
@@ -158,6 +160,25 @@ func (s *Service) require() (*core.Project, *gorm.DB, error) {
 		return nil, nil, fmt.Errorf("pm service 缺少 task runtime")
 	}
 	return s.p, s.p.DB, nil
+}
+
+// SetConvergentNotifier injects a ConvergentNotifier for Feishu push.
+func (s *Service) SetConvergentNotifier(n ConvergentNotifier) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.convergentNotifier = n
+}
+
+func (s *Service) getConvergentNotifier() ConvergentNotifier {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.convergentNotifier
 }
 
 func (s *Service) SetTaskRunner(runner sdkrunner.TaskRunner) {

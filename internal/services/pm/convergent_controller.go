@@ -273,6 +273,7 @@ func (s *Service) convergentTickBatch(ctx context.Context, run contracts.FocusRu
 
 	// Check PM run exhaustion BEFORE transitioning.
 	if run.PMRunCount >= run.MaxPMRuns {
+		s.convergentNotifyAsync(convergentBuildExhaustedText(run, round))
 		return s.convergentSetTerminalWithEvent(ctx, db, run, round, contracts.FocusExhausted,
 			contracts.FocusEventConvergentExhausted, "convergent exhausted: PM run limit reached",
 			map[string]any{
@@ -474,6 +475,7 @@ func (s *Service) convergentHandlePMRunDone(ctx context.Context, db *gorm.DB, ru
 
 	if result.Converged {
 		// Converged! Terminal state.
+		s.convergentNotifyAsync(convergentBuildConvergedText(run, round, result))
 		scopeIDs, _ := convergentParseTicketIDs(run.ScopeTicketIDs)
 		return s.convergentSetTerminalWithEvent(ctx, db, run, round, contracts.FocusConverged,
 			contracts.FocusEventConvergentConverged, "convergent converged",
@@ -533,6 +535,7 @@ func (s *Service) convergentHandlePMRunDone(ctx context.Context, db *gorm.DB, ru
 	if err != nil {
 		return err
 	}
+	s.convergentNotifyAsync(convergentBuildNeedsFixText(run, round, result))
 	s.projectWake()
 	return nil
 }

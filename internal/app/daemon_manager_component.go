@@ -44,7 +44,8 @@ type daemonManagerComponent struct {
 
 	recoveryOnce sync.Once
 
-	statusHookFactory func(projectName string, p *Project) pmsvc.WorkflowStatusChangeHook
+	statusHookFactory       func(projectName string, p *Project) pmsvc.WorkflowStatusChangeHook
+	convergentNotifyFactory func(projectName string, p *Project) pmsvc.ConvergentNotifier
 }
 
 type recoveryProjectSummary struct {
@@ -85,6 +86,13 @@ func (m *daemonManagerComponent) setStatusChangeHookFactory(factory func(project
 		return
 	}
 	m.statusHookFactory = factory
+}
+
+func (m *daemonManagerComponent) setConvergentNotifyFactory(factory func(projectName string, p *Project) pmsvc.ConvergentNotifier) {
+	if m == nil {
+		return
+	}
+	m.convergentNotifyFactory = factory
 }
 
 func (m *daemonManagerComponent) Name() string {
@@ -377,6 +385,9 @@ func (m *daemonManagerComponent) runTickProject(parent context.Context, projectN
 	}
 	if m.statusHookFactory != nil && p != nil && p.pm != nil {
 		p.pm.SetStatusChangeHook(m.statusHookFactory(projectName, p))
+	}
+	if m.convergentNotifyFactory != nil && p != nil && p.pm != nil {
+		p.pm.SetConvergentNotifier(m.convergentNotifyFactory(projectName, p))
 	}
 	tickCtx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	res, err := p.ManagerTick(tickCtx, ManagerTickOptions{})

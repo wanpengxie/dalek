@@ -26,4 +26,7 @@ func (h *Home) wireStatusChangeHook(p *Project, projectName string) {
 	logger := core.EnsureLogger(p.core.Logger).With("project", projectName, "service", "pm_status_outbox_notifier")
 	hook := pmsvc.NewOutboxEnqueueStatusNotifier(projectName, p.core.DB, gatewayDB, logger)
 	p.pm.SetStatusChangeHook(hook)
+
+	convergentLogger := core.EnsureLogger(p.core.Logger).With("project", projectName, "service", "convergent_outbox_notifier")
+	p.pm.SetConvergentNotifier(pmsvc.NewOutboxConvergentNotifier(projectName, gatewayDB, convergentLogger))
 }
