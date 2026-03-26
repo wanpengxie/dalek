@@ -21,6 +21,7 @@ type PMRunInput struct {
 	RoundNumber int    // 1-based round number
 	TicketIDs   []uint // ticket IDs executed in this batch round
 	ReviewDir   string // review output directory
+	ReviewScope string // review-first 模式：自定义审查范围描述（替代 ticket 列表）
 }
 
 // PMRunResult is the parsed result of a PM agent run.
@@ -161,7 +162,12 @@ func parsePMRunResult(reviewDir string) (PMRunResult, error) {
 // buildPMRunPrompt constructs the full PM agent prompt following spec §8.
 // All dynamic variables ({focus_id}, {round_number}, {ticket_ids},
 // {review_output_dir}) are interpolated into the template.
+// When ReviewScope is set, it replaces the ticket-based review scope.
 func buildPMRunPrompt(input PMRunInput) string {
+	reviewScope := strings.TrimSpace(input.ReviewScope)
+	if reviewScope != "" {
+		return buildPMRunPromptWithReviewScope(input, reviewScope)
+	}
 	ticketList := buildTicketIDList(input.TicketIDs)
 	reviewDir := strings.TrimSpace(input.ReviewDir)
 
@@ -262,6 +268,126 @@ dalek agent run --sync --provider claude --timeout 30m --prompt "
 		reviewDir,
 		// Step 2 claude
 		ticketList,
+		reviewDir,
+		// Step 3
+		reviewDir,
+		reviewDir,
+		// Step 4
+		reviewDir,
+		input.RoundNumber,
+		// 输出约定
+		reviewDir,
+	)
+}
+
+// buildPMRunPromptWithReviewScope constructs the PM prompt for review-first mode.
+// Instead of reviewing batch ticket deliveries, it reviews code based on a
+// user-provided scope description (e.g., "审查 main 分支最近 5 个 commits").
+func buildPMRunPromptWithReviewScope(input PMRunInput, reviewScope string) string {
+	reviewDir := strings.TrimSpace(input.ReviewDir)
+
+	return fmt.Sprintf(`你是 PM agent。你的任务是根据指定的审查范围审查代码并决定是否需要修复。
+
+## 上下文
+- Convergent Focus ID: %d
+- 当前轮次: Round %d
+- Review 输出目录: %s
+
+## 审查范围
+%s
+
+请根据上述范围审查代码。你可以使用 git log、git diff、文件读取等工具来理解代码变更。
+
+## 你的工作流程
+
+### Step 1: 分析审查范围
+根据审查范围描述，使用 git 命令和文件读取理解代码变更：
+- `+"`git log`"+`、`+"`git diff`"+` 等命令了解变更内容
+- 阅读相关源文件理解上下文
+
+### Step 2: 调起多角度 code review
+从不同 AI 模型获取独立审查意见：
+
+`+"```"+`bash
+dalek agent run --sync --provider codex --timeout 30m --prompt "
+你是 code reviewer。审查范围：%s。
+审查重点：正确性、安全性、边界条件、测试覆盖、架构一致性。
+对每个问题标注严重级别：critical（bug/安全）、major（质量）、minor（建议）、style（风格）。
+将审查结果写入 %s/review-codex.md
+"
+`+"```"+`
+
+`+"```"+`bash
+dalek agent run --sync --provider claude --timeout 30m --prompt "
+你是 code reviewer。审查范围：%s。
+审查重点：正确性、安全性、边界条件、测试覆盖、架构一致性。
+对每个问题标注严重级别：critical（bug/安全）、major（质量）、minor（建议）、style（风格）。
+将审查结果写入 %s/review-claude.md
+"
+`+"```"+`
+
+### Step 3: 批判性综合
+读取两份 review 结果（%s/review-codex.md 和 review-claude.md），批判性地整理：
+
+1. 识别两份 review 的共同发现和独立发现
+2. 过滤误判：
+   - 对正确代码的错误指摘
+   - 对已有测试覆盖的遗漏指摘
+   - 过度保守的风格建议
+   - severity=style 的纯风格问题
+3. 只保留真正的 bug 和 blocker（critical/major 级别）
+4. 将综合分析写入 %s/synthesis.md
+
+### Step 4: 判定与执行
+
+**若无有效 bug/blocker（收敛）**：
+- 在 synthesis.md 中记录 "verdict: converged"
+- 直接退出
+
+**若有 bug/blocker 需要修复**：
+- 将修复 spec 写入 %s/fix-spec.md
+- 为每个修复项创建 ticket：
+  `+"```"+`bash
+  dalek ticket create --title "[fix] R%d: {问题简述}" \
+      --description "修复描述（含问题定位、修复指导、涉及文件）" \
+      --label convergent-fix \
+      --priority high
+  `+"```"+`
+- 创建完毕后，清理 repo root：
+  `+"```"+`bash
+  git checkout -- .
+  git clean -fd
+  `+"```"+`
+  并验证 `+"`git status`"+` 干净
+- 退出
+
+## 输出约定
+退出前，请在 %s/result.json 中写入：
+`+"```"+`json
+{
+  "verdict": "converged|needs_fix",
+  "fix_ticket_ids": [若有，新创建的 ticket IDs],
+  "effective_issues_count": 有效问题数,
+  "filtered_issues_count": 被过滤问题数,
+  "summary": "一句话总结"
+}
+`+"```"+`
+
+## 硬约束
+- 你不直接修复代码，只审查和派发
+- 修复通过创建 ticket 委托给 worker
+- 清理 repo root 是你退出前的必须动作（如果创建了 fix tickets）
+- review 文档必须落盘到指定目录`,
+		input.FocusID,
+		input.RoundNumber,
+		reviewDir,
+		// 审查范围
+		reviewScope,
+		// Step 2 codex
+		reviewScope,
+		reviewDir,
+		// Step 2 claude
+		reviewScope,
 		reviewDir,
 		// Step 3
 		reviewDir,

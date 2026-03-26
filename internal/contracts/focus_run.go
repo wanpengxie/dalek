@@ -25,6 +25,7 @@ type FocusRun struct {
 	MaxPMRuns       int    `gorm:"default:5" json:"max_pm_runs"`
 	PMRunCount      int    `gorm:"default:0" json:"pm_run_count"`
 	ConvergentPhase string `gorm:"type:varchar(32);default:''" json:"convergent_phase"` // "batch" | "pm_run" | ""
+	ReviewScope     string `gorm:"type:text;default:''" json:"review_scope"`            // review-first 模式的审查范围描述
 
 	StartedAt  *time.Time `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at"`
@@ -83,7 +84,8 @@ type FocusStartInput struct {
 	RequestID      string `json:"request_id"`
 
 	// convergent 专属
-	MaxPMRuns int `json:"max_pm_runs,omitempty"` // 默认 5, 上限 10
+	MaxPMRuns   int    `json:"max_pm_runs,omitempty"`   // 默认 5, 上限 10
+	ReviewScope string `json:"review_scope,omitempty"` // review-first 模式：跳过 batch，直接进入 PM review
 }
 
 type FocusStartResult struct {

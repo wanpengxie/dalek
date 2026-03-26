@@ -1152,3 +1152,156 @@ func TestConvergentItemStatusForRun(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Review-first mode tests
+// ---------------------------------------------------------------------------
+
+// TestFocusStart_ReviewFirst_Round1DirectlyPMRun verifies that when ReviewScope
+// is provided and no tickets, FocusStart creates a run that directly starts
+// in pm_run phase with batch_status=completed.
+func TestFocusStart_ReviewFirst_Round1DirectlyPMRun(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	result, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:        contracts.FocusModeConvergent,
+		MaxPMRuns:   3,
+		ReviewScope: "审查 main 分支最近 5 个 commits 的代码变更",
+	})
+	if err != nil {
+		t.Fatalf("FocusStart review-first failed: %v", err)
+	}
+	if !result.Created {
+		t.Fatal("expected run to be created")
+	}
+
+	run := loadFocusRun(t, p.DB, result.FocusID)
+
+	// Phase should be pm_run directly (skip batch)
+	if run.ConvergentPhase != "pm_run" {
+		t.Errorf("expected convergent_phase=pm_run, got=%q", run.ConvergentPhase)
+	}
+	if run.ReviewScope != "审查 main 分支最近 5 个 commits 的代码变更" {
+		t.Errorf("expected review_scope to be set, got=%q", run.ReviewScope)
+	}
+	if run.MaxPMRuns != 3 {
+		t.Errorf("expected max_pm_runs=3, got=%d", run.MaxPMRuns)
+	}
+
+	// No FocusRunItems should be created
+	var items []contracts.FocusRunItem
+	if err := p.DB.Where("focus_run_id = ?", run.ID).Find(&items).Error; err != nil {
+		t.Fatalf("query items failed: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 items in review-first mode, got %d", len(items))
+	}
+
+	// Round 1 should have batch_status=completed
+	round := loadLatestRound(t, p.DB, run.ID)
+	if round.RoundNumber != 1 {
+		t.Errorf("expected round_number=1, got=%d", round.RoundNumber)
+	}
+	if round.BatchStatus != "completed" {
+		t.Errorf("expected batch_status=completed, got=%q", round.BatchStatus)
+	}
+	if round.BatchTicketIDs != "[]" {
+		t.Errorf("expected batch_ticket_ids=[], got=%q", round.BatchTicketIDs)
+	}
+}
+
+// TestFocusStart_ReviewFirst_TicketsAndReviewScopeMutuallyExclusive verifies
+// that providing both --tickets and --review-scope results in an error.
+func TestFocusStart_ReviewFirst_TicketsAndReviewScopeMutuallyExclusive(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "mutual-exclusive-test")
+	_, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeConvergent,
+		ScopeTicketIDs: []uint{tk.ID},
+		ReviewScope:    "审查某些代码",
+		MaxPMRuns:      3,
+	})
+	if err == nil {
+		t.Fatal("expected error when both tickets and review_scope are provided")
+	}
+	if !strings.Contains(err.Error(), "不能同时使用") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestFocusStart_ReviewScope_OnlyConvergentMode verifies that --review-scope
+// is rejected for non-convergent modes.
+func TestFocusStart_ReviewScope_OnlyConvergentMode(t *testing.T) {
+	svc, _, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	_, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:        contracts.FocusModeBatch,
+		ReviewScope: "审查某些代码",
+	})
+	if err == nil {
+		t.Fatal("expected error when review_scope is used with batch mode")
+	}
+	if !strings.Contains(err.Error(), "仅在 convergent 模式下可用") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestConvergentTick_ReviewFirst_DirectlyEntersPMRun verifies that in review-first
+// mode, ConvergentTick directly enters pm_run phase on first tick (no batch phase).
+func TestConvergentTick_ReviewFirst_DirectlyEntersPMRun(t *testing.T) {
+	_, p, _ := newServiceForTest(t)
+
+	// Manually create a review-first run (phase already pm_run from FocusStart)
+	now := time.Now()
+	run := contracts.FocusRun{
+		ProjectKey:      "demo",
+		Mode:            contracts.FocusModeConvergent,
+		RequestID:       fmt.Sprintf("test-review-first-%d", now.UnixNano()),
+		DesiredState:    contracts.FocusDesiredRunning,
+		Status:          contracts.FocusQueued,
+		ScopeTicketIDs:  "[]",
+		AgentBudget:     5,
+		AgentBudgetMax:  5,
+		MaxPMRuns:       3,
+		PMRunCount:      0,
+		ConvergentPhase: "pm_run",
+		ReviewScope:     "审查 main 分支最近变更",
+		StartedAt:       &now,
+	}
+	if err := p.DB.Create(&run).Error; err != nil {
+		t.Fatalf("create run failed: %v", err)
+	}
+	round := contracts.ConvergentRound{
+		FocusRunID:     run.ID,
+		RoundNumber:    1,
+		BatchTicketIDs: "[]",
+		BatchStatus:    "completed",
+		PMRunStatus:    "pending",
+		StartedAt:      &now,
+	}
+	if err := p.DB.Create(&round).Error; err != nil {
+		t.Fatalf("create round failed: %v", err)
+	}
+
+	// Verify the run is set up correctly for review-first
+	reloaded := loadFocusRun(t, p.DB, run.ID)
+	if reloaded.ConvergentPhase != "pm_run" {
+		t.Errorf("expected phase=pm_run, got=%q", reloaded.ConvergentPhase)
+	}
+	if reloaded.ReviewScope != "审查 main 分支最近变更" {
+		t.Errorf("expected review_scope set, got=%q", reloaded.ReviewScope)
+	}
+
+	// No items should exist
+	var items []contracts.FocusRunItem
+	if err := p.DB.Where("focus_run_id = ?", run.ID).Find(&items).Error; err != nil {
+		t.Fatalf("query items failed: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected 0 items, got %d", len(items))
+	}
+}

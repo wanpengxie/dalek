@@ -314,6 +314,7 @@ func cmdManagerRun(args []string) {
 	mode := fs.String("mode", "", "focus 模式: batch | convergent")
 	pmRuns := fs.Int("pm-runs", 5, "convergent 模式 PM run 最大次数（1-10，默认 5）")
 	tickets := fs.String("tickets", "", "batch scope ticket IDs，逗号分隔: 1,2,3")
+	reviewScope := fs.String("review-scope", "", "convergent review-first 模式：审查范围描述（与 --tickets 互斥）")
 	budget := fs.Int("budget", 10, "PM agent 最大调用次数")
 	_ = fs.Duration("interval", 15*time.Second, "已废弃")
 	maxRunning := fs.Int("max", 0, "最大并发 running workers（可选；0 表示用 DB 默认）")
@@ -339,8 +340,20 @@ func cmdManagerRun(args []string) {
 		if *pmRuns < 1 || *pmRuns > 10 {
 			exitUsageError(out, fmt.Sprintf("--pm-runs 值 %d 超出范围", *pmRuns), "--pm-runs 取值范围 1-10", "示例: dalek manager run --mode convergent --tickets 1,2 --pm-runs 5")
 		}
-		cmdManagerRunConvergent(out, *home, *proj, *tickets, *budget, *pmRuns)
+		rs := strings.TrimSpace(*reviewScope)
+		if rs != "" && strings.TrimSpace(*tickets) != "" {
+			exitUsageError(out, "--tickets 和 --review-scope 不能同时使用", "review-first 模式通过 --review-scope 指定审查范围，无需 --tickets", "示例: dalek manager run --mode convergent --review-scope \"审查最近 5 个 commits\" --pm-runs 3")
+		}
+		if rs == "" && strings.TrimSpace(*tickets) == "" {
+			exitUsageError(out, "请通过 --tickets 或 --review-scope 指定审查目标", "示例: --tickets 1,2,3 或 --review-scope \"审查范围描述\"", "dalek manager run --mode convergent --tickets 1,2 --pm-runs 5")
+		}
+		cmdManagerRunConvergent(out, *home, *proj, *tickets, *budget, *pmRuns, rs)
 		return
+	}
+
+	// --review-scope 只能在 convergent 模式下使用
+	if strings.TrimSpace(*reviewScope) != "" {
+		exitUsageError(out, "--review-scope 仅在 convergent 模式下可用", "请指定 --mode convergent", "示例: dalek manager run --mode convergent --review-scope \"审查范围\"")
 	}
 
 	if !*syncWorkerRun {

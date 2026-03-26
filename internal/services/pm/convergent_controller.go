@@ -352,6 +352,7 @@ func (s *Service) convergentSubmitPMRun(ctx context.Context, db *gorm.DB, run co
 		RoundNumber: round.RoundNumber,
 		TicketIDs:   ticketIDs,
 		ReviewDir:   reviewDir,
+		ReviewScope: strings.TrimSpace(run.ReviewScope),
 	}
 
 	// Use the service-level PM run submitter if available, otherwise create one.

@@ -243,6 +243,9 @@ func (c *DaemonAPIClient) FocusStart(ctx context.Context, req DaemonFocusStartRe
 	if req.MaxPMRuns > 0 {
 		payload["max_pm_runs"] = req.MaxPMRuns
 	}
+	if strings.TrimSpace(req.ReviewScope) != "" {
+		payload["review_scope"] = strings.TrimSpace(req.ReviewScope)
+	}
 	var out FocusStartResult
 	code, err := c.doJSON(ctx, http.MethodPost, "/api/v1/focus/start", payload, &out)
 	if err != nil {

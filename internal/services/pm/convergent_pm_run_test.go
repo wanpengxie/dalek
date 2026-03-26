@@ -78,6 +78,63 @@ func TestBuildPMRunPrompt_ContainsDynamicVariables(t *testing.T) {
 	}
 }
 
+func TestBuildPMRunPrompt_WithReviewScope(t *testing.T) {
+	input := PMRunInput{
+		FocusID:     10,
+		RoundNumber: 1,
+		TicketIDs:   nil,
+		ReviewDir:   ".dalek/pm/reviews/convergent-10/round-1",
+		ReviewScope: "审查 main 分支最近 5 个 commits 的代码变更",
+	}
+
+	prompt := buildPMRunPrompt(input)
+
+	checks := []struct {
+		name    string
+		pattern string
+	}{
+		{"focus_id", "Convergent Focus ID: 10"},
+		{"round_number", "Round 1"},
+		{"review_scope", "审查 main 分支最近 5 个 commits 的代码变更"},
+		{"review_dir", ".dalek/pm/reviews/convergent-10/round-1"},
+		{"codex_reviewer", "--provider codex"},
+		{"claude_reviewer", "--provider claude"},
+		{"result_json", "result.json"},
+		{"git_log", "git log"},
+		{"git_diff", "git diff"},
+	}
+
+	for _, c := range checks {
+		if !strings.Contains(prompt, c.pattern) {
+			t.Errorf("review-scope prompt missing %s pattern %q", c.name, c.pattern)
+		}
+	}
+
+	// Should NOT contain the ticket-based prompt content
+	if strings.Contains(prompt, "batch run 已完成") {
+		t.Error("review-scope prompt should not contain batch-based preamble")
+	}
+}
+
+func TestBuildPMRunPrompt_ReviewScopeOverridesTickets(t *testing.T) {
+	// When both ReviewScope and TicketIDs are set, ReviewScope takes precedence
+	input := PMRunInput{
+		FocusID:     5,
+		RoundNumber: 1,
+		TicketIDs:   []uint{10, 11},
+		ReviewDir:   "/tmp/review",
+		ReviewScope: "审查特定范围",
+	}
+
+	prompt := buildPMRunPrompt(input)
+	if !strings.Contains(prompt, "审查特定范围") {
+		t.Error("expected review scope in prompt")
+	}
+	if strings.Contains(prompt, "batch run 已完成") {
+		t.Error("review-scope prompt should not contain batch-based preamble")
+	}
+}
+
 func TestBuildPMRunPrompt_EmptyTicketIDs(t *testing.T) {
 	input := PMRunInput{
 		FocusID:     1,

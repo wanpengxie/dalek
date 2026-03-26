@@ -42,10 +42,15 @@ func cmdManagerRunBatch(out cliOutputFormat, home, proj, ticketsFlag string, bud
 	tailFocusRun(out, daemonClient, p.Name(), result.FocusID)
 }
 
-func cmdManagerRunConvergent(out cliOutputFormat, home, proj, ticketsFlag string, budget, pmRuns int) {
+func cmdManagerRunConvergent(out cliOutputFormat, home, proj, ticketsFlag string, budget, pmRuns int, reviewScope string) {
 	p := mustOpenProjectWithOutput(out, home, proj)
 	_, daemonClient := mustOpenDaemonClient(out, home)
-	ticketIDs := parseManagerFocusTicketIDs(out, ticketsFlag)
+
+	var ticketIDs []uint
+	if strings.TrimSpace(reviewScope) == "" {
+		// 标准 convergent 模式：需要 tickets
+		ticketIDs = parseManagerFocusTicketIDs(out, ticketsFlag)
+	}
 
 	result, err := daemonClient.FocusStart(context.Background(), app.DaemonFocusStartRequest{
 		Project: p.Name(),
@@ -54,6 +59,7 @@ func cmdManagerRunConvergent(out cliOutputFormat, home, proj, ticketsFlag string
 			ScopeTicketIDs: ticketIDs,
 			AgentBudget:    budget,
 			MaxPMRuns:      pmRuns,
+			ReviewScope:    reviewScope,
 		},
 	})
 	if err != nil {
@@ -63,7 +69,11 @@ func cmdManagerRunConvergent(out cliOutputFormat, home, proj, ticketsFlag string
 		printJSONOrExit(result)
 		return
 	}
-	fmt.Printf("focus convergent 已提交到 daemon: id=%d scope=%v budget=%d pm_runs=%d\n", result.FocusID, ticketIDs, budget, pmRuns)
+	if reviewScope != "" {
+		fmt.Printf("focus convergent (review-first) 已提交到 daemon: id=%d pm_runs=%d review_scope=%q\n", result.FocusID, pmRuns, reviewScope)
+	} else {
+		fmt.Printf("focus convergent 已提交到 daemon: id=%d scope=%v budget=%d pm_runs=%d\n", result.FocusID, ticketIDs, budget, pmRuns)
+	}
 	tailFocusRun(out, daemonClient, p.Name(), result.FocusID)
 }
 

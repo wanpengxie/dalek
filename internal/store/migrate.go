@@ -133,6 +133,11 @@ func storeMigrations() []Migration {
 			Name:    "add_convergent_mode_schema",
 			Up:      migrateAddConvergentModeSchema,
 		},
+		{
+			Version: 24,
+			Name:    "add_review_scope_column",
+			Up:      migrateAddReviewScopeColumn,
+		},
 	}
 }
 
@@ -770,6 +775,27 @@ func migrateAddConvergentModeSchema(db *gorm.DB) error {
 	}
 	// 2. 新建 convergent_rounds 表
 	if err := db.AutoMigrate(&ConvergentRound{}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func migrateAddReviewScopeColumn(db *gorm.DB) error {
+	if db == nil {
+		return fmt.Errorf("db 为空")
+	}
+	has, err := tableHasColumn(db, "focus_runs", "review_scope")
+	if err != nil {
+		return err
+	}
+	if has {
+		return nil
+	}
+	if err := db.Exec(`ALTER TABLE focus_runs ADD COLUMN review_scope TEXT NOT NULL DEFAULT '';`).Error; err != nil {
+		msg := strings.ToLower(strings.TrimSpace(err.Error()))
+		if strings.Contains(msg, "duplicate column name") {
+			return nil
+		}
 		return err
 	}
 	return nil

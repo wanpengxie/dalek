@@ -44,8 +44,18 @@ func (s *Service) FocusStart(ctx context.Context, in contracts.FocusStartInput) 
 			return contracts.FocusStartResult{}, fmt.Errorf("max_pm_runs 不能超过 10（当前值: %d）", maxPMRuns)
 		}
 	}
+	reviewScope := strings.TrimSpace(in.ReviewScope)
+
+	// convergent review-first 校验：--tickets 和 --review-scope 互斥
+	if mode == contracts.FocusModeConvergent && reviewScope != "" && len(in.ScopeTicketIDs) > 0 {
+		return contracts.FocusStartResult{}, fmt.Errorf("--tickets 和 --review-scope 不能同时使用")
+	}
+	if reviewScope != "" && mode != contracts.FocusModeConvergent {
+		return contracts.FocusStartResult{}, fmt.Errorf("--review-scope 仅在 convergent 模式下可用")
+	}
+
 	scope := normalizeFocusTicketIDs(in.ScopeTicketIDs)
-	if len(scope) == 0 {
+	if len(scope) == 0 && reviewScope == "" {
 		return contracts.FocusStartResult{}, fmt.Errorf("scope ticket 不能为空")
 	}
 	budget := in.AgentBudget
@@ -57,9 +67,15 @@ func (s *Service) FocusStart(ctx context.Context, in contracts.FocusStartInput) 
 		requestID = newPMRequestID("focus")
 	}
 
-	scopeJSON, err := json.Marshal(scope)
-	if err != nil {
-		return contracts.FocusStartResult{}, fmt.Errorf("序列化 scope 失败: %w", err)
+	var scopeJSON []byte
+	if len(scope) == 0 {
+		scopeJSON = []byte("[]")
+	} else {
+		var err error
+		scopeJSON, err = json.Marshal(scope)
+		if err != nil {
+			return contracts.FocusStartResult{}, fmt.Errorf("序列化 scope 失败: %w", err)
+		}
 	}
 
 	projectKey := strings.TrimSpace(s.p.Key)
@@ -95,27 +111,37 @@ func (s *Service) FocusStart(ctx context.Context, in contracts.FocusStartInput) 
 			StartedAt:      &now,
 		}
 		// convergent 模式：设置专属字段
+		isReviewFirst := mode == contracts.FocusModeConvergent && reviewScope != "" && len(scope) == 0
 		if mode == contracts.FocusModeConvergent {
 			focus.MaxPMRuns = maxPMRuns
 			focus.PMRunCount = 0
-			focus.ConvergentPhase = ""
+			focus.ReviewScope = reviewScope
+			if isReviewFirst {
+				// review-first 模式：跳过 batch，直接进入 pm_run
+				focus.ConvergentPhase = "pm_run"
+			} else {
+				focus.ConvergentPhase = ""
+			}
 		}
 		if err := tx.WithContext(ctx).Create(&focus).Error; err != nil {
 			return err
 		}
 
-		items := make([]contracts.FocusRunItem, 0, len(scope))
-		for i, ticketID := range scope {
-			items = append(items, contracts.FocusRunItem{
-				FocusRunID: focus.ID,
-				Seq:        i + 1,
-				TicketID:   ticketID,
-				Status:     contracts.FocusItemPending,
-			})
-		}
-		if len(items) > 0 {
-			if err := tx.WithContext(ctx).Create(&items).Error; err != nil {
-				return err
+		// review-first 模式不创建 FocusRunItems（没有 batch tickets）
+		if !isReviewFirst {
+			items := make([]contracts.FocusRunItem, 0, len(scope))
+			for i, ticketID := range scope {
+				items = append(items, contracts.FocusRunItem{
+					FocusRunID: focus.ID,
+					Seq:        i + 1,
+					TicketID:   ticketID,
+					Status:     contracts.FocusItemPending,
+				})
+			}
+			if len(items) > 0 {
+				if err := tx.WithContext(ctx).Create(&items).Error; err != nil {
+					return err
+				}
 			}
 		}
 
@@ -125,9 +151,14 @@ func (s *Service) FocusStart(ctx context.Context, in contracts.FocusStartInput) 
 				FocusRunID:     focus.ID,
 				RoundNumber:    1,
 				BatchTicketIDs: string(scopeJSON),
-				BatchStatus:    "pending",
 				PMRunStatus:    "pending",
 				StartedAt:      &now,
+			}
+			if isReviewFirst {
+				// review-first: batch 视为已完成（空 batch）
+				round1.BatchStatus = "completed"
+			} else {
+				round1.BatchStatus = "pending"
 			}
 			if err := tx.WithContext(ctx).Create(&round1).Error; err != nil {
 				return err
@@ -142,6 +173,9 @@ func (s *Service) FocusStart(ctx context.Context, in contracts.FocusStartInput) 
 		}
 		if mode == contracts.FocusModeConvergent {
 			eventPayload["max_pm_runs"] = maxPMRuns
+			if reviewScope != "" {
+				eventPayload["review_scope"] = reviewScope
+			}
 		}
 		if _, err := appendFocusEventTx(ctx, tx, focus.ID, nil, "run.created", "focus run created", eventPayload, now); err != nil {
 			return err

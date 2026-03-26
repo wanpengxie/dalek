@@ -23,6 +23,7 @@ type focusStartPayload struct {
 	AgentBudget    int    `json:"agent_budget"`
 	RequestID      string `json:"request_id"`
 	MaxPMRuns      int    `json:"max_pm_runs,omitempty"`
+	ReviewScope    string `json:"review_scope,omitempty"`
 }
 
 type focusAddTicketsPayload struct {
@@ -92,6 +93,7 @@ func (s *InternalAPI) handleFocusStart(w http.ResponseWriter, r *http.Request) {
 		AgentBudget:    payload.AgentBudget,
 		RequestID:      strings.TrimSpace(payload.RequestID),
 		MaxPMRuns:      payload.MaxPMRuns,
+		ReviewScope:    strings.TrimSpace(payload.ReviewScope),
 	})
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "start_failed", err.Error())
