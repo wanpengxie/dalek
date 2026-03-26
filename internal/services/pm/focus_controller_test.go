@@ -1673,6 +1673,57 @@ func TestFocusTick_SelectedEventSilent_NoProjectWake(t *testing.T) {
 	}
 }
 
+// TestFocusTick_ItemSelectedAtomicUnderConcurrency verifies that concurrent
+// ticks on a pending item only emit exactly one item.selected event, exercising
+// the transactional check+write guard introduced in t148.
+func TestFocusTick_ItemSelectedAtomicUnderConcurrency(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "focus-atomic-selected")
+
+	res, err := svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	// Simulate concurrent ticks by running multiple goroutines.
+	const concurrency = 10
+	var wg sync.WaitGroup
+	errs := make([]error, concurrency)
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			errs[idx] = svc.AdvanceFocusController(ctx)
+		}(i)
+	}
+	wg.Wait()
+
+	// At least some should succeed (SQLite serializes writes, some may conflict).
+	successCount := 0
+	for _, e := range errs {
+		if e == nil {
+			successCount++
+		}
+	}
+	if successCount == 0 {
+		t.Fatalf("expected at least one tick to succeed, all failed")
+	}
+
+	// Key assertion: exactly 1 item.selected event, regardless of concurrency.
+	var selectedCount int64
+	p.DB.Model(&contracts.FocusEvent{}).
+		Where("focus_run_id = ? AND kind = ?", res.FocusID, contracts.FocusEventItemSelected).
+		Count(&selectedCount)
+	if selectedCount != 1 {
+		t.Fatalf("expected exactly 1 item.selected event under concurrency, got=%d", selectedCount)
+	}
+}
+
 func focusItemByTicketID(items []contracts.FocusRunItem, ticketID uint) *contracts.FocusRunItem {
 	for i := range items {
 		if items[i].TicketID == ticketID {

@@ -66,18 +66,9 @@ func (s *Service) checkZombieWorkers(ctx context.Context, db *gorm.DB, taskRunti
 		}
 	}
 
-	// 加载 focus 管辖的 ticket IDs — focus controller 自己处理健康检查，
-	// zombie 不应介入，避免在 worker closure grace window 内误判。
-	focusManaged, _ := s.focusManagedTicketIDs(ctx, db)
-
 	now := time.Now()
 	for _, w := range running {
 		out.Checked++
-
-		// 跳过 focus 管辖的 tickets
-		if _, managed := focusManaged[w.TicketID]; managed {
-			continue
-		}
 
 		tv, hasTV := runtimeByWorker[w.ID]
 		ticketWorkflow := ticketWorkflowByID[w.TicketID]
@@ -272,9 +263,6 @@ func (s *Service) reconcileZombieStateDrift(ctx context.Context, db *gorm.DB, no
 		latestWorkerByTicket[w.TicketID] = w
 	}
 
-	// 加载 focus 管辖的 ticket IDs — 同 checkZombieWorkers 的理由。
-	focusManaged, _ := s.focusManagedTicketIDs(ctx, db)
-
 	for _, t := range tickets {
 		status := contracts.CanonicalTicketWorkflowStatus(t.WorkflowStatus)
 		if !fsm.TicketWorkflowTable.IsKnownState(status) {
@@ -292,11 +280,6 @@ func (s *Service) reconcileZombieStateDrift(ctx context.Context, db *gorm.DB, no
 		}
 
 		if status != contracts.TicketActive {
-			continue
-		}
-
-		// 跳过 focus 管辖的 tickets
-		if _, managed := focusManaged[t.ID]; managed {
 			continue
 		}
 

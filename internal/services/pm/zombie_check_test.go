@@ -753,3 +753,95 @@ func TestCheckZombieWorkers_TerminalClosureGrace_Expired(t *testing.T) {
 		t.Fatalf("expected recovered=1 (grace expired), got=%d errors=%v", out.Recovered, out.Errors)
 	}
 }
+
+// TestCheckZombieWorkers_FocusManagedDeadWorker_StillRecovered verifies that
+// zombie detection still works for focus-managed tickets when the worker is
+// truly dead (running but missing runtime anchor). Previously, focus-managed
+// tickets were wholesale skipped by zombie detection, causing hang scenarios.
+func TestCheckZombieWorkers_FocusManagedDeadWorker_StillRecovered(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "zombie-focus-managed-dead")
+	w, err := svc.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
+	if err := p.DB.Model(&contracts.Worker{}).Where("id = ?", w.ID).Updates(map[string]any{
+		"status":     contracts.WorkerRunning,
+		"log_path":   "",
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("clear runtime anchor failed: %v", err)
+	}
+
+	// Create a focus run that includes this ticket — ticket is focus-managed.
+	_, err = svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	rt, err := svc.taskRuntimeForDB(p.DB)
+	if err != nil {
+		t.Fatalf("taskRuntimeForDB failed: %v", err)
+	}
+	out := svc.checkZombieWorkers(ctx, p.DB, rt)
+	if out.Checked != 1 {
+		t.Fatalf("expected checked=1, got=%d", out.Checked)
+	}
+	// Even though the ticket is focus-managed, zombie should still detect
+	// the dead worker (missing runtime anchor) and recover it.
+	if out.Recovered != 1 {
+		t.Fatalf("expected recovered=1 for focus-managed dead worker, got=%d errors=%v", out.Recovered, out.Errors)
+	}
+}
+
+// TestReconcileZombieStateDrift_FocusManagedActiveNoWorker_NotSkipped verifies
+// that reconcileZombieStateDrift processes (does not skip) focus-managed tickets
+// with illegal state (active ticket without running worker).
+func TestReconcileZombieStateDrift_FocusManagedActiveNoWorker_NotSkipped(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "zombie-focus-drift")
+	_, err := svc.StartTicket(ctx, tk.ID)
+	if err != nil {
+		t.Fatalf("StartTicket failed: %v", err)
+	}
+	// Set ticket active but remove the worker entirely — pure "active without worker" case.
+	if err := p.DB.Model(&contracts.Ticket{}).Where("id = ?", tk.ID).Updates(map[string]any{
+		"workflow_status": contracts.TicketActive,
+		"updated_at":      time.Now(),
+	}).Error; err != nil {
+		t.Fatalf("set ticket active failed: %v", err)
+	}
+	// Delete all workers for this ticket to trigger "active_without_worker".
+	if err := p.DB.Where("ticket_id = ?", tk.ID).Delete(&contracts.Worker{}).Error; err != nil {
+		t.Fatalf("delete workers failed: %v", err)
+	}
+
+	// Create focus run — ticket is focus-managed.
+	_, err = svc.FocusStart(ctx, contracts.FocusStartInput{
+		Mode:           contracts.FocusModeBatch,
+		ScopeTicketIDs: []uint{tk.ID},
+	})
+	if err != nil {
+		t.Fatalf("FocusStart failed: %v", err)
+	}
+
+	out := svc.reconcileZombieStateDrift(ctx, p.DB, time.Now())
+	// Should detect the illegal state even for focus-managed tickets.
+	// "active_without_worker" → demoted to blocked → illegal+blocked both increment.
+	if out.Illegal < 1 || out.Blocked < 1 {
+		t.Fatalf("expected illegal>=1 and blocked>=1 for focus-managed ticket without worker, got illegal=%d blocked=%d errors=%v", out.Illegal, out.Blocked, out.Errors)
+	}
+}

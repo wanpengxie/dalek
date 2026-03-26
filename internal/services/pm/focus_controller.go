@@ -129,26 +129,14 @@ func (s *Service) focusTickPendingItem(ctx context.Context, run contracts.FocusR
 	}
 	// Guard: only emit item.selected once per activation attempt.
 	// Primary check: item status is already "queued" (fast path).
-	// Secondary check: if item is still "pending" but a prior tick already
-	// emitted item.selected (e.g. the subsequent status transition failed or
-	// was interrupted), verify via the events table.
-	// Uses focusAppendEventSilent (no projectWake) to break the
+	// Secondary check + write in a single DB transaction to prevent concurrent
+	// ticks from both seeing count=0 and emitting duplicate item.selected events.
+	// Uses appendFocusEventTx (no projectWake) to break the
 	// item.selected → projectWake → re-tick → item.selected feedback loop.
-	// DB query errors abort the tick rather than silently allowing duplicates.
+	// DB errors abort the tick rather than silently allowing duplicates.
 	alreadyQueued := strings.TrimSpace(item.Status) == contracts.FocusItemQueued
-	alreadySelected := alreadyQueued
-	if !alreadySelected {
-		var checkErr error
-		alreadySelected, checkErr = s.focusItemAlreadySelectedInAttempt(ctx, run.ID, item.ID)
-		if checkErr != nil {
-			return checkErr
-		}
-	}
-	if !alreadySelected {
-		if err := s.focusAppendEventSilent(ctx, run.ID, item.ID, contracts.FocusEventItemSelected, "focus item selected", map[string]any{
-			"ticket_id": item.TicketID,
-			"seq":       item.Seq,
-		}); err != nil {
+	if !alreadyQueued {
+		if err := s.focusClaimItemSelectedAtomic(ctx, run.ID, item.ID, item.TicketID, item.Seq); err != nil {
 			return err
 		}
 	}
@@ -268,6 +256,10 @@ func (s *Service) focusTickExecutingItem(ctx context.Context, run contracts.Focu
 				if isUserInitiatedTaskCancelCause(cause) {
 					return s.focusStopItem(ctx, run, item, userInitiatedTaskCancelSummary(cause))
 				}
+				return s.focusHandleBlockedExecution(ctx, run, item, snapshot)
+			case contracts.WorkerRunning:
+				// Worker 仍标记 running 但 activeRun 缺失且 acceptance grace 已过期 —
+				// 说明执行实际已丢失（worker 假死），交给 blocked 处理流程恢复。
 				return s.focusHandleBlockedExecution(ctx, run, item, snapshot)
 			}
 		}
@@ -1190,6 +1182,38 @@ func (s *Service) focusAppendEvent(ctx context.Context, runID, itemID uint, kind
 		itemPtr = &itemID
 	}
 	return s.focusUpdateRunAndItem(ctx, runID, itemPtr, nil, nil, kind, summary, payload)
+}
+
+// focusClaimItemSelectedAtomic atomically checks whether item.selected has
+// already been emitted for the given item in the current focus run, and if
+// not, appends the event — all within a single DB transaction. This prevents
+// concurrent ticks from both seeing count=0 and emitting duplicate events.
+// Uses appendFocusEventTx directly (no projectWake) to break the feedback loop.
+func (s *Service) focusClaimItemSelectedAtomic(ctx context.Context, runID, itemID, ticketID uint, seq int) error {
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&contracts.FocusEvent{}).
+			Where("focus_run_id = ? AND focus_item_id = ? AND kind = ?",
+				runID, itemID, contracts.FocusEventItemSelected).
+			Count(&count).Error; err != nil {
+			return fmt.Errorf("focusClaimItemSelectedAtomic count failed: %w", err)
+		}
+		if count > 0 {
+			return nil // 已存在，跳过
+		}
+		itemPtr := &itemID
+		_, err := appendFocusEventTx(ctx, tx, runID, itemPtr,
+			contracts.FocusEventItemSelected, "focus item selected",
+			map[string]any{"ticket_id": ticketID, "seq": seq}, time.Now())
+		return err
+	})
 }
 
 // focusItemAlreadySelectedInAttempt returns true if an item.selected event
