@@ -1238,6 +1238,10 @@ func (s *Service) focusAppendEventSilent(ctx context.Context, runID, itemID uint
 }
 
 func (s *Service) focusRefreshExecutionBinding(ctx context.Context, runID, itemID uint, snapshot focusTicketSnapshot) error {
+	_, db, err := s.require()
+	if err != nil {
+		return err
+	}
 	itemUpdates := map[string]any{
 		"updated_at": time.Now(),
 	}
@@ -1247,7 +1251,11 @@ func (s *Service) focusRefreshExecutionBinding(ctx context.Context, runID, itemI
 	if snapshot.ActiveRun != nil {
 		itemUpdates["current_task_run_id"] = snapshot.ActiveRun.ID
 	}
-	return s.focusUpdateRunAndItem(ctx, runID, &itemID, nil, itemUpdates, "", "", nil)
+	// 直接写 DB，不触发 projectWake — 这是被动观测，不是状态变更。
+	// 避免 focusUpdateRunAndItem → projectWake 导致的 wake 风暴。
+	return db.WithContext(ctx).Model(&contracts.FocusRunItem{}).
+		Where("id = ? AND focus_run_id = ?", itemID, runID).
+		Updates(itemUpdates).Error
 }
 
 func (s *Service) focusLoadTicketSnapshot(ctx context.Context, ticketID uint) (focusTicketSnapshot, error) {

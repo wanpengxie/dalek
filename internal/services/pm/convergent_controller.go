@@ -199,7 +199,12 @@ func (s *Service) convergentTickBatch(ctx context.Context, run contracts.FocusRu
 				return fmt.Errorf("convergent: reload item after blocked self-heal failed: %w", err)
 			}
 			if strings.TrimSpace(reloaded.Status) == contracts.FocusItemBlocked {
-				// Item is truly unrecoverable — terminate the convergent run.
+				// 检查宽限期：如果 item 变为 blocked 时间尚短（< convergentBlockedGrace），
+				// 等下一个 tick 重试 self-heal，容忍异步 merge observation 延迟。
+				if reloaded.UpdatedAt.After(time.Now().Add(-convergentBlockedGrace)) {
+					return nil // 还在宽限期，等下一个 tick
+				}
+				// Item 超过宽限期仍 blocked — 终态化 convergent run。
 				return s.convergentSetTerminal(ctx, db, run, round, contracts.FocusBlocked, "batch item blocked")
 			}
 			// Item was healed (e.g. transitioned to merging/completed) — will be

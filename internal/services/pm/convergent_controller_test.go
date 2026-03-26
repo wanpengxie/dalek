@@ -389,6 +389,14 @@ func TestConvergentTickBatch_ItemBlocked_RunBlocked(t *testing.T) {
 	setConvergentPhase(t, p.DB, run.ID, "batch", contracts.FocusRunning)
 	setRoundBatchStatus(t, p.DB, round.ID, "running")
 	blockItem(t, p.DB, run.ID, tk.ID)
+	// 将 item 的 updated_at 设为超过宽限期（convergentBlockedGrace=60s），
+	// 模拟 blocked 已持续超过宽限期的场景。
+	pastGrace := time.Now().Add(-(convergentBlockedGrace + 10*time.Second))
+	if err := p.DB.Model(&contracts.FocusRunItem{}).
+		Where("focus_run_id = ? AND ticket_id = ?", run.ID, tk.ID).
+		Update("updated_at", pastGrace).Error; err != nil {
+		t.Fatalf("set item updated_at past grace failed: %v", err)
+	}
 
 	view, _ := svc.focusViewForDB(ctx, p.DB, run.ID)
 	if err := svc.ConvergentTick(ctx, view); err != nil {
@@ -398,6 +406,32 @@ func TestConvergentTickBatch_ItemBlocked_RunBlocked(t *testing.T) {
 	reloaded := loadFocusRun(t, p.DB, run.ID)
 	if reloaded.Status != contracts.FocusBlocked {
 		t.Errorf("expected status=blocked, got=%q", reloaded.Status)
+	}
+}
+
+// TestConvergentTickBatch_BlockedItemWithinGrace_NoTerminate verifies that a
+// blocked item within the grace period does NOT terminate the convergent run,
+// allowing time for async merge observation to arrive.
+func TestConvergentTickBatch_BlockedItemWithinGrace_NoTerminate(t *testing.T) {
+	svc, p, _ := newServiceForTest(t)
+	ctx := context.Background()
+
+	tk := createTicket(t, p.DB, "conv-batch-blocked-grace")
+	run, round := createConvergentRun(t, p.DB, []uint{tk.ID}, 5)
+
+	setConvergentPhase(t, p.DB, run.ID, "batch", contracts.FocusRunning)
+	setRoundBatchStatus(t, p.DB, round.ID, "running")
+	blockItem(t, p.DB, run.ID, tk.ID)
+	// item 的 updated_at 就是 now（在宽限期内）
+
+	view, _ := svc.focusViewForDB(ctx, p.DB, run.ID)
+	if err := svc.ConvergentTick(ctx, view); err != nil {
+		t.Fatalf("ConvergentTick batch-blocked-grace failed: %v", err)
+	}
+
+	reloaded := loadFocusRun(t, p.DB, run.ID)
+	if reloaded.Status == contracts.FocusBlocked {
+		t.Errorf("expected run NOT to be terminated within grace period, got status=%q", reloaded.Status)
 	}
 }
 

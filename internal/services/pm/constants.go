@@ -43,4 +43,8 @@ const (
 	defaultZombieRetryBackoffMax = 10 * time.Minute
 
 	defaultWorkerLoopClosureRepairAttempts = 1
+
+	// convergentBlockedGrace 是 convergent batch 中 blocked item 的宽限期。
+	// 在此期间每次 tick 都会重试 self-heal，容忍异步 merge observation 延迟。
+	convergentBlockedGrace = 60 * time.Second
 )
