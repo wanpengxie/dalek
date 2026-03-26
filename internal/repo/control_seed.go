@@ -156,6 +156,80 @@ func UpdateControlPlaneSeed(layout Layout, projectName string, force bool) ([]Co
 	return changes, nil
 }
 
+// UpdateKernelSeed updates only agent-kernel.md (always force).
+func UpdateKernelSeed(layout Layout, projectName string) ([]ControlPlaneChange, error) {
+	if strings.TrimSpace(layout.ProjectDir) == "" {
+		return nil, fmt.Errorf("project_dir 为空")
+	}
+	change, err := applyTemplateFileChange(
+		layout.ProjectAgentKernelPath,
+		defaultControlProjectAgentKernelTemplate(layout, projectName),
+		0o644,
+		true,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if change != nil {
+		return []ControlPlaneChange{*change}, nil
+	}
+	return nil, nil
+}
+
+// PlanKernelSeedUpdate previews changes for kernel scope.
+func PlanKernelSeedUpdate(layout Layout, projectName string) ([]ControlPlaneChange, error) {
+	if strings.TrimSpace(layout.ProjectDir) == "" {
+		return nil, fmt.Errorf("project_dir 为空")
+	}
+	change, err := planTemplateFileChange(
+		layout.ProjectAgentKernelPath,
+		defaultControlProjectAgentKernelTemplate(layout, projectName),
+		true,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if change != nil {
+		return []ControlPlaneChange{*change}, nil
+	}
+	return nil, nil
+}
+
+// UpdateControlTemplates updates only control/worker and control/skills (always force).
+func UpdateControlTemplates(layout Layout) ([]ControlPlaneChange, error) {
+	if strings.TrimSpace(layout.ProjectDir) == "" {
+		return nil, fmt.Errorf("project_dir 为空")
+	}
+	if err := ensureControlPlaneDirs(layout); err != nil {
+		return nil, err
+	}
+	changes, err := ensureControlWorkerTemplates(layout, true)
+	if err != nil {
+		return nil, err
+	}
+	skillChanges, err := seedControlSkillsTemplates(layout, true)
+	if err != nil {
+		return nil, err
+	}
+	return append(changes, skillChanges...), nil
+}
+
+// PlanControlTemplatesUpdate previews changes for control scope.
+func PlanControlTemplatesUpdate(layout Layout) ([]ControlPlaneChange, error) {
+	if strings.TrimSpace(layout.ProjectDir) == "" {
+		return nil, fmt.Errorf("project_dir 为空")
+	}
+	changes, err := planControlWorkerTemplateChanges(layout)
+	if err != nil {
+		return nil, err
+	}
+	skillChanges, err := planControlSkillsTemplateChanges(layout)
+	if err != nil {
+		return nil, err
+	}
+	return append(changes, skillChanges...), nil
+}
+
 func CurrentControlVersion(ctx context.Context, repoRoot string) string {
 	repoRoot = strings.TrimSpace(repoRoot)
 	if repoRoot == "" {

@@ -14,12 +14,18 @@ import (
 	"dalek/internal/store"
 )
 
+const (
+	UpgradeScopeKernel  = "kernel"
+	UpgradeScopeControl = "control"
+)
+
 type UpgradeOptions struct {
 	ProjectName   string
 	StartDir      string
 	BinaryVersion string
 	DryRun        bool
 	Force         bool
+	Scope         string // "" (full) | "kernel" | "control"
 }
 
 type UpgradeChange struct {
@@ -32,6 +38,7 @@ type UpgradeResult struct {
 	RepoRoot               string          `json:"repo_root"`
 	DryRun                 bool            `json:"dry_run"`
 	Force                  bool            `json:"force"`
+	Scope                  string          `json:"scope,omitempty"`
 	AlreadyLatest          bool            `json:"already_latest"`
 	PreviousVersion        string          `json:"previous_version"`
 	TargetVersion          string          `json:"target_version"`
@@ -82,6 +89,10 @@ func (h *Home) UpgradeProject(ctx context.Context, opt UpgradeOptions) (UpgradeR
 			return UpgradeResult{}, ErrNotInitialized
 		}
 		return UpgradeResult{}, err
+	}
+
+	if opt.Scope != "" {
+		return h.upgradeScopedProject(ctx, opt, projectRef, layout)
 	}
 
 	metaPath := repo.ProjectMetaPath(layout)
@@ -249,6 +260,126 @@ func (h *Home) UpgradeProject(ctx context.Context, opt UpgradeOptions) (UpgradeR
 		return res.Changes[i].Action < res.Changes[j].Action
 	})
 	return res, nil
+}
+
+func (h *Home) upgradeScopedProject(_ context.Context, opt UpgradeOptions, projectRef RegisteredProject, layout repo.Layout) (UpgradeResult, error) {
+	res := UpgradeResult{
+		Project:       projectRef.Name,
+		RepoRoot:      projectRef.RepoRoot,
+		DryRun:        opt.DryRun,
+		Force:         opt.Force,
+		Scope:         opt.Scope,
+		TargetVersion: repo.NormalizeDalekVersion(opt.BinaryVersion),
+	}
+
+	switch opt.Scope {
+	case UpgradeScopeKernel:
+		planned, err := repo.PlanKernelSeedUpdate(layout, projectRef.Name)
+		if err != nil {
+			return res, &UpgradeFailure{Result: res, Err: err}
+		}
+		res.Changes = convertControlChanges(planned)
+		if opt.DryRun {
+			backupSources := collectScopedBackupSources(layout, opt.Scope)
+			res.Backups = previewBackupTargets(layout, backupSources)
+			sort.Strings(res.Backups)
+			return res, nil
+		}
+		backups, err := createBackups(layout, collectScopedBackupSources(layout, opt.Scope))
+		if err != nil {
+			res.Backups = backups
+			return res, &UpgradeFailure{Result: res, Err: err}
+		}
+		res.Backups = backups
+		applied, err := repo.UpdateKernelSeed(layout, projectRef.Name)
+		if err != nil {
+			return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("更新 kernel 失败: %w", err)}
+		}
+		if err := repo.OverwriteRepoAgentEntryPoints(projectRef.RepoRoot); err != nil {
+			return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("覆写入口文件失败: %w", err)}
+		}
+		res.Changes = convertControlChanges(applied)
+
+	case UpgradeScopeControl:
+		planned, err := repo.PlanControlTemplatesUpdate(layout)
+		if err != nil {
+			return res, &UpgradeFailure{Result: res, Err: err}
+		}
+		res.Changes = convertControlChanges(planned)
+		if opt.DryRun {
+			backupSources := collectScopedBackupSources(layout, opt.Scope)
+			res.Backups = previewBackupTargets(layout, backupSources)
+			sort.Strings(res.Backups)
+			return res, nil
+		}
+		backups, err := createBackups(layout, collectScopedBackupSources(layout, opt.Scope))
+		if err != nil {
+			res.Backups = backups
+			return res, &UpgradeFailure{Result: res, Err: err}
+		}
+		res.Backups = backups
+		applied, err := repo.UpdateControlTemplates(layout)
+		if err != nil {
+			return res, &UpgradeFailure{Result: res, Err: fmt.Errorf("更新 control 模板失败: %w", err)}
+		}
+		res.Changes = convertControlChanges(applied)
+
+	default:
+		return res, fmt.Errorf("未知 scope: %q（支持: kernel, control）", opt.Scope)
+	}
+
+	sort.Strings(res.Backups)
+	sort.Slice(res.Changes, func(i, j int) bool {
+		if res.Changes[i].Action == res.Changes[j].Action {
+			return res.Changes[i].Path < res.Changes[j].Path
+		}
+		return res.Changes[i].Action < res.Changes[j].Action
+	})
+	return res, nil
+}
+
+func collectScopedBackupSources(layout repo.Layout, scope string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	appendIfExists := func(path string) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+
+	switch scope {
+	case UpgradeScopeKernel:
+		appendIfExists(filepath.Join(layout.RepoRoot, "CLAUDE.md"))
+		appendIfExists(filepath.Join(layout.RepoRoot, "AGENTS.md"))
+		appendIfExists(layout.ProjectAgentKernelPath)
+	case UpgradeScopeControl:
+		_ = filepath.Walk(layout.ControlWorkerDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			appendIfExists(path)
+			return nil
+		})
+		_ = filepath.Walk(layout.ControlSkillsDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			appendIfExists(path)
+			return nil
+		})
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (h *Home) resolveUpgradeProject(projectName, startDir string) (RegisteredProject, error) {

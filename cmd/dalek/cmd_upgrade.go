@@ -18,14 +18,17 @@ func cmdUpgrade(args []string) {
 		printSubcommandUsage(
 			fs,
 			"升级当前项目（DB migration + config schema + control plane + 版本记录）",
-			"dalek upgrade [--project <name>] [--dry-run] [--force] [--output text|json]",
+			"dalek upgrade [--scope kernel|control] [--project <name>] [--dry-run] [--force] [--output text|json]",
 			"dalek upgrade --dry-run",
+			"dalek upgrade --scope kernel",
+			"dalek upgrade --scope control",
 			"dalek upgrade -p demo",
 		)
 	}
 	home := fs.String("home", globalHome, "dalek Home 目录（默认 ~/.dalek）")
 	project := fs.String("project", globalProject, "项目名（可选，默认从当前目录推断）")
 	projectShort := fs.String("p", globalProject, "项目名（可选，默认从当前目录推断）")
+	scope := fs.String("scope", "", "升级范围: kernel（入口文件+内核）| control（控制平面模板）。留空=全量升级")
 	dryRun := fs.Bool("dry-run", false, "仅预览，不执行写入")
 	force := fs.Bool("force", false, "即使记录版本与当前 binary 相同也强制执行")
 	output := addOutputFlag(fs, "输出格式: text|json（默认 text）")
@@ -49,12 +52,18 @@ func cmdUpgrade(args []string) {
 		exitRuntimeError(out, "获取当前目录失败", err.Error(), "切换到可读目录后重试")
 	}
 
+	scopeVal := strings.TrimSpace(*scope)
+	if scopeVal != "" && scopeVal != app.UpgradeScopeKernel && scopeVal != app.UpgradeScopeControl {
+		exitRuntimeError(out, "无效 --scope 值", fmt.Sprintf("%q 不是合法选项", scopeVal), "支持: kernel, control")
+	}
+
 	res, err := h.UpgradeProject(context.Background(), app.UpgradeOptions{
 		ProjectName:   strings.TrimSpace(*project),
 		StartDir:      wd,
 		BinaryVersion: version,
 		DryRun:        *dryRun,
 		Force:         *force,
+		Scope:         scopeVal,
 	})
 	if err != nil {
 		cause := strings.TrimSpace(err.Error())
@@ -80,6 +89,7 @@ func printUpgradeResult(out cliOutputFormat, res app.UpgradeResult) {
 			"repo_root":                strings.TrimSpace(res.RepoRoot),
 			"dry_run":                  res.DryRun,
 			"force":                    res.Force,
+			"scope":                    res.Scope,
 			"already_latest":           res.AlreadyLatest,
 			"previous_version":         strings.TrimSpace(res.PreviousVersion),
 			"target_version":           strings.TrimSpace(res.TargetVersion),
@@ -101,18 +111,23 @@ func printUpgradeResult(out cliOutputFormat, res app.UpgradeResult) {
 		mode = "dry-run"
 	}
 	fmt.Printf("upgrade mode: %s\n", mode)
+	if res.Scope != "" {
+		fmt.Printf("scope: %s\n", res.Scope)
+	}
 	fmt.Printf("project: %s\n", strings.TrimSpace(res.Project))
 	fmt.Printf("repo: %s\n", strings.TrimSpace(res.RepoRoot))
-	fmt.Printf("version: %s -> %s\n", fallbackVersion(res.PreviousVersion), fallbackVersion(preferVersion(res.AppliedVersion, res.TargetVersion)))
-	if res.AlreadyLatest {
-		fmt.Println("status: already latest (skip)")
-		return
-	}
-	fmt.Printf("daemon_running: %t\n", res.DaemonRunning)
-	fmt.Printf("running_workers: %d\n", res.RunningWorkers)
-	if !res.DryRun {
-		fmt.Printf("db_migration: %d/%d\n", res.MigrationVersion, res.LatestMigrationVersion)
-		fmt.Printf("config_schema: %d\n", res.ConfigSchemaVersion)
+	if res.Scope == "" {
+		fmt.Printf("version: %s -> %s\n", fallbackVersion(res.PreviousVersion), fallbackVersion(preferVersion(res.AppliedVersion, res.TargetVersion)))
+		if res.AlreadyLatest {
+			fmt.Println("status: already latest (skip)")
+			return
+		}
+		fmt.Printf("daemon_running: %t\n", res.DaemonRunning)
+		fmt.Printf("running_workers: %d\n", res.RunningWorkers)
+		if !res.DryRun {
+			fmt.Printf("db_migration: %d/%d\n", res.MigrationVersion, res.LatestMigrationVersion)
+			fmt.Printf("config_schema: %d\n", res.ConfigSchemaVersion)
+		}
 	}
 	fmt.Printf("changes: %d\n", len(res.Changes))
 	for _, item := range res.Changes {
@@ -131,7 +146,13 @@ func printUpgradeResult(out cliOutputFormat, res app.UpgradeResult) {
 		}
 	}
 	if res.DryRun {
-		fmt.Println("next: 运行 `dalek upgrade` 执行实际升级。")
+		if res.Scope != "" {
+			fmt.Printf("next: 运行 `dalek upgrade --scope %s` 执行实际升级。\n", res.Scope)
+		} else {
+			fmt.Println("next: 运行 `dalek upgrade` 执行实际升级。")
+		}
+	} else if res.Scope != "" {
+		fmt.Println("done.")
 	} else {
 		fmt.Println("next: 如 daemon 在运行，建议执行 `dalek daemon restart`。")
 	}
