@@ -47,19 +47,20 @@ func cmdUpgradeConfig(args []string) {
 		exitRuntimeError(out, "打开 Home 失败", err.Error(), "检查 Home 目录权限")
 	}
 
-	// 全局配置：schema 更低时覆写（补 providers map），schema 相同则不动
+	// 全局配置：先用原始值判断是否需要升级，再 WithDefaults
+	rawSchema := h.Config.SchemaVersion
+	rawHasProviders := len(h.Config.Providers) > 0
 	homeCfg := h.Config.WithDefaults()
-	if homeCfg.SchemaVersion < app.CurrentHomeConfigSchemaVersion {
-		if len(homeCfg.Providers) == 0 {
-			homeCfg.Providers = repo.DefaultProviders()
-		}
-		homeCfg.SchemaVersion = app.CurrentHomeConfigSchemaVersion
-		if err := app.WriteHomeConfigAtomic(h.ConfigPath, homeCfg); err != nil {
-			exitRuntimeError(out, "写入 Home 配置失败", err.Error(), "检查文件权限")
-		}
-	} else if len(homeCfg.Providers) == 0 {
-		// schema 已是最新但缺 providers（极端情况），补上但不碰其他字段
-		homeCfg.Providers = repo.DefaultProviders()
+
+	needsWrite := false
+	if rawSchema < app.CurrentHomeConfigSchemaVersion {
+		// schema 更低 → 覆写（升 schema + 确保 providers 存在）
+		needsWrite = true
+	} else if !rawHasProviders {
+		// schema 已最新但原始配置缺 providers → 补上
+		needsWrite = true
+	}
+	if needsWrite {
 		if err := app.WriteHomeConfigAtomic(h.ConfigPath, homeCfg); err != nil {
 			exitRuntimeError(out, "写入 Home 配置失败", err.Error(), "检查文件权限")
 		}

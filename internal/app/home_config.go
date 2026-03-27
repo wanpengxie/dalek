@@ -34,7 +34,8 @@ var defaultGatewayInternalAllowCIDRs = []string{
 }
 
 // CurrentHomeConfigSchemaVersion 是 Home 全局配置版本号（非 binary semver）。
-const CurrentHomeConfigSchemaVersion = 2
+// v3: 新增 providers map（全局 provider 定义）。
+const CurrentHomeConfigSchemaVersion = 3
 
 var homeConfigDeprecationWarnf = func(format string, args ...any) {
 	log.Printf(format, args...)
