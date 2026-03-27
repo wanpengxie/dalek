@@ -38,6 +38,7 @@ func (s *Service) resolveAgentSettings(providerRaw, modelRaw string) (agentprovi
 	}
 
 	// Subagent 强制 permission=auto：不继承父级的 bypass 权限
+	resolved.Permission = agentprovider.PermissionAuto
 	resolved.DangerFullAccess = false
 	resolved.BypassPermissions = false
 

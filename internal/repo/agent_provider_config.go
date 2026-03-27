@@ -43,6 +43,6 @@ func ResolveAgentConfig(providerKey string, providers map[string]ProviderConfig)
 		Model:           strings.TrimSpace(pc.Model),
 		ReasoningEffort: strings.TrimSpace(pc.ReasoningEffort),
 		ExtraFlags:      append([]string(nil), pc.ExtraFlags...),
-		// Permission 映射在 Phase 3 实现
+		Permission:      strings.TrimSpace(pc.Permission),
 	}.Normalize(), nil
 }

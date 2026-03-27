@@ -25,9 +25,10 @@ var providerConstructors = map[string]constructor{
 	},
 	ProviderGemini: func(cfg AgentConfig) Provider {
 		return GeminiProvider{
-			Command:    cfg.Command,
-			Model:      cfg.Model,
-			ExtraFlags: append([]string(nil), cfg.ExtraFlags...),
+			Command:           cfg.Command,
+			Model:             cfg.Model,
+			ExtraFlags:        append([]string(nil), cfg.ExtraFlags...),
+			BypassPermissions: cfg.BypassPermissions,
 		}
 	},
 }
