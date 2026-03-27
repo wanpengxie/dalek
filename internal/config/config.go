@@ -28,6 +28,9 @@ const (
 	ConfigKeyProjectMaxRunningWorkers = "project.max_running_workers"
 	ConfigKeyAgentProvider            = "agent.provider"
 	ConfigKeyAgentModel               = "agent.model"
+	ConfigKeyWorkerAgentProvider      = "worker_agent.provider"
+	ConfigKeyPMAgentProvider          = "pm_agent.provider"
+	ConfigKeyGatewayAgentProvider     = "gateway_agent.provider"
 )
 
 const (
@@ -73,6 +76,21 @@ var KeyOrder = []KeyMeta{
 		DefaultScope:  ScopeLocal,
 		AllowedScopes: []Scope{ScopeGlobal, ScopeLocal},
 	},
+	{
+		Key:           ConfigKeyWorkerAgentProvider,
+		DefaultScope:  ScopeLocal,
+		AllowedScopes: []Scope{ScopeLocal},
+	},
+	{
+		Key:           ConfigKeyPMAgentProvider,
+		DefaultScope:  ScopeLocal,
+		AllowedScopes: []Scope{ScopeLocal},
+	},
+	{
+		Key:           ConfigKeyGatewayAgentProvider,
+		DefaultScope:  ScopeLocal,
+		AllowedScopes: []Scope{ScopeLocal},
+	},
 }
 
 type HomePresence struct {
@@ -84,8 +102,11 @@ type HomePresence struct {
 }
 
 type LocalPresence struct {
-	AgentProvider bool
-	AgentModel    bool
+	AgentProvider        bool
+	AgentModel           bool
+	WorkerAgentProvider  bool
+	PMAgentProvider      bool
+	GatewayAgentProvider bool
 }
 
 type HomeConfig struct {
@@ -258,6 +279,27 @@ func ResolveValue(key string, eval *EvalContext) (string, Scope, error) {
 			return value, ScopeGlobal, nil
 		}
 		return value, ScopeDefault, nil
+	case ConfigKeyWorkerAgentProvider:
+		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
+		value := strings.TrimSpace(effective.WorkerAgent.Provider)
+		if eval.LocalPresence.WorkerAgentProvider {
+			return value, ScopeLocal, nil
+		}
+		return value, ScopeDefault, nil
+	case ConfigKeyPMAgentProvider:
+		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
+		value := strings.TrimSpace(effective.PMAgent.Provider)
+		if eval.LocalPresence.PMAgentProvider {
+			return value, ScopeLocal, nil
+		}
+		return value, ScopeDefault, nil
+	case ConfigKeyGatewayAgentProvider:
+		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
+		value := strings.TrimSpace(effective.GatewayAgent.Provider)
+		if eval.LocalPresence.GatewayAgentProvider {
+			return value, ScopeLocal, nil
+		}
+		return value, ScopeDefault, nil
 	default:
 		return "", ScopeDefault, fmt.Errorf("未知配置键: %s", key)
 	}
@@ -370,9 +412,58 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 		default:
 			return "", fmt.Errorf("agent.model 不支持 scope=%s", scope)
 		}
+	case ConfigKeyWorkerAgentProvider:
+		return setRoleProvider(ctx, "worker_agent", rawValue, scope)
+	case ConfigKeyPMAgentProvider:
+		return setRoleProvider(ctx, "pm_agent", rawValue, scope)
+	case ConfigKeyGatewayAgentProvider:
+		return setRoleProvider(ctx, "gateway_agent", rawValue, scope)
 	default:
 		return "", fmt.Errorf("未知配置键: %s", key)
 	}
+}
+
+// setRoleProvider 校验 provider key 存在于全局 providers map，写入项目配置，返回最终值。
+func setRoleProvider(ctx *SetContext, role, rawValue string, scope Scope) (string, error) {
+	if scope != ScopeLocal {
+		return "", fmt.Errorf("%s.provider 仅支持 local 层", role)
+	}
+	if ctx.Project == nil {
+		return "", fmt.Errorf("project 为空")
+	}
+	providerKey := strings.TrimSpace(rawValue)
+	if providerKey == "" {
+		return "", fmt.Errorf("%s.provider 不能为空", role)
+	}
+	// 校验 provider key 在全局 providers map 中存在
+	providers := ctx.Providers
+	if len(providers) == 0 {
+		providers = repo.DefaultProviders()
+	}
+	if _, ok := providers[providerKey]; !ok {
+		// 也接受合法的 provider 类型名作为 fallback
+		normalized := agentprovider.NormalizeProvider(providerKey)
+		if !agentprovider.IsSupportedProvider(normalized) {
+			keys := make([]string, 0, len(providers))
+			for k := range providers {
+				keys = append(keys, k)
+			}
+			return "", fmt.Errorf("provider key %q 不存在，可用: %s", providerKey, strings.Join(keys, ", "))
+		}
+	}
+	next := ctx.LocalCfg.WithDefaults()
+	switch role {
+	case "worker_agent":
+		next.WorkerAgent.Provider = providerKey
+	case "pm_agent":
+		next.PMAgent.Provider = providerKey
+	case "gateway_agent":
+		next.GatewayAgent.Provider = providerKey
+	}
+	if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
+		return "", err
+	}
+	return providerKey, nil
 }
 
 func LoadProjectConfigFromPath(path string) (repo.Config, error) {
@@ -410,8 +501,11 @@ func LoadLocalConfigPresence(path string) (LocalPresence, error) {
 		return LocalPresence{}, err
 	}
 	return LocalPresence{
-		AgentProvider: jsonPathExists(root, "worker_agent", "provider") || jsonPathExists(root, "pm_agent", "provider"),
-		AgentModel:    false, // v3: model 不再是 role-level 字段
+		AgentProvider:        jsonPathExists(root, "worker_agent", "provider") || jsonPathExists(root, "pm_agent", "provider"),
+		AgentModel:           false, // v3: model 不再是 role-level 字段
+		WorkerAgentProvider:  jsonPathExists(root, "worker_agent", "provider"),
+		PMAgentProvider:      jsonPathExists(root, "pm_agent", "provider"),
+		GatewayAgentProvider: jsonPathExists(root, "gateway_agent", "provider"),
 	}, nil
 }
 

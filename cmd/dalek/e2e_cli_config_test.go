@@ -56,6 +56,9 @@ func TestCLI_E2E_ConfigCommands(t *testing.T) {
 		"project.max_running_workers",
 		"agent.provider",
 		"agent.model",
+		"worker_agent.provider",
+		"pm_agent.provider",
+		"gateway_agent.provider",
 	}
 	for _, key := range requiredKeys {
 		if _, ok := gotByKey[key]; !ok {
@@ -119,12 +122,22 @@ func TestCLI_E2E_ConfigCommands(t *testing.T) {
 		t.Fatalf("unexpected config set agent.provider payload: %+v", setPayload)
 	}
 
-	setOut, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "config", "set", "agent.model", "claude-3-7-sonnet", "--local", "-o", "json")
-	if err := json.Unmarshal([]byte(setOut), &setPayload); err != nil {
-		t.Fatalf("decode config set agent.model json failed: %v\nraw=%s", err, setOut)
+	// v3: agent.model 不再支持 local scope 设置
+	_, stderr, errModel := runCLI(t, bin, repo, "-home", home, "-project", "demo", "config", "set", "agent.model", "claude-3-7-sonnet", "--local")
+	if errModel == nil {
+		t.Fatalf("config set agent.model --local should fail in v3")
 	}
-	if setPayload.Value != "claude-3-7-sonnet" || setPayload.Source != "local" {
-		t.Fatalf("unexpected config set agent.model payload: %+v", setPayload)
+	if !strings.Contains(stderr, "v3") {
+		t.Fatalf("unexpected stderr for agent.model local: %s", stderr)
+	}
+
+	// agent.model --global 仍然有效
+	setOut, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "config", "set", "agent.model", "claude-3-7-sonnet", "--global", "-o", "json")
+	if err := json.Unmarshal([]byte(setOut), &setPayload); err != nil {
+		t.Fatalf("decode config set agent.model --global json failed: %v\nraw=%s", err, setOut)
+	}
+	if setPayload.Value != "claude-3-7-sonnet" || setPayload.Source != "global" {
+		t.Fatalf("unexpected config set agent.model --global payload: %+v", setPayload)
 	}
 
 	getOut, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "config", "get", "agent.provider", "-o", "json")
@@ -135,12 +148,21 @@ func TestCLI_E2E_ConfigCommands(t *testing.T) {
 		t.Fatalf("unexpected agent.provider after set: %+v", getPayload)
 	}
 
-	getOut, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "config", "get", "agent.model", "-o", "json")
-	if err := json.Unmarshal([]byte(getOut), &getPayload); err != nil {
-		t.Fatalf("decode config get agent.model json failed: %v\nraw=%s", err, getOut)
+	// v3: 测试 worker_agent.provider 热切换
+	setOut, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "config", "set", "worker_agent.provider", "gemini", "--local", "-o", "json")
+	if err := json.Unmarshal([]byte(setOut), &setPayload); err != nil {
+		t.Fatalf("decode config set worker_agent.provider json failed: %v\nraw=%s", err, setOut)
 	}
-	if getPayload.Value != "claude-3-7-sonnet" || getPayload.Source != "local" {
-		t.Fatalf("unexpected agent.model after set: %+v", getPayload)
+	if setPayload.Value != "gemini" || setPayload.Source != "local" {
+		t.Fatalf("unexpected config set worker_agent.provider payload: %+v", setPayload)
+	}
+
+	getOut, _ = runCLIOK(t, bin, repo, "-home", home, "-project", "demo", "config", "get", "worker_agent.provider", "-o", "json")
+	if err := json.Unmarshal([]byte(getOut), &getPayload); err != nil {
+		t.Fatalf("decode config get worker_agent.provider json failed: %v\nraw=%s", err, getOut)
+	}
+	if getPayload.Value != "gemini" || getPayload.Source != "local" {
+		t.Fatalf("unexpected worker_agent.provider after set: %+v", getPayload)
 	}
 
 	_, stderr, err := runCLI(t, bin, repo, "-home", home, "-project", "demo", "config", "set", "daemon.internal.listen", "127.0.0.1:19081", "--local")

@@ -199,6 +199,115 @@ func TestSetValue_LocalWritesProjectConfig(t *testing.T) {
 	}
 }
 
+func TestLoadPresence_RoleProviderFields(t *testing.T) {
+	t.Parallel()
+	localPath := filepath.Join(t.TempDir(), "config.json")
+	localJSON := `{
+  "worker_agent": {"provider": "codex"},
+  "gateway_agent": {"provider": "claude"}
+}`
+	if err := os.WriteFile(localPath, []byte(localJSON), 0o644); err != nil {
+		t.Fatalf("write local json failed: %v", err)
+	}
+	lp, err := LoadLocalConfigPresence(localPath)
+	if err != nil {
+		t.Fatalf("LoadLocalConfigPresence failed: %v", err)
+	}
+	if !lp.WorkerAgentProvider {
+		t.Fatal("expected WorkerAgentProvider=true")
+	}
+	if lp.PMAgentProvider {
+		t.Fatal("expected PMAgentProvider=false")
+	}
+	if !lp.GatewayAgentProvider {
+		t.Fatal("expected GatewayAgentProvider=true")
+	}
+}
+
+func TestResolveValue_RoleProviders(t *testing.T) {
+	t.Parallel()
+	localCfg := repo.Config{}.WithDefaults()
+	localCfg.WorkerAgent.Provider = "codex"
+	localCfg.PMAgent.Provider = "claude"
+	localCfg.GatewayAgent.Provider = "gemini"
+	eval := &EvalContext{
+		LocalCfg:      localCfg,
+		LocalPresence: LocalPresence{WorkerAgentProvider: true, PMAgentProvider: true, GatewayAgentProvider: true},
+	}
+	for _, tc := range []struct {
+		key  string
+		want string
+	}{
+		{ConfigKeyWorkerAgentProvider, "codex"},
+		{ConfigKeyPMAgentProvider, "claude"},
+		{ConfigKeyGatewayAgentProvider, "gemini"},
+	} {
+		v, src, err := ResolveValue(tc.key, eval)
+		if err != nil {
+			t.Fatalf("ResolveValue(%s) failed: %v", tc.key, err)
+		}
+		if v != tc.want {
+			t.Fatalf("ResolveValue(%s): got %s, want %s", tc.key, v, tc.want)
+		}
+		if src != ScopeLocal {
+			t.Fatalf("ResolveValue(%s): got scope %s, want local", tc.key, src)
+		}
+	}
+}
+
+func TestSetValue_RoleProvider(t *testing.T) {
+	repoRoot := initGitRepo(t)
+	cfgPath := filepath.Join(repoRoot, ".dalek", "config.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := repo.WriteConfigAtomic(cfgPath, repo.Config{}.WithDefaults()); err != nil {
+		t.Fatalf("WriteConfigAtomic failed: %v", err)
+	}
+	p := &fakeProject{configPath: cfgPath, maxRunning: 4}
+	localCfg, err := LoadProjectConfigFromProject(p)
+	if err != nil {
+		t.Fatalf("LoadProjectConfigFromProject failed: %v", err)
+	}
+
+	providers := repo.DefaultProviders()
+	ctx := &SetContext{
+		Project:   p,
+		LocalCfg:  localCfg,
+		Providers: providers,
+	}
+
+	// Set worker_agent.provider
+	v, err := SetValue(ctx, ConfigKeyWorkerAgentProvider, ScopeLocal, "claude")
+	if err != nil {
+		t.Fatalf("SetValue worker_agent.provider failed: %v", err)
+	}
+	if v != "claude" {
+		t.Fatalf("unexpected normalized value: %s", v)
+	}
+
+	// Verify file was updated
+	cfg, _, err := repo.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.WorkerAgent.Provider != "claude" {
+		t.Fatalf("expected worker_agent.provider=claude, got=%s", cfg.WorkerAgent.Provider)
+	}
+
+	// Reject unknown provider key
+	_, err = SetValue(ctx, ConfigKeyPMAgentProvider, ScopeLocal, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for unknown provider key")
+	}
+
+	// Reject global scope
+	_, err = SetValue(ctx, ConfigKeyWorkerAgentProvider, ScopeGlobal, "claude")
+	if err == nil {
+		t.Fatal("expected error for global scope on worker_agent.provider")
+	}
+}
+
 func TestBuildEffectiveProjectConfig(t *testing.T) {
 	t.Parallel()
 	homeCfg := HomeConfig{}

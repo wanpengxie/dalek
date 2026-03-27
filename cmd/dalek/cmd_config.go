@@ -28,6 +28,9 @@ const (
 	configKeyProjectMaxRunningWorkers = config.ConfigKeyProjectMaxRunningWorkers
 	configKeyAgentProvider            = config.ConfigKeyAgentProvider
 	configKeyAgentModel               = config.ConfigKeyAgentModel
+	configKeyWorkerAgentProvider      = config.ConfigKeyWorkerAgentProvider
+	configKeyPMAgentProvider          = config.ConfigKeyPMAgentProvider
+	configKeyGatewayAgentProvider     = config.ConfigKeyGatewayAgentProvider
 )
 
 type configKeyMeta = config.KeyMeta
@@ -172,11 +175,40 @@ func cmdConfigList(args []string) {
 
 	if out == outputJSON {
 		printJSONOrExit(map[string]any{
-			"schema":  "dalek.config.list.v1",
-			"configs": items,
+			"schema":    "dalek.config.list.v1",
+			"configs":   items,
+			"providers": eval.Providers,
 		})
 		return
 	}
+
+	// 展示 providers 菜单
+	providers := eval.Providers
+	if len(providers) > 0 {
+		fmt.Println("providers (global):")
+		tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+		for key, pc := range providers {
+			extra := ""
+			if strings.TrimSpace(pc.ReasoningEffort) != "" {
+				extra = fmt.Sprintf("  (%s)", strings.TrimSpace(pc.ReasoningEffort))
+			}
+			perm := strings.TrimSpace(pc.Permission)
+			if perm == "" {
+				perm = "auto"
+			}
+			fmt.Fprintf(tw, "  %s\t→ %s / %s\t/ %s%s\n",
+				key,
+				strings.TrimSpace(pc.Type),
+				strings.TrimSpace(pc.Model),
+				perm,
+				extra,
+			)
+		}
+		_ = tw.Flush()
+		fmt.Println()
+	}
+
+	// 展示配置项列表
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "KEY\tVALUE\tSOURCE")
 	for _, it := range items {
@@ -334,6 +366,7 @@ func cmdConfigSet(args []string) {
 	setCtx := &configSetContext{
 		HomeConfigPath: homeHandle.ConfigPath,
 		HomeCfg:        toConfigHomeCfg(homeCfg),
+		Providers:      homeCfg.Providers,
 		WriteHomeConfig: func(path string, cfg config.HomeConfig) error {
 			next := homeCfg
 			normalized := cfg.WithDefaults()
@@ -404,9 +437,11 @@ func mustBuildConfigEvalContext(out cliOutputFormat, homeFlag, projectFlag strin
 			"检查 Home 配置文件格式后重试",
 		)
 	}
+	homeCfgDefaults := home.Config.WithDefaults()
 	eval := &configEvalContext{
-		HomeCfg:      toConfigHomeCfg(home.Config.WithDefaults()),
+		HomeCfg:      toConfigHomeCfg(homeCfgDefaults),
 		HomePresence: homePresence,
+		Providers:    homeCfgDefaults.Providers,
 	}
 	if !requireProject {
 		return eval

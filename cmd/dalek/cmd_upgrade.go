@@ -12,6 +12,11 @@ import (
 )
 
 func cmdUpgrade(args []string) {
+	// 路由 "upgrade config" 子命令
+	if len(args) > 0 && strings.TrimSpace(args[0]) == "config" {
+		cmdUpgradeConfig(args[1:])
+		return
+	}
 	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.Usage = func() {
