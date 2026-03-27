@@ -356,7 +356,7 @@ func (h *Home) openProject(rp RegisteredProject) (*Project, error) {
 		return nil, err
 	}
 
-	cp, err := buildCoreProject(name, repo.ProjectKey(repoRoot), repoRoot, layout, cfg, db, worktreesDir)
+	cp, err := buildCoreProject(name, repo.ProjectKey(repoRoot), repoRoot, layout, cfg, h.Config.WithDefaults().Providers, db, worktreesDir)
 	if err != nil {
 		return nil, err
 	}
@@ -429,14 +429,14 @@ func (h *Home) initProjectFiles(name, repoRoot string, cfg ProjectConfig) (*Proj
 		return nil, err
 	}
 
-	cp, err := buildCoreProject(name, key, repoRoot, layout, cfg, db, worktreesDir)
+	cp, err := buildCoreProject(name, key, repoRoot, layout, cfg, h.Config.WithDefaults().Providers, db, worktreesDir)
 	if err != nil {
 		return nil, err
 	}
 	return assembleProject(cp), nil
 }
 
-func buildCoreProject(name, key, repoRoot string, layout repo.Layout, cfg repo.Config, db *gorm.DB, worktreesDir string) (*core.Project, error) {
+func buildCoreProject(name, key, repoRoot string, layout repo.Layout, cfg repo.Config, providers map[string]repo.ProviderConfig, db *gorm.DB, worktreesDir string) (*core.Project, error) {
 	return core.NewProject(core.NewProjectInput{
 		Name:          strings.TrimSpace(name),
 		Key:           strings.TrimSpace(key),
@@ -445,6 +445,7 @@ func buildCoreProject(name, key, repoRoot string, layout repo.Layout, cfg repo.C
 		WorktreesDir:  strings.TrimSpace(worktreesDir),
 		WorkersDir:    strings.TrimSpace(layout.RuntimeWorkersDir),
 		Config:        cfg,
+		Providers:     providers,
 		DB:            db,
 		Logger:        core.DefaultLogger(),
 		WorkerRuntime: infra.NewDaemonProcessManager(),
@@ -456,6 +457,9 @@ func buildCoreProject(name, key, repoRoot string, layout repo.Layout, cfg repo.C
 func loadProjectConfigRaw(path string) (repo.Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
+		return repo.Config{}, err
+	}
+	if err := repo.ValidateNoDeprecatedProjectFields(b); err != nil {
 		return repo.Config{}, err
 	}
 	var cfg repo.Config

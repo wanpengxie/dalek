@@ -159,7 +159,7 @@ func LoadConfig(path string) (Config, bool, error) {
 	if err != nil {
 		return Config{}, false, err
 	}
-	if err := validateNoDeprecatedProjectFields(b); err != nil {
+	if err := ValidateNoDeprecatedProjectFields(b); err != nil {
 		return Config{}, false, err
 	}
 	var cfg Config
@@ -182,7 +182,9 @@ func LoadConfig(path string) (Config, bool, error) {
 	return cfg.WithDefaults(), needsRewrite, nil
 }
 
-func validateNoDeprecatedProjectFields(raw []byte) error {
+// ValidateNoDeprecatedProjectFields 检测 raw JSON 中是否包含 v2 已废弃字段。
+// 若检测到旧字段，返回 error 指引用户运行 `dalek upgrade config`。
+func ValidateNoDeprecatedProjectFields(raw []byte) error {
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &root); err != nil {
 		return nil // 让正常 unmarshal 处理语法错误

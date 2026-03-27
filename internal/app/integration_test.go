@@ -1225,6 +1225,87 @@ func TestIntegration_OpenProject_BackfillsSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestIntegration_OpenProject_ProvidersInjected(t *testing.T) {
+	testutil.UseTmuxShim(t)
+	repoRoot := testutil.InitGitRepo(t)
+	homeDir := filepath.Join(t.TempDir(), "home")
+
+	h, err := OpenHome(homeDir)
+	if err != nil {
+		t.Fatalf("OpenHome failed: %v", err)
+	}
+
+	// 设置自定义 providers
+	h.Config.Providers = map[string]repo.ProviderConfig{
+		"custom-llm": {
+			Type:  "claude",
+			Model: "custom-model",
+		},
+	}
+
+	_, err = h.InitProjectFromDir(repoRoot, "demo-providers", repo.Config{
+		BranchPrefix: "ts/demo/",
+	})
+	if err != nil {
+		t.Fatalf("InitProjectFromDir failed: %v", err)
+	}
+
+	p, err := h.OpenProjectByName("demo-providers")
+	if err != nil {
+		t.Fatalf("OpenProjectByName failed: %v", err)
+	}
+	if p.core.Providers == nil {
+		t.Fatalf("Providers should not be nil after openProject")
+	}
+	if _, ok := p.core.Providers["custom-llm"]; !ok {
+		t.Fatalf("custom-llm provider should be present in Providers map, got keys: %v", p.core.Providers)
+	}
+}
+
+func TestIntegration_OpenProject_V2DeprecatedFieldsError(t *testing.T) {
+	testutil.UseTmuxShim(t)
+	repoRoot := testutil.InitGitRepo(t)
+	homeDir := filepath.Join(t.TempDir(), "home")
+
+	h, err := OpenHome(homeDir)
+	if err != nil {
+		t.Fatalf("OpenHome failed: %v", err)
+	}
+	_, err = h.InitProjectFromDir(repoRoot, "demo-v2", repo.Config{
+		BranchPrefix: "ts/demo/",
+	})
+	if err != nil {
+		t.Fatalf("InitProjectFromDir failed: %v", err)
+	}
+
+	// 写入包含 v2 deprecated 字段的配置
+	cfgPath := filepath.Join(repoRoot, ".dalek", "config.json")
+	v2Config := `{
+		"schema_version": 2,
+		"worker_agent": {
+			"provider": "codex",
+			"mode": "cli"
+		},
+		"pm_agent": {
+			"provider": "claude"
+		}
+	}`
+	if err := os.WriteFile(cfgPath, []byte(v2Config), 0o644); err != nil {
+		t.Fatalf("write v2 config failed: %v", err)
+	}
+
+	_, err = h.OpenProjectByName("demo-v2")
+	if err == nil {
+		t.Fatalf("expected error for v2 deprecated config, got nil")
+	}
+	if !strings.Contains(err.Error(), "已不再支持") {
+		t.Fatalf("expected deprecation error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "dalek upgrade config") {
+		t.Fatalf("expected upgrade hint in error, got: %v", err)
+	}
+}
+
 func TestIntegration_AddOrUpdateProject_ExistingDoesNotAutoCommitEntryPoints(t *testing.T) {
 	testutil.UseTmuxShim(t)
 	repoRoot := testutil.InitGitRepo(t)

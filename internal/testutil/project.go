@@ -282,6 +282,7 @@ echo '{"type":"item.completed","item":{"id":"msg-worker-default","type":"agent_m
 		WorktreesDir:  worktreesDir,
 		WorkersDir:    layout.RuntimeWorkersDir,
 		Config:        cfg,
+		Providers:     repo.DefaultProviders(),
 		DB:            db,
 		Logger:        core.DiscardLogger(),
 		WorkerRuntime: fRuntime,
