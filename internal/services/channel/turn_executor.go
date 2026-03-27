@@ -129,8 +129,12 @@ func (s *Service) claimAndLoadTurnContext(ctx context.Context, jobID uint) (*tur
 	gaCfg := s.p.Config.WithDefaults().GatewayAgent
 	gaResolved, err := resolveGatewayProviderConfig(gaCfg.Provider, s.p.Providers)
 	if err != nil {
-		s.p.Logger.Warn("resolveGatewayProviderConfig failed", "provider", gaCfg.Provider, "error", err)
-		return nil, false, fmt.Errorf("resolve gateway provider config: %w", err)
+		resolveErr := fmt.Errorf("resolve gateway provider config: %w", err)
+		s.slog().Warn("resolveGatewayProviderConfig failed", "provider", gaCfg.Provider, "error", err)
+		if failErr := tctx.failTurn(s, resolveErr, ""); failErr != nil {
+			return nil, true, failErr
+		}
+		return nil, true, resolveErr
 	}
 	tctx.gaCfg = agentcli.ConfigOverride{
 		Provider:     gaResolved.Provider,

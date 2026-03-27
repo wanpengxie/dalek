@@ -74,13 +74,19 @@ func TestService_Create_RejectsMissingTargetRef(t *testing.T) {
 	}
 
 	svc := New(db)
-	if _, err := svc.Create(context.Background(), "hello"); err == nil {
-		t.Fatalf("expected create without target_ref to fail")
-	} else if !strings.Contains(err.Error(), "target_ref 不能为空") {
-		t.Fatalf("unexpected error: %v", err)
+	// 便捷 API（Create / CreateWithDescription）现在使用默认 target_ref（refs/heads/main），
+	// 应当成功而非报错。
+	if _, err := svc.Create(context.Background(), "hello"); err != nil {
+		t.Fatalf("Create with default target_ref should succeed, got: %v", err)
 	}
-	if _, err := svc.CreateWithDescription(context.Background(), "world", "   "); err == nil {
-		t.Fatalf("expected create with description without target_ref to fail")
+	if _, err := svc.CreateWithDescription(context.Background(), "world", "desc"); err != nil {
+		t.Fatalf("CreateWithDescription with default target_ref should succeed, got: %v", err)
+	}
+	// 显式传入空 target_ref 到底层 API 仍然应报错
+	if _, err := svc.CreateWithDescriptionAndLabelAndPriorityAndTarget(
+		context.Background(), "explicit-empty", "", "", contracts.TicketPriorityNone, "",
+	); err == nil {
+		t.Fatalf("expected explicit empty target_ref to fail")
 	} else if !strings.Contains(err.Error(), "target_ref 不能为空") {
 		t.Fatalf("unexpected error: %v", err)
 	}

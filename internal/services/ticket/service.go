@@ -40,8 +40,11 @@ func (s *Service) CreateWithDescriptionAndLabel(ctx context.Context, title, desc
 }
 
 func (s *Service) CreateWithDescriptionAndLabelAndPriority(ctx context.Context, title, description, label string, priority int) (*contracts.Ticket, error) {
-	return s.CreateWithDescriptionAndLabelAndPriorityAndTarget(ctx, title, description, label, priority, "")
+	return s.CreateWithDescriptionAndLabelAndPriorityAndTarget(ctx, title, description, label, priority, defaultTargetRef)
 }
+
+// defaultTargetRef 是便捷 API（不含 target 参数的变体）使用的默认目标分支。
+const defaultTargetRef = "refs/heads/main"
 
 func (s *Service) CreateWithDescriptionAndLabelAndPriorityAndTarget(ctx context.Context, title, description, label string, priority int, targetBranch string) (*contracts.Ticket, error) {
 	db, err := s.requireDB()

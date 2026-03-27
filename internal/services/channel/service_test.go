@@ -379,9 +379,10 @@ func TestDecidePendingAction_ApproveExecutesAndMarksExecuted(t *testing.T) {
 
 	repoRoot := t.TempDir()
 	svc := newChannelServiceForTestProject(&core.Project{
-		Name:     "demo",
-		RepoRoot: repoRoot,
-		Layout:   repo.NewLayout(repoRoot),
+		Name:      "demo",
+		RepoRoot:  repoRoot,
+		Layout:    repo.NewLayout(repoRoot),
+		Providers: repo.DefaultProviders(),
 		Config: repo.Config{
 			GatewayAgent: repo.GatewayRoleConfig{},
 		},
@@ -1817,5 +1818,73 @@ func TestClassifyJobErrorType(t *testing.T) {
 				t.Fatalf("classifyJobErrorType(%q)=%q, want=%q", tc.msg, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestProcessInbound_ProviderResolveFail_TurnJobMarkedFailed 验证当 resolveGatewayProviderConfig
+// 失败时，已 claim 的 turn job 被正确标记为 failed（而非卡在 running）。
+func TestProcessInbound_ProviderResolveFail_TurnJobMarkedFailed(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "dalek.sqlite3")
+	db, err := store.OpenAndMigrate(dbPath)
+	if err != nil {
+		t.Fatalf("OpenAndMigrate failed: %v", err)
+	}
+
+	installFakeClaudeBinaryWithMessageText(t, `{"schema":"dalek.turn_response.v1","reply_text":"hi"}`)
+	t.Setenv("DALEK_GATEWAY_AGENT_MODE", "cli")
+
+	repoRoot := t.TempDir()
+	// 使用不存在的 provider key + 空 providers map 触发 resolveGatewayProviderConfig 失败
+	svc := newChannelServiceForTestProject(&core.Project{
+		Name:     "demo",
+		RepoRoot: repoRoot,
+		Layout:   repo.NewLayout(repoRoot),
+		Providers: map[string]repo.ProviderConfig{
+			"only-custom": {Type: "custom-unsupported"},
+		},
+		Config: repo.Config{
+			GatewayAgent: repo.GatewayRoleConfig{
+				Provider: "nonexistent-provider",
+			},
+		},
+		DB: db,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := svc.ProcessInbound(ctx, contracts.InboundEnvelope{
+		Schema:             contracts.ChannelInboundSchemaV1,
+		ChannelType:        contracts.ChannelTypeCLI,
+		Adapter:            "cli.local",
+		PeerConversationID: "conv-provider-fail",
+		PeerMessageID:      "msg-provider-fail",
+		SenderID:           "u1",
+		Text:               "hello",
+		ReceivedAt:         time.Now().UTC().Format(time.RFC3339),
+	})
+
+	// ProcessInbound 应该返回 job result（通过 collectTurnResult 回收），而非裸 error
+	if err != nil {
+		// 即使返回 error，turn job 也不应该卡在 running
+		var job contracts.ChannelTurnJob
+		if dbErr := db.Order("id desc").First(&job).Error; dbErr != nil {
+			t.Fatalf("failed to query turn job: %v", dbErr)
+		}
+		if job.Status == contracts.ChannelTurnRunning {
+			t.Fatalf("turn job should NOT be stuck in running when provider resolve fails, got status=%s", job.Status)
+		}
+		if job.Status != contracts.ChannelTurnFailed {
+			t.Fatalf("turn job should be failed when provider resolve fails, got status=%s", job.Status)
+		}
+		// job 被正确 fail 了，虽然 ProcessInbound 返回了 error，这是可接受的
+		return
+	}
+
+	// 如果没有 error，验证 job result 中的状态
+	if result.JobStatus != contracts.ChannelTurnFailed {
+		t.Fatalf("expected failed job status when provider resolve fails, got=%s", result.JobStatus)
+	}
+	if !strings.Contains(result.JobError, "resolve gateway provider config") {
+		t.Fatalf("job error should mention provider resolve failure, got: %s", result.JobError)
 	}
 }
