@@ -309,6 +309,7 @@ func TestProcessInbound_StructuredTurnResponseCreatesPendingActions(t *testing.T
 
 	turnResp := `{"schema":"dalek.turn_response.v1","reply_text":"请确认是否执行","requires_confirmation":true,"actions":[{"name":"create_ticket","args":{"title":"pending ticket","description":"pending desc"}}]}`
 	installFakeClaudeBinaryWithMessageText(t, turnResp)
+	t.Setenv("DALEK_GATEWAY_AGENT_MODE", "cli")
 
 	repoRoot := t.TempDir()
 	svc := newChannelServiceForTestProject(&core.Project{
@@ -316,7 +317,7 @@ func TestProcessInbound_StructuredTurnResponseCreatesPendingActions(t *testing.T
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
+			GatewayAgent: repo.GatewayRoleConfig{},
 		},
 		DB: db,
 	})
@@ -374,6 +375,7 @@ func TestDecidePendingAction_ApproveExecutesAndMarksExecuted(t *testing.T) {
 
 	turnResp := `{"schema":"dalek.turn_response.v1","reply_text":"请审批","requires_confirmation":true,"actions":[{"name":"create_ticket","args":{"title":"approved ticket","description":"from approval"}}]}`
 	installFakeClaudeBinaryWithMessageText(t, turnResp)
+	t.Setenv("DALEK_GATEWAY_AGENT_MODE", "cli")
 
 	repoRoot := t.TempDir()
 	svc := newChannelServiceForTestProject(&core.Project{
@@ -381,7 +383,7 @@ func TestDecidePendingAction_ApproveExecutesAndMarksExecuted(t *testing.T) {
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
+			GatewayAgent: repo.GatewayRoleConfig{},
 		},
 		DB: db,
 	})
@@ -441,6 +443,7 @@ func TestDecidePendingAction_RejectMarksRejected(t *testing.T) {
 
 	turnResp := `{"schema":"dalek.turn_response.v1","reply_text":"请审批","requires_confirmation":true,"actions":[{"name":"create_ticket","args":{"title":"rejected ticket","description":"from reject"}}]}`
 	installFakeClaudeBinaryWithMessageText(t, turnResp)
+	t.Setenv("DALEK_GATEWAY_AGENT_MODE", "cli")
 
 	repoRoot := t.TempDir()
 	svc := newChannelServiceForTestProject(&core.Project{
@@ -448,7 +451,7 @@ func TestDecidePendingAction_RejectMarksRejected(t *testing.T) {
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
+			GatewayAgent: repo.GatewayRoleConfig{},
 		},
 		DB: db,
 	})
@@ -504,13 +507,14 @@ func TestProcessInbound_FailedWhenAgentNoResponse(t *testing.T) {
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	installFakeClaudeBinary(t, true)
+	t.Setenv("DALEK_GATEWAY_AGENT_MODE", "cli")
 	repoRoot := t.TempDir()
 	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
+			GatewayAgent: repo.GatewayRoleConfig{},
 		},
 		DB: db,
 	})
@@ -586,6 +590,7 @@ PY
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("DALEK_TEST_CLAUDE_LOG", logPath)
+	t.Setenv("DALEK_GATEWAY_AGENT_MODE", "cli")
 
 	repoRoot := t.TempDir()
 	svc := newChannelServiceForTestProject(&core.Project{
@@ -593,7 +598,7 @@ PY
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
+			GatewayAgent: repo.GatewayRoleConfig{},
 		},
 		DB: db,
 	})
@@ -707,7 +712,7 @@ PY
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
+			GatewayAgent: repo.GatewayRoleConfig{},
 		},
 		DB: db,
 	})
@@ -752,13 +757,14 @@ func TestProcessInbound_TimeoutStillReturnsFailedJobResult(t *testing.T) {
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	installFakeClaudeBinaryWithDelay(t, 2*time.Second)
+	t.Setenv("DALEK_GATEWAY_AGENT_MODE", "cli")
 	repoRoot := t.TempDir()
 	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
+			GatewayAgent: repo.GatewayRoleConfig{},
 		},
 		DB: db,
 	})
@@ -1182,7 +1188,7 @@ func TestDispatchOutbox_EmptyAdapterPersistFailedStatus(t *testing.T) {
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{Mode: "cli"},
+			GatewayAgent: repo.GatewayRoleConfig{},
 		},
 		DB: db,
 	})
@@ -1259,6 +1265,7 @@ func TestProcessInbound_CodexBackend_JSONLAndEvents(t *testing.T) {
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	installFakeCodexBinary(t)
+	t.Setenv("DALEK_GATEWAY_AGENT_MODE", "cli")
 	t.Setenv("DALEK_GATEWAY_AGENT_PROVIDER", "codex")
 	t.Setenv("DALEK_GATEWAY_AGENT_MODEL", "gpt-5-codex-test")
 
@@ -1309,6 +1316,7 @@ func TestProcessInbound_ResolveBackendFromProjectConfig(t *testing.T) {
 		t.Fatalf("OpenAndMigrate failed: %v", err)
 	}
 	installFakeCodexBinary(t)
+	t.Setenv("DALEK_GATEWAY_AGENT_MODE", "cli")
 	repoRoot := t.TempDir()
 	svc := newChannelServiceForTestProject(&core.Project{
 		Name:     "demo",
@@ -1316,10 +1324,8 @@ func TestProcessInbound_ResolveBackendFromProjectConfig(t *testing.T) {
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{
+			GatewayAgent: repo.GatewayRoleConfig{
 				Provider: "codex",
-				Mode:     "cli",
-				Model:    "gpt-5-codex-config",
 			},
 		},
 		DB:          db,
@@ -1347,7 +1353,7 @@ func TestProcessInbound_ResolveBackendFromProjectConfig(t *testing.T) {
 	if result.AgentProvider != "codex" {
 		t.Fatalf("unexpected provider: %q", result.AgentProvider)
 	}
-	if result.AgentModel != "gpt-5-codex-config" {
+	if result.AgentModel != "gpt-5.3-codex" {
 		t.Fatalf("unexpected model: %q", result.AgentModel)
 	}
 	assertChannelTaskRunCreated(t, db, result.ConversationID)
@@ -1367,10 +1373,8 @@ func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{
+			GatewayAgent: repo.GatewayRoleConfig{
 				Provider: "codex",
-				Mode:     "sdk",
-				Model:    "gpt-5-codex-sdk",
 			},
 		},
 		DB:          db,
@@ -1401,7 +1405,7 @@ func TestProcessInbound_CodexBackend_SDKMode(t *testing.T) {
 	if result.AgentProvider != "codex" {
 		t.Fatalf("unexpected provider: %q", result.AgentProvider)
 	}
-	if result.AgentModel != "gpt-5-codex-sdk" {
+	if result.AgentModel != "gpt-5.3-codex" {
 		t.Fatalf("unexpected model: %q", result.AgentModel)
 	}
 	if result.AgentOutputMode != "jsonl" {
@@ -1570,6 +1574,8 @@ func newChannelServiceForTestProject(p *core.Project) *Service {
 func newChannelServiceWithFakeAgent(t *testing.T, db *gorm.DB) *Service {
 	t.Helper()
 	installFakeClaudeBinary(t, false)
+	// v3: mode 始终为 sdk，测试用 CLI 假 binary 需通过 env 回退到 cli mode
+	t.Setenv("DALEK_GATEWAY_AGENT_MODE", "cli")
 	repoRoot := t.TempDir()
 	p := &core.Project{
 		Name:     "demo",
@@ -1577,9 +1583,7 @@ func newChannelServiceWithFakeAgent(t *testing.T, db *gorm.DB) *Service {
 		RepoRoot: repoRoot,
 		Layout:   repo.NewLayout(repoRoot),
 		Config: repo.Config{
-			GatewayAgent: repo.GatewayAgentConfig{
-				Mode: "cli",
-			},
+			GatewayAgent: repo.GatewayRoleConfig{},
 		},
 		DB:          db,
 		TaskRuntime: task.NewRuntimeFactory(),

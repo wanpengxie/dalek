@@ -151,6 +151,7 @@ type EvalContext struct {
 	Project       ProjectConfigAccessor
 	LocalCfg      repo.Config
 	LocalPresence LocalPresence
+	Providers     map[string]repo.ProviderConfig // 全局 providers map
 }
 
 type SetContext struct {
@@ -159,6 +160,7 @@ type SetContext struct {
 	WriteHomeConfig func(path string, cfg HomeConfig) error
 	Project         ProjectConfigAccessor
 	LocalCfg        repo.Config
+	Providers       map[string]repo.ProviderConfig // 全局 providers map
 }
 
 func NormalizeKey(raw string) string {
@@ -240,7 +242,15 @@ func ResolveValue(key string, eval *EvalContext) (string, Scope, error) {
 		return value, ScopeDefault, nil
 	case ConfigKeyAgentModel:
 		effective := BuildEffectiveProjectConfig(home, eval.LocalCfg)
-		value := strings.TrimSpace(effective.WorkerAgent.Model)
+		providers := eval.Providers
+		if len(providers) == 0 {
+			providers = repo.DefaultProviders()
+		}
+		resolved, err := repo.ResolveAgentConfig(effective.WorkerAgent.Provider, providers)
+		if err != nil {
+			return "", ScopeDefault, nil
+		}
+		value := strings.TrimSpace(resolved.Model)
 		if eval.LocalPresence.AgentModel {
 			return value, ScopeLocal, nil
 		}
@@ -355,16 +365,8 @@ func SetValue(ctx *SetContext, key string, scope Scope, rawValue string) (string
 			}
 			return strings.TrimSpace(ctx.HomeCfg.WithDefaults().Agent.Model), nil
 		case ScopeLocal:
-			if ctx.Project == nil {
-				return "", fmt.Errorf("project 为空")
-			}
-			next := ctx.LocalCfg.WithDefaults()
-			next.WorkerAgent.Model = model
-			next.PMAgent.Model = model
-			if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
-				return "", err
-			}
-			return strings.TrimSpace(next.WorkerAgent.Model), nil
+			// v3: model 不再是 role-level 字段，不支持 local scope 设置
+			return "", fmt.Errorf("agent.model 在 v3 中不再支持 local scope 设置，请通过 providers map 配置")
 		default:
 			return "", fmt.Errorf("agent.model 不支持 scope=%s", scope)
 		}
@@ -409,7 +411,7 @@ func LoadLocalConfigPresence(path string) (LocalPresence, error) {
 	}
 	return LocalPresence{
 		AgentProvider: jsonPathExists(root, "worker_agent", "provider") || jsonPathExists(root, "pm_agent", "provider"),
-		AgentModel:    jsonPathExists(root, "worker_agent", "model") || jsonPathExists(root, "pm_agent", "model"),
+		AgentModel:    false, // v3: model 不再是 role-level 字段
 	}, nil
 }
 
@@ -446,37 +448,10 @@ func applyAgentProviderModelOverride(cfg *repo.Config, providerRaw, model string
 		return
 	}
 	providerName := agentprovider.NormalizeProvider(providerRaw)
-	model = strings.TrimSpace(model)
+	_ = strings.TrimSpace(model) // v3: model 不再是 role-level 字段
 	if providerName != "" {
-		prevWorkerProvider := strings.TrimSpace(strings.ToLower(cfg.WorkerAgent.Provider))
-		prevPMProvider := strings.TrimSpace(strings.ToLower(cfg.PMAgent.Provider))
 		cfg.WorkerAgent.Provider = providerName
 		cfg.PMAgent.Provider = providerName
-		if model == "" {
-			if prevWorkerProvider != providerName {
-				cfg.WorkerAgent.Model = ""
-			}
-			if prevPMProvider != providerName {
-				cfg.PMAgent.Model = ""
-			}
-			defaultModel := agentprovider.DefaultModel(providerName)
-			if providerName == agentprovider.ProviderCodex && defaultModel != "" {
-				if strings.TrimSpace(cfg.WorkerAgent.Model) == "" {
-					cfg.WorkerAgent.Model = defaultModel
-				}
-				if strings.TrimSpace(cfg.PMAgent.Model) == "" {
-					cfg.PMAgent.Model = defaultModel
-				}
-			}
-		}
-		if providerName == agentprovider.ProviderClaude || providerName == agentprovider.ProviderGemini {
-			cfg.WorkerAgent.ReasoningEffort = ""
-			cfg.PMAgent.ReasoningEffort = ""
-		}
-	}
-	if model != "" {
-		cfg.WorkerAgent.Model = model
-		cfg.PMAgent.Model = model
 	}
 }
 

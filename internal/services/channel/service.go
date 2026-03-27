@@ -13,7 +13,9 @@ import (
 	"sync"
 	"time"
 
+	agentprovider "dalek/internal/agent/provider"
 	"dalek/internal/contracts"
+	"dalek/internal/repo"
 	"dalek/internal/services/channel/agentcli"
 	"dalek/internal/services/core"
 
@@ -723,6 +725,18 @@ func resolveGatewayAgentHints(cfg agentcli.ConfigOverride) (provider, model stri
 	return strings.ToLower(resolved.Provider), resolved.Model
 }
 
+// resolveGatewayProviderConfig 将 gateway 角色的 provider key 通过全局 providers map 解析为 AgentConfig。
+func resolveGatewayProviderConfig(providerKey string, providers map[string]repo.ProviderConfig) (agentprovider.AgentConfig, error) {
+	if len(providers) == 0 {
+		providers = repo.DefaultProviders()
+	}
+	key := strings.TrimSpace(providerKey)
+	if key == "" {
+		key = agentprovider.ProviderClaude // gateway 默认 claude
+	}
+	return repo.ResolveAgentConfig(key, providers)
+}
+
 func (s *Service) claimTurnJob(ctx context.Context, jobID uint, runnerID string, leaseTTL time.Duration) (contracts.ChannelTurnJob, bool, error) {
 	_, db, err := s.require()
 	if err != nil {
@@ -1004,22 +1018,20 @@ func (s *Service) planTurnByPMAgent(ctx context.Context, inbound contracts.Chann
 		return pmAgentTurnResponse{}, fmt.Errorf("用户消息为空，无法调用 project manager agent")
 	}
 	gaCfg := p.Config.WithDefaults().GatewayAgent
+	gaResolved, gaErr := resolveGatewayProviderConfig(gaCfg.Provider, p.Providers)
+	if gaErr != nil {
+		return pmAgentTurnResponse{}, fmt.Errorf("gateway agent provider 解析失败: %w", gaErr)
+	}
 	resolved := agentcli.ResolveBackend(agentcli.ConfigOverride{
-		Provider:     gaCfg.Provider,
-		Model:        gaCfg.Model,
-		Command:      gaCfg.Command,
+		Provider:     gaResolved.Provider,
+		Model:        gaResolved.Model,
 		Output:       gaCfg.Output,
 		ResumeOutput: gaCfg.ResumeOutput,
 	})
-	mode := strings.ToLower(gaCfg.Mode)
+	// v3: mode 始终为 sdk
+	mode := "sdk"
 	if envMode := strings.ToLower(os.Getenv("DALEK_GATEWAY_AGENT_MODE")); envMode != "" {
 		mode = envMode
-	}
-	if mode == "" {
-		mode = "sdk"
-	}
-	if mode != "sdk" && resolved.Provider == agentcli.ProviderGemini {
-		return pmAgentTurnResponse{}, fmt.Errorf("gateway agent provider=gemini 仅支持 sdk mode")
 	}
 	var runResult agentcli.Result
 	if mode == "sdk" {

@@ -31,13 +31,18 @@ func (s *Service) launchWorkerSDKHandle(
 		return nil, fmt.Errorf("worker/ticket 不能为空")
 	}
 	cfg := p.Config.WithDefaults()
-	agentCfg := repo.AgentConfigFromExecConfig(cfg.WorkerAgent)
+	providers := p.Providers
+	if len(providers) == 0 {
+		providers = repo.DefaultProviders()
+	}
+	agentCfg, err := repo.ResolveAgentConfig(cfg.WorkerAgent.Provider, providers)
+	if err != nil {
+		return nil, fmt.Errorf("worker_agent 配置非法: %w", err)
+	}
 	if _, err := provider.NewFromConfig(agentCfg); err != nil {
 		return nil, fmt.Errorf("worker_agent 配置非法: %w", err)
 	}
-	if strings.TrimSpace(strings.ToLower(cfg.WorkerAgent.Mode)) != "sdk" {
-		return nil, fmt.Errorf("worker_agent.mode 不是 sdk")
-	}
+	// v3: mode 始终为 sdk，无需检查
 
 	rt, err := s.taskRuntime()
 	if err != nil {

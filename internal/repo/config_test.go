@@ -2,7 +2,6 @@ package repo
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,32 +24,8 @@ func TestConfigWithDefaults_SetsAgentAndTimeoutDefaults(t *testing.T) {
 	if cfg.WorkerAgent.Provider != "codex" {
 		t.Fatalf("expected worker_agent.provider=codex by default, got=%q", cfg.WorkerAgent.Provider)
 	}
-	if cfg.WorkerAgent.Model != "gpt-5.3-codex" {
-		t.Fatalf("unexpected worker_agent.model default: %q", cfg.WorkerAgent.Model)
-	}
-	if cfg.WorkerAgent.ReasoningEffort != "xhigh" {
-		t.Fatalf("unexpected worker_agent.reasoning_effort default: %q", cfg.WorkerAgent.ReasoningEffort)
-	}
-	if cfg.WorkerAgent.DangerFullAccess {
-		t.Fatalf("expected worker_agent.danger_full_access=false by default")
-	}
-	if cfg.PMAgent.BypassPermissions {
-		t.Fatalf("expected pm_agent.bypass_permissions=false by default")
-	}
-	if cfg.WorkerAgent.Mode != "sdk" {
-		t.Fatalf("unexpected worker_agent.mode default: %q", cfg.WorkerAgent.Mode)
-	}
-	if cfg.PMAgent.Mode != "sdk" {
-		t.Fatalf("unexpected pm_agent.mode default: %q", cfg.PMAgent.Mode)
-	}
-	if cfg.GatewayAgent.Mode != "sdk" {
-		t.Fatalf("unexpected gateway_agent.mode default: %q", cfg.GatewayAgent.Mode)
-	}
 	if cfg.GatewayAgent.Provider != "claude" {
 		t.Fatalf("expected gateway_agent.provider=claude by default, got=%q", cfg.GatewayAgent.Provider)
-	}
-	if cfg.GatewayAgent.Model != "opus" {
-		t.Fatalf("expected gateway_agent.model=opus by default, got=%q", cfg.GatewayAgent.Model)
 	}
 	if !cfg.Notebook.Enabled {
 		t.Fatalf("expected notebook.enabled=true by default")
@@ -66,186 +41,24 @@ func TestConfigWithDefaults_SetsAgentAndTimeoutDefaults(t *testing.T) {
 func TestMergeConfig_OverridesPMAgent(t *testing.T) {
 	base := Config{}.WithDefaults()
 	got := MergeConfig(base, Config{
-		PMAgent: AgentExecConfig{
+		PMAgent: RoleConfig{
 			Provider: "codex",
-			Model:    "gpt-5-codex",
 		},
 	})
 	if strings.TrimSpace(got.PMAgent.Provider) != "codex" {
 		t.Fatalf("unexpected pm_agent.provider: %q", got.PMAgent.Provider)
 	}
-	if strings.TrimSpace(got.PMAgent.Model) != "gpt-5-codex" {
-		t.Fatalf("unexpected pm_agent.model: %q", got.PMAgent.Model)
-	}
 }
 
-func TestMergeConfig_OverridesAgentCommand(t *testing.T) {
+func TestMergeConfig_OverridesWorkerAgent(t *testing.T) {
 	base := Config{}.WithDefaults()
 	got := MergeConfig(base, Config{
-		WorkerAgent: AgentExecConfig{
-			Provider: "codex",
-			Mode:     "sdk",
-			Command:  "/tmp/fake-codex",
+		WorkerAgent: RoleConfig{
+			Provider: "claude",
 		},
 	})
-	if strings.TrimSpace(got.WorkerAgent.Provider) != "codex" {
+	if strings.TrimSpace(got.WorkerAgent.Provider) != "claude" {
 		t.Fatalf("unexpected worker_agent.provider: %q", got.WorkerAgent.Provider)
-	}
-	if strings.TrimSpace(got.WorkerAgent.Command) != "/tmp/fake-codex" {
-		t.Fatalf("unexpected worker_agent.command: %q", got.WorkerAgent.Command)
-	}
-	if strings.TrimSpace(got.WorkerAgent.Mode) != "sdk" {
-		t.Fatalf("unexpected worker_agent.mode: %q", got.WorkerAgent.Mode)
-	}
-}
-
-func TestMergeConfig_OverridesAgentPermissionFlags(t *testing.T) {
-	base := Config{}.WithDefaults()
-	got := MergeConfig(base, Config{
-		WorkerAgent: setAgentPermissionPresence(AgentExecConfig{
-			Provider:         "codex",
-			DangerFullAccess: true,
-		}, true, false),
-		PMAgent: setAgentPermissionPresence(AgentExecConfig{
-			Provider:          "claude",
-			BypassPermissions: true,
-		}, false, true),
-	})
-	if !got.WorkerAgent.DangerFullAccess {
-		t.Fatalf("expected worker_agent.danger_full_access=true")
-	}
-	if !got.PMAgent.BypassPermissions {
-		t.Fatalf("expected pm_agent.bypass_permissions=true")
-	}
-}
-
-func TestMergeConfig_SwitchProviderToClaudeClearsInheritedCodexModel(t *testing.T) {
-	base := Config{
-		WorkerAgent: AgentExecConfig{
-			Provider:         "codex",
-			Model:            "gpt-5.3-codex",
-			DangerFullAccess: true,
-		},
-		PMAgent: AgentExecConfig{
-			Provider:         "codex",
-			Model:            "gpt-5.3-codex",
-			DangerFullAccess: true,
-		},
-	}.WithDefaults()
-	got := MergeConfig(base, Config{
-		WorkerAgent: AgentExecConfig{Provider: "claude"},
-		PMAgent: setAgentPermissionPresence(AgentExecConfig{
-			Provider:          "claude",
-			BypassPermissions: true,
-		}, false, true),
-	})
-	if got.WorkerAgent.Provider != "claude" {
-		t.Fatalf("unexpected worker_agent.provider: %q", got.WorkerAgent.Provider)
-	}
-	if got.WorkerAgent.Model != "" {
-		t.Fatalf("worker_agent.model should be empty after switch to claude, got=%q", got.WorkerAgent.Model)
-	}
-	if got.WorkerAgent.ReasoningEffort != "" {
-		t.Fatalf("worker_agent.reasoning_effort should be empty for claude, got=%q", got.WorkerAgent.ReasoningEffort)
-	}
-	if got.WorkerAgent.DangerFullAccess {
-		t.Fatalf("worker_agent.danger_full_access should be cleared for claude")
-	}
-	if got.PMAgent.Provider != "claude" {
-		t.Fatalf("unexpected pm_agent.provider: %q", got.PMAgent.Provider)
-	}
-	if got.PMAgent.Model != "" {
-		t.Fatalf("pm_agent.model should be empty after switch to claude, got=%q", got.PMAgent.Model)
-	}
-	if got.PMAgent.ReasoningEffort != "" {
-		t.Fatalf("pm_agent.reasoning_effort should be empty for claude, got=%q", got.PMAgent.ReasoningEffort)
-	}
-	if !got.PMAgent.BypassPermissions {
-		t.Fatalf("expected pm_agent.bypass_permissions preserved for claude")
-	}
-}
-
-func TestMergeConfig_SwitchProviderToCodexRestoresDefaults(t *testing.T) {
-	base := Config{
-		WorkerAgent: AgentExecConfig{
-			Provider:          "claude",
-			Model:             "claude-3-7-sonnet",
-			BypassPermissions: true,
-		},
-		PMAgent: AgentExecConfig{
-			Provider:          "claude",
-			Model:             "claude-3-7-sonnet",
-			BypassPermissions: true,
-		},
-	}.WithDefaults()
-	got := MergeConfig(base, Config{
-		WorkerAgent: setAgentPermissionPresence(AgentExecConfig{
-			Provider:         "codex",
-			DangerFullAccess: true,
-		}, true, false),
-		PMAgent: AgentExecConfig{Provider: "codex"},
-	})
-	if got.WorkerAgent.Provider != "codex" {
-		t.Fatalf("unexpected worker_agent.provider: %q", got.WorkerAgent.Provider)
-	}
-	if got.WorkerAgent.Model != "gpt-5.3-codex" {
-		t.Fatalf("unexpected worker_agent.model default: %q", got.WorkerAgent.Model)
-	}
-	if got.WorkerAgent.ReasoningEffort != "xhigh" {
-		t.Fatalf("unexpected worker_agent.reasoning_effort default: %q", got.WorkerAgent.ReasoningEffort)
-	}
-	if !got.WorkerAgent.DangerFullAccess {
-		t.Fatalf("expected worker_agent.danger_full_access preserved for codex")
-	}
-	if got.WorkerAgent.BypassPermissions {
-		t.Fatalf("worker_agent.bypass_permissions should be cleared for codex")
-	}
-	if got.PMAgent.Provider != "codex" {
-		t.Fatalf("unexpected pm_agent.provider: %q", got.PMAgent.Provider)
-	}
-	if got.PMAgent.Model != "gpt-5.3-codex" {
-		t.Fatalf("unexpected pm_agent.model default: %q", got.PMAgent.Model)
-	}
-	if got.PMAgent.ReasoningEffort != "xhigh" {
-		t.Fatalf("unexpected pm_agent.reasoning_effort default: %q", got.PMAgent.ReasoningEffort)
-	}
-	if got.PMAgent.BypassPermissions {
-		t.Fatalf("pm_agent.bypass_permissions should be cleared for codex")
-	}
-}
-
-func TestMergeConfig_ExplicitFalseClearsAgentPermissionFlags(t *testing.T) {
-	base := Config{
-		WorkerAgent: AgentExecConfig{
-			Provider:         "codex",
-			DangerFullAccess: true,
-		},
-		PMAgent: AgentExecConfig{
-			Provider:          "claude",
-			BypassPermissions: true,
-		},
-	}.WithDefaults()
-
-	var override Config
-	if err := json.Unmarshal([]byte(`{
-		"worker_agent": {
-			"provider": "codex",
-			"danger_full_access": false
-		},
-		"pm_agent": {
-			"provider": "claude",
-			"bypass_permissions": false
-		}
-	}`), &override); err != nil {
-		t.Fatalf("unmarshal override failed: %v", err)
-	}
-
-	got := MergeConfig(base, override)
-	if got.WorkerAgent.DangerFullAccess {
-		t.Fatalf("expected worker_agent.danger_full_access=false after explicit override")
-	}
-	if got.PMAgent.BypassPermissions {
-		t.Fatalf("expected pm_agent.bypass_permissions=false after explicit override")
 	}
 }
 
@@ -259,11 +72,8 @@ func TestConfigWithDefaults_GatewayAgentTurnTimeout(t *testing.T) {
 func TestMergeConfig_OverridesGatewayAgentFields(t *testing.T) {
 	base := Config{}.WithDefaults()
 	got := MergeConfig(base, Config{
-		GatewayAgent: GatewayAgentConfig{
+		GatewayAgent: GatewayRoleConfig{
 			Provider:      "codex",
-			Mode:          "sdk",
-			Model:         "gpt-5-codex",
-			Command:       "/tmp/custom-agent",
 			Output:        "jsonl",
 			ResumeOutput:  "json",
 			TurnTimeoutMS: 30000,
@@ -272,15 +82,6 @@ func TestMergeConfig_OverridesGatewayAgentFields(t *testing.T) {
 
 	if got.GatewayAgent.Provider != "codex" {
 		t.Fatalf("unexpected gateway_agent.provider: %q", got.GatewayAgent.Provider)
-	}
-	if got.GatewayAgent.Model != "gpt-5-codex" {
-		t.Fatalf("unexpected gateway_agent.model: %q", got.GatewayAgent.Model)
-	}
-	if got.GatewayAgent.Mode != "sdk" {
-		t.Fatalf("unexpected gateway_agent.mode: %q", got.GatewayAgent.Mode)
-	}
-	if got.GatewayAgent.Command != "/tmp/custom-agent" {
-		t.Fatalf("unexpected gateway_agent.command: %q", got.GatewayAgent.Command)
 	}
 	if got.GatewayAgent.Output != "jsonl" {
 		t.Fatalf("unexpected gateway_agent.output: %q", got.GatewayAgent.Output)
@@ -298,13 +99,11 @@ func TestLoadConfig_DoesNotRewriteWhenSchemaAndAgentsComplete(t *testing.T) {
 	path := filepath.Join(root, "config.json")
 	raw, err := json.MarshalIndent(Config{
 		SchemaVersion: CurrentProjectSchemaVersion,
-		WorkerAgent: AgentExecConfig{
+		WorkerAgent: RoleConfig{
 			Provider: "codex",
-			Model:    "gpt-5.3-codex",
 		},
-		PMAgent: AgentExecConfig{
+		PMAgent: RoleConfig{
 			Provider: "codex",
-			Model:    "gpt-5.3-codex",
 		},
 		Notebook: NotebookConfig{
 			Enabled:          true,
@@ -333,7 +132,7 @@ func TestMergeConfig_OverridesNotebookFields(t *testing.T) {
 
 	var override Config
 	if err := json.Unmarshal([]byte(`{
-		"schema_version": 2,
+		"schema_version": 3,
 		"notebook": {
 			"enabled": false,
 			"auto_shape": false,
@@ -355,7 +154,7 @@ func TestMergeConfig_OverridesNotebookFields(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_V1SchemaMigratesNotebookAndLogsDeprecation(t *testing.T) {
+func TestLoadConfig_OldSchemaVersionReturnsError(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "config.json")
 	raw := `{
@@ -367,38 +166,21 @@ func TestLoadConfig_V1SchemaMigratesNotebookAndLogsDeprecation(t *testing.T) {
 		t.Fatalf("write config failed: %v", err)
 	}
 
-	var deprecationMsg string
-	origWarnf := projectConfigDeprecationWarnf
-	projectConfigDeprecationWarnf = func(format string, args ...any) {
-		deprecationMsg = fmt.Sprintf(format, args...)
+	_, _, err := LoadConfig(path)
+	if err == nil {
+		t.Fatalf("expected error for schema_version=1, got nil")
 	}
-	defer func() { projectConfigDeprecationWarnf = origWarnf }()
-
-	cfg, needsRewrite, err := LoadConfig(path)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-	if !needsRewrite {
-		t.Fatalf("schema_version=1 should need rewrite")
-	}
-	if cfg.SchemaVersion != CurrentProjectSchemaVersion {
-		t.Fatalf("unexpected schema version: got=%d want=%d", cfg.SchemaVersion, CurrentProjectSchemaVersion)
-	}
-	if !cfg.Notebook.Enabled || !cfg.Notebook.AutoShape || cfg.Notebook.ShapeIntervalSec != 60 {
-		t.Fatalf("notebook defaults should be applied after migration: %+v", cfg.Notebook)
-	}
-	if !strings.Contains(deprecationMsg, "已废弃") {
-		t.Fatalf("expected deprecation warning, got=%q", deprecationMsg)
+	if !strings.Contains(err.Error(), "已不再支持") {
+		t.Fatalf("expected deprecation error, got=%q", err.Error())
 	}
 }
 
-func TestAgentConfigFromExecConfig_AppliesNormalizationAndDefaults(t *testing.T) {
-	got := AgentConfigFromExecConfig(AgentExecConfig{
-		Provider:         " CODEX ",
-		ExtraFlags:       []string{" --foo ", "", " --bar "},
-		DangerFullAccess: true,
-		Command:          " /tmp/fake-codex ",
-	})
+func TestResolveAgentConfig_AppliesNormalizationAndDefaults(t *testing.T) {
+	providers := DefaultProviders()
+	got, err := ResolveAgentConfig("codex", providers)
+	if err != nil {
+		t.Fatalf("ResolveAgentConfig failed: %v", err)
+	}
 	if got.Provider != agentprovider.ProviderCodex {
 		t.Fatalf("unexpected provider: %q", got.Provider)
 	}
@@ -408,37 +190,18 @@ func TestAgentConfigFromExecConfig_AppliesNormalizationAndDefaults(t *testing.T)
 	if got.ReasoningEffort != agentprovider.DefaultReasoningEffort(agentprovider.ProviderCodex) {
 		t.Fatalf("unexpected reasoning_effort default: %q", got.ReasoningEffort)
 	}
-	if got.Command != "/tmp/fake-codex" {
-		t.Fatalf("unexpected command: %q", got.Command)
-	}
-	if len(got.ExtraFlags) != 2 || got.ExtraFlags[0] != "--foo" || got.ExtraFlags[1] != "--bar" {
-		t.Fatalf("unexpected extra_flags: %#v", got.ExtraFlags)
-	}
-	if !got.DangerFullAccess {
-		t.Fatalf("expected danger_full_access=true")
-	}
 }
 
-func TestAgentConfigFromExecConfig_ClaudeClearsReasoningEffort(t *testing.T) {
-	got := AgentConfigFromExecConfig(AgentExecConfig{
-		Provider:          "claude",
-		Model:             "claude-3-7-sonnet",
-		ReasoningEffort:   "xhigh",
-		BypassPermissions: true,
-	})
+func TestResolveAgentConfig_ClaudeClearsReasoningEffort(t *testing.T) {
+	providers := DefaultProviders()
+	got, err := ResolveAgentConfig("claude", providers)
+	if err != nil {
+		t.Fatalf("ResolveAgentConfig failed: %v", err)
+	}
 	if got.Provider != agentprovider.ProviderClaude {
 		t.Fatalf("unexpected provider: %q", got.Provider)
 	}
 	if got.ReasoningEffort != "" {
 		t.Fatalf("claude reasoning_effort should be empty, got=%q", got.ReasoningEffort)
 	}
-	if !got.BypassPermissions {
-		t.Fatalf("expected bypass_permissions=true")
-	}
-}
-
-func setAgentPermissionPresence(cfg AgentExecConfig, dangerSet, bypassSet bool) AgentExecConfig {
-	cfg.dangerFullAccessSet = dangerSet
-	cfg.bypassPermissionsSet = bypassSet
-	return cfg
 }

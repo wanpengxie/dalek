@@ -127,10 +127,10 @@ func (s *Service) claimAndLoadTurnContext(ctx context.Context, jobID uint) (*tur
 	}
 
 	gaCfg := s.p.Config.WithDefaults().GatewayAgent
+	gaResolved, _ := resolveGatewayProviderConfig(gaCfg.Provider, s.p.Providers)
 	tctx.gaCfg = agentcli.ConfigOverride{
-		Provider:     gaCfg.Provider,
-		Model:        gaCfg.Model,
-		Command:      gaCfg.Command,
+		Provider:     gaResolved.Provider,
+		Model:        gaResolved.Model,
 		Output:       gaCfg.Output,
 		ResumeOutput: gaCfg.ResumeOutput,
 	}

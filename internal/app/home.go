@@ -474,37 +474,10 @@ func composeProjectConfigLayers(base repo.Config, provider, model string, repoOv
 
 func applyAgentProviderModel(cfg repo.Config, providerRaw, model string) repo.Config {
 	providerName := provider.NormalizeProvider(providerRaw)
-	model = strings.TrimSpace(model)
+	_ = strings.TrimSpace(model) // model 在 v3 中不再是 role-level 字段，忽略
 	if providerName != "" {
-		prevWorkerProvider := strings.TrimSpace(strings.ToLower(cfg.WorkerAgent.Provider))
-		prevPMProvider := strings.TrimSpace(strings.ToLower(cfg.PMAgent.Provider))
 		cfg.WorkerAgent.Provider = providerName
 		cfg.PMAgent.Provider = providerName
-		if model == "" {
-			if prevWorkerProvider != providerName {
-				cfg.WorkerAgent.Model = ""
-			}
-			if prevPMProvider != providerName {
-				cfg.PMAgent.Model = ""
-			}
-			defaultModel := provider.DefaultModel(providerName)
-			if providerName == provider.ProviderCodex && defaultModel != "" {
-				if strings.TrimSpace(cfg.WorkerAgent.Model) == "" {
-					cfg.WorkerAgent.Model = defaultModel
-				}
-				if strings.TrimSpace(cfg.PMAgent.Model) == "" {
-					cfg.PMAgent.Model = defaultModel
-				}
-			}
-		}
-		if providerName == provider.ProviderClaude || providerName == provider.ProviderGemini {
-			cfg.WorkerAgent.ReasoningEffort = ""
-			cfg.PMAgent.ReasoningEffort = ""
-		}
-	}
-	if model != "" {
-		cfg.WorkerAgent.Model = model
-		cfg.PMAgent.Model = model
 	}
 	return cfg
 }

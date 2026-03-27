@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"dalek/internal/repo"
 	"dalek/internal/services/subagent"
 )
 
@@ -78,9 +79,15 @@ func (s *Service) submitPMRun(ctx context.Context, submitter PMRunSubmitter, inp
 	if s.p == nil {
 		return PMRunResult{}, fmt.Errorf("convergent: project config not initialized")
 	}
-	cfg := s.p.Config.WithDefaults().PMAgent
-	provider := strings.TrimSpace(cfg.Provider)
-	model := strings.TrimSpace(cfg.Model)
+	pmRole := s.p.Config.WithDefaults().PMAgent
+	provider := strings.TrimSpace(pmRole.Provider)
+	// v3: model 通过 providers map 解析
+	providers := s.p.Providers
+	if len(providers) == 0 {
+		providers = repo.DefaultProviders()
+	}
+	resolved, _ := repo.ResolveAgentConfig(provider, providers)
+	model := strings.TrimSpace(resolved.Model)
 
 	requestID := newPMRequestID("pm_run")
 

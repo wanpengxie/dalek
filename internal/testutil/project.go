@@ -255,18 +255,17 @@ echo '{"type":"thread.started","thread_id":"thread-worker-default"}'
 echo '{"type":"item.completed","item":{"id":"msg-worker-default","type":"agent_message","text":"worker default ok"}}'
 `)
 
+	_ = workerScript   // v3: command 不再由 role 配置，始终走 SDK
+	_ = dispatchScript // v3: command 不再由 role 配置
+
 	cfg := repo.Config{
 		BranchPrefix:      "",
 		RefreshIntervalMS: 1000,
-		WorkerAgent: repo.AgentExecConfig{
+		WorkerAgent: repo.RoleConfig{
 			Provider: "codex",
-			Mode:     "sdk",
-			Command:  workerScript,
 		},
-		PMAgent: repo.AgentExecConfig{
+		PMAgent: repo.RoleConfig{
 			Provider: "codex",
-			Mode:     "cli",
-			Command:  dispatchScript,
 		},
 	}.WithDefaults()
 

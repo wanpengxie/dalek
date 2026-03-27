@@ -62,8 +62,8 @@ func TestLoadPresence(t *testing.T) {
 
 	localPath := filepath.Join(t.TempDir(), "config.json")
 	localJSON := `{
-  "worker_agent": {"provider": "codex", "model": "gpt-5.3-codex"},
-  "pm_agent": {"model": "gpt-5.3-codex"}
+  "worker_agent": {"provider": "codex"},
+  "pm_agent": {"provider": "claude"}
 }`
 	if err := os.WriteFile(localPath, []byte(localJSON), 0o644); err != nil {
 		t.Fatalf("write local json failed: %v", err)
@@ -72,7 +72,8 @@ func TestLoadPresence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadLocalConfigPresence failed: %v", err)
 	}
-	if !lp.AgentProvider || !lp.AgentModel {
+	// v3: model 不再是 role-level 字段，AgentModel 始终 false
+	if !lp.AgentProvider || lp.AgentModel {
 		t.Fatalf("unexpected local presence: %+v", lp)
 	}
 }
@@ -110,8 +111,6 @@ func TestResolveValue(t *testing.T) {
 		localCfg := repo.Config{}.WithDefaults()
 		localCfg.WorkerAgent.Provider = "claude"
 		localCfg.PMAgent.Provider = "claude"
-		localCfg.WorkerAgent.Model = "claude-3-7-sonnet"
-		localCfg.PMAgent.Model = "claude-3-7-sonnet"
 		eval := &EvalContext{
 			HomeCfg:      homeCfg,
 			HomePresence: HomePresence{AgentProvider: true},
@@ -182,11 +181,11 @@ func TestSetValue_LocalWritesProjectConfig(t *testing.T) {
 		Project:  p,
 		LocalCfg: localCfg,
 	}
-	v, err := SetValue(ctx, ConfigKeyAgentModel, ScopeLocal, "claude-3-7-sonnet")
+	v, err := SetValue(ctx, ConfigKeyAgentProvider, ScopeLocal, "claude")
 	if err != nil {
 		t.Fatalf("SetValue local failed: %v", err)
 	}
-	if v != "claude-3-7-sonnet" {
+	if v != "claude" {
 		t.Fatalf("unexpected normalized value: %s", v)
 	}
 
@@ -195,8 +194,8 @@ func TestSetValue_LocalWritesProjectConfig(t *testing.T) {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
 	cfg = cfg.WithDefaults()
-	if cfg.WorkerAgent.Model != "claude-3-7-sonnet" || cfg.PMAgent.Model != "claude-3-7-sonnet" {
-		t.Fatalf("unexpected local models: worker=%s pm=%s", cfg.WorkerAgent.Model, cfg.PMAgent.Model)
+	if cfg.WorkerAgent.Provider != "claude" || cfg.PMAgent.Provider != "claude" {
+		t.Fatalf("unexpected local providers: worker=%s pm=%s", cfg.WorkerAgent.Provider, cfg.PMAgent.Provider)
 	}
 }
 
@@ -209,15 +208,10 @@ func TestBuildEffectiveProjectConfig(t *testing.T) {
 	localCfg := repo.Config{}.WithDefaults()
 	localCfg.WorkerAgent.Provider = "codex"
 	localCfg.PMAgent.Provider = "codex"
-	localCfg.WorkerAgent.Model = "local-model"
-	localCfg.PMAgent.Model = "local-model"
 
 	got := BuildEffectiveProjectConfig(homeCfg, localCfg)
 	if got.WorkerAgent.Provider != "codex" || got.PMAgent.Provider != "codex" {
 		t.Fatalf("unexpected provider merge result: worker=%s pm=%s", got.WorkerAgent.Provider, got.PMAgent.Provider)
-	}
-	if got.WorkerAgent.Model != "local-model" || got.PMAgent.Model != "local-model" {
-		t.Fatalf("unexpected model merge result: worker=%s pm=%s", got.WorkerAgent.Model, got.PMAgent.Model)
 	}
 }
 

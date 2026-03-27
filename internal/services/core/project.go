@@ -23,9 +23,10 @@ type Project struct {
 	WorktreesDir string
 	WorkersDir   string
 
-	Config repo.Config
-	DB     *gorm.DB
-	Logger *slog.Logger
+	Config    repo.Config
+	Providers map[string]repo.ProviderConfig // 全局 providers map（来自 HomeConfig）
+	DB        *gorm.DB
+	Logger    *slog.Logger
 
 	WorkerRuntime infra.WorkerRuntime
 	Git           infra.GitClient
@@ -42,9 +43,10 @@ type NewProjectInput struct {
 	WorktreesDir string
 	WorkersDir   string
 
-	Config repo.Config
-	DB     *gorm.DB
-	Logger *slog.Logger
+	Config    repo.Config
+	Providers map[string]repo.ProviderConfig
+	DB        *gorm.DB
+	Logger    *slog.Logger
 
 	WorkerRuntime infra.WorkerRuntime
 	Git           infra.GitClient
@@ -60,6 +62,7 @@ func NewProject(in NewProjectInput) (*Project, error) {
 		WorktreesDir:  strings.TrimSpace(in.WorktreesDir),
 		WorkersDir:    strings.TrimSpace(in.WorkersDir),
 		Config:        in.Config,
+		Providers:     in.Providers,
 		DB:            in.DB,
 		Logger:        in.Logger,
 		WorkerRuntime: in.WorkerRuntime,

@@ -100,8 +100,15 @@ commit message：Merge branch '%s' (ticket T%d)`, attempt+1, branch, ticketID)
 
 // runPMAgent 使用 sdkrunner 同步调用 PM agent。
 func (s *Service) runPMAgent(ctx context.Context, prompt string) (sdkrunner.Result, error) {
-	cfg := s.p.Config.WithDefaults().PMAgent
-	agentCfg := repo.AgentConfigFromExecConfig(cfg)
+	pmRole := s.p.Config.WithDefaults().PMAgent
+	providers := s.p.Providers
+	if len(providers) == 0 {
+		providers = repo.DefaultProviders()
+	}
+	agentCfg, err := repo.ResolveAgentConfig(pmRole.Provider, providers)
+	if err != nil {
+		return sdkrunner.Result{}, fmt.Errorf("pm_agent provider 解析失败: %w", err)
+	}
 
 	repoRoot := s.p.RepoRoot
 	s.slog().Info("focus: calling PM agent",

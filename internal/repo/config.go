@@ -4,51 +4,50 @@ import (
 	"dalek/internal/agent/provider"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+// ProviderConfig 是全局 providers map 中的一个命名配置条目。
+// key 为任意用户标签（如 "claude"、"sonnet"、"codex"），每条通过 Type 字段声明底层 provider 类型。
+type ProviderConfig struct {
+	Type            string   `json:"type"`                       // "codex" | "claude" | "gemini"
+	Model           string   `json:"model,omitempty"`            // 模型名称
+	ReasoningEffort string   `json:"reasoning_effort,omitempty"` // codex only
+	Permission      string   `json:"permission,omitempty"`       // "auto" | "bypass", 默认 "auto"
+	ExtraFlags      []string `json:"extra_flags,omitempty"`
+}
+
+// RoleConfig 角色配置，只引用全局 providers map 的 key。
+type RoleConfig struct {
+	Provider string `json:"provider"` // 对应全局 providers map 的 key
+}
+
+// GatewayRoleConfig gateway 角色配置 + gateway 特有字段。
+type GatewayRoleConfig struct {
+	Provider      string `json:"provider"`                  // 对应全局 providers map 的 key
+	Output        string `json:"output,omitempty"`          // gateway 输出格式
+	ResumeOutput  string `json:"resume_output,omitempty"`   // gateway 续跑输出格式
+	TurnTimeoutMS int    `json:"turn_timeout_ms,omitempty"` // 单轮超时（毫秒）
+}
+
+// Config 是项目配置（.dalek/config.json, schema_version=3）。
+// 角色只引用 provider key，不携带任何 provider 参数。
 type Config struct {
-	SchemaVersion       int                `json:"schema_version"`
-	BranchPrefix        string             `json:"branch_prefix"`
-	RefreshIntervalMS   int                `json:"refresh_interval_ms"`
-	WorkerAgent         AgentExecConfig    `json:"worker_agent"`
-	PMAgent             AgentExecConfig    `json:"pm_agent"`
-	ManagerCommand string             `json:"manager_command"`
-	GatewayAgent   GatewayAgentConfig `json:"gateway_agent"`
-	Notebook            NotebookConfig     `json:"notebook"`
+	SchemaVersion     int               `json:"schema_version"`
+	BranchPrefix      string            `json:"branch_prefix"`
+	RefreshIntervalMS int               `json:"refresh_interval_ms"`
+	WorkerAgent       RoleConfig        `json:"worker_agent"`
+	PMAgent           RoleConfig        `json:"pm_agent"`
+	ManagerCommand    string            `json:"manager_command"`
+	GatewayAgent      GatewayRoleConfig `json:"gateway_agent"`
+	Notebook          NotebookConfig    `json:"notebook"`
 
 	notebookSet              bool
 	notebookEnabledSet       bool
 	notebookAutoShapeSet     bool
 	notebookShapeIntervalSet bool
-}
-
-type AgentExecConfig struct {
-	Provider          string   `json:"provider"`
-	Mode              string   `json:"mode,omitempty"`
-	Model             string   `json:"model,omitempty"`
-	ReasoningEffort   string   `json:"reasoning_effort,omitempty"`
-	ExtraFlags        []string `json:"extra_flags,omitempty"`
-	DangerFullAccess  bool     `json:"danger_full_access,omitempty"`
-	BypassPermissions bool     `json:"bypass_permissions,omitempty"`
-	// Command 可选，用于覆盖 provider 可执行文件路径（例如自定义 codex/claude 二进制）。
-	Command string `json:"command,omitempty"`
-
-	dangerFullAccessSet  bool
-	bypassPermissionsSet bool
-}
-
-type GatewayAgentConfig struct {
-	Provider      string `json:"provider"`
-	Mode          string `json:"mode,omitempty"`
-	Model         string `json:"model"`
-	Command       string `json:"command"`
-	Output        string `json:"output"`
-	ResumeOutput  string `json:"resume_output"`
-	TurnTimeoutMS int    `json:"turn_timeout_ms"`
 }
 
 type NotebookConfig struct {
@@ -60,40 +59,29 @@ type NotebookConfig struct {
 const (
 	defaultWorkerProvider      = provider.ProviderCodex
 	defaultPMProvider          = provider.ProviderClaude
-	execModeCLI                = "cli"
-	execModeSDK                = "sdk"
 	defaultNotebookEnabled     = true
 	defaultNotebookAutoShape   = true
 	defaultNotebookIntervalSec = 60
 )
 
 // CurrentProjectSchemaVersion 是项目结构迁移版本号（非 binary semver）。
-// 发生 breaking 的项目结构变更时手动递增。
-const CurrentProjectSchemaVersion = 2
+// v3: 角色只引用 provider key，不携带 model/mode/permission 等参数。
+const CurrentProjectSchemaVersion = 3
 
 var projectConfigDeprecationWarnf = func(format string, args ...any) {
-	log.Printf(format, args...)
+	// 保留变量以便测试覆盖，但 v3 不再有 deprecation warning（旧格式直接 error）。
+	_ = fmt.Sprintf(format, args...)
 }
 
-func (c *AgentExecConfig) UnmarshalJSON(data []byte) error {
-	type alias AgentExecConfig
-	var decoded alias
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	*c = AgentExecConfig(decoded)
+// deprecatedAgentFields 是 worker_agent/pm_agent 中不再允许的字段名（v2 遗留）。
+var deprecatedAgentFields = []string{
+	"mode", "command", "model", "reasoning_effort", "extra_flags",
+	"danger_full_access", "bypass_permissions",
+}
 
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil
-	}
-	if _, exists := raw["danger_full_access"]; exists {
-		c.dangerFullAccessSet = true
-	}
-	if _, exists := raw["bypass_permissions"]; exists {
-		c.bypassPermissionsSet = true
-	}
-	return nil
+// deprecatedGatewayFields 是 gateway_agent 中不再允许的字段名（v2 遗留）。
+var deprecatedGatewayFields = []string{
+	"mode", "command", "model",
 }
 
 func (c *Config) UnmarshalJSON(data []byte) error {
@@ -137,32 +125,19 @@ func (c Config) WithDefaults() Config {
 	if out.RefreshIntervalMS <= 0 {
 		out.RefreshIntervalMS = 1000
 	}
-	out.WorkerAgent = normalizeAgentExecConfig(out.WorkerAgent)
-	out.PMAgent = normalizeAgentExecConfig(out.PMAgent)
-	out.GatewayAgent = normalizeGatewayAgentConfig(out.GatewayAgent)
+	out.WorkerAgent.Provider = strings.TrimSpace(out.WorkerAgent.Provider)
+	out.PMAgent.Provider = strings.TrimSpace(out.PMAgent.Provider)
+	out.GatewayAgent.Provider = strings.TrimSpace(out.GatewayAgent.Provider)
+	out.GatewayAgent.Output = strings.TrimSpace(out.GatewayAgent.Output)
+	out.GatewayAgent.ResumeOutput = strings.TrimSpace(out.GatewayAgent.ResumeOutput)
 	if out.WorkerAgent.Provider == "" {
-		out.WorkerAgent = AgentExecConfig{
-			Provider:        defaultWorkerProvider,
-			Mode:            execModeSDK,
-			Model:           provider.DefaultModel(defaultWorkerProvider),
-			ReasoningEffort: provider.DefaultReasoningEffort(defaultWorkerProvider),
-		}
+		out.WorkerAgent.Provider = defaultWorkerProvider
 	}
 	if out.PMAgent.Provider == "" {
-		out.PMAgent = AgentExecConfig{
-			Provider: defaultPMProvider,
-			Mode:     execModeSDK,
-			Model:    provider.DefaultModel(defaultPMProvider),
-		}
+		out.PMAgent.Provider = defaultPMProvider
 	}
 	if out.GatewayAgent.Provider == "" {
 		out.GatewayAgent.Provider = defaultPMProvider
-	}
-	if out.GatewayAgent.Model == "" {
-		out.GatewayAgent.Model = provider.DefaultModel(defaultPMProvider)
-	}
-	if out.ManagerCommand == "" {
-		out.ManagerCommand = ""
 	}
 	if out.GatewayAgent.TurnTimeoutMS < 0 {
 		out.GatewayAgent.TurnTimeoutMS = 0
@@ -179,130 +154,71 @@ func (c Config) WithDefaults() Config {
 	return out
 }
 
-func normalizeAgentExecConfig(in AgentExecConfig) AgentExecConfig {
-	out := in
-	out.Provider = provider.NormalizeProvider(out.Provider)
-	out.Mode = normalizeExecMode(out.Mode)
-	out.Model = strings.TrimSpace(out.Model)
-	out.ReasoningEffort = strings.TrimSpace(out.ReasoningEffort)
-	out.Command = strings.TrimSpace(out.Command)
-	switch out.Provider {
-	case provider.ProviderCodex:
-		if out.Model == "" {
-			out.Model = provider.DefaultModel(provider.ProviderCodex)
-		}
-		if out.ReasoningEffort == "" {
-			out.ReasoningEffort = provider.DefaultReasoningEffort(provider.ProviderCodex)
-		}
-		out.BypassPermissions = false
-	case provider.ProviderClaude, provider.ProviderGemini:
-		// claude/gemini 不使用 reasoning_effort，避免跨 provider 残留。
-		out.ReasoningEffort = ""
-		out.DangerFullAccess = false
-		if out.Provider != provider.ProviderClaude {
-			out.BypassPermissions = false
-		}
-	default:
-		out.DangerFullAccess = false
-		out.BypassPermissions = false
-	}
-	if len(out.ExtraFlags) > 0 {
-		flags := make([]string, 0, len(out.ExtraFlags))
-		for _, flag := range out.ExtraFlags {
-			flag = strings.TrimSpace(flag)
-			if flag == "" {
-				continue
-			}
-			flags = append(flags, flag)
-		}
-		out.ExtraFlags = flags
-	}
-	return out
-}
-
-func normalizeGatewayAgentConfig(in GatewayAgentConfig) GatewayAgentConfig {
-	out := in
-	out.Provider = provider.NormalizeProvider(out.Provider)
-	out.Mode = normalizeExecMode(out.Mode)
-	out.Model = strings.TrimSpace(out.Model)
-	out.Command = strings.TrimSpace(out.Command)
-	out.Output = strings.TrimSpace(out.Output)
-	out.ResumeOutput = strings.TrimSpace(out.ResumeOutput)
-	return out
-}
-
-func normalizeExecMode(raw string) string {
-	switch strings.TrimSpace(strings.ToLower(raw)) {
-	case "", execModeSDK:
-		return execModeSDK
-	case execModeCLI:
-		return execModeCLI
-	default:
-		return execModeSDK
-	}
-}
-
-func mergeAgentExecConfig(base AgentExecConfig, override AgentExecConfig) AgentExecConfig {
-	out := normalizeAgentExecConfig(base)
-	rawOverrideMode := strings.TrimSpace(override.Mode)
-	override = normalizeAgentExecConfig(override)
-	providerChanged := false
-	if override.Provider != "" {
-		providerChanged = out.Provider != "" && out.Provider != override.Provider
-		out.Provider = override.Provider
-	}
-	if override.Model != "" {
-		out.Model = override.Model
-	} else if providerChanged {
-		// provider 变化但上层未显式给 model 时，清空下层 model，避免跨 provider 污染。
-		out.Model = ""
-	}
-	if override.ReasoningEffort != "" {
-		out.ReasoningEffort = override.ReasoningEffort
-	}
-	if override.Command != "" {
-		out.Command = override.Command
-	}
-	if override.dangerFullAccessSet {
-		out.DangerFullAccess = override.DangerFullAccess
-	}
-	if override.bypassPermissionsSet {
-		out.BypassPermissions = override.BypassPermissions
-	}
-	if rawOverrideMode != "" {
-		out.Mode = normalizeExecMode(rawOverrideMode)
-	}
-	if len(override.ExtraFlags) > 0 {
-		out.ExtraFlags = append([]string(nil), override.ExtraFlags...)
-	}
-	return normalizeAgentExecConfig(out)
-}
-
 func LoadConfig(path string) (Config, bool, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
+		return Config{}, false, err
+	}
+	if err := validateNoDeprecatedProjectFields(b); err != nil {
 		return Config{}, false, err
 	}
 	var cfg Config
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return Config{}, false, err
 	}
+	if cfg.SchemaVersion > 0 && cfg.SchemaVersion < CurrentProjectSchemaVersion {
+		return Config{}, false, fmt.Errorf(
+			"config schema v%d 已不再支持\nCause: 当前配置格式已废弃，无法自动迁移\nFix:   运行 `dalek upgrade config` 重新生成配置",
+			cfg.SchemaVersion,
+		)
+	}
 	needsRewrite := cfg.SchemaVersion <= 0 ||
-		cfg.SchemaVersion < CurrentProjectSchemaVersion ||
 		strings.TrimSpace(cfg.WorkerAgent.Provider) == "" ||
 		strings.TrimSpace(cfg.PMAgent.Provider) == "" ||
 		!cfg.notebookSet ||
 		!cfg.notebookEnabledSet ||
 		!cfg.notebookAutoShapeSet ||
 		!cfg.notebookShapeIntervalSet
-	if cfg.SchemaVersion > 0 && cfg.SchemaVersion < CurrentProjectSchemaVersion {
-		projectConfigDeprecationWarnf(
-			"[deprecation] project config schema v%d 已废弃，已自动迁移到 v%d；请补充 notebook.enabled/auto_shape/shape_interval_sec",
-			cfg.SchemaVersion,
-			CurrentProjectSchemaVersion,
-		)
-	}
 	return cfg.WithDefaults(), needsRewrite, nil
+}
+
+func validateNoDeprecatedProjectFields(raw []byte) error {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return nil // 让正常 unmarshal 处理语法错误
+	}
+	for _, agentKey := range []string{"worker_agent", "pm_agent"} {
+		agentRaw, ok := root[agentKey]
+		if !ok {
+			continue
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(agentRaw, &fields); err != nil {
+			continue
+		}
+		for _, f := range deprecatedAgentFields {
+			if _, exists := fields[f]; exists {
+				return fmt.Errorf(
+					"config schema v2 已不再支持：字段 %s.%s 已废弃\nFix:   运行 `dalek upgrade config` 重新生成配置",
+					agentKey, f,
+				)
+			}
+		}
+	}
+	if gaRaw, ok := root["gateway_agent"]; ok {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(gaRaw, &fields); err == nil {
+			for _, f := range deprecatedGatewayFields {
+				if _, exists := fields[f]; exists {
+					return fmt.Errorf(
+						"config schema v2 已不再支持：字段 gateway_agent.%s 已废弃\nFix:   运行 `dalek upgrade config` 重新生成配置",
+						f,
+					)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func WriteConfigAtomic(path string, cfg Config) error {
@@ -341,22 +257,17 @@ func MergeConfig(oldCfg, override Config) Config {
 	if override.RefreshIntervalMS > 0 {
 		out.RefreshIntervalMS = override.RefreshIntervalMS
 	}
-	out.WorkerAgent = mergeAgentExecConfig(out.WorkerAgent, override.WorkerAgent)
-	out.PMAgent = mergeAgentExecConfig(out.PMAgent, override.PMAgent)
+	if strings.TrimSpace(override.WorkerAgent.Provider) != "" {
+		out.WorkerAgent.Provider = strings.TrimSpace(override.WorkerAgent.Provider)
+	}
+	if strings.TrimSpace(override.PMAgent.Provider) != "" {
+		out.PMAgent.Provider = strings.TrimSpace(override.PMAgent.Provider)
+	}
 	if strings.TrimSpace(override.ManagerCommand) != "" {
 		out.ManagerCommand = strings.TrimSpace(override.ManagerCommand)
 	}
 	if strings.TrimSpace(override.GatewayAgent.Provider) != "" {
 		out.GatewayAgent.Provider = strings.TrimSpace(override.GatewayAgent.Provider)
-	}
-	if strings.TrimSpace(override.GatewayAgent.Mode) != "" {
-		out.GatewayAgent.Mode = strings.TrimSpace(override.GatewayAgent.Mode)
-	}
-	if strings.TrimSpace(override.GatewayAgent.Model) != "" {
-		out.GatewayAgent.Model = strings.TrimSpace(override.GatewayAgent.Model)
-	}
-	if strings.TrimSpace(override.GatewayAgent.Command) != "" {
-		out.GatewayAgent.Command = strings.TrimSpace(override.GatewayAgent.Command)
 	}
 	if strings.TrimSpace(override.GatewayAgent.Output) != "" {
 		out.GatewayAgent.Output = strings.TrimSpace(override.GatewayAgent.Output)
@@ -382,6 +293,28 @@ func MergeConfig(oldCfg, override Config) Config {
 		}
 		out.notebookSet = true
 	}
-	out.GatewayAgent = normalizeGatewayAgentConfig(out.GatewayAgent)
 	return out.WithDefaults()
+}
+
+// DefaultProviders 返回默认的全局 providers map。
+// key 为 provider 类型名，方便默认配置下 provider key == provider type。
+func DefaultProviders() map[string]ProviderConfig {
+	return map[string]ProviderConfig{
+		provider.ProviderCodex: {
+			Type:            provider.ProviderCodex,
+			Model:           provider.DefaultModel(provider.ProviderCodex),
+			ReasoningEffort: provider.DefaultReasoningEffort(provider.ProviderCodex),
+			Permission:      "bypass",
+		},
+		provider.ProviderClaude: {
+			Type:       provider.ProviderClaude,
+			Model:      provider.DefaultModel(provider.ProviderClaude),
+			Permission: "bypass",
+		},
+		provider.ProviderGemini: {
+			Type:       provider.ProviderGemini,
+			Model:      provider.DefaultModel(provider.ProviderGemini),
+			Permission: "auto",
+		},
+	}
 }

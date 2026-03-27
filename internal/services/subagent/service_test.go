@@ -307,7 +307,7 @@ func TestResolveAgentSettings_DefaultsToCodex(t *testing.T) {
 	}
 }
 
-func TestResolveAgentSettings_SwitchToClaudeDoesNotInheritModel(t *testing.T) {
+func TestResolveAgentSettings_SwitchToClaudeResolvesFromProviders(t *testing.T) {
 	svc, _, _ := newSubagentServiceForTest(t)
 	got, err := svc.resolveAgentSettings("claude", "")
 	if err != nil {
@@ -316,8 +316,9 @@ func TestResolveAgentSettings_SwitchToClaudeDoesNotInheritModel(t *testing.T) {
 	if got.Provider != agentprovider.ProviderClaude {
 		t.Fatalf("unexpected provider: %q", got.Provider)
 	}
-	if got.Model != "" {
-		t.Fatalf("claude model should remain empty when only provider overrides, got=%q", got.Model)
+	// v3: model 来自 providers map 的默认值
+	if got.Model != agentprovider.DefaultModel(agentprovider.ProviderClaude) {
+		t.Fatalf("claude model should be default from providers map, got=%q", got.Model)
 	}
 	if got.ReasoningEffort != "" {
 		t.Fatalf("claude reasoning_effort should be empty, got=%q", got.ReasoningEffort)
@@ -326,11 +327,8 @@ func TestResolveAgentSettings_SwitchToClaudeDoesNotInheritModel(t *testing.T) {
 
 func TestResolveAgentSettings_DoesNotInheritElevatedPermissions(t *testing.T) {
 	svc, _, project := newSubagentServiceForTest(t)
-	project.Config.WorkerAgent = repo.AgentExecConfig{
-		Provider:         "codex",
-		Model:            "gpt-5.3-codex",
-		ReasoningEffort:  "xhigh",
-		DangerFullAccess: true,
+	project.Config.WorkerAgent = repo.RoleConfig{
+		Provider: "codex",
 	}
 
 	got, err := svc.resolveAgentSettings("", "")
@@ -344,10 +342,8 @@ func TestResolveAgentSettings_DoesNotInheritElevatedPermissions(t *testing.T) {
 		t.Fatalf("subagent should not inherit danger_full_access")
 	}
 
-	project.Config.WorkerAgent = repo.AgentExecConfig{
-		Provider:          "claude",
-		Model:             "opus",
-		BypassPermissions: true,
+	project.Config.WorkerAgent = repo.RoleConfig{
+		Provider: "claude",
 	}
 	got, err = svc.resolveAgentSettings("", "")
 	if err != nil {

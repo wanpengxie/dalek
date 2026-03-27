@@ -1,6 +1,7 @@
 package app
 
 import (
+	"dalek/internal/repo"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -44,6 +45,12 @@ type HomeConfig struct {
 	Gateway       HomeGatewayConfig `json:"gateway"`
 	Agent         HomeAgentConfig   `json:"agent"`
 	Daemon        HomeDaemonConfig  `json:"daemon"`
+
+	// v3 新增：全局 providers map + 角色默认
+	Providers    map[string]repo.ProviderConfig `json:"providers,omitempty"`
+	WorkerAgent  repo.RoleConfig                `json:"worker_agent,omitempty"`
+	PMAgent      repo.RoleConfig                `json:"pm_agent,omitempty"`
+	GatewayAgent repo.GatewayRoleConfig         `json:"gateway_agent,omitempty"`
 }
 
 type HomeAgentConfig struct {
@@ -273,10 +280,18 @@ func (c HomeConfig) WithDefaults() HomeConfig {
 	out.Agent.Provider = strings.TrimSpace(strings.ToLower(out.Agent.Provider))
 	out.Agent.Model = strings.TrimSpace(out.Agent.Model)
 	switch out.Agent.Provider {
-	case "", "codex", "claude":
+	case "", "codex", "claude", "gemini":
 	default:
 		out.Agent.Provider = ""
 	}
+
+	// v3: providers map 默认
+	if len(out.Providers) == 0 {
+		out.Providers = repo.DefaultProviders()
+	}
+	out.WorkerAgent.Provider = strings.TrimSpace(out.WorkerAgent.Provider)
+	out.PMAgent.Provider = strings.TrimSpace(out.PMAgent.Provider)
+	out.GatewayAgent.Provider = strings.TrimSpace(out.GatewayAgent.Provider)
 
 	return out
 }
