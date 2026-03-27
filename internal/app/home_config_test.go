@@ -268,14 +268,14 @@ func TestLoadHomeConfig_ExistingConfigWithDefaults(t *testing.T) {
 func TestLoadHomeConfig_DaemonNotebookWorkerCountFromJSON(t *testing.T) {
 	root := t.TempDir()
 	cfgPath := filepath.Join(root, "config.json")
-	raw := `{
-  "schema_version": 2,
+	raw := fmt.Sprintf(`{
+  "schema_version": %d,
   "daemon": {
     "notebook": {
       "worker_count": 4
     }
   }
-}`
+}`, CurrentHomeConfigSchemaVersion)
 	if err := os.WriteFile(cfgPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("write config failed: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestLoadHomeConfig_DaemonNotebookWorkerCountFromJSON(t *testing.T) {
 		t.Fatalf("config should exist")
 	}
 	if needsRewrite {
-		t.Fatalf("schema_version=2 should not need rewrite")
+		t.Fatalf("current schema should not need rewrite")
 	}
 	if cfg.Daemon.Notebook.WorkerCount != 4 {
 		t.Fatalf("daemon.notebook.worker_count should keep explicit value: got=%d", cfg.Daemon.Notebook.WorkerCount)
@@ -399,13 +399,13 @@ func TestHomeConfigWithDefaults_DoesNotReenableDaemonFeishuWithoutOldValues(t *t
 func TestLoadHomeConfig_InvalidAgentProviderResetsToEmpty(t *testing.T) {
 	root := t.TempDir()
 	cfgPath := filepath.Join(root, "config.json")
-	raw := `{
-  "schema_version": 2,
+	raw := fmt.Sprintf(`{
+  "schema_version": %d,
   "agent": {
     "provider": "unsupported",
     "model": "foo"
   }
-}`
+}`, CurrentHomeConfigSchemaVersion)
 	if err := os.WriteFile(cfgPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("write config failed: %v", err)
 	}
@@ -417,7 +417,7 @@ func TestLoadHomeConfig_InvalidAgentProviderResetsToEmpty(t *testing.T) {
 		t.Fatalf("config should exist")
 	}
 	if needsRewrite {
-		t.Fatalf("schema_version=2 should not need rewrite")
+		t.Fatalf("current schema should not need rewrite")
 	}
 	if cfg.Agent.Provider != "" {
 		t.Fatalf("invalid agent.provider should reset to empty, got=%q", cfg.Agent.Provider)
