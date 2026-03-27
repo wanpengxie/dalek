@@ -231,6 +231,13 @@ type model struct {
 	workerLogLoadedAt time.Time
 
 	runRequestTicketID uint
+
+	// focus 状态
+	focusView            *contracts.FocusRunView
+	focusEvents          []contracts.FocusEvent
+	focusEventLatestID   uint
+	focusRefreshInFlight bool
+	ticketFocusItemByID  map[uint]*contracts.FocusRunItem
 }
 
 func newModel(p *app.Project, home *app.Home, projectName string) model {
@@ -405,6 +412,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshStarted = now
 			cmds = append(cmds, m.refreshCmd())
 		}
+		// focus 刷新：复用同一 ticker，不额外增加负载
+		if m.mode == modeTable && !m.focusRefreshInFlight {
+			m.focusRefreshInFlight = true
+			cmds = append(cmds, m.focusRefreshCmd())
+		}
 		if m.mode == modeWorkerLog && m.workerLogTicketID != 0 && !m.workerLogInFlight {
 			if m.workerLogLoadedAt.IsZero() || now.Sub(m.workerLogLoadedAt) >= workerLogRefreshEvery {
 				m.workerLogInFlight = true
@@ -456,6 +468,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// 避免覆盖用户操作产生的状态提示（也减少闪烁）。
 			m.status = "就绪"
 		}
+		return m, nil
+
+	case focusRefreshedMsg:
+		m.applyFocusRefresh(msg)
 		return m, nil
 
 	case tailMsg:
@@ -833,15 +849,16 @@ func (m *model) applyViews(views []app.TicketView) {
 		}
 	}
 
+	mgrStatus, mgrRuntime, mgrTitle := m.managerRowCells()
 	rows = append(rows, table.Row{
 		partitionCell("manager"),
 		trimCell("mgr", m.tableLayout.id),
 		"-",
 		"-",
-		trimCell("manager", m.tableLayout.status),
+		trimCell(mgrStatus, m.tableLayout.status),
 		"-",
-		trimCell("就绪", m.tableLayout.runtime),
-		trimCell("项目管理员", m.tableLayout.title),
+		trimCell(mgrRuntime, m.tableLayout.runtime),
+		trimCell(mgrTitle, m.tableLayout.title),
 		trimCell("-", m.tableLayout.output),
 	})
 	refs = append(refs, rowRef{kind: rowManager, section: "manager"})
@@ -873,12 +890,21 @@ func (m *model) applyViews(views []app.TicketView) {
 			}
 
 			runtime := formatRuntimeState(v)
+			// focus item runtime 叠加
+			if overlay, ok := m.focusItemRuntimeOverlay(t.ID); ok {
+				runtime = overlay
+			}
+			// focus label 前缀
+			labelText := labelOrDash(t.Label)
+			if prefix := m.focusLabelPrefix(t.ID); prefix != "" {
+				labelText = prefix + labelText
+			}
 
 			rows = append(rows, table.Row{
 				partitionCell(sectionKey),
 				trimCell(strconv.Itoa(int(t.ID)), m.tableLayout.id),
 				trimCell(ticketPriorityShort(t.Priority), m.tableLayout.priority),
-				trimCell(labelOrDash(t.Label), m.tableLayout.label),
+				trimCell(labelText, m.tableLayout.label),
 				trimCell(status, m.tableLayout.status),
 				trimCell(formatIntegrationStatus(t.WorkflowStatus, t.IntegrationStatus), m.tableLayout.integ),
 				trimCell(runtime, m.tableLayout.runtime),
@@ -1203,6 +1229,11 @@ func (m model) inspectorMiddleView(panelW int) string {
 }
 
 func (m model) managerInspectorMiddleView(panelW int) string {
+	// 有 focus 时切换为 focus 阶段详情
+	if m.hasFocusView() {
+		return m.focusInspectorMiddleView(panelW)
+	}
+
 	innerW := max(10, panelW-4)
 
 	issues := collectPendingIssues(m.orderedViews(), 6)
@@ -1227,7 +1258,16 @@ func (m model) managerInspectorMiddleView(panelW int) string {
 	return strings.Join(lines, "\n")
 }
 
+func (m model) hasFocusView() bool {
+	return m.focusView != nil && m.focusView.Run.ID != 0
+}
+
 func (m model) managerInspectorLeftView(panelW int) string {
+	// 有 focus 时切换为 focus 总览
+	if m.hasFocusView() {
+		return m.focusInspectorLeftView(panelW)
+	}
+
 	innerW := max(10, panelW-4) // border(2) + padding(2)
 
 	repo := "-"
@@ -1368,6 +1408,11 @@ func (m model) inspectorRightView(panelW int) string {
 }
 
 func (m model) managerInspectorRightView(panelW int) string {
+	// 有 focus 时切换为 focus 事件流
+	if m.hasFocusView() {
+		return m.focusInspectorRightView(panelW)
+	}
+
 	innerW := max(10, panelW-4) // border(2) + padding(2)
 
 	head := panelTitle("输出尾部") + "  " + badge("已移除", cNeutral)

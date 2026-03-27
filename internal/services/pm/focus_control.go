@@ -565,12 +565,30 @@ func (s *Service) focusViewForDB(ctx context.Context, db *gorm.DB, focusID uint)
 		return contracts.FocusRunView{}, err
 	}
 
-	return contracts.FocusRunView{
+	view := contracts.FocusRunView{
 		Run:           run,
 		Items:         items,
 		ActiveItem:    selectActiveFocusRunItem(items),
 		LatestEventID: row.MaxID,
-	}, nil
+	}
+
+	// convergent 模式：补查 convergent_rounds
+	if run.Mode == contracts.FocusModeConvergent {
+		var rounds []contracts.ConvergentRound
+		if err := db.WithContext(ctx).
+			Where("focus_run_id = ?", run.ID).
+			Order("round_number asc").
+			Find(&rounds).Error; err != nil {
+			return contracts.FocusRunView{}, err
+		}
+		view.Rounds = rounds
+		if len(rounds) > 0 {
+			latest := rounds[len(rounds)-1]
+			view.LatestRound = &latest
+		}
+	}
+
+	return view, nil
 }
 
 func (s *Service) updateFocusDesiredState(ctx context.Context, focusID uint, desiredState, requestID string) error {
