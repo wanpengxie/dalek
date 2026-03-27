@@ -101,6 +101,10 @@ type FocusRunView struct {
 	ActiveItem    *FocusRunItem  `json:"active_item,omitempty"`
 	LatestEventID uint           `json:"latest_event_id"`
 	ReadonlyStale bool           `json:"readonly_stale,omitempty"`
+
+	// convergent 模式扩展（batch 模式下为 nil / empty）
+	LatestRound *ConvergentRound  `json:"latest_round,omitempty"`
+	Rounds      []ConvergentRound `json:"rounds,omitempty"`
 }
 
 type FocusPollResult struct {
