@@ -73,8 +73,8 @@ var KeyOrder = []KeyMeta{
 	},
 	{
 		Key:           ConfigKeyAgentModel,
-		DefaultScope:  ScopeLocal,
-		AllowedScopes: []Scope{ScopeGlobal, ScopeLocal},
+		DefaultScope:  ScopeGlobal,
+		AllowedScopes: []Scope{ScopeGlobal},
 	},
 	{
 		Key:           ConfigKeyWorkerAgentProvider,
@@ -463,6 +463,7 @@ func setRoleProvider(ctx *SetContext, role, rawValue string, scope Scope) (strin
 	if err := repo.WriteConfigAtomic(strings.TrimSpace(ctx.Project.ConfigPath()), next); err != nil {
 		return "", err
 	}
+	ctx.LocalCfg = next // 同步内存，确保同一 session 内后续操作使用新配置
 	return providerKey, nil
 }
 

@@ -459,9 +459,6 @@ func loadProjectConfigRaw(path string) (repo.Config, error) {
 	if err != nil {
 		return repo.Config{}, err
 	}
-	if err := repo.ValidateNoDeprecatedProjectFields(b); err != nil {
-		return repo.Config{}, err
-	}
 	var cfg repo.Config
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return repo.Config{}, err

@@ -86,7 +86,10 @@ func (s *Service) submitPMRun(ctx context.Context, submitter PMRunSubmitter, inp
 	if len(providers) == 0 {
 		providers = repo.DefaultProviders()
 	}
-	resolved, _ := repo.ResolveAgentConfig(provider, providers)
+	resolved, err := repo.ResolveAgentConfig(provider, providers)
+	if err != nil {
+		return PMRunResult{}, fmt.Errorf("convergent: pm_agent provider %q 解析失败: %w", provider, err)
+	}
 	model := strings.TrimSpace(resolved.Model)
 
 	requestID := newPMRequestID("pm_run")
