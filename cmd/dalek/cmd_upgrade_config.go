@@ -47,15 +47,22 @@ func cmdUpgradeConfig(args []string) {
 		exitRuntimeError(out, "打开 Home 失败", err.Error(), "检查 Home 目录权限")
 	}
 
-	// 确保 Home 有 providers map（如果没有则写入默认值）
+	// 全局配置：schema 更低时覆写（补 providers map），schema 相同则不动
 	homeCfg := h.Config.WithDefaults()
-	if len(homeCfg.Providers) == 0 {
+	if homeCfg.SchemaVersion < app.CurrentHomeConfigSchemaVersion {
+		if len(homeCfg.Providers) == 0 {
+			homeCfg.Providers = repo.DefaultProviders()
+		}
+		homeCfg.SchemaVersion = app.CurrentHomeConfigSchemaVersion
+		if err := app.WriteHomeConfigAtomic(h.ConfigPath, homeCfg); err != nil {
+			exitRuntimeError(out, "写入 Home 配置失败", err.Error(), "检查文件权限")
+		}
+	} else if len(homeCfg.Providers) == 0 {
+		// schema 已是最新但缺 providers（极端情况），补上但不碰其他字段
 		homeCfg.Providers = repo.DefaultProviders()
-	}
-
-	// 写回 Home 配置以确保 providers map 存在
-	if err := app.WriteHomeConfigAtomic(h.ConfigPath, homeCfg); err != nil {
-		exitRuntimeError(out, "写入 Home 配置失败", err.Error(), "检查文件权限")
+		if err := app.WriteHomeConfigAtomic(h.ConfigPath, homeCfg); err != nil {
+			exitRuntimeError(out, "写入 Home 配置失败", err.Error(), "检查文件权限")
+		}
 	}
 
 	// 打开项目
