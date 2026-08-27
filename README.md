@@ -1,40 +1,58 @@
 # Dalek Core
 
-理论对象 **M = (H₀, L, U, K)** 的最小可运行内核。它是 c0 / Dalek Core 两篇文章的证明对象，不是 atoll 的缩小版。
+一台可以自我维持、自我改进、自我复制、自我组织的智能单元的最小内核。副标题：如何优雅地把 LLM 塞进冯诺依曼机器。
 
-它回答的问题：**要让一个由 L 驱动的 agent 社会在无人介入下产出通过测试的下一代，最少必须由 L 之外的东西守住哪些边界性质？** 候选四条：无带外效应、步公平性、L 之外的确定性、外生边界。必要性由记录的失败证明，充分性由原型通过 E1/E2 证明，最小性由其余规则可从四条推出证明。pi agent 隐式满足这份规格（部分由人满足）；它是对照组，不是对手。
+它不是 agent 框架。它是一条账本和一个沿着账本走的控制器；agent、工具、人、别的机器——全是账本上的地址，用同一套词说话。四个"自我"不是内核功能，是这套词上的普通程序。
 
-- **定位**：理想型。像 Minix 之于 Linux、1948 之于 EDVAC——不给人用，用来被测量。atoll 是发布，借来一切、只对下面两条负责。
-- **合同（③ 必须保持的两条）**
-  1. 可自举：K 源码在 H₀ 里；从 H₀ + host 能起一个新的 K。
-  2. 主代数自封闭：actor / channel / message 上的运算不出代数；协调不走 H 之外。
-- **规模**：K 本体 ≤ 1k 行；全部（含 T_dalek 与实验）≤ 3k 行。每多一行 K，最小性主张弱一分。
+- **Dalek**：机器的名字（用户的另一个项目）。**Dalek Core**：本仓库，内核。**c0**：第一条 channel，内核所在。
+- 状态：`kernel.py` 318 行；T1–T7 全绿；E1（机器造机器，c0 → c1 → c2，人只说一句）与 E2（Dalek Core 起 Dalek Core′，K 逐字相同）通过，两者 replay 逐字相同。真 L 尚未接入（`l.py` 已备）。
 
-规格见 [SPEC.md](SPEC.md)。
+## 一页纸
 
-## 布局（计划）
+**对象**：一条 append-only 账本（每台机器一条带子，物理上一个 `ledger.jsonl`）；消息 `(ch, seq, sender, to[], body)`，前三项由 K 盖章；成员 = 带子上的一条描述，id 就是那条消息的地址 `ch/seq`。
+
+**根**（每台机器内建，可直接寻址）：`L` 想（文本→文本，随机）、`U` 算（程序+文本→文本，确定，每步全新草稿）、`H` 记（带子的只读投影，问询本身入带）。外面的东西（人、时钟、别的机器）经 `#admit` 成为外生根。
+
+**词**（body 第一行；说错话的人，他的话只是文本）：
+
+| 词 | 谁能说 | 造世界的动作 |
+|---|---|---|
+| `#genesis` | door | 一条带子开始；c0 的 genesis 携带 K 的源码 |
+| `#admit` | door | 外面的东西成为一个地址 |
+| `#decl L\|U` | 成员 | 一段描述成为一个地址——**创建 = 描述** |
+| `#decl M` | 成员 | 一组描述（part）+ 接待员（in）+ 启动消息（start）成为**一台新机器**，并绑成本机的一个地址（channel as actor）；复印时地址按 map 重绑定 |
+| `#disable` / `#enable` | 成员 | 逻辑删除；enable 补发积压 |
+| `#step` | K | K 记下自己这一步（actor、看到哪、原文 out）；replay 用 |
+| 普通消息 + `to` | 任何地址 | 一条边 |
+
+**K**：沿账本走，对每条消息的每个收件人跑一步（view → apply → 记 `#step` → parse → append）；账本走完轮询外生根，一轮无人开口即停。没有 agent loop，没有 `*`，没有调度器——公平性就是账本顺序。
+
+**replay**：同一段 `run`，apply 换成读 `#step` 记录；`U`、`H` 重算而非照抄；文件逐字节比较。任何带外效应、任何对确定根结果的篡改都使其发散。它检验因果自洽，不检验 L 的真实性。
+
+## 跑
 
 ```
-kernel.py        K：H、Wake/View/Apply/Emit/Append、door（channel.create / member.create）
-actors.py        三种 kind：human（stdin）、agent（L）、tool（U）
-l.py             L：complete(text) -> text，裸 HTTP completion 端点
-u.py             U：run(program, text) -> text，确定、子进程、不可观测草稿
-t_dalek-core/         T1–T7 一致性套件
-experiments/
-  e1_channel.py  ①：跨 channel 边界，Dalek Core 给定
-  e2_dalek.py    ②：跨 Dalek Core 边界，host 给定
+python3 experiments/e1.py /tmp/e1     # 机器造机器：c0 → c1 → c2，人只说一句；打印带子、四个条件、replay
+python3 experiments/e2.py /tmp/e2     # Dalek Core 起 Dalek Core′：子机器自我 replay、K sha 相同
+python3 kernel.py show|book|replay DIR
+python3 -c "..."                       # 测试：见 t_dalek/test_t.py（无 pytest 时用文件头的跑法）
+```
+
+E1/E2 里的 L 是确定的状态机替身（`experiments/e1.py: constructor`）。接真模型：设 `DALEK_L_URL`，把 `apply["L"]` 换成 `l.L`。
+
+## 文件
+
+```
+kernel.py        K：对象、文法、账本（append 唯一写路径；折叠只改内存；跨界由 door 在写入时做）、派发、根、replay
+l.py             L：裸 completion 端点（未测：本机无端点）
+experiments/     e1.py e2.py
+t_dalek/         T1–T7
+FAILURES.md      每条法律的出生证明（F1–F13）
+SPEC.md DESIGN.md  设计时的假设清单与设计（部分已被 kernel.py 超过；以代码与 FAILURES 为准）
 ```
 
 ## 纪律
 
-- 单线程、单显式循环。调度是 K 的规则，不交给语言运行时——否则 replay 不成立。
-- L 用裸 HTTP 打 completion 端点，不用 SDK；chat 接口只是工程近似，须注明。
-- SPEC 与代码不许各说各话：偏离时改其一并提交。
-- 非目标：身份 / 认证、权限、数据面、分布式、沙箱加固、供应商 SDK、持久化超出一个平面文件。出现即违反 K 最小性。
-
-## 状态
-
-- 2026-08-27：SPEC v0。
-- 2026-08-28 起：kernel.py。顺序：K + echo tool + stdin human 跑通 T1–T7 → 接 L → E1 → E2。
-
-理论推导在私有仓库 `wanpengxie/atoll-research`（`notes/`、`references/`）。
+- 单线程、单显式循环；K 内无墙钟、无随机源；唯一非确定点是 apply。
+- 不做安全加固：本仓库是理论原型，恶意账本、伪造文件、U 越权不在范围内（③ 的事）。
+- 每条进 K 的法律先有一份 FAILURES 记录；没有失败要求的机制不进来。

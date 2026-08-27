@@ -263,7 +263,7 @@ def H(sp: Space, a: Addr, view: str) -> str:
             ans = render([x for x in c.msgs if x.sender != "K"][-int(q[1]):])
         else:
             ans = "? book | msg <addr> | range <addr> <addr> | steps <addr> | tail <n>"
-        out.append(f">>> {m.sender}\n{ans}")
+        out.append(f">>> {m.sender}\n> {m.body.splitlines()[0]}\n{ans}")        # 回答引用问题
     return "\n".join(out)
 
 LIVE = {"U": U, "H": H}                                                    # 确定的根：replay 时重算
