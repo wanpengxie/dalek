@@ -201,7 +201,7 @@ def valid_target(sp: Space, c: Channel, to: tuple[str, ...], body: str) -> tuple
         if not parts or any(p not in c.book or not c.book[p].is_copyable() for p in parts): return ()
     return to
 
-def step(sp: Space, a: Addr, apply: dict[str, Apply]) -> None:
+def step(sp: Space, a: Addr, apply: dict[str, Apply]) -> str:
     c = sp.channels[a.ch]
     view = view_of(c, a)
     out = apply[a.root](sp, a, render(view))                               # 唯一非确定点
@@ -209,6 +209,7 @@ def step(sp: Space, a: Addr, apply: dict[str, Apply]) -> None:
     for to, body in parse(out):
         to = valid_target(sp, c, to, body)
         if to: append(sp, a.ch, a.id, to, body)
+    return out
 
 def run(sp: Space, apply: dict[str, Apply], max_steps: int | None = None) -> None:
     """对账本上每条消息的每个收件人各跑一步；账本走完时轮询外生根；无人开口即停。"""
@@ -229,7 +230,7 @@ def run(sp: Space, apply: dict[str, Apply], max_steps: int | None = None) -> Non
             for a in list(c.book.values()):
                 if a.root == "X" and a.enabled:
                     if budget(): return
-                    n0 = len(sp.ledger); step(sp, a, apply); spoke |= len(sp.ledger) > n0 + 1
+                    spoke |= bool(step(sp, a, apply).strip())          # 开口了（哪怕话被丢弃）就再轮一次
         if not spoke: return
 
 # ----------------------------------------------------------------- 根的实现
@@ -271,7 +272,11 @@ def tape(outs: list[tuple[str, str]], live: dict[str, Apply] = LIVE) -> Apply:
     """录音带：(期望地址, out) 序列。live 里的根不照抄记录而是重算。"""
     it = iter(outs)
     def f(sp: Space, a: Addr, view: str) -> str:
-        who, out = next(it)
+        who, out = next(it, (None, None))
+        if who is None:
+            if a.root in live: return live[a.root](sp, a, view)
+            if a.root == "X": return ""                          # 外面没话了：外生根沉默
+            raise RuntimeError(f"tape exhausted at step of {a.id}")
         if who != a.id: raise RuntimeError(f"divergence: expected step of {who}, got {a.id}")
         return live[a.root](sp, a, view) if a.root in live else out
     return f
