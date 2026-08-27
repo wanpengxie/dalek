@@ -138,6 +138,7 @@ c0 的 door 即 registrar。没有第三个效应词。
 2. Emit 的文法——"L 产出 U-程序"在这里第一次具体。
 3. 公平性最少需要什么（round-robin 是否已足够；enabled 的定义是否稳）。
 4. P1 是否真是唯一的根：去掉它是否裂、只加它是否够；P2–P4 中哪些是它的推论。
+5. door 是否需要效应词：候选修正——member.create / channel.create 降为 K 的折叠规则（Decl 形状的消息即成员，id = 其 (channel, seq)；配方形状的消息即新带子），K 无效应词。door 只剩创世与外来者接入两件跨界的事。看 E1/E2 是否仍过、T5/T7 如何改写。
 
 ## 11. 纪律
 
