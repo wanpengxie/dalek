@@ -1,14 +1,14 @@
-# coral — kernel spec v1（2026-08-27）
+# Dalek Core — kernel spec v1（2026-08-27）
 
 ## 0. 题设与定位
 
 **问题**：求最小的 (定义, 不变量集)，使一台把 L 当作内部作者的机器仍满足冯诺依曼的两个定义——1945 单一介质（程序是数据）、1948 自我制造（描述准静止、复制而非解释）——且不变量由 L 之外的东西持有。
 
-coral 是这个问题的证明对象：理论对象 M = (H₀, L, U, K) 的最小可运行实例。不是 atoll 的缩小版，不给人用，用来被测量（Minix 之于 Linux、1948 之于 EDVAC）。
+Dalek Core 是这个问题的证明对象：理论对象 M = (H₀, L, U, K) 的最小可运行实例。不是 atoll 的缩小版，不给人用，用来被测量（Minix 之于 Linux、1948 之于 EDVAC）。
 
 它要给出两个定理的实物：
-- **①（channel 级）**：channel 已是冯诺依曼级别的机器；能造出通过 T 的 channel。milieu = coral（registrar、K 作法律为公理）。
-- **②（coral 级）**：coral 能从 H 中的自身描述起一个通过 T_coral 的 coral'。milieu = Linux（解释器、进程为公理）。
+- **①（channel 级）**：channel 已是冯诺依曼级别的机器；能造出通过 T 的 channel。milieu = Dalek Core（registrar、K 作法律为公理）。
+- **②（Dalek Core 级）**：Dalek Core 能从 H 中的自身描述起一个通过 T_coral 的 Dalek Core'。milieu = Linux（解释器、进程为公理）。
 
 同一原型、同一定理形状、两次选边界。
 
@@ -111,12 +111,12 @@ c0 的 door 即 registrar。没有第三个效应词。
 
 **E0（基线，pi 形态）**：L + loop + 文件，无任何法律。以最强形态出场（git、测试、最好的 prompt）。在 E1 上运行并记录裂在哪。
 
-**E1（①，跨 channel 边界；coral 给定）**：gen1 在 c0 经 door 造 c1；c1 中由 gen1（L 应用）写出一个新 tool 成员并经 member.create 接入；该成员通过一个 gen1 自身不通过的测试。**gen1 → gen2 之间无外生成员介入**。三个可检条件：
+**E1（①，跨 channel 边界；Dalek Core 给定）**：gen1 在 c0 经 door 造 c1；c1 中由 gen1（L 应用）写出一个新 tool 成员并经 member.create 接入；该成员通过一个 gen1 自身不通过的测试。**gen1 → gen2 之间无外生成员介入**。三个可检条件：
 1. V(I₂) = pass，且 T 含 gen1 不过的测试；
 2. 产生 I₂ 的那一步的 view 不含 I₂（区分构造与复制）；
 3. c1 → c2 重复。
 
-**E2（②，跨 coral 边界；host 给定）**：从 H₀ 中的 K 源码起一个新进程 coral'；coral 对 coral' 跑 T_coral；通过即一次自我制造。K diff = 0。验证者是 coral 而非 coral' 自己（不 in-place；"D is in no wise modified"）。
+**E2（②，跨 Dalek Core 边界；host 给定）**：从 H₀ 中的 K 源码起一个新进程 Dalek Core'；Dalek Core 对 Dalek Core' 跑 T_coral；通过即一次自我制造。K diff = 0。验证者是 Dalek Core 而非 Dalek Core' 自己（不 in-place；"D is in no wise modified"）。
 
 ## 8. 方法：失败驱动
 

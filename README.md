@@ -1,6 +1,6 @@
-# coral
+# Dalek Core
 
-理论对象 **M = (H₀, L, U, K)** 的最小可运行内核。它是 c0 / coral 两篇文章的证明对象，不是 atoll 的缩小版。
+理论对象 **M = (H₀, L, U, K)** 的最小可运行内核。它是 c0 / Dalek Core 两篇文章的证明对象，不是 atoll 的缩小版。
 
 它回答的问题：**要让一个由 L 驱动的 agent 社会在无人介入下产出通过测试的下一代，最少必须由 L 之外的东西守住哪些边界性质？** 候选四条：无带外效应、步公平性、L 之外的确定性、外生边界。必要性由记录的失败证明，充分性由原型通过 E1/E2 证明，最小性由其余规则可从四条推出证明。pi agent 隐式满足这份规格（部分由人满足）；它是对照组，不是对手。
 
@@ -19,10 +19,10 @@ kernel.py        K：H、Wake/View/Apply/Emit/Append、door（channel.create / m
 actors.py        三种 kind：human（stdin）、agent（L）、tool（U）
 l.py             L：complete(text) -> text，裸 HTTP completion 端点
 u.py             U：run(program, text) -> text，确定、子进程、不可观测草稿
-t_coral/         T1–T7 一致性套件
+t_dalek-core/         T1–T7 一致性套件
 experiments/
-  e1_channel.py  ①：跨 channel 边界，coral 给定
-  e2_coral.py    ②：跨 coral 边界，host 给定
+  e1_channel.py  ①：跨 channel 边界，Dalek Core 给定
+  e2_coral.py    ②：跨 Dalek Core 边界，host 给定
 ```
 
 ## 纪律

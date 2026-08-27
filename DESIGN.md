@@ -1,7 +1,7 @@
-# coral — 代码设计 v1（2026-08-27）
+# Dalek Core — 代码设计 v1（2026-08-27）
 
-目标：最小 coral，Python，单进程、单线程、单显式循环。K 本体 ≤ 800 行。
-公开交付物：**一盘可重放的带子**——gen1 → gen2 的完整 H，任何人 `coral replay` 得到逐字相同的结果，其中没有一条人类消息，gen2 通过 gen1 通不过的测试。
+目标：最小 Dalek Core，Python，单进程、单线程、单显式循环。K 本体 ≤ 800 行。
+公开交付物：**一盘可重放的带子**——gen1 → gen2 的完整 H，任何人 `dalek replay` 得到逐字相同的结果，其中没有一条人类消息，gen2 通过 gen1 通不过的测试。
 
 本设计取代 v0。与 v0 的实质差异：door 不再有效应词（创建 = 描述，由折叠规则实现）；外生成员有接入记录、无构造描述；"I ∈ H"升为不变量；Emit 文法改为指令行而非 JSON。
 
@@ -20,7 +20,7 @@
 ## 1. 一条原则定结构
 
 **H 是唯一状态；内存里的一切都是 fold(H) 的缓存。**
-- 一个 coral = 一个目录：`h/c0.jsonl, h/c1.jsonl, …`，每行一条 Message。
+- 一个 Dalek Core = 一个目录：`h/c0.jsonl, h/c1.jsonl, …`，每行一条 Message。
 - actor 表、channel 表、游标、全局步数——全部从 H 折叠出来，不单独持久化。
 - K 自己的每一步写进 H（sender = `K`），所以 replay 不依赖 H 之外的任何东西。
 
@@ -124,7 +124,7 @@ c0/7
 
 ## 6. Apply 的三种实现（K 之外，经 `apply: dict[kind, Callable]` 注入）
 
-- **agent**：`l.complete(a.program + "\n\n" + rendered_view)`。program 就是这个 agent 的 harness（系统提示 + 文法说明），在 H 上，是数据。`l.py` 只做 `POST {prompt, max_tokens, temperature}` 到 `CORAL_L_URL`；chat 接口用一个 shim，注明是工程近似。
+- **agent**：`l.complete(a.program + "\n\n" + rendered_view)`。program 就是这个 agent 的 harness（系统提示 + 文法说明），在 H 上，是数据。`l.py` 只做 `POST {prompt, max_tokens, temperature}` 到 `DALEK_L_URL`；chat 接口用一个 shim，注明是工程近似。
 - **tool**：`subprocess.run([sys.executable, "-c", a.program], input=view, cwd=scratch/<a.id>, capture_output=True, timeout=T_HOST)` → stdout。每成员一个草稿目录（草稿不共享）。
 - **human**：`select([stdin],[],[],0)`，有则读一行，否则 `""`。
 - **录音带（tape）**：`lambda a, v: next(outs)`——测试与 replay 用同一个 `run`。
@@ -151,25 +151,25 @@ def replay(src_dir) -> Report:
 ## 8. 模块与预算
 
 ```
-coral/kernel.py    Msg/Actor/Channel/Space、fold 规则、append、wake/view/render、run、replay   ≤ 450
-coral/grammar.py   parse(out) / 指令行识别                                                    ≤ 60
-coral/l.py         completion 客户端 + chat shim                                               ≤ 60
-coral/u.py         子进程 runner                                                               ≤ 50
-coral/human.py     stdin 非阻塞                                                                ≤ 25
-coral/cli.py       init / run / replay / fold / t                                              ≤ 100
-t_coral/           T1–T7（pytest，录音带 apply，秒级、确定）                                     ≤ 400
-experiments/pi/    E0：最强形态 pi（loop + file + bash + git），不 import coral                  ≤ 200
+dalek-core/kernel.py    Msg/Actor/Channel/Space、fold 规则、append、wake/view/render、run、replay   ≤ 450
+dalek-core/grammar.py   parse(out) / 指令行识别                                                    ≤ 60
+dalek-core/l.py         completion 客户端 + chat shim                                               ≤ 60
+dalek-core/u.py         子进程 runner                                                               ≤ 50
+dalek-core/human.py     stdin 非阻塞                                                                ≤ 25
+dalek-core/cli.py       init / run / replay / fold / t                                              ≤ 100
+t_dalek-core/           T1–T7（pytest，录音带 apply，秒级、确定）                                     ≤ 400
+experiments/pi/    E0：最强形态 pi（loop + file + bash + git），不 import Dalek Core                  ≤ 200
 experiments/e1.py  E1 驱动 + 验证器（四个条件）                                                  ≤ 150
-experiments/e2.py  E2 spawner tool 的 program + 父 coral 对子目录跑 t                            ≤ 100
+experiments/e2.py  E2 spawner tool 的 program + 父 Dalek Core 对子目录跑 t                            ≤ 100
 FAILURES.md        每条法律的出生证明（记录纪律；不是建造门槛）
 ```
 
 CLI：
-- `coral init DIR`：写 `h/c0.jsonl` 第一条 `#genesis K=<kernel.py+grammar.py 源码>`。
-- `coral run DIR [--human] [--l URL] [--steps N]`：`--human` 先 append `#admit human`。
-- `coral replay DIR`：§7，退出码 0/1，打印首个发散点。
-- `coral fold DIR`：打印折叠出的成员表与带子表（调试）。
-- `coral t DIR`：对一个已存在的目录跑 T1–T7（E2 里父 coral 用它验子 coral）。
+- `dalek init DIR`：写 `h/c0.jsonl` 第一条 `#genesis K=<kernel.py+grammar.py 源码>`。
+- `dalek run DIR [--human] [--l URL] [--steps N]`：`--human` 先 append `#admit human`。
+- `dalek replay DIR`：§7，退出码 0/1，打印首个发散点。
+- `dalek fold DIR`：打印折叠出的成员表与带子表（调试）。
+- `dalek t DIR`：对一个已存在的目录跑 T1–T7（E2 里父 Dalek Core 用它验子 Dalek Core）。
 
 ## 9. T_coral（与 §0 对应）
 
@@ -194,28 +194,28 @@ CLI：
 4. c1 → c2 重复一次。
 **gen1 → gen2 之间 H 上没有 human 消息**——验证器直接查带子。
 
-**E2（coral 造 coral'）**：c0 里一个 spawner tool：读 c0 第一条取 K 源码，写到 `DIR2/`，`Popen([python, DIR2/kernel.py, "init+run", …])`；父 coral 再以 tool 跑 `coral t DIR2`，结果作为 Msg 落回 c0。通过即一次自我制造，K diff = 0。**这盘带子就是公开交付物。**
+**E2（Dalek Core 造 Dalek Core'）**：c0 里一个 spawner tool：读 c0 第一条取 K 源码，写到 `DIR2/`，`Popen([python, DIR2/kernel.py, "init+run", …])`；父 Dalek Core 再以 tool 跑 `dalek t DIR2`，结果作为 Msg 落回 c0。通过即一次自我制造，K diff = 0。**这盘带子就是公开交付物。**
 
 ## 11. 建造顺序（每步有验收）
 
 | 步 | 交付 | 验收 |
 |---|---|---|
 | 1 | `kernel.py` `grammar.py` + 录音带 apply | T1 T2 T3 T5 T6 T7 绿 |
-| 2 | `u.py` `human.py` `cli.py`；一个 echo tool | T4 绿；`coral run --human` 能和 echo 对话；`coral replay` 通过 |
+| 2 | `u.py` `human.py` `cli.py`；一个 echo tool | T4 绿；`dalek run --human` 能和 echo 对话；`dalek replay` 通过 |
 | 3 | `l.py` + 构造者 agent 的 program | 手动跑通一次 `#decl` + `#recipe` |
 | 4 | `experiments/e1.py` | 四条件通过；带子里无 human 消息 |
-| 5 | `experiments/e2.py` + `coral t` | 子 coral 通过 T1–T7；带子公开 |
+| 5 | `experiments/e2.py` + `dalek t` | 子 Dalek Core 通过 T1–T7；带子公开 |
 | 6 | `experiments/pi/` + FAILURES.md | 对照记录 |
 
 第 1 步先于一切：**K 在没有 L 的情况下就必须能被完整测试**。
 
 ## 12. 对照 atoll（只取内核形状）
 
-atoll `runtime + platform + protocol` 约 39k 行 Go；coral K ≤ 800。差的全是 ③ 的自由项。
-- 信封：atoll `id, ts, channel_id, sender{kind,id}, kind, type, payload, parent_id, correlation_id, visibility, audience, expires_at`，seq 为存储派生列。coral 只留 K 盖的三个章（ch, seq, sender）+ to + body；**无 ts、无 uuid**——墙钟与随机源是外生输入，进 K 即破 replay。
-- 写入链：atoll `harness/` 8 步（shape → caller_auth → sender_consistent → kind_audience → type_registered → receiver_gate → response_pairing → normalize）在 coral 坍缩为 `parse` + 盖章 + locality。atoll 里叫 harness 的东西就是 K 的 Emit，与文章里"harness 在 H 里"是撞名。
-- 门：atoll `systemkernel` 把门做成特殊 actor 并有词表；coral 的 door 不是成员、不收信、无词，只在跨界处写三种记录。
-- 时间轴：atoll 有 `schedule`；coral 没有。若某次失败要求 K 有时间，记 FAILURES.md 作候选。
+atoll `runtime + platform + protocol` 约 39k 行 Go；Dalek Core K ≤ 800。差的全是 ③ 的自由项。
+- 信封：atoll `id, ts, channel_id, sender{kind,id}, kind, type, payload, parent_id, correlation_id, visibility, audience, expires_at`，seq 为存储派生列。Dalek Core 只留 K 盖的三个章（ch, seq, sender）+ to + body；**无 ts、无 uuid**——墙钟与随机源是外生输入，进 K 即破 replay。
+- 写入链：atoll `harness/` 8 步（shape → caller_auth → sender_consistent → kind_audience → type_registered → receiver_gate → response_pairing → normalize）在 Dalek Core 坍缩为 `parse` + 盖章 + locality。atoll 里叫 harness 的东西就是 K 的 Emit，与文章里"harness 在 H 里"是撞名。
+- 门：atoll `systemkernel` 把门做成特殊 actor 并有词表；Dalek Core 的 door 不是成员、不收信、无词，只在跨界处写三种记录。
+- 时间轴：atoll 有 `schedule`；Dalek Core 没有。若某次失败要求 K 有时间，记 FAILURES.md 作候选。
 
 ## 13. 未决（由代码回答，答案回写本文件）
 

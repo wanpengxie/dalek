@@ -1,4 +1,4 @@
-"""coral kernel — 最简版（v2 模型）。
+"""Dalek Core kernel — 最简版（v2 模型）。
 
 一条账本；K 沿着账本走；一切皆地址；派生地址是账本数据。
 
@@ -187,7 +187,7 @@ def run(sp: Space, apply: dict[str, Apply], max_steps: int | None = None) -> Non
 # ----------------------------------------------------------------- 根的实现（K 之外）
 
 def U(a: Addr, view: str) -> str:
-    scratch = Path(tempfile.gettempdir()) / "coral-scratch" / a.ch / a.id.replace("/", "_")
+    scratch = Path(tempfile.gettempdir()) / "dalek-core-scratch" / a.ch / a.id.replace("/", "_")
     scratch.mkdir(parents=True, exist_ok=True)
     r = subprocess.run([sys.executable, "-c", a.prefix], input=view, capture_output=True,
                        text=True, cwd=scratch, timeout=30)
@@ -213,7 +213,7 @@ def replay(src: Path) -> bool:
         w, args, rest = directive(m.body)
         if w == "step":
             recs.append((dict(a.split("=", 1) for a in args)["actor"], rest))
-    dst = Path(tempfile.mkdtemp(prefix="coral-replay-"))
+    dst = Path(tempfile.mkdtemp(prefix="dalek-core-replay-"))
     sp2 = Space(dir=dst)
     append(sp2, "c0", "door", (), sp.ledger[0].body)         # 同一条 genesis
     t = tape(recs, live={"U": U})
