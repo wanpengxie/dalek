@@ -8,7 +8,7 @@ Dalek Core 是这个问题的证明对象：理论对象 M = (H₀, L, U, K) 的
 
 它要给出两个定理的实物：
 - **①（channel 级）**：channel 已是冯诺依曼级别的机器；能造出通过 T 的 channel。milieu = Dalek Core（registrar、K 作法律为公理）。
-- **②（Dalek Core 级）**：Dalek Core 能从 H 中的自身描述起一个通过 T_coral 的 Dalek Core'。milieu = Linux（解释器、进程为公理）。
+- **②（Dalek Core 级）**：Dalek Core 能从 H 中的自身描述起一个通过 T_dalek 的 Dalek Core'。milieu = Linux（解释器、进程为公理）。
 
 同一原型、同一定理形状、两次选边界。
 
@@ -95,7 +95,7 @@ c0 的 door 即 registrar。没有第三个效应词。
 1. **可自举**：K 源码作为 Message 在 H₀ 中；从 H₀ + host 能起一个新的 K。
 2. **主代数自封闭**：actor / channel / message 上的运算（create、view、emit、append）不出代数；协调不走 H 之外。
 
-## 6. T_coral（七项 ↔ 四条性质）
+## 6. T_dalek（七项 ↔ 四条性质）
 
 | 测试 | 内容 | 性质 |
 |---|---|---|
@@ -116,7 +116,7 @@ c0 的 door 即 registrar。没有第三个效应词。
 2. 产生 I₂ 的那一步的 view 不含 I₂（区分构造与复制）；
 3. c1 → c2 重复。
 
-**E2（②，跨 Dalek Core 边界；host 给定）**：从 H₀ 中的 K 源码起一个新进程 Dalek Core'；Dalek Core 对 Dalek Core' 跑 T_coral；通过即一次自我制造。K diff = 0。验证者是 Dalek Core 而非 Dalek Core' 自己（不 in-place；"D is in no wise modified"）。
+**E2（②，跨 Dalek Core 边界；host 给定）**：从 H₀ 中的 K 源码起一个新进程 Dalek Core'；Dalek Core 对 Dalek Core' 跑 T_dalek；通过即一次自我制造。K diff = 0。验证者是 Dalek Core 而非 Dalek Core' 自己（不 in-place；"D is in no wise modified"）。
 
 ## 8. 方法：失败驱动
 

@@ -8,7 +8,7 @@
 - **合同（③ 必须保持的两条）**
   1. 可自举：K 源码在 H₀ 里；从 H₀ + host 能起一个新的 K。
   2. 主代数自封闭：actor / channel / message 上的运算不出代数；协调不走 H 之外。
-- **规模**：K 本体 ≤ 1k 行；全部（含 T_coral 与实验）≤ 3k 行。每多一行 K，最小性主张弱一分。
+- **规模**：K 本体 ≤ 1k 行；全部（含 T_dalek 与实验）≤ 3k 行。每多一行 K，最小性主张弱一分。
 
 规格见 [SPEC.md](SPEC.md)。
 
@@ -22,7 +22,7 @@ u.py             U：run(program, text) -> text，确定、子进程、不可观
 t_dalek-core/         T1–T7 一致性套件
 experiments/
   e1_channel.py  ①：跨 channel 边界，Dalek Core 给定
-  e2_coral.py    ②：跨 Dalek Core 边界，host 给定
+  e2_dalek.py    ②：跨 Dalek Core 边界，host 给定
 ```
 
 ## 纪律

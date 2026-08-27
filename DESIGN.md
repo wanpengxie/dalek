@@ -171,7 +171,7 @@ CLI：
 - `dalek fold DIR`：打印折叠出的成员表与带子表（调试）。
 - `dalek t DIR`：对一个已存在的目录跑 T1–T7（E2 里父 Dalek Core 用它验子 Dalek Core）。
 
-## 9. T_coral（与 §0 对应）
+## 9. T_dalek（与 §0 对应）
 
 | 测试 | 做法 | 守的是 |
 |---|---|---|
