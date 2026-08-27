@@ -1,212 +1,225 @@
-# coral — 代码设计 v0（2026-08-27）
+# coral — 代码设计 v1（2026-08-27）
 
-对应 SPEC v1。目标：K 本体 ≤ 1k 行，一个进程跑一个 coral（一个 space：c0, c1, …），单线程、单显式循环。
+目标：最小 coral，Python，单进程、单线程、单显式循环。K 本体 ≤ 800 行。
+公开交付物：**一盘可重放的带子**——gen1 → gen2 的完整 H，任何人 `coral replay` 得到逐字相同的结果，其中没有一条人类消息，gen2 通过 gen1 通不过的测试。
 
-## 1. 一条原则决定全部结构
+本设计取代 v0。与 v0 的实质差异：door 不再有效应词（创建 = 描述，由折叠规则实现）；外生成员有接入记录、无构造描述；"I ∈ H"升为不变量；Emit 文法改为指令行而非 JSON。
+
+## 0. 三条不变量（内部纪律，不进公开文本）
+
+| | 内容 | 由谁守 |
+|---|---|---|
+| **因果闭包** | 系统的每个效应、每次跨界（进入/创建/接入）都是 K 盖章的 Message，在 H 上。没有带外。 | `append` 是唯一写路径；文法无 sender 字段 |
+| **描述闭包** | 每个非外生成员的描述（kind + program）在 H 上；K 自己的源码在 H₀ 上 | 折叠规则；genesis |
+| **生成闭包** | 从 H 上的描述能得到成员与新带子（Decl → 成员，recipe → 新带子）；milieu 里有构造者零件（L） | 折叠规则 + Apply 表 |
+
+两条作者法律：**公平性**（enabled 者不被永远跳过）；**L 之外的确定性**（除 Apply 外全是确定函数；判决由 U/K 做）。
+
+外生成员（human）= 有接入记录、无 program 的成员。封闭到此为止。
+
+## 1. 一条原则定结构
 
 **H 是唯一状态；内存里的一切都是 fold(H) 的缓存。**
-- 每 channel 一个 append-only 文件 `h/<ch>.jsonl`，每行一条 Message。
-- actor 表、channel 表、每个 actor 的游标（"上次步到哪"）都不单独存储，启动时从 H 折叠出来。
-- K 自己的每一步也写进 H（作为 sender=`K` 的 Message），所以 replay 不需要任何 H 之外的东西。
+- 一个 coral = 一个目录：`h/c0.jsonl, h/c1.jsonl, …`，每行一条 Message。
+- actor 表、channel 表、游标、全局步数——全部从 H 折叠出来，不单独持久化。
+- K 自己的每一步写进 H（sender = `K`），所以 replay 不依赖 H 之外的任何东西。
 
-H 里只有一种东西——Message——但 sender 分四类，靠 sender 区分而不靠 schema：
-
-| sender | 含义 | body |
-|---|---|---|
-| actor id | 成员发言 | 任意文本 |
-| `door` | 创建事件 / 门的回执 | JSON：Decl、channel 回执、K 源码 |
-| `K` | 一步的记录（replay 用） | JSON：`{actor, upto, out}` |
-| human id | 外生成员发言 | 文本；其 Decl 不在 H |
-
-## 2. 模块
-
-```
-coral/
-  kernel.py     K：Msg、H、fold、Wake/View/Emit/Append、door、replay      ~450 行
-  grammar.py    Emit 文法：parse(out) -> [(to, body)]；render(view) -> text   ~60
-  l.py          L：complete(text) -> text，裸 HTTP                            ~50
-  u.py          U：run(program, text) -> text，子进程 + 每 actor 草稿目录       ~60
-  human.py      stdin 非阻塞读                                                ~30
-  cli.py        init / run / replay / t                                      ~80
-t_coral/        T1–T7（pytest）                                               ~400
-experiments/
-  pi/           E0：最强形态的 pi agent（loop + file + bash + git）             ~200
-  e1_channel.py E1                                                           ~150
-  e2_coral.py   E2                                                           ~100
-```
-
-`kernel.py` 只 import 标准库和 `grammar`。L、U、human 通过一个 `apply: Callable[[Actor, str], str]` 表注入——K 不知道 L 是 HTTP 还是录音带，这正是 replay 的实现方式。
-
-## 3. 数据结构
+## 2. 数据结构
 
 ```python
 @dataclass(frozen=True)
 class Msg:
-    ch: str      # channel id，K 写
-    seq: int     # 该 channel 内单调递增，K 写
-    sender: str  # actor id | "door" | "K"，K 写
-    to: str      # actor id | "*" | "door" | ""（K 记录用空）
-    body: str
+    ch: str      # "c0", "c1", …          K 写
+    seq: int     # 该带子内从 1 递增        K 写
+    sender: str  # actor id | "door" | "K" K 写
+    to: str      # actor id | "*" | ""     actor 给（K 记录用 ""）
+    body: str    # 任意文本                actor 给
 
 @dataclass
 class Actor:
-    id: str      # "<ch>/<n>"，如 "c0/3"
+    id: str        # "<ch>/<seq>"，即宣告它的那条 Message 的地址。天然唯一、天然 K 盖章
     ch: str
-    kind: str    # "agent" | "tool" | "human"
-    program: str # agent: L 的前缀文本（harness 在 H 里）；tool: python 源码；human: ""
-    cursor: int  # 已见到的最大 seq —— 从 K 记录折叠得到，不单独存
+    kind: str      # "agent" | "tool" | "human"
+    program: str   # agent: L 的前缀文本；tool: python 源码；human: ""（无构造描述）
+    cursor: int    # 已见到的最大 seq —— 由 K 记录折叠得出
 
 @dataclass
 class Channel:
     id: str
-    msgs: list[Msg]        # fold 的缓存；权威在文件
-    actors: dict[str, Actor]
+    msgs: list[Msg]
+    actors: dict[str, Actor]   # 折叠顺序即唤醒顺序
+
+@dataclass
+class Space:
+    dir: Path
+    channels: dict[str, Channel]   # 创建顺序
+    nsteps: int                    # 全局步数，由 K 记录折叠得出
 ```
 
-Decl（door 发出的 Message 的 body）：`{"decl": {"id": "c1/2", "kind": "tool", "program": "..."}}`。
-human 在 `run --human` 时挂上，**不写 Decl**；它的发言与 K 记录照常入 H。这就是 T7 里"外生成员对第二问无答案"的实现。
+## 3. 折叠规则（K 的"读法"——创建就在这里）
+
+按带子创建顺序、带子内按 seq，逐条折叠。body 第一行若是指令行则有结构意义，否则是普通消息。
+
+| 触发 | 谁写 | 折叠效果 |
+|---|---|---|
+| 带子第一条：`#genesis` + 可选 `K=<源码>` / `parent=<msg id>` | door | 新建 Channel。c0 携带 K 源码（T1）；子带子携带 parent 指针（谱系） |
+| `#admit human` | door | 新成员，id = 本条地址，kind human，program ""。**外生成员的接入记录** |
+| `#decl agent` / `#decl tool` + 其后全部行 = program | 任意成员，to = `*` | 新成员，id = 本条地址。**创建 = 描述** |
+| `#recipe` + 每行一个已存在的成员 id | 任意成员，to = `*` | 新带子 c{n}：door 写 `#genesis parent=<本条地址>`，再把每个 id 的 Decl **逐字复印**为 door 写的 `#decl` 消息（B：复印非理解）。回执：door 在本带子写 `#created c{n}` to 发起者 |
+| `#step actor=<id> upto=<seq> n=<全局步数>` + 其后全部行 = out | K | actor.cursor = upto；nsteps = n。replay 用 |
+| 其他 | 任意 | 普通消息，按 to 可见 |
+
+door 只写三种东西：genesis、admit、复印。**它不是成员，不接受消息，只在跨界处出现**：带子诞生、外来者接入、描述过界复印。
+
+id 规则：成员 id 就是宣告它的消息地址 `ch/seq`。不需要分配器，不可能伪造（seq 是 K 的）。
 
 ## 4. K 主循环
 
 ```python
-def run(space: Space, apply: dict[str, Callable[[Actor, str], str]]) -> None:
-    while True:
-        a = wake(space)                        # P3
-        if a is None: idle(); continue
-        view = view_of(space, a)               # 机械投影
-        out  = apply[a.kind](a, render(view))  # L / U / stdin —— 唯一的非确定点
-        record(space, a, upto=view[-1].seq if view else a.cursor, out=out)   # sender=K
-        for to, body in parse(out):            # P4：确定文法
-            if to == "door":
-                door(space, a, body)           # 唯一效应词的入口，结果也 append
-            elif to == "*" or to in space[a.ch].actors:
-                append(space, Msg(a.ch, next_seq(a.ch), a.id, to, body))     # P1
-            # 其它：越界 → 丢弃（locality）
+def run(space, apply, max_steps=None):
+    while max_steps is None or space.nsteps < max_steps:
+        a = wake(space)
+        if a is None:
+            idle(space); continue                 # 无人 enabled：等 stdin 或退出
+        view = view_of(space, a)
+        out  = apply[a.kind](a, render(view))     # 唯一的非确定点
+        record(space, a, upto=last_seq(view, a), out=out)   # sender=K，先记后发
+        for to, body in parse(out):
+            if to == "*" or to in space.channels[a.ch].actors:
+                append(space, Msg(a.ch, next_seq, a.id, to, body))   # 折叠规则在 append 内即时生效
+            # 否则丢弃：locality
 ```
 
-- `wake`：对所有 channel 的所有 actor 做一个全局 round-robin 游标；返回下一个 `enabled` 的。`enabled(a) ⇔ 存在 seq > a.cursor 且 to ∈ {a.id, "*"} 的 Msg`。human 永远 enabled（外生者何时说话不可知），但其 apply 是非阻塞读，无输入即返回 ""。
-- `view_of`：`[m for m in ch.msgs if m.seq > a.cursor and m.to in (a.id, "*") and m.sender != "K"]`。不含 K 记录，不含发给别人的私信。**是否含自己发的消息、窗口 n 怎么截断**——SPEC §10.1，先不截断。
-- `record`：把这一步写成 `Msg(ch, seq, "K", "", json{actor, upto, out})`。cursor 的更新就是这条记录：fold 时对每个 actor 取最后一条 K 记录的 upto。
-- `append` 是**唯一**写文件的函数；`door` 和主循环都只经它。
+- `wake`：全局 round-robin 游标（从 nsteps 推出：`nsteps % len(all_actors)` 起找第一个 enabled）。`enabled(a)` ⇔ 存在 `seq > a.cursor` 且 `to ∈ {a.id, "*"}` 且 `sender ≠ K` 的 Msg。human 永远 enabled，但 apply 非阻塞，无输入返回 ""（空 out 也记一步）。
+- `view_of`：`[m for m in ch.msgs if m.seq > a.cursor and m.to in (a.id, "*") and m.sender != "K"]`。含自己发的消息。v1 不截断（窗口问题留给失败记录）。
+- `render`：每条一行 `[{ch}/{seq}] {sender} → {to}: {body}`；多行 body 缩进。
+- `record` 先于 `append`：一步的"意图"先落带，再落效果，重放时才能逐字对齐。
+- `append` 是唯一写文件的函数，写完立即对该条做折叠（所以 `#decl` 一落带成员就存在，`#recipe` 一落带子带子就诞生）。
 
-## 5. door
-
-```python
-def door(space, a, body):
-    req = json.loads(body)
-    if req["word"] == "member.create":
-        actor = new_actor(a.ch, req["decl"])            # id = f"{ch}/{n}"
-        append(space, Msg(a.ch, seq, "door", "*", json{"decl": actor.decl}))
-    elif req["word"] == "channel.create":
-        ch = new_channel(space)                          # id = f"c{n}"，新文件
-        for decl in req["recipe"]:
-            append(space, Msg(ch, seq, "door", "*", json{"decl": ...}))
-        append(space, Msg(a.ch, seq, "door", a.id, json{"created": ch}))
-    else:
-        append(space, Msg(a.ch, seq, "door", a.id, json{"error": "unknown word"}))
-```
-
-只有这两个分支。`channel.create` 的回执发给请求者——这是 A∘B 的"构造"回到"复制"一侧的那条线。
-genesis：`cli init` 建 `h/c0.jsonl`，第一条是 `door → *`，body = `{"K": <kernel.py + grammar.py 源码>}`（T1）。
-
-## 6. Apply 的三种实现（都在 K 之外）
-
-- **agent**：`l.complete(a.program + "\n\n" + rendered_view)`。program 就是这个 agent 的 harness（系统提示、输出文法说明）——它在 H 里，是数据。L 本身只是 `POST /completion`。
-- **tool**：`u.run(a.program, rendered_view)`：`subprocess.run([python, "-c", program], input=view, cwd=scratch/<actor id>, capture_output=True, timeout=…)`，返回 stdout。每 actor 一个草稿目录（P1 的"草稿不共享"）。程序自己按 §7 文法打印输出。
-- **human**：`select([stdin], [], [], 0)`，有则读一行，否则 `""`。
-
-E2 的 tool 需要 `subprocess` 起新进程——允许，milieu = Linux。
-
-## 7. Emit 文法（候选，SPEC §10.2）
+## 5. Emit 文法
 
 ```
 >>> <to>
-<body …>
+<body 行…>
 >>> <to>
-<body …>
+<body 行…>
 ```
 
-- 以 `>>> ` 开头的行是头，其后到下一头之前是 body。第一个头之前的文本丢弃（L 的自言自语不入 H）。
-- `to` 是 actor id、`*` 或 `door`。发给 door 的 body 必须是 JSON。
-- 之所以不用 JSON 整体输出：让 L 写代码（body 是 python 源码）时不用转义。
+- `>>> ` 开头的行是头；第一个头之前的文本丢弃（L 的自言自语不入带）。
+- to ∈ {成员 id, `*`}。没有 `door`——门不收信。
+- body 的结构由第一行指令决定（§3）。program 是裸文本，不需要转义——这是不用 JSON 的原因。
 
-## 8. replay
+例：一个 agent 造一个 tool 并把自己和它一起复印进新带子：
+```
+>>> *
+#decl tool
+import sys; v = sys.stdin.read()
+if "fib 30" in v: print(">>> *\n832040")
+>>> *
+#recipe
+c0/3
+c0/7
+```
+（c0/3 是它自己的 Decl 地址，c0/7 是刚才那条 `#decl tool` 的地址——它得等下一步从 view 里看到才知道。）
+
+## 6. Apply 的三种实现（K 之外，经 `apply: dict[kind, Callable]` 注入）
+
+- **agent**：`l.complete(a.program + "\n\n" + rendered_view)`。program 就是这个 agent 的 harness（系统提示 + 文法说明），在 H 上，是数据。`l.py` 只做 `POST {prompt, max_tokens, temperature}` 到 `CORAL_L_URL`；chat 接口用一个 shim，注明是工程近似。
+- **tool**：`subprocess.run([sys.executable, "-c", a.program], input=view, cwd=scratch/<a.id>, capture_output=True, timeout=T_HOST)` → stdout。每成员一个草稿目录（草稿不共享）。
+- **human**：`select([stdin],[],[],0)`，有则读一行，否则 `""`。
+- **录音带（tape）**：`lambda a, v: next(outs)`——测试与 replay 用同一个 `run`。
+
+E2 的 spawner tool 用 `subprocess.Popen` 起新进程——允许，milieu = Linux。
+
+## 7. replay
 
 ```python
-def replay(hdir) -> bool:
-    recorded = fold_records(hdir)          # 按 (ch, seq) 顺序的 K 记录
-    space2 = Space(tmpdir); genesis(space2, same K source)
-    outs = iter(recorded)
-    apply_rec = {k: (lambda a, v: next(outs).out) for k in ("agent","tool","human")}
-    run(space2, apply_rec, steps=len(recorded))
-    return files_equal(hdir, space2.dir)
+def replay(src_dir) -> Report:
+    steps = fold_steps(src_dir)            # 所有 #step 记录，按 n 排序
+    dst = fresh_space(tmpdir, genesis_from(src_dir))   # 同一份 K 源码、同一条 genesis
+    it = iter(steps)
+    def tape(a, v):
+        s = next(it)
+        if s.actor != a.id: raise Divergence(n=s.n, expected=s.actor, got=a.id)
+        return s.out
+    run(dst, {k: tape for k in KINDS}, max_steps=len(steps))
+    return diff_dirs(src_dir, dst.dir)     # 逐字节比较每条带子
 ```
 
-同一个 `run`，只换 `apply`。任何带外效应、任何 L 之外的随机性都会让两组文件不逐字相等——这就是 T2 作为漏检器的实现。要求 `wake` 完全确定（round-robin 游标本身也从 K 记录折叠出来，或简单地：记录里带 actor id，replay 时按记录顺序 wake）。
+发散的两种形式都被抓：wake 选了不同的人（法律变了 / 有带外状态），或落带内容不同（效应不由记录决定）。这是 T2，也是公开带子的验证命令。
 
-## 9. T_coral 的挂法
+## 8. 模块与预算
 
-pytest，每个测试起一个临时 space，用**录音带 apply**（预写好的 out 序列）而不是真的 L，这样 T 是确定的、秒级的。
+```
+coral/kernel.py    Msg/Actor/Channel/Space、fold 规则、append、wake/view/render、run、replay   ≤ 450
+coral/grammar.py   parse(out) / 指令行识别                                                    ≤ 60
+coral/l.py         completion 客户端 + chat shim                                               ≤ 60
+coral/u.py         子进程 runner                                                               ≤ 50
+coral/human.py     stdin 非阻塞                                                                ≤ 25
+coral/cli.py       init / run / replay / fold / t                                              ≤ 100
+t_coral/           T1–T7（pytest，录音带 apply，秒级、确定）                                     ≤ 400
+experiments/pi/    E0：最强形态 pi（loop + file + bash + git），不 import coral                  ≤ 200
+experiments/e1.py  E1 驱动 + 验证器（四个条件）                                                  ≤ 150
+experiments/e2.py  E2 spawner tool 的 program + 父 coral 对子目录跑 t                            ≤ 100
+FAILURES.md        每条法律的出生证明（记录纪律；不是建造门槛）
+```
 
-| 测试 | 做法 |
-|---|---|
-| T1 | genesis 后 c0 第一条 Message 的 body 含 K 源码，且 `exec` 它能得到 `run` |
-| T2 | 跑一段录音带 → replay → 文件逐字比较 |
-| T3 | 构造一个 out 试图伪造 `sender` / `seq`（文法里根本没有这些字段 → 无法表达）；直接改文件后 fold 应报 seq 不连续 |
-| T4 | 两个 tool 各写自己的 scratch，互相读不到（cwd 隔离）；同一 channel 只经 Msg 可见 |
-| T5 | actor 发 `>>> c1/0`（别的 channel）→ 被丢弃；非 door 无法造 channel（没有 API） |
-| T6 | 3 个 actor，其中一个只在很少的 view 下 enabled，验证 N 轮内被 wake |
-| T7 | 对每个非 human actor：H 里有 Decl，且能找到造它的 door 记录；human 找不到 Decl |
+CLI：
+- `coral init DIR`：写 `h/c0.jsonl` 第一条 `#genesis K=<kernel.py+grammar.py 源码>`。
+- `coral run DIR [--human] [--l URL] [--steps N]`：`--human` 先 append `#admit human`。
+- `coral replay DIR`：§7，退出码 0/1，打印首个发散点。
+- `coral fold DIR`：打印折叠出的成员表与带子表（调试）。
+- `coral t DIR`：对一个已存在的目录跑 T1–T7（E2 里父 coral 用它验子 coral）。
 
-## 10. 实验的挂法
+## 9. T_coral（与 §0 对应）
 
-- **E0**：`experiments/pi/` 是独立程序，不 import coral。要求它在无人介入下产出 pi'，通过 `tests/`。裂开的地方记 `FAILURES.md`。
-- **E1**：c0 里一个 agent（program = "你是构造者…文法…"），一段真实 L。目标：经 door 造 c1，在 c1 里 `member.create` 一个 tool，该 tool 通过 gen1 不过的测试（例：在 view 里出现 `fib 30` 时回答正确数）。验证脚本检查三个条件：V 通过；生成该 Decl 的 K 记录的 `upto` 早于 Decl 的 seq；c1 内重复一次。
-- **E2**：c0 里一个 tool，program 读 c0 第一条 Message 取 K 源码，写到临时目录，`subprocess.Popen` 起 `python -c <K> init+run`，然后对新目录跑 T1–T7，把结果作为 Msg 发回。
-
-## 11. 行数预算与顺序
-
-| 步 | 交付 | 预算 |
+| 测试 | 做法 | 守的是 |
 |---|---|---|
-| 1 | `kernel.py` + `grammar.py` + 录音带 apply，T1–T7 绿 | ≤ 500 + 400 |
-| 2 | `l.py` `u.py` `human.py` `cli.py`，手动跑一个 echo tool + 人 | ≤ 250 |
-| 3 | E0（pi），跑、记失败 | ≤ 200 |
-| 4 | E1 | ≤ 150 |
-| 5 | E2 | ≤ 100 |
+| T1 | c0 第一条含 K 源码，`exec` 它得到可用的 `run` | 描述闭包（K 自身） |
+| T2 | 跑一段录音带 → replay → 逐字节相同；篡改任一行后 replay 报发散 | 因果闭包 + 确定性 |
+| T3 | out 里试图伪造 sender/seq：文法无此字段，不可表达；直接改文件 → fold 报 seq 不连续 | 因果闭包 |
+| T4 | 两个 tool 各写自己的 scratch，互相读不到；同带子内只经 Msg 可见 | 因果闭包 |
+| T5 | actor 发 `>>> c1/2`（别的带子的成员）→ 丢弃；无任何 API 能不经 `#recipe` 得到新带子 | 因果闭包（locality） |
+| T6 | 3 个成员，其中一个只偶尔 enabled，验证 N 轮内被 wake | 公平性 |
+| T7 | 每个非 human 成员都能在 H 上找到自己的 `#decl`（及 `#recipe` 复印来源）；human 有 `#admit` 无 program | 描述闭包 + 外生边界 |
 
-第 1 步先于一切：K 在没有 L 的情况下就必须能被完整测试。这本身就是 P4 的一个体现。
+## 10. 实验
 
-## 12. 对照 atoll（只看内核形状，工程细节不进来）
+**E0（对照，pi 形态）**：L + loop + 文件 + bash + git，最强 prompt。同一任务："在无人介入下产出通过测试的下一代"。裂开处记 FAILURES.md。
 
-atoll 的 `runtime + platform + protocol` 非测试 Go 代码约 39k 行；coral 的 K 预算 1k。40× 的差是 ③ 的自由项，不是 K。对照三处：
+**E1（channel 造 channel）**：c0 里一个构造者 agent（program = 角色 + 文法说明 + 目标测试的描述）+ 真实 L。目标：它 `#decl` 一个 tool，再 `#recipe` 把自己和该 tool 复印进 c1；c1 里的 tool 通过 gen1 不通过的测试。验证器查四条：
+1. V 通过，且 T 含 gen1 不通过的测试；
+2. 产生该 `#decl` 的 `#step` 的 upto 早于该 Decl 的 seq（view 不含它——构造非复制）；
+3. c1 的配方含构造者（可遗传）；
+4. c1 → c2 重复一次。
+**gen1 → gen2 之间 H 上没有 human 消息**——验证器直接查带子。
 
-**信封**（`protocol/message/envelope.go`）：`id, ts, ts_received, channel_id, sender{kind,id}, kind, type, payload, parent_id, correlation_id, visibility, audience, expires_at`；`seq` 是存储派生列，不在线上。coral 的 `Msg(ch, seq, sender, to, body)` 与之的关系：
+**E2（coral 造 coral'）**：c0 里一个 spawner tool：读 c0 第一条取 K 源码，写到 `DIR2/`，`Popen([python, DIR2/kernel.py, "init+run", …])`；父 coral 再以 tool 跑 `coral t DIR2`，结果作为 Msg 落回 c0。通过即一次自我制造，K diff = 0。**这盘带子就是公开交付物。**
 
-| atoll 字段 | coral | 理由 |
+## 11. 建造顺序（每步有验收）
+
+| 步 | 交付 | 验收 |
 |---|---|---|
-| channel_id, sender, seq | ch, sender, seq（K 写） | 同：三个由 K 盖的章 |
-| audience（列表）+ visibility | to（单个 / `*`） | audience 是 to 的集合推广；原型取最小 |
-| kind / type / payload | body | request/response/word 的区分是 H 级约定，body 内可表达，不是 K |
-| parent_id / correlation_id | 无 | body 引用 seq 即可，可从 H 推出 |
-| ts / ts_received / expires_at | **无** | 墙钟是外生输入；进 K 会破坏 replay 的逐字相等。coral 里时间若需要，是一个外生成员（clock） |
-| id（uuid） | (ch, seq) | 由 K 递增即唯一，无需随机源 |
+| 1 | `kernel.py` `grammar.py` + 录音带 apply | T1 T2 T3 T5 T6 T7 绿 |
+| 2 | `u.py` `human.py` `cli.py`；一个 echo tool | T4 绿；`coral run --human` 能和 echo 对话；`coral replay` 通过 |
+| 3 | `l.py` + 构造者 agent 的 program | 手动跑通一次 `#decl` + `#recipe` |
+| 4 | `experiments/e1.py` | 四条件通过；带子里无 human 消息 |
+| 5 | `experiments/e2.py` + `coral t` | 子 coral 通过 T1–T7；带子公开 |
+| 6 | `experiments/pi/` + FAILURES.md | 对照记录 |
 
-**写入链**（`runtime/harness/`，8 步：envelope_shape → caller_auth → sender_consistent → kind_audience → type_registered → receiver_gate → response_pairing → normalize）——这就是 atoll 的 Emit/Validate/Append。在 coral 里坍缩为：
+第 1 步先于一切：**K 在没有 L 的情况下就必须能被完整测试**。
 
-| atoll 步 | coral |
-|---|---|
-| envelope_shape | `grammar.parse` |
-| caller_auth + sender_consistent | 不存在：文法里没有 sender 字段，伪造不可表达；K 直接盖章 |
-| kind_audience + receiver_gate | `to ∈ members ∪ {*, door}`，否则丢弃（locality） |
-| type_registered | door 的两个词 |
-| response_pairing / normalize | 无 |
+## 12. 对照 atoll（只取内核形状）
 
-atoll 里叫 "harness" 的东西就是 K 的 Emit——和文章里"harness 在 H 里"是两个词撞名，注意分开。
+atoll `runtime + platform + protocol` 约 39k 行 Go；coral K ≤ 800。差的全是 ③ 的自由项。
+- 信封：atoll `id, ts, channel_id, sender{kind,id}, kind, type, payload, parent_id, correlation_id, visibility, audience, expires_at`，seq 为存储派生列。coral 只留 K 盖的三个章（ch, seq, sender）+ to + body；**无 ts、无 uuid**——墙钟与随机源是外生输入，进 K 即破 replay。
+- 写入链：atoll `harness/` 8 步（shape → caller_auth → sender_consistent → kind_audience → type_registered → receiver_gate → response_pairing → normalize）在 coral 坍缩为 `parse` + 盖章 + locality。atoll 里叫 harness 的东西就是 K 的 Emit，与文章里"harness 在 H 里"是撞名。
+- 门：atoll `systemkernel` 把门做成特殊 actor 并有词表；coral 的 door 不是成员、不收信、无词，只在跨界处写三种记录。
+- 时间轴：atoll 有 `schedule`；coral 没有。若某次失败要求 K 有时间，记 FAILURES.md 作候选。
 
-**门与内核**：atoll 的 `systemkernel` 拥有恰好一个 SystemActor 单元，门是一个特殊 actor；coral 的 door 不是 actor，是 K 的一个函数。`receiver_gate` 依赖 Presence（接收者是否在线）——coral 无 presence：有 Decl 即在，活性归公平性管。
+## 13. 未决（由代码回答，答案回写本文件）
 
-**时间轴**：atoll 有 `runtime/schedule`（timer 触发消息）。coral 没有。E1/E2 若被迫需要超时，那是 U 的 host 级 timeout（子进程），不是 K 的时间。若某次失败真的要求 K 有时间，记入 FAILURES.md 作为候选第五条。
-
-由此定两条设计决定：
-1. **K 内无墙钟、无随机源**。唯一的非确定点是 Apply。
-2. **门不是成员**。door 词的处理在主循环里，与 Append 同一层。
+1. view 是否需要截断；截断规则是否必须进 K。
+2. `#recipe` 引用 id 的方式够不够——构造者要等一步才知道刚宣告的 Decl 地址。
+3. round-robin + "human 永远 enabled" 是否足够公平且不空转。
+4. E1 里 L 能否稳定遵守文法；不能则 harness（program）如何写，仍须在 H 上。
