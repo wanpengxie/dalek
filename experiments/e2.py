@@ -1,12 +1,14 @@
-"""E2：Dalek Core 造 Dalek Core′，父验子。
+"""E2：K 自举——H 中的 K 源码在新进程里重新实例化一个逐字相同、可运行、可 replay 的 K。
 
 c0 里只有人和一个 U 工具（spawner）。人说一句 "spawn"。之后：
-  spawner → 问 H 根要 c0/1（genesis，里面是 K 的源码）
-  H → 把那条消息投影给 spawner
+  spawner → 问 H 根要 c0/1（genesis，里面是 K 的源码；msg 是精确的 JSON 投影）
+  H → 投影给 spawner
   spawner → 把源码写到一个新目录，起一个新的 python 进程：用这份源码 genesis 一台新机器、跑一段、自我 replay
           → 把子进程的报告（replay 是否 identical、账本长度、K 源码的 sha）发回给人
 验证器（读带子）：子机器 replay identical；子机器 genesis 里的 K sha == 父机器 genesis 里的 K sha（K diff = 0）。
 两代之间没有人：人只说了 "spawn"。
+注意：这证明的是 K 自举（给定 Python/OS milieu）。子机器没有成为父带上的地址，报告经宿主 stdout 返回——
+"独立、可寻址、可继续通信的 Core′" 是 E3。
 """
 from __future__ import annotations
 import hashlib, re, sys
@@ -21,42 +23,40 @@ sys.path.insert(0, sys.argv[1])
 import kernel as K
 d = Path(sys.argv[1]) / "h"
 sp = K.genesis(d)
-human = K.append(sp, "c0", "door", (), "#admit human").addr()
+human = K.append(sp, "c0", "door", "", "#admit human").addr()
 t = K.tape([(human, ">>> H\nbook"), (human, "")])
-K.run(sp, {"L": t, "U": K.U, "H": K.H, "X": t})
+K.run(sp, {"L": t, "U": K.U, "X": t})
 ok = K.replay(d)
 ksrc = sp.ledger[0].body.split("K=\n", 1)[1]
 print("REPLAY", ok, "LEDGER", len(sp.ledger), "KSHA", hashlib.sha256(ksrc.encode()).hexdigest()[:16])
 '''
 
 SPAWNER = r'''
-import sys, re, subprocess, tempfile, hashlib
+import sys, re, json, subprocess, tempfile, hashlib
 from pathlib import Path
 v = sys.stdin.read()
 lines = v.splitlines()
-k = next((i for i, l in enumerate(lines) if l.strip() == "K="), None)
-if k is None:
+i = next((i for i, l in enumerate(lines) if "> msg c0/1" in l), None)
+if i is None:
     who = re.search(r"\] (\S+) ->", v).group(1)
     print(">>> H"); print("msg c0/1 reply-to " + who)       # 第一步：向带子要 K 的源码，带上回信人
 else:
-    who = re.search(r"reply-to (\S+)", v).group(1)
-    indent = len(lines[k]) - len(lines[k].lstrip())
-    src = "\n".join(l[indent:] for l in lines[k + 1:]).rstrip("\n") + "\n"
+    who = re.search(r"reply-to (\S+)", lines[i]).group(1)
+    src = json.loads(lines[i + 1].strip())["body"].split("K=\n", 1)[1]   # 精确投影：JSON 逐字
     tmp = Path(tempfile.mkdtemp(prefix="dalek-e2-child-"))
     (tmp / "kernel.py").write_text(src, encoding="utf-8")
     (tmp / "driver.py").write_text(''' + repr(CHILD_DRIVER) + r''', encoding="utf-8")
     r = subprocess.run([sys.executable, str(tmp / "driver.py"), str(tmp)], capture_output=True, text=True, timeout=50)
     print(">>> " + who)
     print("child:", (r.stdout.strip() or r.stderr.strip()[-300:]))
-    print("sent-KSHA", hashlib.sha256(src.encode()).hexdigest()[:16])
 '''
 
 def run_e2(dir: Path) -> K.Space:
     sp = K.genesis(dir)
-    human = K.append(sp, "c0", "door", (), "#admit human").addr()
-    spawner = K.append(sp, "c0", "door", (), f"#decl U\n{SPAWNER}").addr()
+    human = K.append(sp, "c0", "door", "", "#admit human").addr()
+    spawner = K.append(sp, "c0", "door", "", f"#decl U\n{SPAWNER}").addr()
     t = K.tape([(human, f">>> {spawner}\nspawn"), (human, "")])
-    K.run(sp, {"L": t, "U": K.U, "H": K.H, "X": t})
+    K.run(sp, {"L": t, "U": K.U, "X": t})
     return sp
 
 def verify(sp: K.Space) -> list[str]:
