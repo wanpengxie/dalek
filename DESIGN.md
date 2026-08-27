@@ -175,3 +175,38 @@ pytest，每个测试起一个临时 space，用**录音带 apply**（预写好�
 | 5 | E2 | ≤ 100 |
 
 第 1 步先于一切：K 在没有 L 的情况下就必须能被完整测试。这本身就是 P4 的一个体现。
+
+## 12. 对照 atoll（只看内核形状，工程细节不进来）
+
+atoll 的 `runtime + platform + protocol` 非测试 Go 代码约 39k 行；coral 的 K 预算 1k。40× 的差是 ③ 的自由项，不是 K。对照三处：
+
+**信封**（`protocol/message/envelope.go`）：`id, ts, ts_received, channel_id, sender{kind,id}, kind, type, payload, parent_id, correlation_id, visibility, audience, expires_at`；`seq` 是存储派生列，不在线上。coral 的 `Msg(ch, seq, sender, to, body)` 与之的关系：
+
+| atoll 字段 | coral | 理由 |
+|---|---|---|
+| channel_id, sender, seq | ch, sender, seq（K 写） | 同：三个由 K 盖的章 |
+| audience（列表）+ visibility | to（单个 / `*`） | audience 是 to 的集合推广；原型取最小 |
+| kind / type / payload | body | request/response/word 的区分是 H 级约定，body 内可表达，不是 K |
+| parent_id / correlation_id | 无 | body 引用 seq 即可，可从 H 推出 |
+| ts / ts_received / expires_at | **无** | 墙钟是外生输入；进 K 会破坏 replay 的逐字相等。coral 里时间若需要，是一个外生成员（clock） |
+| id（uuid） | (ch, seq) | 由 K 递增即唯一，无需随机源 |
+
+**写入链**（`runtime/harness/`，8 步：envelope_shape → caller_auth → sender_consistent → kind_audience → type_registered → receiver_gate → response_pairing → normalize）——这就是 atoll 的 Emit/Validate/Append。在 coral 里坍缩为：
+
+| atoll 步 | coral |
+|---|---|
+| envelope_shape | `grammar.parse` |
+| caller_auth + sender_consistent | 不存在：文法里没有 sender 字段，伪造不可表达；K 直接盖章 |
+| kind_audience + receiver_gate | `to ∈ members ∪ {*, door}`，否则丢弃（locality） |
+| type_registered | door 的两个词 |
+| response_pairing / normalize | 无 |
+
+atoll 里叫 "harness" 的东西就是 K 的 Emit——和文章里"harness 在 H 里"是两个词撞名，注意分开。
+
+**门与内核**：atoll 的 `systemkernel` 拥有恰好一个 SystemActor 单元，门是一个特殊 actor；coral 的 door 不是 actor，是 K 的一个函数。`receiver_gate` 依赖 Presence（接收者是否在线）——coral 无 presence：有 Decl 即在，活性归公平性管。
+
+**时间轴**：atoll 有 `runtime/schedule`（timer 触发消息）。coral 没有。E1/E2 若被迫需要超时，那是 U 的 host 级 timeout（子进程），不是 K 的时间。若某次失败真的要求 K 有时间，记入 FAILURES.md 作为候选第五条。
+
+由此定两条设计决定：
+1. **K 内无墙钟、无随机源**。唯一的非确定点是 Apply。
+2. **门不是成员**。door 词的处理在主循环里，与 Append 同一层。
