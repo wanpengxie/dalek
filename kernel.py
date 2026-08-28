@@ -4,10 +4,11 @@
   配置 Config  这台 channel 是什么：成员（kind, 描述）、接待员、peer。造机器只需要它。繁殖复制它。
   账本 H       这台 channel 发生过什么：消息、每一步、配置改动的记录。恢复重演它。
 
-channel = (Config, H, R)。R（runtime）是白盒：读消息、成 view、调成员、落带盖章、投递。由 Ω 的 U 执行。
+机器 = Space（细胞）。channel 是 Space 里的功能单元 = (Config, H, R)，不是机器。
+R（runtime）是白盒：读消息、成 view、调成员、落带盖章、投递。由 Ω 的 U 执行。
 零件：Author（L、人：产生候选描述）；U（执行/验证描述，确定）；D（c0 里的构造子系统）。
 
-D = A + B + C，是 c0 的一个成员：
+c0 是装着 A、B、C 的那个功能单元；D = A + B + C，是 c0 的一个成员：
   A  按配置建空 channel、构造成员、绑定地址     B  从请求者的配置复制一项（Genome = 配置）
   C  构造 → 复制 → 装进子代 → 接 peer → 启动
 D 改配置的每一步都在目标账本上留一条 door 记录；D 自己那一步以 #step 落在 c0 账本上。
@@ -121,7 +122,7 @@ def save_conf(sp: Space, name: str) -> None:
     p.write_text(json.dumps(asdict(sp.channels[name].conf), ensure_ascii=False, indent=1), encoding="utf-8")
 
 def born(sp: Space, name: str, by: str) -> Channel:
-    """A：按空配置建一台新 channel——一份配置、一条空账本。造机器不需要账本。"""
+    """A：按空配置建一个新 channel——一份配置、一条空账本。造功能单元不需要账本。"""
     c = Channel(name=name, conf=Config()); sp.channels[name] = c
     append(sp, name, "door", "", f"#born name={name} by={by} order={len(sp.channels) - 1}")
     save_conf(sp, name)
@@ -247,7 +248,7 @@ def run_channel(sp: Space, name: str, apply, pos: dict, budget: list) -> bool:
     return acted
 
 def run(sp: Space, apply: dict[str, Apply], max_steps: int = 2000) -> None:
-    """宿主 Ω：轮流让每台 channel 跑到静止；全静止时轮询外生者一轮；无人开口即停。预算是宿主的事。"""
+    """宿主 Ω：轮流让每个 channel 跑到静止；全静止时轮询外生者一轮；无人开口即停。预算是宿主的事。"""
     pos, budget = {}, [max_steps]
     while budget[0] > 0:
         while any(run_channel(sp, n, apply, pos, budget) for n in list(sp.channels)): pass
