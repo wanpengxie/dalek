@@ -1,13 +1,13 @@
-"""E1（v5）：c0 的构造器 D 造 channel；子 channel 经 peer 请 c0 再造下一台。两代之间没有人。
+"""E1（v6）：c0 的构造器 D 按配置造 channel；子 channel 经 peer 请 c0 再造下一台。两代之间没有人。
 
-c0：人（X）、作者（L 替身）、D（构造器，接待员）。
+c0 的配置：人（X）、D（接待员）、作者（L 替身）。
   人 → 作者：目标，第 1 代
-  作者 → D：attach here / decl U <fib 工具>          A：D 把工具贴到 c0 的膜上，回执给作者
-  作者 → 工具：fib 30                                  U：算，回事实
-  作者 → D：build c1 / part 作者 / part 工具 / in #1 / peer c0 / start 目标 第 2 代
-        D：genesis c1，逐字复制两份描述（B），接待员，c1<->c0 接 peer，以 c0 门的名义把 start 交给 c1 的作者副本（C）
-  c1 的作者副本收到 start → 经 c1 的 peer 门向 c0 的 D 发同样的请求 → D 造 c2 → … 到第 N 代停。
-作者是只看 view 的确定状态机（真 L 的替身）。验证器只读账本。
+  作者 → D：attach here / decl U <fib 工具>        A：D 把工具加进 c0 的配置，回执"decl -> c0/4"
+  作者 → 工具：fib 30                                U：算，回事实
+  作者 → D：build c0.3 / part 作者 / part 工具 / in #1 / peer c0 / start 目标 第 2 代
+        D：建空 channel，从 c0 的配置复制两项（B），接待员，双向 peer，以 c0 门的名义送启动（C）
+  c0.3 的作者副本收到 start → 经 peer 门向 c0 的 D 发同样的请求 → D 造 c0.3.1 → … 到第 N 代停。
+作者是只看 view 的确定状态机（真 L 的替身；跨步记忆用属性代替真 L 的文本笔记）。验证器只读配置与账本。
 """
 from __future__ import annotations
 import re, sys
@@ -29,71 +29,51 @@ if m:
 
 PREFIX = "你是作者。目标：请 D 造一个会算 fib 的工具，测试它，然后请 D 把你和工具复制进下一台 channel 并交代同样的目标。"
 
-def author(a: K.Member, view: str) -> str:
-    """真 L 的替身：只看 view。D 的地址与 peer 门的地址都从 view 里读。"""
-    me = a.addr
-    if not view: return ""
-    # 谁给我发的 = 我该回给谁：本机的 D（c0）或者通向 c0 的 peer 门（子 channel）
-    gate = re.search(r"\[\d+\] (\S+) -> " + re.escape(me) + ":", view).group(1)
-    g = re.search(r"第 (\d+) 代", view)
-    if g and "decl ->" not in view and "fib(" not in view and "part " not in view:
-        gen = int(g.group(1))
-        if gen >= DEPTH: return ""
-        return f">>> {a.d}\nattach here\ndecl U\n{FIB_TOOL}\n# gen {gen}"   # c0 里 a.d 是 D；子 channel 里是通向 c0 的门
-    m = re.search(r"decl -> (\S+)/(\d+)", view)          # D 的回执：工具贴上了，地址在这
-    if m and "fib(" not in view and "part " not in view:
-        return f">>> {m.group(2)}\nfib 30"
-    if re.search(r"fib\(30\) = 832040", view):            # 事实 → 请 D 复制自己和工具进下一台
-        gen = a.gen
-        return (f">>> {a.d}\nbuild {a.home}.{me}\npart {me}\npart {a.tool}\nin #1\npeer c0\n"
-                f"start 目标：造一个会算 fib 的工具并测试它，再复制进下一台。第 {gen + 1} 代")
-    return ""
-
 class Author:
-    """给替身挂上它从 view 里学到的两个地址（真 L 会自己记在文本里；这里用属性代替笔记）。"""
-    def __init__(self): self.mem = {}
-    def __call__(self, a: K.Member, view: str) -> str:
-        st = self.mem.setdefault(f"{a.home}/{a.addr}", {"d": None, "tool": None, "gen": 1})
-        gate = re.search(r"\[\d+\] (\S+) -> " + re.escape(a.addr) + ":", view)
-        if gate and st["d"] is None: st["d"] = gate.group(1)       # 第一条来信的发件人就是通向 D 的路（人除外，见下）
+    """真 L 的替身：只看 view 决定说什么。d = 通向 D 的地址（c0 里是 D 本身，子 channel 里是 peer 门）。"""
+    def __init__(self, d_in_c0: str): self.d0, self.mem = d_in_c0, {}
+    def __call__(self, who: str, mem: K.Member, view: str) -> str:
+        home, me = who.split("/")
+        st = self.mem.setdefault(who, {"d": self.d0 if home == "c0" else None, "tool": None, "gen": 1})
+        if not view: return ""
+        gate = re.search(r"\[\d+\] (\S+) -> " + re.escape(me) + ":", view)
+        if gate and st["d"] is None: st["d"] = gate.group(1)                # 子 channel：第一封信来自通向 c0 的门
         g = re.search(r"第 (\d+) 代", view)
         if g: st["gen"] = int(g.group(1))
         m = re.search(r"decl -> (\S+)/(\d+)", view)
         if m: st["tool"] = m.group(2)
-        a.d, a.tool, a.gen = st["d"], st["tool"], st["gen"]
-        return author(a, view)
+        if g and "decl ->" not in view and "fib(" not in view and "part " not in view:
+            if st["gen"] >= DEPTH: return ""
+            return f">>> {st['d']}\nattach here\ndecl U\n{FIB_TOOL}"
+        if m and "fib(" not in view and "part " not in view:
+            return f">>> {m.group(2)}\nfib 30"
+        if re.search(r"fib\(30\) = 832040", view):
+            return (f">>> {st['d']}\nbuild {home}.{me}\npart {me}\npart {st['tool']}\nin #1\npeer c0\n"
+                    f"start 目标：造一个会算 fib 的工具并测试它，再复制进下一台。第 {st['gen'] + 1} 代")
+        return ""
 
 def run_e1(dir: Path) -> K.Space:
     sp = K.genesis(dir)
-    human = str(K.append(sp, "c0", "door", "", "#admit human").seq)
-    d = str(K.append(sp, "c0", "door", "", "#decl D").seq)
-    K.append(sp, "c0", "door", "", f"#in {d}")                               # c0 的接待员是 D：peer 来的请求归它
-    au = str(K.append(sp, "c0", "door", "", f"#decl L\n{PREFIX}").seq)
+    human = K.conf_add(sp, "c0", K.Member("X"))
+    d = K.conf_add(sp, "c0", K.Member("D")); K.conf_in(sp, "c0", d)
+    au = K.conf_add(sp, "c0", K.Member("L", PREFIX))
     said = [False]
-    def X(a, view):
+    def X(who, mem, view):
         if said[0]: return ""
         said[0] = True
         return f">>> {au}\n目标：造一个会算 fib 的工具并测试它，再复制进下一台。第 1 代"
-    A = Author()
-    def L(a, view):
-        # 在 c0 里，作者的第一条来信来自人，不是 D；D 的地址是已知的膜内地址
-        st = A.mem.setdefault(f"{a.home}/{a.addr}", {"d": None, "tool": None, "gen": 1})
-        if a.home == "c0": st["d"] = d
-        return A(a, view)
-    K.run(sp, {"L": L, "U": K.U, "X": X})
+    K.run(sp, {"L": Author(d), "U": K.U, "X": X})
     return sp
 
 def verify(sp: K.Space) -> list[str]:
     rep = [f"channels = {list(sp.channels)}"]
     for n, c in sp.channels.items():
-        kinds = [f"{a.addr}:{a.kind}" for a in c.book.values()]
+        kinds = [f"{i + 1}:{m.kind}" for i, m in enumerate(c.conf.members)]
         ok = any("fib(30) = 832040" in m.body and m.sender != "R" for m in c.msgs)
-        starts = [m for m in c.msgs if m.sender not in ("door", "R") and c.book.get(m.sender, K.Member("", "")).kind == "P"]
-        rep.append(f"{n}: in={c.receptionist} book={kinds} 工具通过={ok} 经门收到={len(starts)}")
-    humans = sum(1 for c in sp.channels.values() for m in c.msgs if m.sender in c.book and c.book[m.sender].kind == "X")
-    rep.append(f"human 消息 = {humans}")
-    door_lines = sum(1 for c in sp.channels.values() for m in c.msgs if m.sender == "door")
-    rep.append(f"door 写的行（D 的动作全部落账）= {door_lines}")
+        rep.append(f"{n}: in={c.conf.receptionist} conf={kinds} 工具通过={ok}")
+    humans = sum(1 for c in sp.channels.values() for m in c.msgs if (mm := c.conf.get(m.sender)) and mm.kind == "X")
+    doors = sum(1 for c in sp.channels.values() for m in c.msgs if m.sender == "door")
+    rep.append(f"human 消息 = {humans}；door 记录（D 的每个动作）= {doors}")
     return rep
 
 if __name__ == "__main__":
