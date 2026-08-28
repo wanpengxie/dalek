@@ -42,7 +42,7 @@ D 对目标 channel 做的每一步都是 door 写在目标账本上的行；D �
 **replay**：同一段 `run`；Author/人照抄记录（每个地址一条队列）；U 重算；D 重算；逐字节比较每条账本。检验因果自洽，不检验 Author 的真实性。
 
 ## 状态
-- `kernel.py` 338 行；`t_dalek/test_t.py` 7/7；`experiments/e1.py` 通过：c0 → c0.3 → c0.3.1，子 channel 经 peer 请 c0 的 D 造下一台，人只说一句，replay identical。
+- `kernel.py` 338 行；`t_dalek/test_t.py` 7/7；`experiments/e1.py` 通过：c0 → c0.3 → c0.3.1，子 channel 经 peer 请 c0 的 D 造下一个 channel，人只说一句，replay identical。
 - 真 L 未接（`l.py` 是 v4 接口，待改）。
 - 旧 E2（v4 的 K 自举）归档于 `experiments/old/`：自举是独立目标，不是 E 的定义。
 
@@ -65,5 +65,5 @@ REVIEW.md SPEC.md DESIGN.md   旧版审阅与设计；以本文、代码、FAILU
 ## 纪律
 - 死的不动手：账本、描述只被读被写。
 - 构造只由 D 做，且全部落账；成员只写文本。
-- 创生来自外面：第一个 U、第一台 c0 来自 Ω；描述、组织的原因、启动请求可以来自里面。
+- 创生来自外面：第一个 U、第一个 c0 来自 Ω；描述、组织的原因、启动请求可以来自里面。
 - 每条进 R 的规则先有一份 FAILURES 记录。
