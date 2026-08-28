@@ -212,7 +212,7 @@ def _construct(sp: Space, origin: str, target: str, spec: list[str], dhome: str)
         append(sp, target, gate, c.conf.receptionist, start); report.append(f"start -> {target}/{c.conf.receptionist}")
     return "\n".join(report) or "nothing"
 
-# ----------------------------------------------------------------- R：一台 channel 的运行
+# ----------------------------------------------------------------- R：一个 channel 的运行
 
 def view_of(c: Channel, addr: str) -> list[Msg]:
     cur = c.cursor.get(addr, 0)
