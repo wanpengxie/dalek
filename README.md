@@ -55,6 +55,7 @@ python3 kernel.py show|conf|replay DIR
 
 ## 文件
 ```
+MODEL.md         机制说明（面向不了解概念的读者）
 kernel.py        Config、H、R、D、宿主、零件实现（U、录音带）、replay、CLI
 experiments/     e1.py；old/
 t_dalek/         T1–T7
