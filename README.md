@@ -1,67 +1,69 @@
-# Dalek Core
+# Dalek Core（v5）
 
 一台可以自我维持、自我改进、自我复制、自我组织的智能单元的最小内核。副标题：如何优雅地把 LLM 塞进冯诺依曼机器。
 
-它不是 agent 框架。它是一条账本和一个沿着账本走的控制器；agent、工具、人、别的机器——全是账本上的地址，用同一套词说话。四个"自我"不是内核功能，是这套词上的普通程序。
+## 模型（整合版）
 
-- **Dalek**：机器的名字（用户的另一个项目）。**Dalek Core**：本仓库，内核。**c0**：第一条 channel，内核所在。
-- 状态（v4）：`kernel.py` 314 行；T1–T7 全绿；E1（递归自我组织：c0 → c0.17 → c0.17.17，人只说一句）与 E2（K 自举：新进程从 H 里的源码起 K，sha 逐字相同）通过，两者 replay 逐字相同。真 L 尚未接入（`l.py` 已备）。
+**先验（相对于 milieu Ω）**
+- **H** 账本：被动的追加介质，一台 channel 一条（`h/<name>.jsonl`）。死的，自己不跑。
+- **R** runtime：读消息、成 view、调成员、落带盖章、投递、恢复。白盒——就是 `kernel.py` 里那几条；由 Ω 的一个 U 执行。
+- **D ⊂ H**：账本里能被解释为机器描述的行（`#decl` `#peer` `#in`）。不是每一行都是。描述是唯一机器特异的、需要保存和遗传的结构。
 
-## 一页纸
+**channel = (H, R, bindings, boundary)**。活的单元；封闭：影响它的一切都经门落在它的账本上。膜内地址只是序号；channel 名属于门。
 
-**对象**：一条 append-only 账本（每台机器一条逻辑带子，物理上一个 `ledger.jsonl`）；消息 `(ch, seq, sender, to, body)`，前三项由 K 盖章，`to` 是一个地址（一条边）；成员 = 带子上的一条描述，id 就是那条消息的地址 `ch/seq`。
-
-**根**（每台机器内建，可直接寻址）：`L` 想（文本→文本，随机，只见 view）、`U` 算（程序+文本→文本，确定，每步全新草稿，只见 view）、`H` 记（带子的投影，K 内建；`msg` 精确 JSON，其余人类可读；回答引用问题）。外面的东西（人、时钟、父机器）经 `#admit` 成为外生根。
-
-**词**（body 第一行；说错话的人，他的话只是文本）：
-
-| 词 | 谁能说 | 造世界的动作 |
+**零件（按对描述做什么分）**
+| | 做什么 | 性质 |
 |---|---|---|
-| `#genesis` | door | 一条带子开始；c0 的 genesis 携带 K 的源码 |
-| `#admit` | door | 外面的东西成为一个地址 |
-| `#decl L\|U` | 成员 | 一段描述成为一个地址——**创建 = 描述** |
-| `#decl M` | 成员 | 描述 D = `part`（零件，逐字复印）+ `in`（子机接待员）+ `out`（父机收信人，缺省声明者）+ `start`（启动消息）→ **一台新机器**，id = 声明地址（`c0/17` → `c0.17`），并绑成本机的一个地址（channel as actor）；只有 `in`/`start` 做地址重绑定 |
-| `#step` | K | K 记下自己这一步（actor、看到哪、原文 out）；replay 用 |
-| 普通消息 | 任何地址 | 一条边 |
+| Author：L、人 | 产生候选描述 | 同一接口类型：可寻址、可调用、可重复；随机性不是本质 |
+| U | 执行 / 验证描述 | 确定、可重算；它自己是另一台 channel，经门当零件用 |
+| **D = A + B + C** | c0 里的构造子系统 | c0 的一个成员（kind `D`） |
+| F | 普通成员、普通 channel | 被造的 |
 
-**K**：沿账本走，对每条消息的收件人跑一步（view → apply → 记 `#step` → parse → 过滤 → append）；账本走完轮询外生根一轮，所有外生根 out 为空即停。没有 agent loop、没有 `*`、没有调度器——公平性就是账本顺序。机器地址是 K 的网关：发给 M 地址的消息落进子机器（sender `P:<子>` → 接待员），子机器发给 `P:` 的消息落回父机器（sender = M 地址 → `out`）。
+**构造器 D**（在 c0 里；A 建空 channel、构造成员、绑定；B 复制 Genome；C 构造 → 复制 → 装进子代 → 接 peer → 启动）。一个 Author 给 D 发请求：
+```
+build <name>      A：genesis
+part <addr>       B：把请求者所在 channel 里 <addr> 的描述逐字复制进去
+decl <L|U>        A：用新描述构造成员（其后各行是正文，直到下一个关键字）
+in #1             C：接待员
+peer <channel>    C：双向接 peer
+start <text>      C：以 c0 门的名义把启动消息交给接待员
+attach here|<channel> …   对已有 channel 做上述动作（组织）
+```
+D 对目标 channel 做的每一步都是 door 写在目标账本上的行；D 的回执发给请求者。D 对非请求沉默。
 
-**replay**：同一段 `run`，apply 换成读 `#step` 记录；`U`、`H` 重算而非照抄；文件逐字节比较。任何带外效应、任何对确定根结果的篡改都使其发散。它检验因果自洽，不检验 L/外生根的真实性。
+**Genome(H)** = 可遗传的部件描述 + bindings + peer 拓扑 + 启动。整盘账本复制 = checkpoint（恢复）；复制 Genome = 繁殖。
 
-**已声明的隐藏结构**（milieu 给的，不是机器能力）：python 解释器与子进程、临时目录、单进程内的全局账本顺序、根的实现绑定表、运行中由宿主追加的 door 事实不可重放、外生根只在内部静止时被采样一次、M 不能作为 part。
+**c0** 承载 D + I_D（I_D = Genome(H_c0) 里对 D 的描述）；**E = Space** = c0 + 它造的 channel + peer 拓扑。
 
-## 实验证明了什么、没证明什么
+**词**（行首；作者约束）：`#genesis #admit #decl #peer #in` 只有 door 能说；`#step` 只有 R 能说；成员说的一切都是文本。输出文法：`>>> 地址` + 正文。
 
-| | 证明了 | 没证明 |
-|---|---|---|
-| **E1** | 一个 channel 的组织描述能被复制、重绑定、激活，并继续构造下一代；两代之间无人；构造者只经 view 与 H 观测 | 独立单元的复制——所有 channel 共用一个 Space / K 循环 / 账本 |
-| **E2** | H 中的 K 源码在给定 Python/OS milieu 下足以重新实例化一个逐字相同、可运行、可 replay 的 K | Core′ 作为独立、可寻址、可继续通信的单元（E3） |
+**宿主 Ω**（`run`）：轮流让每台 channel 沿自己的账本跑到静止；全部静止时轮询外生者一轮；无人开口即停。步数预算是宿主的事。
+
+**replay**：同一段 `run`；Author/人照抄记录（每个地址一条队列）；U 重算；D 重算；逐字节比较每条账本。检验因果自洽，不检验 Author 的真实性。
+
+## 状态
+- `kernel.py` 335 行；`t_dalek/test_t.py` 6/6；`experiments/e1.py` 通过：c0 → c0.5 → c0.5.2，子 channel 经 peer 请 c0 的 D 造下一台，人只说一句，replay identical。
+- 真 L 未接（`l.py` 是 v4 接口，待改）。
+- 旧 E2（v4 的 K 自举）归档于 `experiments/old/`：自举是独立目标，不是 E 的定义。
 
 ## 跑
-
 ```
-python3 experiments/e1.py /tmp/e1     # 打印带子、条件、replay
-python3 experiments/e2.py /tmp/e2     # 子机器报告、K sha 比对、replay
+python3 t_dalek/test_t.py
+python3 experiments/e1.py /tmp/e1
 python3 kernel.py show|book|replay DIR
-python3 t_dalek/test_t.py             # T1–T7
 ```
-
-E1/E2 里的 L 是确定的状态机替身（只看 view，需要历史就问 H）。接真模型：设 `DALEK_L_URL`，把 `apply["L"]` 换成 `l.L`。
 
 ## 文件
-
 ```
-kernel.py        K：对象、文法、账本（append 唯一写路径；折叠只改内存；跨界由 door 在写入时做）、派发、根、replay
-l.py             L：裸 completion 端点（未测：本机无端点）
-experiments/     e1.py e2.py
-t_dalek/         T1–T7
-FAILURES.md      每条法律的出生证明（F1–F18）+ 按规则删除的 + 已声明的隐藏结构
-REVIEW.md        审阅材料
-SPEC.md DESIGN.md  设计时的假设清单与设计（已被代码超过；以代码、README、FAILURES 为准）
+kernel.py        H、R、D、宿主、零件实现（U、录音带）、replay、CLI
+experiments/     e1.py；old/
+t_dalek/         T1–T6
+FAILURES.md      每条法律的出生证明（F1–F23）
+REVIEW.md SPEC.md DESIGN.md   旧版审阅与设计；以本文、代码、FAILURES 为准
 ```
 
 ## 纪律
-
-- 单线程、单显式循环；K 内无墙钟、无随机源；唯一非确定点是 apply，且 apply 只见 view。
-- 不做安全加固：本仓库是理论原型，恶意账本、伪造文件、U 越权不在范围内（③ 的事）。
-- 每条进 K 的法律先有一份 FAILURES 记录；没有失败要求的机制不进来，已进来而无出生证明的删掉。
+- 死的不动手：账本、描述只被读被写。
+- 构造只由 D 做，且全部落账；成员只写文本。
+- 创生来自外面：第一个 U、第一台 c0 来自 Ω；描述、组织的原因、启动请求可以来自里面。
+- 每条进 R 的规则先有一份 FAILURES 记录。
