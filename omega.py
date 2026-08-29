@@ -77,3 +77,12 @@ class Port:
         d, _, box = endpoint[5:].partition("#")
         Store.append(Path(d) / "in" / f"{box}.jsonl", json.dumps(payload, ensure_ascii=False))
         return True
+
+    @staticmethod
+    def recv(endpoint: str, offset: int = 0) -> tuple[list[dict], int]:
+        """从字节偏移起收完整的行；返回 (载荷列表, 新偏移)。"""
+        if not endpoint.startswith("file:"):
+            return [], offset
+        d, _, box = endpoint[5:].partition("#")
+        lines, off = Store.lines(Path(d) / "in" / f"{box}.jsonl", offset)
+        return [json.loads(l) for l in lines if l.strip()], off

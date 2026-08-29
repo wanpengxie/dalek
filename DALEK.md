@@ -12,7 +12,7 @@ codex 审阅（2026-08-29）指出四个阻塞问题；1（运行时归包 P，�
 | 符号 | 名字 | 是什么 | 死/活 | 谁产生 |
 |---|---|---|---|---|
 | **Ω** | 宿主 | Exec / Store / Port 三条契约（第 1 章） | — | 外面给的，不是 Dalek |
-| **R** | 运行时 | 四行转移表 + 账本 + 门（第 1½ 章） | 软件 | 在 G 的根字段 `world` 里；机器内无人读它，Ω 执行它；对个体不可改 |
+| **R** | 运行时 | 三种 kind 的转移表 + 账本 + 根门（第 1½ 章） | 软件 | 在 G 的根字段 `world` 里；机器内无人读它，Ω 执行它；对个体不可改 |
 | **G** | 描述（基因），配置形态 | 一个 JSON：`world`（R 的源码）、channels、members(kind, text, bind)、receptionist、peers | 死 | 初代：人写；之后：c1 从 H 折叠出（decl） |
 | **P** | 机器，G 的可运行形态 | 同一个 G 展开到目录：`world` 写成文件 + G.json 原样。自包含，Ω 能跑 | 死 | pack = 展开（B：抄，不读） |
 | **S** | 运行的机器（Space） | Ω.run(P) 得到的进程：R 驱动着一组 channel | 活 | Ω.run + 创造者的 A 经根门造 + start |
@@ -161,16 +161,16 @@ Linux + python3 + 文件系统 + http。
 
 | 事件落在的 actor 的 kind | 转移 |
 |---|---|
-| **程序** | 取视图 → `Exec.spawn(text, 视图)` → stdout 原样追加 + 步记录（谁、看到哪、回了什么）+ 拆成新消息追加；游标前移 |
-| **oracle** | 取视图 → `Port.send / receive` → 回答原样追加 + 步记录 + 拆分；游标前移 |
-| **门** | 把这条消息原样追加到 text 所指的账本，署名对面的门，收件人是对面的接待员 |
-| **放 actor**（介质动作） | 在该 channel 的下一个地址写下 kind + text，在该账本记一行——**这一行带完整的 kind + text**。born 一个 channel = 它账本的第一行；init 放 c0、c1 也走这一行 |
+| **程序** | 取视图 → `Exec.run(text, 视图)` → stdout 原样追加为步记录（谁、看到哪、回了什么）+ 拆成动作：消息、syscall、绑定了的 Ω 动词（spawn / stop，一张表，转交 Ω）；游标前移 |
+| **oracle** | 取视图 → Ω 侧的端点 → 回答同程序行；游标前移 |
+| **门** | 把这条消息原样 `Port.send` 到 text 所指的端点（本机 channel 名也是端点），署名本 channel 的端点；对面收件箱进账时署名指回来的门，收件人是对面的接待员 |
+| **放 actor**（syscall `channel.add.actor`） | 在该 channel 的下一个地址写下 kind + text，在该账本记一行——**这一行带完整的 kind + text**。channel 存在 = 它账本有第一行；经根门放也走这一行 |
 
-四行，没有第五行。视图 = 写给该 actor、且它上次没看过的那些条。
+三种 kind 一行一条，加一条放 actor；没有第五行。视图 = 写给该 actor、且它上次没看过的那些条。
 
 **kind**：三种，都是"转移表定行为 + 一个 text 参数"，区别只在 text 是什么——程序的 text 是源码，oracle 的 text 是提示语/模型绑定，门的 text 是对面的地址。门最退化：text 不是行为、不是内容，是指针；但它是唯一 text 指向 channel 外面的 kind。整台机器的拓扑 = 全部门的 text 的集合。
 
-**门**：是 actor，不是 channel（没有自己的账本，是两本账之间的管子）。一条连线 = 两扇门互指。膜内成员只能写给本 channel 的地址；要出去只能写给门；外面的东西进来必须先变成账本上的一行——"影响一个 channel 的一切都在它的账本上"由此保证。内外同一种门：对面是本机器另一个 channel 时抄账是进程内一次 append，对面是人、LLM、另一台机器时走 Port；门的定义不变。冯诺依曼的"+"在这里有了定义：接上 = 两本账各有一扇门互指。
+**门**：是 actor，不是 channel（没有自己的账本，是两本账之间的管子）。一条连线 = 两扇门互指。膜内成员只能写给本 channel 的地址；要出去只能写给门；外面的东西进来必须先变成账本上的一行——"影响一个 channel 的一切都在它的账本上"由此保证。内外同一种门：门只做一件事——原样 `Port.send` 到 text 所指的端点；对面是本机器另一个 channel 时端点就是本机的收件箱，对面是人、LLM、另一台机器时是外面的端点；运行时里只有一条门的规则。冯诺依曼的"+"在这里有了定义：接上 = 两本账各有一扇门互指。
 
 **内容盲**（运行时唯一的纪律）：运行时只处理形，不处理义。它读的东西有且只有：地址、kind、text 作为该 kind 的参数。检验：把 G 里所有组织层的名字全部替换（c0 改叫 x7，源码做等价改写），运行时行为逐字节不变。
 
@@ -187,11 +187,11 @@ Linux + python3 + 文件系统 + http。
 
 **全局账本还是每 channel 一本**：便利问题，条件是每个 channel 的账本必须能从全局账本完整投影。**路由**：暂不做，每条消息自带合法地址；通用路由是一个功能性 actor。
 
-**运行时的六个性质**（它是支撑而不是桎梏的条件）：通用（限制怎么通信，不限制能算什么）；小（四行，能被整个读懂、验证、独立重写）；内容盲；忠实无私状态（每一步效果都在账上，自己不做决定）；按规范定义、实现可替换（同一 G 跑在不同实现上，多实现互相核对）；**对个体冻结、对谱系可变**（正在跑的机器改不了它；但它是 P 里的源码，c2 可以写出运行时′，pack 一个子代用它跑，用不动点测试验证——编译器自举、内核换代的方式）。历史上同一位置的东西：语言的操作语义 + ABI、内核 ABI、遗传密码表 + 核糖体、β 归约、UTM 的读写头、Lisp 的 eval、Smalltalk VM。
+**运行时的六个性质**（它是支撑而不是桎梏的条件）：通用（限制怎么通信，不限制能算什么）；小（一页纸，能被整个读懂、验证、独立重写）；内容盲；忠实无私状态（每一步效果都在账上，自己不做决定）；按规范定义、实现可替换（同一 G 跑在不同实现上，多实现互相核对）；**对个体冻结、对谱系可变**（正在跑的机器改不了它；但它是 P 里的源码，c2 可以写出运行时′，pack 一个子代用它跑，用不动点测试验证——编译器自举、内核换代的方式）。历史上同一位置的东西：语言的操作语义 + ABI、内核 ABI、遗传密码表 + 核糖体、β 归约、UTM 的读写头、Lisp 的 eval、Smalltalk VM。
 
 ### 1.8 待定
 
-新 actor 怎么出现——运行时一侧已由内容盲定形：只有"放 actor"这一介质动作（转移表第四行）。谁能用它、born / peer 如何由它和门组合出来，是组织层的事，见第 2 章，与 syscall 一起定。
+新 actor 怎么出现——运行时一侧已由内容盲定形：只有"放 actor"这一 syscall。谁能用它、born / peer 如何由它和门组合出来，是组织层的事，见第 2 章，与 syscall 一起定。
 
 ---
 
@@ -391,7 +391,7 @@ stop，spawn → decl 不变，游标不变，pending 消息重跑，账本有 d
 杀掉 dalek0 进程，tick → dalek1 长出 hub 或重新 spawn dalek0 → ping/pong 恢复    远端维护
 ```
 
-**要改的机制**（介质级，不认识名字）：R 起来时广播 up（仅已出生）；SIGTERM → 广播 down → 静止 → 退出；`stop` 加进 Ω 动作绑定集；`channel.create` 返回 new|exists；收件箱偏移从 H 派生（收进来的 msg 行带收件箱行号，关 H6）；step 之间退出。
+**要改的机制**（介质级，不认识名字）：R 起来时广播 up（仅已出生）；SIGTERM → 广播 down → 静止 → 退出；收件箱偏移从 H 派生（收进来的 msg 行带收件箱行号，关 H6）；step 之间退出。
 
 ### 本版的不动点（定位）
 
@@ -428,7 +428,7 @@ channel 的创建顺序记在 `h/_order`。`from` 可以是 `door`（膜外来�
 ### 4.2 根门与收件箱
 
 - `in/_root.jsonl`：Space 级根门。**开着 ⇔ 所有账本无 msg 行。** 开着时接受 `channel.create <name>`、`channel.add.actor <channel> <kind> [in] [bind=…]\n<text>`（by=_root）、`msg <channel>\n<body>`（追加给该 channel 的接待员，署名匹配的门或 `door`；**这一条关门**）。关门后根门的行全部忽略。
-- `in/<channel>.jsonl`：channel 级收件箱，只收 `{from, body}` → msg 给接待员。
+- `in/<channel>.jsonl`：channel 级收件箱（`Port.recv`，Ω 的接收侧），只收 `{from, body}` → msg 给接待员，署名指回 from 的门（本机 channel 名与 `file:<P>#<名>` 视为同一端点）。
 
 ### 4.3 程序 actor 的 ABI
 
@@ -438,14 +438,14 @@ stdin：`{"channel", "me", "msgs": [{seq, from, to, body}…]}`。stdout 原样�
 >>> <addr>                                          消息，发给本 channel 的 <addr>（含门）
 >>> channel.create <name>                           syscall；需 bind=syscall
 >>> channel.add.actor <channel> <kind> [in] [bind=…]  syscall（含 actor.create）；后续各行是 text；需 bind=syscall
->>> spawn <dir>                                     Ω 动作：Exec.spawn(init, dir)；需 bind=spawn
+>>> <动词> <参数>                                   绑定了的 Ω 动词，一张表：spawn <dir>（Exec.spawn(init, dir)）、stop <pid>；需 bind=<动词>
 ```
 
-返回以 msg 追加给调用者：`from=channel.create body=<name>`；`from=channel.add.actor body=<channel>/<addr>`；`from=spawn body="<dir> pid=<n>"`。跨膜没有返回（根门单向）。
+返回以 msg 追加给调用者：`from=channel.create body="<name> new|exists"`；`from=channel.add.actor body=<channel>/<addr>`；`from=spawn body="<dir> pid=<n>"`。跨膜没有返回（根门单向）。
 
 ### 4.4 门与 Port
 
-门 actor 的 text 是目标：本机器的 channel 名，或 `file:<dir>#<box>`（box = `_root` 或 channel 名）。写给门的消息：目标在本机器 → 追加到目标账本；目标在外 → `Port.send` 落到对方收件箱。
+门 actor 的 text 是端点：`file:<dir>#<box>`（box = `_root` 或 channel 名），或本机器的 channel 名（= `file:<P>#<名>` 的缩写）。写给门的消息一律 `Port.send` 到该端点，署名 `file:<P>#<本 channel>`；本机目标也经自己的收件箱进账。
 
 ### 4.5 init.py = R 的入口
 
@@ -465,3 +465,5 @@ stdin：`{"channel", "me", "msgs": [{seq, from, to, body}…]}`。stdout 原样�
 按 §2.2.5 / M1 / DESIGN.md §5 的版本重写：`runtime.py`（转移表三行 + syscall 两词 + Space 级根门，`root_open` 由账本派生；place 行带 `by`；消息正文逐字节保留）、`init.py`（R 的入口，不读 G）、`actors/realize.py`（A：`build` 经门造整台机器，`add / peer` 本地生长）、`actors/spawn.py`（C：pack → spawn → 两扇门 → 把 G 交给 realize → `msg c0 start`）、`genesis.py`（人侧的 A + B：dalek0 由人经根门用同一套 syscall 造）。T1–T7 绿：T4 验证构造期间机械不动、start 关门、关门后根门无效；T7 验证子代全部 place 行 `by=_root`、出生证明指回父代、第一条消息署名出生证明门、父代对象销毁后子代已切离且活着。
 
 仍开着的洞（DESIGN.md §3）：H3（外来请求只到接待员，`spawn` 只能由 c0 内部发给 C）、H4（无 c1，pack 抄 P 里的 G）、H5/H7（C actor 用文件系统 pack；程序 actor cwd = P）、H6（收件箱偏移在进程内存）、H9（oracle 端点）、H10（崩溃语义）。H1、H2、H15 已由本版消除。
+
+2026-08-30 凌晨收缩 R（规则 16 → 9，不动理论）：Ω 动词一张表（spawn、stop）而非逐个分支；门只有一条规则（一律 `Port.send`，本机 channel 名是端点缩写）；收件箱读取归 Ω（`Port.recv`），根门与 channel 收件箱走同一条入口；`channel.create` 返回 new|exists。T1–T7 仍绿。

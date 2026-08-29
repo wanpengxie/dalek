@@ -69,7 +69,7 @@ def test_T2_local_syscall():
     y = rows(rt, "y", "place")
     assert y[0]["text"] == "print(1)" and y[0]["in"] and y[0]["addr"] == "1" and y[0]["by"] == "1"
     ret = [x for x in rows(rt, "a", "msg") if x["from"].startswith("channel.")]
-    assert [x["body"] for x in ret] == ["y", "y/1"]
+    assert [x["body"] for x in ret] == ["y new", "y/1"]
     G2 = G_of([{"name": "a", "members": [{"kind": "program", "text": PLACER}]}])   # 无绑定
     rt2, P2 = fresh(G2); start(P2, G2, "go"); rt2.run()
     assert "y" not in rt2.channels and ">>> channel.create" in rows(rt2, "a", "step")[0]["out"]
@@ -153,7 +153,7 @@ def test_T7_spawn_child_built_by_parent_A():
     pid = int([m for m in rows(rt, "c0", "msg") if m["from"] == "spawn"][0]["body"].split("pid=")[1])
     try:
         c0 = rt.channels["c0"]
-        rdoor, cdoor = c0.door_to(f"file:{d}#_root"), c0.door_to(f"file:{d}#c0")
+        rdoor, cdoor = rt._door(c0, f"file:{d}#_root"), rt._door(c0, f"file:{d}#c0")
         sent = [m["body"] for m in rows(rt, "c0", "msg") if m["to"] == rdoor]                        # 父代 A 发出的 syscall
         assert sent[0] == "channel.create c0" and sum(b.startswith("channel.add.actor") for b in sent) == 4
         assert sent[-1] == "msg c0\nstart" and sent[-2].startswith("channel.add.actor c0 door\nfile:")   # 出生证明，然后 start

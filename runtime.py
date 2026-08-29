@@ -1,18 +1,24 @@
-"""运行时 R：极小状态空间 + 转移表 + 一扇根门。内容盲。
+"""运行时 R：极小状态空间 + 转移表。内容盲。
 
-状态：每个 channel 一本只追加的账本（h/<name>.jsonl）+ 每个 actor 一个游标。
-事件：某本账上多了一条写给某地址的消息。
-转移表（按被写到的 actor 的 kind）：
-  program   取视图 → Exec.run(text, 视图) → stdout 原样追加为 step + 拆成新消息追加；游标前移
-  oracle    取视图 → 交给 Ω 侧的端点 → 回答同上
-  door      把这条消息原样抄到 text 所指的账本，署名对面的门（没有则 door），收件人是对面的接待员
-syscall（三个词；持有 bind=syscall 的 actor 可发；根门开着时膜外可发）：
-  channel.create <name>
-  channel.add.actor <channel> <kind> [in] [bind=…] + text     （含 actor.create；带完整 text 记一行）
-根门（in/_root.jsonl，Space 级，在 channel 之前存在）：
-  开着 ⇔ 所有账本里没有任何 msg 行。开着时接受两个 syscall 和 msg；msg 是第一条消息，顺手关门。关门后忽略。
+状态    每个 channel 一本只追加的账本（h/<name>.jsonl，三种行 place / msg / step）+ 每个 actor 一个游标。
+        全部由账本折叠重建；进程里只另记各收件箱读到的字节偏移。
+事件    某本账上多了一条写给某地址的消息。
+转移表（按被写到的 actor 的 kind）
+  program   视图 → Exec.run(text, 视图) → stdout 原样记 step，按 ">>> " 拆成动作
+  oracle    视图 → Ω 侧的端点 → 同上
+  door      每条消息原样 Port.send 到 text 所指的端点，署名本 channel 的端点
+动作（program / oracle 输出的每一段）
+  >>> <addr>                                                 消息给本 channel 的 <addr>
+  >>> channel.create <name>                                  syscall；需 bind=syscall
+  >>> channel.add.actor <channel> <kind> [in] [bind=…] + text  syscall；需 bind=syscall
+  >>> <动词> <参数>                                            绑定了的 Ω 动词转交 Ω（ACTIONS 表）；需 bind=<动词>
+  返回都是一条 msg：from=<动作名>。其他一律忽略。
+入口    每个 channel 一个收件箱 in/<name>.jsonl（Port 的接收侧）：一行 → msg 给接待员，署名指回发信端点的门（没有则 door）。
+        根收件箱 in/_root.jsonl 在 channel 之前存在：开着 ⇔ 所有账本无 msg 行。开着时接受两个 syscall（by=_root）
+        和 msg <channel>（第一条消息，顺手关门）。关门后忽略。
+调度    轮转每个 channel，各取 pending 最早的 actor 走一步；静止则停（serve 模式下继续轮询）。
 
-这个文件只认识介质词汇：地址、kind、text、消息、账本、追加、投递、视图、步记录、门、syscall。
+本文件只认识介质词汇：地址、kind、text、消息、账本、追加、投递、视图、步记录、门、端点、syscall、动词。
 它不认识任何组织词汇。检验：把 G 里所有名字换掉，本文件的行为逐字节不变。
 """
 from __future__ import annotations
@@ -23,8 +29,22 @@ from typing import Callable
 from omega import Exec, Store, Port
 
 KINDS = ("program", "oracle", "door")
-BINDS = ("syscall", "spawn")
 ROOT = "_root"
+
+
+def _spawn(P: Path, arg: str) -> str:
+    d = Path(arg) if Path(arg).is_absolute() else P / arg
+    pid = Exec.spawn([str(d / "init.py"), str(d), "--serve"], cwd=d, log=d / "init.log")
+    return f"{d} pid={pid}"
+
+
+def _stop(P: Path, arg: str) -> str:
+    Exec.stop(int(arg))
+    return arg
+
+
+ACTIONS: dict[str, Callable[[Path, str], str]] = {"spawn": _spawn, "stop": _stop}   # 可绑定的 Ω 动词
+BINDS = ("syscall", *ACTIONS)
 
 
 @dataclass
@@ -42,14 +62,10 @@ class Channel:
     receptionist: str | None = None
     rows: list[dict] = field(default_factory=list)
     cursor: dict[str, int] = field(default_factory=dict)
-    inbox_offset: int = 0
 
     @property
     def seq(self) -> int:
         return self.rows[-1]["seq"] if self.rows else 0
-
-    def door_to(self, target: str) -> str | None:
-        return next((a.addr for a in self.actors.values() if a.kind == "door" and a.text == target), None)
 
 
 Oracle = Callable[[str, str, Actor, list[dict]], str]
@@ -61,7 +77,18 @@ class Runtime:
         self.h = self.P / "h"
         self.oracle = oracle
         self.channels: dict[str, Channel] = {}
-        self.root_offset = 0
+        self.offsets: dict[str, int] = {}
+
+    # ------------------------------------------------------------ 端点
+    def ep(self, box: str) -> str:
+        return f"file:{self.P}#{box}"
+
+    def _target(self, text: str) -> str:
+        return text if ":" in text else self.ep(text)          # 门的 text：端点，或本机 channel 名
+
+    def _door(self, c: Channel, sender: str) -> str | None:
+        return next((a.addr for a in c.actors.values()
+                     if a.kind == "door" and (a.text == sender or self.ep(a.text) == sender)), None)
 
     # ------------------------------------------------------------ 账本
     def _path(self, name: str) -> Path:
@@ -95,12 +122,12 @@ class Runtime:
         return not any(r["k"] == "msg" for c in self.channels.values() for r in c.rows)
 
     # ------------------------------------------------------------ syscall
-    def create(self, name: str) -> bool:
+    def create(self, name: str) -> str:
         if name in self.channels:
-            return False
+            return "exists"
         self.channels[name] = Channel(name)
         Store.append(self.h / "_order", name)
-        return True
+        return "new"
 
     def add(self, channel: str, kind: str, text: str, bind=(), receptionist: bool = False, by: str = ROOT) -> str | None:
         if kind not in KINDS or channel not in self.channels:
@@ -115,10 +142,9 @@ class Runtime:
         return self._append(self.channels[channel], {"k": "msg", "from": frm, "to": to, "body": body})
 
     def _syscall(self, head: str, body: str, by: str) -> tuple[str, str] | None:
-        """执行一条 syscall 行；返回 (op, 结果) 或 None。"""
         t = head.split()
         if t and t[0] == "channel.create" and len(t) == 2:
-            self.create(t[1]); return ("channel.create", t[1])
+            return ("channel.create", f"{t[1]} {self.create(t[1])}")
         if t and t[0] == "channel.add.actor" and len(t) >= 3:
             flags = t[3:]
             bind = next((f[5:].split(",") for f in flags if f.startswith("bind=")), [])
@@ -126,33 +152,30 @@ class Runtime:
             return ("channel.add.actor", f"{t[1]}/{addr}") if addr else None
         return None
 
-    # ------------------------------------------------------------ 收件箱
-    def drain_root(self) -> None:
-        lines, off = Store.lines(self.P / "in" / f"{ROOT}.jsonl", self.root_offset)
-        self.root_offset = off
-        for line in lines:
-            if not line.strip() or not self.root_open:
-                continue                                   # 关门后全部忽略
-            p = json.loads(line)
-            head, _, body = p["body"].partition("\n")
-            t = head.split()
-            if t and t[0] == "msg" and len(t) == 2 and t[1] in self.channels:
-                c = self.channels[t[1]]
-                if c.receptionist is not None:
-                    self.msg(c.name, c.door_to(p.get("from", "")) or "door", c.receptionist, body)   # 关门
-            else:
-                self._syscall(head, body, by=ROOT)
+    # ------------------------------------------------------------ 入口
+    def drain(self) -> None:
+        for box in [ROOT, *self.channels]:
+            payloads, self.offsets[box] = Port.recv(self.ep(box), self.offsets.get(box, 0))
+            for p in payloads:
+                self._receive(box, p)
 
-    def drain_inbox(self) -> None:
-        for c in list(self.channels.values()):
-            if c.receptionist is None:
-                continue
-            lines, off = Store.lines(self.P / "in" / f"{c.name}.jsonl", c.inbox_offset)
-            c.inbox_offset = off
-            for line in lines:
-                if line.strip():
-                    p = json.loads(line)
-                    self.msg(c.name, c.door_to(p.get("from", "")) or "door", c.receptionist, p["body"])
+    def _receive(self, box: str, p: dict) -> None:
+        sender, body = p.get("from", ""), p.get("body", "")
+        if box != ROOT:
+            self._inbound(self.channels[box], sender, body)
+            return
+        if not self.root_open:
+            return                                                     # 关门后全部忽略
+        head, _, rest = body.partition("\n")
+        t = head.split()
+        if t and t[0] == "msg" and len(t) == 2 and t[1] in self.channels:
+            self._inbound(self.channels[t[1]], sender, rest)           # 第一条消息：关门
+        else:
+            self._syscall(head, rest, by=ROOT)
+
+    def _inbound(self, c: Channel, sender: str, body: str) -> None:
+        if c.receptionist is not None:
+            self.msg(c.name, self._door(c, sender) or "door", c.receptionist, body)
 
     # ------------------------------------------------------------ 转移
     def _pending(self, c: Channel, addr: str) -> list[dict]:
@@ -167,7 +190,7 @@ class Runtime:
         upto = msgs[-1]["seq"]
         if a.kind == "door":
             for m in msgs:
-                self._deliver(c, a, m["body"])
+                Port.send(self._target(a.text), {"from": self.ep(channel), "body": m["body"]})
             self._append(c, {"k": "step", "actor": addr, "upto": upto, "out": "", "err": ""})
             return True
         view = {"channel": channel, "me": addr,
@@ -181,25 +204,16 @@ class Runtime:
             self._execute(c, a, head, body)
         return True
 
-    def _deliver(self, c: Channel, door: Actor, body: str) -> None:
-        target = door.text
-        if target in self.channels:
-            t = self.channels[target]
-            if t.receptionist is not None:
-                self.msg(t.name, t.door_to(c.name) or "door", t.receptionist, body)
-        else:
-            Port.send(target, {"from": f"file:{self.P}#{c.name}", "body": body})
-
     def _execute(self, c: Channel, a: Actor, head: str, body: str) -> None:
         t = head.split()
-        if t and t[0].startswith("channel.") and "syscall" in a.bind:
+        if not t:
+            return
+        if t[0].startswith("channel.") and "syscall" in a.bind:
             r = self._syscall(head, body, by=a.addr)
             if r:
                 self.msg(c.name, r[0], a.addr, r[1])
-        elif t and t[0] == "spawn" and "spawn" in a.bind and len(t) == 2:
-            d = Path(t[1]) if Path(t[1]).is_absolute() else self.P / t[1]
-            pid = Exec.spawn([str(d / "init.py"), str(d), "--serve"], cwd=d, log=d / "init.log")
-            self.msg(c.name, "spawn", a.addr, f"{d} pid={pid}")
+        elif t[0] in ACTIONS and t[0] in a.bind and len(t) == 2:
+            self.msg(c.name, t[0], a.addr, ACTIONS[t[0]](self.P, t[1]))
         elif len(t) == 1 and t[0] in c.actors:
             self.msg(c.name, a.addr, t[0], body)
 
@@ -207,7 +221,7 @@ class Runtime:
     def run(self, max_steps: int = 10_000, serve: bool = False, poll: float = 0.2) -> int:
         steps = 0
         while steps < max_steps:
-            self.drain_root(); self.drain_inbox()
+            self.drain()
             progressed = False
             for c in list(self.channels.values()):
                 best = None
@@ -229,7 +243,7 @@ def parse(out: str) -> list[tuple[str, str]]:
     for line in out.splitlines():
         if line.startswith(">>> "):
             if head is not None:
-                res.append((head, "\n".join(buf)))          # 正文逐字节保留（含末尾换行）
+                res.append((head, "\n".join(buf)))          # 正文逐字节保留
             head, buf = line[4:].strip(), []
         elif head is not None:
             buf.append(line)

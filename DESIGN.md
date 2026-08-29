@@ -14,7 +14,7 @@
 |---|---|---|
 | **msg** `>>> <addr>` + 正文 | 任何 program / oracle actor | 在本 channel 账本追加一条 `msg(from=我, to=addr)`。addr 不存在 → 丢弃（只留在 step.out） |
 | **place** `>>> place <channel> <kind> [in] [bind=…]` + text | 持有 `bind=place` 的 actor | 在 `<channel>` 账本追加一条 `place`（带完整 text）；channel 不存在则这就是它的第一行；给调用者追加 `msg(from=place, body="<channel>/<addr>")` |
-| **spawn** `>>> spawn <dir>` | 持有 `bind=spawn` 的 actor | `Exec.spawn(init, dir)`；给调用者追加 `msg(from=spawn, body="<dir> pid=<n>")` |
+| **Ω 动词** `>>> spawn <dir>` / `>>> stop <pid>` | 持有 `bind=<动词>` 的 actor | 一张表转交 Ω：`Exec.spawn(init, dir)` / `Exec.stop(pid)`；给调用者追加 `msg(from=<动词>, body=…)` |
 
 门的抄写不是动作，是 door kind 的转移。**介质动作闭集 = {msg, place, spawn}。** 没有 stop、没有删、没有读账本。
 
