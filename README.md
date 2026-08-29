@@ -8,7 +8,7 @@
 
 ```
 Ω        omega.py    宿主契约：Exec / Store / Port。不含任何 Dalek 词。
-运行时    runtime.py  极小状态空间 + 四行转移表（program / oracle / door / place）。内容盲。随包携带，不在 G 里。
+运行时    runtime.py  极小状态空间 + 转移表（program / oracle / door）+ syscall（channel.create / channel.add.actor）+ Space 级根门。内容盲。源码在 G.world 里，机器内无人读。
 组织      G.json      channel、成员（kind + text + bind）、门。c0 按它 realize。
 ```
 
@@ -16,7 +16,7 @@
 
 ## dalek0（M1 第一天）
 
-G 里一个 channel `c0`，注册三样：
+G 里一个 channel `c0`，注册两个 actor：
 - `actors/realize.py` — 装配器（A）。请求：`build <门> <创造者>\n<G>`（经门造一台机器）、`add …`、`peer …`（本地生长）。
 - `actors/spawn.py` — 起子代（C）。请求：`spawn <name>`：pack（G.world 写成文件 + G.json 原样）→ `Exec.spawn` → 放两扇门 → 把 G 交给 realize 经门造 → `msg c0 start`。关门即切离。
 
