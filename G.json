@@ -1,0 +1,30 @@
+{
+ "channels": [
+  {
+   "name": "c0",
+   "members": [
+    {
+     "kind": "program",
+     "text": "# c0 的装配器（A）。这段源码是 G 里的 text；运行时按 program kind 跑它：stdin 是视图，stdout 按 ABI 拆。\n# 请求（写给它的消息）：\n#   realize [G 路径]                       读 G，把除自己之外的所有成员放进各自 channel，按 peers 放门\n#   add <channel> <kind> [in] [bind=..]\\n<text>   放一个 actor\n#   peer <a> <b>                            放两扇互指的门\n# 介质返回（from=place）会在下一步的视图里出现；用写给自己的便签记住请求者，把 placed 转发给他。\nimport sys, json\nv = json.load(sys.stdin)\nch, me, msgs = v[\"channel\"], v[\"me\"], v[\"msgs\"]\nout, notes, placed = [], [], []\n\n\ndef place(channel, kind, text, flags=()):\n    head = \" \".join([\"place\", channel, kind, *flags]).rstrip()\n    out.append(f\">>> {head}\\n{text}\")\n\n\nfor m in msgs:\n    frm = m[\"from\"]; body = m[\"body\"]\n    head, _, rest = body.partition(\"\\n\"); t = head.split()\n    if frm == \"place\":\n        placed.append(body); continue\n    if frm == me and t and t[0] == \"note\":\n        notes.append(t[1]); continue\n    if not t:\n        continue\n    if t[0] == \"realize\":\n        G = json.load(open(t[1] if len(t) > 1 else \"G.json\", encoding=\"utf-8\"))\n        first = G[\"channels\"][0]\n        for c in G[\"channels\"]:\n            for i, mem in enumerate(c[\"members\"]):\n                if c is first and i == 0 and c[\"name\"] == ch and me == \"1\":\n                    continue                       # 自己已由 init 放好\n                flags = []\n                if i + 1 == c.get(\"receptionist\", 1): flags.append(\"in\")\n                if mem.get(\"bind\"): flags.append(\"bind=\" + \",\".join(mem[\"bind\"]))\n                place(c[\"name\"], mem[\"kind\"], mem[\"text\"], flags)\n        for a, b in G.get(\"peers\", []):\n            place(a, \"door\", b); place(b, \"door\", a)\n        out.append(f\">>> {me}\\nnote {frm}\")\n    elif t[0] == \"add\" and len(t) >= 3:\n        place(t[1], t[2], rest, t[3:]); out.append(f\">>> {me}\\nnote {frm}\")\n    elif t[0] == \"peer\" and len(t) == 3:\n        place(t[1], \"door\", t[2]); place(t[2], \"door\", t[1]); out.append(f\">>> {me}\\nnote {frm}\")\n\n# 把上一轮的介质返回转发给当时的请求者（便签和返回在同一视图里到达）\nif placed and notes:\n    for who in dict.fromkeys(notes):\n        out.append(f\">>> {who}\\n\" + \"\\n\".join(\"placed \" + p for p in placed))\n\nprint(\"\\n\".join(out))\n",
+     "bind": [
+      "place"
+     ]
+    },
+    {
+     "kind": "program",
+     "text": "# c0 的起子代（C）。这段源码是 G 里的 text；持有 bind=place,spawn。\n# 请求：spawn <name>\n#   1. pack：把 omega.py / runtime.py / init.py（世界）和 G.json（描述，原样）抄进 spawn/<name>/\n#   2. >>> spawn spawn/<name>          介质动作：Exec.spawn(init, dir)\n#   3. >>> place <本 channel> door      放一扇门指向子代的第一个 channel\n#   4. 下一步收到门的地址后，经门踢一脚：\"realize G.json\"。踢完，义务结束。\nimport sys, json, os, shutil\nv = json.load(sys.stdin)\nch, me, msgs = v[\"channel\"], v[\"me\"], v[\"msgs\"]\nout, notes, door, pid = [], [], None, None\n\nfor m in msgs:\n    frm, body = m[\"from\"], m[\"body\"]\n    t = body.split()\n    if frm == \"place\" and t:\n        door = body.split(\"/\")[-1]; continue\n    if frm == \"spawn\":\n        pid = body; continue\n    if frm == me and t and t[0] == \"note\":\n        notes.append((t[1], t[2])); continue\n    if t and t[0] == \"spawn\" and len(t) == 2:\n        name = t[1]; d = os.path.join(\"spawn\", name); os.makedirs(d, exist_ok=True)\n        for f in (\"omega.py\", \"runtime.py\", \"init.py\", \"G.json\"):\n            shutil.copyfile(f, os.path.join(d, f))\n        G = json.load(open(\"G.json\", encoding=\"utf-8\"))\n        out.append(f\">>> spawn {d}\")\n        out.append(f\">>> place {ch} door\\nfile:{os.path.abspath(d)}#{G['channels'][0]['name']}\")\n        out.append(f\">>> {me}\\nnote {frm} {os.path.abspath(d)}\")\n\nif door and notes:\n    who, d = notes[-1]\n    out.append(f\">>> {door}\\nrealize G.json\")\n    out.append(f\">>> {who}\\nspawned {d} {pid or ''} door={door}\".rstrip())\n\nprint(\"\\n\".join(out))\n",
+     "bind": [
+      "place",
+      "spawn"
+     ]
+    },
+    {
+     "kind": "door",
+     "text": "creator"
+    }
+   ],
+   "receptionist": 1
+  }
+ ],
+ "peers": []
+}

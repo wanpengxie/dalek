@@ -1,7 +1,5 @@
 __pycache__/
-*.pyc
-.venv/
-*.log
-h/            # 运行时 H 平面文件
-scratch/      # U 的草稿
-.DS_Store
+h/
+in/
+spawn/
+init.log
