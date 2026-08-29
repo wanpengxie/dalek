@@ -208,10 +208,11 @@ m′.c1.decl() == m.c1.decl()
 3. ~~构造器住在哪~~ → 定：**构造器和复制器在描述里，是描述里的第一项。** 按冯诺依曼 E = D + I_D，I_D 描述的正是 A+B+C 自己。对应过来：构造器（c0，realize）和复制器（c1，decl）是描述里的两个普通成员，它们的描述就是它们的源码，与任何工具的程序文本同等地位。pack 下一台机器时，把这两段源码当成员文本从**描述里**抄进包——不特殊对待，不从自己运行中的代码取。这就是"描述被用两次"落在构造器自己身上。
    ~~dalek0 的基因因此只有：一个 channel `c0`，两个成员~~（历史方案，已被 M1 的 {c0, c1} 取代）。
 4. ~~一个包是一台 Space 还是一个 channel~~ → 由公理定：**一个包 = 一台机器 = 一个 Space**；描述里的多个 channel 都在这一个包里。由定义推出（未单独决定，可推翻）：一次 `Ω.run(机器)` 是一个进程，channel 是进程里的对象；进程之间只有机器与机器的关系，经网络。
-5. ~~启动（C）放哪~~ → 定：**C 住在 c0 里（c0 = A + C）。** C 是一段普通程序：kind = 程序的成员，text 里写四步——`pack`、`Exec.spawn(P)`、确认、切离。它必须是描述里的成员，不能是外面的脚本，否则是宿主替机器繁殖。运行时不认识它，只在两处擦边：
+5. ~~启动（C）放哪~~ → 定：**C 住在 c0 里。** C 是一段普通程序：kind = 程序的成员，text 里写三步——`pack`、`Exec.spawn(P)`、经子代的根门踢一脚（"realize G"）。踢完，父代的义务即结束。它必须是描述里的成员，不能是外面的脚本，否则是宿主替机器繁殖。运行时不认识它，只在两处擦边：
    - **能力绑定**：C 要 `spawn` 和 `Port` 的句柄。运行时内容盲地把 G 里为该成员声明的句柄绑给它（转移表第一行 `Exec.spawn` 的 bindings 参数），不知道它是 C。
-   - **子代的第一条消息**：不能由运行时读 G（boot 是组织词）。P 里除运行时外有一个 **init**（属于种子，几行，不认识 "c0"）：起运行时；把 G 里**第一个** actor（约定：第一个 channel 的第一个成员）用"放 actor"放进它的 channel；给它发第一条消息"realize <G 的路径>"。init 只放这一个，不多放——全放的话构造器就跑进世界里了，那是宿主替机器构造。内核起 init，init 是 userland。
-   四步的归属：起 = C 调 `Exec.spawn(P)`；递 G = pack 已把 G 放进 P，init 把路径交给 c0′，父代不再发；确认 = C 经门问 c1′.decl，等于送出的 G 即活了；切离 = C 请 c0 撤掉那扇门（逻辑删除，一条形态改动，两边记账）。
+   - **子代的第一条消息从根门进来。** P 里除运行时外有一个 **init**（属于种子，几行，不认识 "c0"），只做两件事：起运行时；把 G 里**第一个** actor（约定：第一个 channel 的第一个成员）用"放 actor"放进它的 channel。init 不发消息，只放这一个 actor——全放的话构造器就跑进世界里了，那是宿主替机器构造。内核起 init，init 是 userland。
+   **根门**：每台机器的 c0 里有一扇初始门，对面是它的创造者——父代，或对 dalek0 而言是人。它是这台机器账本上第一条消息的来源。"创生来自外面"由此成为字面：每台机器的第一条消息都从根门进来，dalek0 由人踢，dalek1 由 dalek0 踢，形式相同。
+   **切离 = 什么都不用做。** 确认（问子代的 decl 是否等于 G）是观察，验收实验做，父代不需要做；根门留在子代的注册表里就是它对世界的口子，父代那一侧撤不撤是拓扑选择，不是义务。踢的消息可能比 init 放 actor 先到——账本天然处理：消息落在账上，接待员出现后驱动器才投递。
 6. **内部原语还要不要**。旧模型里的 born / add / copy / peer / start 是运行时的 syscall；现在 pack 是纯函数、realize 在运行中做，这些词变成了什么？
 
 ---
@@ -223,7 +224,7 @@ m′.c1.decl() == m.c1.decl()
 **约定**：一台最小的机器 = Space { c0, c1 }，一条连线 c0–c1。按 0.1½ 的三层：c0、c1 是 channel，里面注册的 actor 才有代码。
 
 - **运行时 ≠ c0。** 运行时（第 1½ 章）驱动所有 channel，包括 c0。c0 是被驱动的器官，不是驱动者。
-- **c0 = 注册了两个 actor 的 channel**：**realize actor**（读 G 的结构节点，对每个成员调"放 actor"，按 peers 放门；绑定"放 actor"）和 **C actor**（pack → spawn → 确认 → 切离；绑定 spawn 与 Port 句柄）。造器官是确定的。c0 是唯一持有形态变更能力的 channel，仅因为这两个 actor 注册在它里面。
+- **c0 = 注册了两个 actor 和一扇根门的 channel**：**realize actor**（装配器：读 G 的结构节点，对每个成员调"放 actor"，按 peers 放门；绑定"放 actor"；是接待员）、**C actor**（起子代：pack → spawn → 经根门踢一脚；绑定 spawn 与 Port 句柄）、**根门**（对面是创造者；第一条消息从这里来）。造器官是确定的。c0 是唯一持有形态变更能力的 channel，仅因为这两个 actor 注册在它里面。
 - **c0 的请求集 = Dalek 的 syscall。** 任何形态改动——不管谁想改、改谁，包括一个 channel 想改自己——都是给 c0 发一条请求，c0 执行、c0 记账。Ω 不认识这些请求；它们是 Dalek 自己的系统调用。
 - **入账规则**：一条形态改动请求的本质是**三边同时记账**——被改的 channel 记一行（它的账本因此自足），c0 记一行（它做了这一步），c0 再经门给 c1 发一行（c1 由此知道）。
 - **c1 = 注册了登记 actor 的 channel。** 保持注册关系不掉——actor 的注册关系、channel 的连线关系。这张关系就是**配置**。c1 = **一次折叠 + 保存**：对**自己账本上**收到的形态改动折叠一遍得到配置，落成一个文件；`decl` = 把这个文件原样抄出。c1 不读别的账本（成员只能看自己的视图，偷看是隐藏能力）；一切形态改动都经 c0，c0 每做一次就给 c1 发一条，所以 c1 可从自己的账本重演。文件是派生物，不是私有状态。
@@ -234,17 +235,19 @@ m′.c1.decl() == m.c1.decl()
 **造另一台机器**（唯一路径：种子 + 描述 + 自发育）：
 1. `G = c1.decl()`：当前可遗传描述，原样。
 2. `P = pack(G)`：从自己的 P 抄运行时 + init，抄 G。这是唯一写到机器外面的东西（B）。
-3. `Ω.run(P)`：运行时起来；init 把 G 的第一个 actor（realize actor）放进 c0′，发第一条消息"realize G"。
-4. realize actor 读 G，放其余 actor（C actor、c1′ 的登记 actor）、放门。子机器自己长出来。**同一份 G 的两次使用**：pack 不读地抄（B），init + realize 读了当作 actor 放进去（A）。
+3. `Ω.run(P)`：运行时起来；init 把 G 的第一个 actor（realize actor）放进 c0′。init 不发消息。
+4. 父代的 C actor 经子代的根门踢一脚："realize G"。**踢完，父代的义务即结束。**
+5. realize actor 读 G，放其余 actor（C actor、c1′ 的登记 actor）、放门。子机器自己长出来。**同一份 G 的两次使用**：pack 不读地抄（B），init + realize 读了当作 actor 放进去（A）。
 
-父机器从不伸手进子机器；P 递出去之后父子之间只剩网络。确认、切离由父代的 C actor 做。A（realize）、B（pack + decl）、C 都在机器里。
+父机器从不伸手进子机器；踢完那一脚之后父子之间只剩根门。A（realize）、B（pack + decl）、C（pack → spawn → 踢）都在机器里。
 
 非确定性不在 c0、c1 里；它只从后来长出的作者器官（LLM、人）进来。
 
 种子的 G：
 ```
 { channels: [ { name: c0, members: [ {kind: program, text: <realize 源码>, bind: [place]},
-                                     {kind: program, text: <C 源码>, bind: [spawn, port]} ],
+                                     {kind: program, text: <C 源码>, bind: [spawn, port]},
+                                     {kind: door, text: <创造者的地址>} ],          // 根门
                 receptionist: 1 },
               { name: c1, members: [ {kind: program, text: <登记 源码>} ], receptionist: 1 } ],
   peers: [[c0, c1]] }
@@ -252,7 +255,7 @@ m′.c1.decl() == m.c1.decl()
 
 验收：
 ```
-m′ = Ω.run(pack(m.c1.decl()))
+m′ = Ω.run(pack(m.c1.decl()))；m 经 m′ 的根门踢一脚
 m′.c1.decl() == m.c1.decl()                              复制闭合
 改 G 里 realize 的 text 一处，父代不动，造 m′ → m′ 行为按改动变    子代是从 G 造的，不是抄的（非平凡）
 Ω.run(pack(G′))，G′ ≠ m.c1.decl()，其 c1.decl() == G′     是构造器，不是复印机
