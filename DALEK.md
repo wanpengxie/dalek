@@ -329,3 +329,9 @@ m**.decl() == m*.decl()，且 m** 能继续造
 | `spawn <name>` | （C actor）pack：把 omega/runtime/init 与 G 抄进 `spawn/<name>`；`Exec.spawn`；放一扇门指向子代；经门踢 `realize G.json` |
 
 回执：realize actor 把介质返回（`placed <channel>/<addr>`）转发给请求者。四条，没有删；逻辑删除待 c1。
+
+### 4.6 实现状态（2026-08-29）
+
+`omega.py`（Exec / Store / Port 文件收件箱）、`runtime.py`（四行转移表；内容盲，T6 用改名同构检验）、`init.py`（只放第一个 actor，不发消息；`--kick` 是创造者那一脚）、`actors/realize.py`（A：realize / add / peer；placed 回执经便签转发给请求者）、`actors/spawn.py`（C：pack → spawn → 放门 → 踢）、`genesis.py`（dalek0 的 G）。`t/test_c0.py` T1–T7 绿；T7 里子代在独立进程自发育、父代对象销毁后子代账本完整。
+
+与理论的偏差，明天要收：c1 还没有，所以 pack 抄的是 P 里的 G 而不是 `c1.decl()`；`spawn` 请求只能由 c0 内部的 actor 发给 C actor（外来消息只到接待员）；oracle kind 只有测试用的回调，没有 LLM / 人的端点；没有 replay。
