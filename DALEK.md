@@ -322,7 +322,26 @@ decl(S) 与 fold(H) 逐字相等；P.world == decl.world                三个�
 
 ### M3 · c2 与网络：一次演示三个自我（周一–周二 2026-08-31 / 09-01）
 
-c2 = L + U 接成的 channel（coding agent，"code mode"）。演示任务是**自组织**：
+c2 = L + U 接成的 channel（coding agent，"code mode"）。两个演示任务，先 **c2 → c2′**，再**自组织**。
+
+**任务 0 · c2 → c2′：改进器改进自己**（Trusting Trust 的启发；Yampolskiy 的 Level 3——改进"改进机制"本身）
+
+- 第一件事不是写别的 actor，是**给 code mode 自己加一个工具**：一个 actor，收到 `show G` / `show H <channel>` 回本机的 decl 或账本片段。这是论文里的 "self-access"，但**结构性**地实现：机器认识自己 = 读自己的描述和历史，不是模型读权重。它也是任务 1 本来就要的（写 hub/reporter 前得知道本机有哪些 channel、门指向哪）。
+- 机制上没有新东西：c2 的产出是 G 的增量（新工具的 text + 它是 c2 的成员），经 c0 `add` 装、c1 记、子代继承——**改进器改进自己和改进任何东西是同一条 syscall**，因为改进器不是特殊的，只是 G 里的几段 text。这本身就是要演示的命题。
+- Trusting Trust 的教训不是"自编译"，是**不要原地改**：改坏了自己的 U，就再也验不出任何东西。所以走"本版的不动点"那节的流程：c2 写出 c2′ 的描述 → c0 造出 c2′（同机器里另一个 channel，或带 G′ 的子代）→ **老 c2 的 U 测 c2′** → c2′ 做同一任务得 c2″，`decl(c2″) == decl(c2′)`（自举不动点）→ 通过才采纳（`retire` 老 c2 或切接待员）。
+- 攻击面因此说清：G 和 H 全是文本，没有二进制，"看不见的传染"只能藏在 Ω 的 python 和 **L 的权重**里——L 是本体系里那台不透明编译器。DDC 的对策可用：两个不同的 L 各生成一次 c2′，比对（记为论文里一句话，不做）。
+- 任务与判据从门外来（人给 t* 和回归集 T）：选择压力来自膜外，不假装内生。
+
+验收：
+```
+t*：回答"本机有几个 channel、各自接待员是谁"     c2 失败（没有读 H 的工具）；c2′ 通过
+回归：c2 之前通过的任务集 T                        c2′ 全部通过
+自举：c2′ 接到同一任务 → c2″；decl(c2″) == decl(c2′)   改进器仍是改进器
+遗传：spawn 子代 → 子代的 c2 带着新工具               L3 的改进被继承
+```
+洞：syscall 只有 create/add，没有 replace；"改 U 的 text" = add 新 + `retire` 旧，接待员怎么切换随 M2 的 retire 一起定。
+
+**任务 1 · 自组织**
 
 1. **自改进**：c2 写出两个 actor 并通过 U 的测试——**hub**（c3，住在 dalek0）和 **reporter**（c4）；经 c0 `add` 装进本机器；c1 登记。G 从 {c0, c1, c2} 变成 {c0, c1, c2, c3, c4}。
 2. **自复制**：C 用 `c1.decl()` spawn dalek1、dalek2——它们生来带着 reporter。
