@@ -115,18 +115,29 @@ dalek0.construct(G′)，G′ ≠ dalek0.decl()，得到另一台机器且它的
 
 ## 第 3 章 里程碑
 
-### M1 · c0：描述并构造通用构造器自己
+### M1 · 最小机器：描述并构造自己
 
-最小的能力：通用构造器能描述自己、能按描述造出自己。这台最小机器叫 **c0**（它只有一个器官，器官也叫 c0）。
+**约定**：一台最小的机器 = Space { c0, c1 }。
+- **c0**：通用构造器。收描述，造机器。纯函数，确定。
+- **c1**：通用描述产生器 + 复制器。`decl`（原样抄出描述）在这里；产生新描述也在这里。M1 里"产生"只做一件事：产生自己的描述（= 抄）；接上 LLM 后 c1 就是作者，产生任意新描述。
+- 一条连线 c0–c1。
 
-基因：一个 channel，两个成员——构造器源码、复制器源码，接待员是构造器；无连线，无启动项。
+后果：非确定性全部关在 c1 里；c0 永远确定。重演只需照抄 c1 的输出。
+
+基因：
+```
+{ channels: [ { name: c0, members: [{kind: U, text: <构造器源码>}], receptionist: 1 },
+              { name: c1, members: [{kind: U, text: <复制器源码>}], receptionist: 1 } ],
+  peers: [[c0, c1]],
+  boot: [] }
+```
 
 验收：
 ```
-c0′ = Ω.run(c0.construct(c0.decl()))
-c0′.decl() == c0.decl()                                  复制闭合
-c0.construct(G′)，G′ ≠ c0.decl()，其 decl() == G′        是构造器，不是复印机
-杀掉 c0，c0′ 仍能造 c0″                                  独立
+m′ = Ω.run(m.c0.construct(m.c1.decl()))
+m′.c1.decl() == m.c1.decl()                              复制闭合
+m.c0.construct(G′)，G′ ≠ m.c1.decl()，其 decl() == G′    是构造器，不是复印机
+杀掉 m，m′ 仍能造 m″                                     独立
 ```
 
 Ω：Linux + python3 + 文件系统（M1 不需要网络）。
