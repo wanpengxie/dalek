@@ -307,6 +307,73 @@ m 造 G′ ≠ 自己的机器，其 decl() == G′                           �
 
 Ω：Linux + python3 + 文件系统（M1 不需要网络）。
 
+### M2 · c1：登记与 decl（周日 2026-08-30）
+
+- c1 = 注册了登记 actor 的 channel。c0 每次 syscall 后把 place 行（含完整 text）经门转发给 c1（三边记账）；c1 折叠自己的账本得到 `channels/peers`，从 P 拼上 `world`，落成文件；`decl` = 原样抄出。
+- C actor 的 pack 改用 `c1.decl()`，不再抄 P 里的 G.json（关 H4）。
+- 逻辑删除 `retire <channel>/<addr>`：c1 表上划掉，不再给它送消息；账本不动。
+
+验收：
+```
+运行中 add 一个 actor 后 spawn 子代 → 子代有这个 actor            遗传运行中的形态改动
+decl(S) 与 fold(H) 逐字相等；P.world == decl.world                三个身影
+改 realize 的 text 一处 → spawn → 子代的 realize 是新的            非平凡（此时才真正可测）
+```
+
+### M3 · c2 与网络：一次演示三个自我（周一–周二 2026-08-31 / 09-01）
+
+c2 = L + U 接成的 channel（coding agent，"code mode"）。演示任务是**自组织**：
+
+1. **自改进**：c2 写出两个 actor 并通过 U 的测试——**hub**（c3，住在 dalek0）和 **reporter**（c4）；经 c0 `add` 装进本机器；c1 登记。G 从 {c0, c1, c2} 变成 {c0, c1, c2, c3, c4}。
+2. **自复制**：C 用 `c1.decl()` spawn dalek1、dalek2——它们生来带着 reporter。
+3. **自组织**：协议只有四个词：
+   ```
+   reporter → hub：       hello <我的端点>
+   hub → reporter：       peers <端点…>                （intro）
+   reporter → 自己的 c0： add c0 door\n<端点>          （对每个 peer 放一扇门——这一步才是组织）
+   peer ↔ peer：          ping / pong
+   ```
+   hub 的记忆是它的账本。子代出生、start 一到，reporter 就 hello：**组织是遗传来的**。
+
+验收：三台机器的 G 各自多出指向对方的门；ping/pong 在两边账本上都有；杀掉 dalek0 后 dalek1↔dalek2 仍在 ping。
+概念上要写准：这是**种群层面**的自组织——网络的拓扑分散在每台机器自己的 G 里，没有网络级的 G 或 c0。它是生态，不是更大的有机体（那是递归 Space，另一个里程碑）。单机多进程用 file 端点；http 只在跨宿主时需要。
+
+### M4 · 生命周期与自维护
+
+**Space 的五个状态**（全部由 P 的内容派生，无标志文件）：
+
+| 状态 | P 里有什么 | 根门 |
+|---|---|---|
+| unborn | world + G.json，没有账本 | 开 |
+| constructing | 有 place 行、没有 msg 行 | 开 |
+| alive | 有 msg 行，有进程 | 关 |
+| dormant | 有 msg 行，没有进程 | 关 |
+| dead | H 没了 | — |
+
+转移：pack → unborn；`Exec.spawn(init, P)` → constructing；第一条 msg → alive；`stop` → dormant；**在同一个 P 上再 `Exec.spawn` → alive**（重启 = 账本非空的出生；出生 = 账本为空的重启，R 不区分）；删 H → dead。自己不能重启自己（死的东西不能动）：dormant → alive 的主语是父代、peer 或人。dormant 是合法状态（休眠、孢子、停掉未删的容器），故障只是"没人来唤醒"。
+
+**起停入账，外面只给信号**：
+- 起：R 折叠 H 后，**若根门已关**（已出生），对每个 channel 追加 `msg from=world to=接待员 body=up`。未出生（根门开着）不发——发了会关门；出生的第一条消息仍是父代的 start。**出生 = 父代的 start；醒来 = 世界的 up**，两个词、两个来源，都在账上。
+- 停：外部信号（`Exec.stop` 的 SIGTERM，或经收件箱给 C 的 stop 请求）→ R 对每个 channel 追加 `down` → 跑到静止或预算耗尽 → 退出。自停：C actor 绑定 `stop`（与 spawn 同类的 Ω 动作），走同一条路。
+- 各器官对 up/down 做什么由 G 定，不由世界定：c1 收到 up → reconcile；reporter 收到 up → hello hub、收到 down → 告别；c0 什么都不做。
+- 崩溃可判定：账本最后有 up 没有 down → 上次是硬杀，没写 step 行的 pending 消息会重跑（at-least-once；有外部效果的动作要幂等，spawn 目录已存在则不再起）。第几条 up = 第几次 incarnation。
+
+**自维护 = 期望与实际的对账。** 期望 = c1 的注册表（decl）；实际 = R 折叠 H 的结果。不变量：G 里每个 channel 在 H 里都有一本账且至少一条 place 行。
+
+- **本地损伤不需要时钟**：`stop → rm h/c8.jsonl → spawn → up` → c1 收到 up → 对注册表里每个 channel 向 c0 发 `rebuild <描述>`；c0 逐个 `channel.create`，**返回 new | exists**：exists 跳过，new 才 add 它的 actor 和门。幂等、无探测、一轮消息。重造出的 c8 是新器官：同样的 text、空的账本（照 spec 重造）；整机重启是 R 折叠 H（照 WAL 重放）。两种损伤两种恢复，不混。
+- **channel 存在 ⇔ 账本里至少一条 place 行**（不看 `_order`）。
+- **远端损伤才需要时钟**：对面机器死了，本地没有文件可查，只能"ping 了没 pong"；ping/pong 链自计时但链断了 reporter 不会再醒——发现链断需要一个膜外的 tick（Ω 的时钟经门送进来，和 LLM 同类的 oracle 端点）。发现后：照 G 长一个新 hub（reporter → c0 `add c3 …`），或 peer 把 dormant 的 dalek0 再 spawn 起来（照 H 恢复，同一个个体醒来）。
+- H 坏了不可修：H 是真相。能做的是备份（工程）。
+
+验收：
+```
+stop，rm h/c8.jsonl，spawn，→ c1 收到 up → c8 回来，text 相同，账本为空       本地维护，零时钟
+stop，spawn → decl 不变，游标不变，pending 消息重跑，账本有 down/up            重启 = 同一个体
+杀掉 dalek0 进程，tick → dalek1 长出 hub 或重新 spawn dalek0 → ping/pong 恢复    远端维护
+```
+
+**要改的机制**（介质级，不认识名字）：R 起来时广播 up（仅已出生）；SIGTERM → 广播 down → 静止 → 退出；`stop` 加进 Ω 动作绑定集；`channel.create` 返回 new|exists；收件箱偏移从 H 派生（收进来的 msg 行带收件箱行号，关 H6）；step 之间退出。
+
 ### 本版的不动点（定位）
 
 **G.world = R**（可描述，但机器内无人读、只抄）本版不处理其变异，**作为当前理论的不动点**：介质的不动点，世界的版本的不动点，不是机器的版本的——同一个 world 服务所有 G。构造器没有世界侧的不动点：递归的底是人造 dalek0。构造器（realize、C、登记 actor 的源码）在 G 里，改它们的 text 子代就变——机制上已经允许变异，本版只是**不验证**变异后的构造器是否仍是合法构造器。
