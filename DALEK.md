@@ -280,3 +280,52 @@ m**.decl() == m*.decl()，且 m** 能继续造
 ```
 
 通过前新版本只是候选。这是 1.7 "对个体冻结、对谱系可变"的落实，而"可变"的边界可以一直推到硬件。先把不变的做通，再让它变。
+
+---
+
+## 第 4 章 ABI 与 syscall（M1 实现约定）
+
+理论层到第 3 章为止。本章是工程约定，但必须与 1.7 的转移表和内容盲一致。
+
+### 4.1 账本行（介质）
+
+每个 channel 一个文件 `h/<name>.jsonl`，单写者（本机器的运行时），三种行：
+
+| k | 字段 | 谁写 |
+|---|---|---|
+| `msg` | `seq, from, to, body` | 运行时（成员的输出被拆成的消息；门抄来的消息；介质动作的返回） |
+| `place` | `seq, addr, kind, text, bind, in` | 运行时（介质动作"放 actor"；**带完整 text**；新 channel 的第一行） |
+| `step` | `seq, actor, upto, out, err` | 运行时（某 actor 被叫醒：看到哪、原样回了什么） |
+
+地址：本 channel 内 = actor 的序号（"1"…）；`from` 可以是 `door`（从膜外来、无对应门）、`place` / `spawn`（介质动作的返回）。
+
+### 4.2 程序 actor 的 ABI
+
+运行时用 `Exec.run(text, stdin=view)` 跑它。stdin 是 JSON：`{"channel", "me", "msgs": [{seq, from, to, body}…]}`（只含写给它、它没看过的）。stdout 原样进 `step.out`，再按下面的文法拆：
+
+```
+>>> <addr>                 后续各行是消息正文，发给本 channel 的 <addr>（含门）
+>>> place <channel> <kind> [in] [bind=a,b]   后续各行是 text；介质动作；需持有 bind=place
+>>> spawn <dir>            介质动作：Exec.spawn(init, dir)；需持有 bind=spawn
+```
+
+介质动作的返回以 `msg` 追加给调用者：`from=place, body="<channel>/<addr>"`；`from=spawn, body="<dir> pid=<n>"`。第一个 `>>>` 之前的文本忽略（仍在 step.out 里）。
+
+### 4.3 门与 Port
+
+门 actor 的 text 是目标：本机器的 channel 名，或 `file:<dir>#<channel>`（M1 的 Port 实现：文件）。写给门的消息：目标在本机器 → 追加到目标账本，`from` = 目标里指回来的门的地址（没有则 `door`），`to` = 目标的接待员；目标在外 → `Port.send`，落到对方的 `in/<channel>.jsonl`（无 seq 的收件箱），由对方运行时收进账本时编号。
+
+### 4.4 init
+
+`python init.py <P> [--serve]`：读 `G.json`；若无账本，把 `channels[0].members[0]` 放进 `channels[0].name`（接待员）；然后驱动到静止（`--serve`：静止后持续轮询收件箱）。init 不发消息；第一条消息从根门进来（`--kick "<text>"` 是创造者——人——经 Port 踢的那一脚）。
+
+### 4.5 syscall（写给 c0 接待员的请求）
+
+| 请求 | 做什么 |
+|---|---|
+| `realize [G 路径]` | 读 G，把除自己之外的所有成员 `place` 进各自 channel，按 peers 放门（每条连线两扇） |
+| `add <channel> <kind> [in] [bind=…]\n<text>` | 放一个 actor；channel 不存在则这就是它的第一行 |
+| `peer <a> <b>` | 放两扇互指的门 |
+| `spawn <name>` | （C actor）pack：把 omega/runtime/init 与 G 抄进 `spawn/<name>`；`Exec.spawn`；放一扇门指向子代；经门踢 `realize G.json` |
+
+回执：realize actor 把介质返回（`placed <channel>/<addr>`）转发给请求者。四条，没有删；逻辑删除待 c1。
