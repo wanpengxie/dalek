@@ -7,6 +7,46 @@ codex 审阅（2026-08-29）指出四个阻塞问题；1（运行时归包 P，�
 
 ## 第 0 章 公理与定义
 
+### 0.0 概念表与上下游
+
+| 符号 | 名字 | 是什么 | 死/活 | 谁产生 |
+|---|---|---|---|---|
+| **Ω** | 宿主 | Exec / Store / Port 三条契约（第 1 章） | — | 外面给的，不是 Dalek |
+| **R** | 运行时 | 四行转移表 + 账本 + 门（第 1½ 章） | 软件 | 随 P 携带；不在 G 里；对机器不可改 |
+| **G** | 描述（基因） | 一个 JSON：channels、members(kind, text, bind)、receptionist、peers | 死 | 初代：人写；之后：c1 从 H 折叠出（decl） |
+| **P** | 机器（包） | R + init + G 原样。自包含，Ω 能跑 | 死 | pack（B：抄，不读） |
+| **S** | 运行的机器（Space） | Ω.run(P) 得到的进程：R 驱动着一组 channel | 活 | Ω.run + 根门那一脚 + realize |
+| **H** | 账本（历史） | 每 channel 一本，三种行：place / msg / step | 死，只增 | R 在 S 运行时写 |
+
+S 里的三层：actor（kind + text + bind，行为）→ channel（账本 + 注册表 + 接待员 + 门，边界）→ space（S 本身，个体）。c0 / c1 / c2 是三个有角色的 channel：造（realize + C）、记（fold → decl）、写新描述。
+
+```
+                 decl = fold(H)          （c1：抄出当前形态，B 的另一半）
+        ┌──────────────────────────────────────┐
+        ▼                                      │
+        G ──pack──▶ P ──Ω.run──▶ S ──R 边跑边写──▶ H
+        │  (B: 抄)    (Ω)        ▲
+        │                        │ realize（c0，A：解释 G，逐个放 actor）
+        └────────────────────────┘
+                                 ▲
+                      kick：创造者经根门发第一条消息（人 → dalek0；C actor → dalek1）
+```
+
+| 箭头 | 输入 → 输出 | 谁做 | 读不读 G |
+|---|---|---|---|
+| pack | G → P | c0 的 C actor | 不读，抄 |
+| Ω.run | P → S（只有一个 actor 的种子） | Ω | 不读 |
+| kick | 创造者 → S 的第一条消息 | 人 / 父代 C actor | 正文就是 G |
+| realize | G → S 里的全部器官 | c0 的 realize actor | **读**：唯一解释 G 的地方 |
+| 写 H | S 的每一步 → H 的行 | R | — |
+| decl | H → G_t | c1 | 折叠 |
+| spawn | S → S′ | C actor = pack + Ω.run + kick | — |
+
+不变量：G 在 S 里有三个身影——P 里的 G.json、H 里的 place 行、c1 折叠出的文件——三者相等：`fold(H) == G₀ + 改动`。
+
+一句话：一台机器是一个 JSON；给它一个世界（Ω + R + init）和一脚，它把自己长成一个会写日记的 Space；日记能折回 JSON；JSON 能连同世界的拷贝交给下一个进程——于是有了下一台。
+
+
 ### 0.1 公理
 
 **一台机器是一个 Space，不是一个 channel。channel 是器官。**
