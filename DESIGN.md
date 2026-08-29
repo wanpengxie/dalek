@@ -255,16 +255,16 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 
 ---
 
-## 5. 创世、根门与 boot（2026-08-29 补，按用户表述）
+## 5. 创世、根门与 boot（2026-08-29 补，按用户表述；**已定为 M1 的实现版本**，取代 §1.1/§4 的 place 写法）
 
 **词汇固定**：runtime 的 **syscall** 是三个词——`channel.create(name)`、`actor.create(kind, text, bind) → actor`、`channel.add.actor(channel, actor[, in]) → addr`。`place` = 三者合成。c0 的 `add / build / spawn` 叫**请求**，是 syscall 上的程序。
 
 **创世**（被父代 spawn 出来）：
 1. Ω.run → 进程起来；2. 加载 runtime；3. 开一扇**根门**——不挂在任何 channel 上（还没有 channel），Space 级，handler = 三个 syscall：门那边送来的每一行当 syscall 执行、记进目标账本；4. 加载 boot。
 
-**现在的 boot（硬编码，先按此走）**：boot 自己经根门执行 `channel.create(c0)`、`actor.create(G.channels[0].members[0])`、`channel.add.actor(c0, 它, in)`，然后根门关闭构造 handler。→ 子代的 A 是世界放的，**H15 · A**。
+**旧 boot（硬编码，已废）**：boot 自己经根门执行 `channel.create(c0)`、`actor.create(G.channels[0].members[0])`、`channel.add.actor(c0, 它, in)`，然后根门关闭构造 handler。→ 子代的 A 是世界放的，**H15 · A**。
 
-**严谨版（目标）**：boot 只做一件事——把根门的 syscall handler 打开交给父代，做完后关闭。父代的 A（realize）读 G，经根门逐条发 syscall：先放一扇指回父代的普通门（出生证明，不在 G 里），再放 realize（in）、C、以及 G 里其余全部。父代的 C 经根门发 `start` → 根门关闭构造 handler → 从此只收消息，形态改动只经子代自己的 c0。
+**严谨版（已采用）**：boot 只做一件事——把根门的 syscall handler 打开交给父代，做完后关闭。父代的 A（realize）读 G，经根门逐条发 syscall：先放一扇指回父代的普通门（出生证明，不在 G 里），再放 realize（in）、C、以及 G 里其余全部。父代的 C 经根门发 `start` → 根门关闭构造 handler → 从此只收消息，形态改动只经子代自己的 c0。
 
 推论：
 - **关门的时刻 = start**。准静止有了操作定义：构造门开着时机器无消息；第一条消息一到门就关。"切离 = 什么都不用做"改为"切离 = 关构造门，由 start 顺带完成"。

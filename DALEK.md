@@ -248,12 +248,12 @@ m′.c1.decl() == m.c1.decl()
 3. ~~构造器住在哪~~ → 定：**构造器和复制器在描述里，是描述里的第一项。** 按冯诺依曼 E = D + I_D，I_D 描述的正是 A+B+C 自己。对应过来：构造器（c0，realize）和复制器（c1，decl）是描述里的两个普通成员，它们的描述就是它们的源码，与任何工具的程序文本同等地位。pack 下一台机器时，把这两段源码当成员文本从**描述里**抄进包——不特殊对待，不从自己运行中的代码取。这就是"描述被用两次"落在构造器自己身上。
    ~~dalek0 的基因因此只有：一个 channel `c0`，两个成员~~（历史方案，已被 M1 的 {c0, c1} 取代）。
 4. ~~一个包是一台 Space 还是一个 channel~~ → 由公理定：**一个包 = 一台机器 = 一个 Space**；描述里的多个 channel 都在这一个包里。由定义推出（未单独决定，可推翻）：一次 `Ω.run(机器)` 是一个进程，channel 是进程里的对象；进程之间只有机器与机器的关系，经网络。
-5. ~~启动（C）放哪~~ → 定：**C 住在 c0 里。** C 是一段普通程序：kind = 程序的成员，text 里写三步——`pack`、`Exec.spawn(P)`、经子代的根门踢一脚（"realize G"）。踢完，父代的义务即结束。它必须是描述里的成员，不能是外面的脚本，否则是宿主替机器繁殖。运行时不认识它，只在两处擦边：
-   - **能力绑定**：C 要 `spawn` 和 `Port` 的句柄。运行时内容盲地把 G 里为该成员声明的句柄绑给它（转移表第一行 `Exec.spawn` 的 bindings 参数），不知道它是 C。
-   - **子代的第一条消息从根门进来。** P 里除运行时外有一个 **boot**（旧称 init；几行，不认识 "c0"），只做两件事：起运行时；把 G 里**第一个** actor（约定：第一个 channel 的第一个成员）用"放 actor"放进它的 channel。boot 不发消息，只放这一个 actor——全放的话构造器就跑进世界里了，那是宿主替机器构造。
-     **boot 的本质**（本版）：起运行时、开根门、硬编码地放第一个 actor。严谨版里 boot 不放任何 actor，只把根门的 syscall handler 交给父代，父代的 A 经根门造子代的全部——见 DESIGN.md §5，H15。以下一段是本版的辩护，保留备查：A 造 A 的递归总要有一个不被造的底——"照描述放第一个 actor"这一步不能由描述里的东西做，因为做它的正是它要放的那个。boot 就是那个底；realize 是 A 的可描述部分。BIOS 之于引导扇区、内核之于 PID 1、母源因子之于合子基因组，同一个位置。它**不是 R 的一部分**：它是构造动作（读描述的形状），R 从不读描述、连 G 存在都不知道；它是初始条件，R 是规则。世界 = Ω + R + boot，三样都是不动点、都随 P 抄，但 R 是介质的不动点，boot 是构造器的不动点。
-   **根门**：每台机器的 c0 里有一扇初始门，对面是它的创造者——父代，或对 dalek0 而言是人。它是这台机器账本上第一条消息的来源。"创生来自外面"由此成为字面：每台机器的第一条消息都从根门进来，dalek0 由人踢，dalek1 由 dalek0 踢，形式相同。
-   **切离 = 什么都不用做。** 确认（问子代的 decl 是否等于 G）是观察，验收实验做，父代不需要做；根门留在子代的注册表里就是它对世界的口子，父代那一侧撤不撤是拓扑选择，不是义务。踢的消息可能比 boot 放 actor 先到——账本天然处理：消息落在账上，接待员出现后驱动器才投递。
+5. ~~启动（C）放哪~~ → 定：**C 住在 c0 里。** C 是普通程序 actor：pack → `Exec.spawn` → 把 G 交给本机的 A 经根门造子代 → 发 start。它必须是描述里的成员，不能是外面的脚本。
+   - **根门**是 Space 级的、属于 R、在任何 channel 之前存在，不在 G 里。它接受四个词：`channel.create`、`channel.add.actor`（含 actor.create）、`msg`。前三个造，`msg` 是第一条消息——启动，并顺手关门。**根门开着 ⇔ 账本里没有任何 msg 行**，由账本派生，无隐藏状态。
+   - **boot 不存在**：Ω.run 起 R，R 开着根门等。零行构造、零次读 G。
+   - **子代由父代的 A 造**：父代的 realize 读 G 的结构，把每一项写成 syscall 发给指向子代根门的门；子代账本的前 n 行就是 G。父代的 A 只搬运 text 不解释它——A 读结构不读内容。第一行是指回父代的普通门：出生证明，不在 G 里。
+   - **切离 = 关门 = start**，一个动作。门开着：形态由膜外的 A 决定，机器是被造的对象；门一关：形态只能经自己的 c0 改，机器成了主体。封闭性由此从"要守护的不变量"变成一次事件——出生。
+   - 构造期间机器机械地不动（没有 msg 行就没有 pending）：准静止是自动的。
 6. **内部原语还要不要**。旧模型里的 born / add / copy / peer / start 是运行时的 syscall；现在 pack 是纯函数、realize 在运行中做，这些词变成了什么？
 
 ---
@@ -264,53 +264,52 @@ m′.c1.decl() == m.c1.decl()
 
 **约定**：一台最小的机器 = Space { c0, c1 }，一条连线 c0–c1。按 0.1½ 的三层：c0、c1 是 channel，里面注册的 actor 才有代码。
 
-- **运行时 ≠ c0。** 运行时（第 1½ 章）驱动所有 channel，包括 c0。c0 是被驱动的器官，不是驱动者。
-- **c0 = 注册了两个 actor 和一扇根门的 channel**：**realize actor**（装配器：读 G 的结构节点，对每个成员调"放 actor"，按 peers 放门；绑定"放 actor"；是接待员）、**C actor**（起子代：pack → spawn → 经根门踢一脚；绑定 spawn 与 Port 句柄）、**根门**（对面是创造者；第一条消息从这里来）。造器官是确定的。c0 是唯一持有形态变更能力的 channel，仅因为这两个 actor 注册在它里面。
-- **c0 的请求集 = Dalek 的 syscall。** 任何形态改动——不管谁想改、改谁，包括一个 channel 想改自己——都是给 c0 发一条请求，c0 执行、c0 记账。Ω 不认识这些请求；它们是 Dalek 自己的系统调用。
-- **入账规则**：一条形态改动请求的本质是**三边同时记账**——被改的 channel 记一行（它的账本因此自足），c0 记一行（它做了这一步），c0 再经门给 c1 发一行（c1 由此知道）。
-- **c1 = 注册了登记 actor 的 channel。** 保持注册关系不掉——actor 的注册关系、channel 的连线关系。这张关系就是**配置**。c1 = **一次折叠 + 保存**：对**自己账本上**收到的形态改动折叠一遍得到配置，落成一个文件；`decl` = 把这个文件原样抄出。c1 不读别的账本（成员只能看自己的视图，偷看是隐藏能力）；一切形态改动都经 c0，c0 每做一次就给 c1 发一条，所以 c1 可从自己的账本重演。文件是派生物，不是私有状态。
-- 通用性落在 realize 的"任意合法类型的 channel"上；任意机器 = 种子 + 任意 G。
+- **运行时 ≠ c0。** R 驱动所有 channel，包括 c0。R 还带着一扇 Space 级的**根门**（在 channel 之前存在，不在 G 里）。
+- **R 的 syscall 三个词**：`channel.create(name)`、`actor.create(kind, text, bind)`、`channel.add.actor(channel, actor[, in])`。持有 `bind=syscall` 的 actor 可以在本机器内发；根门开着时膜外可以发。c0 的 `add / build / spawn` 叫**请求**，是 syscall 上的程序。
+- **c0 = 注册了两个 actor 的 channel**：**realize actor**（A：读 G 的结构，逐项发 syscall——本地生长，或经门造子代；接待员）、**C actor**（pack → spawn → 把 G 交给 realize 经门造 → start；绑定 spawn）。c0 是唯一持有形态变更能力的 channel，仅因为这两个 actor 注册在它里面。任何形态改动都是给 c0 的请求。
+- **入账规则**：一条形态改动**三边同时记账**——被改的 channel 记一行，c0 记一行，c0 再经门给 c1 发一行。
+- **c1 = 注册了登记 actor 的 channel**：对自己账本上收到的形态改动折叠一遍得到配置，落成文件；`decl` = 原样抄出 + 从 P 拼上 `world`。不读别的账本。文件是派生物。
+- 通用性落在 realize 的"任意合法 G"上；任意机器 = 世界 + 任意 G。
 
-**种子 = P = G 展开。** 里面只有 G.world 写成的文件和 G.json；c0、c1 的源码只在 G 里（作为 actor 的 text），由 boot 与 realize 放出来。这是 M1 最要紧的一条：子代的 c0 是**从 G 里造出来的**，不是从父代抄过来的。否则自复制就是纯拷贝——描述只被用了一次，和病毒一样（Langton 的判据）。
+**造另一台机器**（冯诺依曼的三步，一步不少）：
+1. `G = c1.decl()`（c1 落地前：P 里的 G.json）。
+2. **B** `P′ = pack(G)`：把 G.world 写成文件，G.json 放旁边。C actor 做。
+3. `Ω.run(P′)`：子代的 R 起来，根门开着，账本全空，等。
+4. **A** 父代的 realize 收到 `build <门> <父代地址>\n<G>`，经门逐条发 syscall：每个 channel `channel.create`；每个成员 `channel.add.actor`（text 逐字搬运，不解释）；每条 peers 两扇门；最后在第一个 channel 放一扇指回父代的门（出生证明）。子代账本前 n 行 = G。
+5. **C** 父代的 C actor 经根门发 `msg c0 start`：第一条消息，署名出生证明那扇门。**门关，切离。** 父代义务结束。
 
-**造另一台机器**（唯一路径：种子 + 描述 + 自发育）：
-1. `G = c1.decl()`：当前可遗传描述，原样。
-2. `P = pack(G)`：把 G.world 写成文件，G.json 放旁边。这是唯一写到机器外面的东西（B）。
-3. `Ω.run(P)`：运行时起来；boot 把 G 的第一个 actor（realize actor）放进 c0′。boot 不发消息。
-4. 父代的 C actor 经子代的根门踢一脚："realize G"。**踢完，父代的义务即结束。**
-5. realize actor 读 G，放其余 actor（C actor、c1′ 的登记 actor）、放门。子机器自己长出来。**同一份 G 的两次使用**：pack 不读地抄（B），boot + realize 读了当作 actor 放进去（A）。
+父代从不进入子代的进程；它只往子代的根门收件箱写行。子代的 realize 出生时无事可做——它是给以后生长和造孙代用的：造出来的 A 要能干父代 A 干的事。
 
-父机器从不伸手进子机器；踢完那一脚之后父子之间只剩根门。A（realize）、B（pack + decl）、C（pack → spawn → 踢）都在机器里。
+**同一份 G 的两次使用**：pack 抄（B，不读）；realize 读结构、搬 text（A）。父代账本上有发出的每一条 syscall，子代账本上有落地的每一条：复制在两边都可重演。
 
-非确定性不在 c0、c1 里；它只从后来长出的作者器官（LLM、人）进来。
+非确定性不在 c0、c1 里；只从后来长出的作者器官（LLM、人）进来。
 
-种子的 G：
+G（dalek0；根门与出生证明都不在 G 里）：
 ```
-{ channels: [ { name: c0, members: [ {kind: program, text: <realize 源码>, bind: [place]},
-                                     {kind: program, text: <C 源码>, bind: [spawn, port]},
-                                     {kind: door, text: <创造者的地址>} ],          // 根门
-                receptionist: 1 },
-              { name: c1, members: [ {kind: program, text: <登记 源码>} ], receptionist: 1 } ],
-  peers: [[c0, c1]] }
+{ world: { omega.py, runtime.py, init.py 的源码 },
+  channels: [ { name: c0, members: [ {kind: program, text: <realize 源码>, bind: [syscall]},
+                                     {kind: program, text: <C 源码>, bind: [syscall, spawn]} ],
+                receptionist: 1 } ],
+  peers: [] }
 ```
 
 验收：
 ```
-m′ = Ω.run(pack(m.c1.decl()))；m 经 m′ 的根门踢一脚
-m′.c1.decl() == m.c1.decl()                              复制闭合
+m 造 m′（上面五步）；m′.c1.decl() == m.c1.decl()                复制闭合
 改 G 里 realize 的 text 一处，父代不动，造 m′ → m′ 行为按改动变    子代是从 G 造的，不是抄的（非平凡）
-Ω.run(pack(G′))，G′ ≠ m.c1.decl()，其 c1.decl() == G′     是构造器，不是复印机
-杀掉 m，m′ 仍能造 m″                                     独立
-杀掉 m′ 的进程，只留运行时 + boot 与账本，重起后 c1.decl() 不变   配置可从账本恢复（机器不能只从账本恢复）
+m 造 G′ ≠ 自己的机器，其 decl() == G′                           是构造器，不是复印机
+杀掉 m，m′ 仍能造 m″                                          独立
+关门后经根门再发 channel.add.actor → 无效                       切离
+杀掉 m′ 的进程，只留 world 与账本，重起后 decl 不变              配置可从账本恢复
 ```
 
-**什么是只抄不解释的**：G.world = 运行时 + boot。运行时是介质（内容盲：换任何机器它的字节不变，所以它携带零比特关于这台机器的信息——抄它是安装世界，不是复制自己）；boot 是构造器的不动点，几行固定引导，只认识"第一个 actor"。它们在 G 里，可描述；但机器内无人读，对应转移规则里让构造臂开始动的那个信号。最干净的表述是两个动作：**安装世界**（Ω + 运行时 + boot，对宿主做一次）；**复制机器**（抄 G，从 G 造 c0，c0 从 G 造其余）。非平凡性只在第二步，也只在第二步检验。空白宿主测试把两步塞进一个包，是为了证明宿主没预装 Dalek 语义，不是为了证明非平凡。
+**什么是只抄不解释的**：G.world = R。内容盲，换任何机器它的字节不变，携带零比特关于这台机器的信息——抄它是安装世界，不是复制自己。世界（Ω + R）里没有任何一段知道 G 形状的代码；构造的递归在机器之间闭合，底是人：dalek0 由人经根门用同一套 syscall 造出来。
 
 Ω：Linux + python3 + 文件系统（M1 不需要网络）。
 
 ### 本版的不动点（定位）
 
-**G.world = 运行时 + boot**（可描述，但机器内无人读、只抄）本版不处理其变异，**作为当前理论的不动点**：R 是介质的不动点，boot 是构造器的不动点；两者是世界的版本的不动点，不是机器的版本的——同一个 world 服务所有 G。构造器（realize、C、登记 actor 的源码）在 G 里，改它们的 text 子代就变——机制上已经允许变异，本版只是**不验证**变异后的构造器是否仍是合法构造器。
+**G.world = R**（可描述，但机器内无人读、只抄）本版不处理其变异，**作为当前理论的不动点**：介质的不动点，世界的版本的不动点，不是机器的版本的——同一个 world 服务所有 G。构造器没有世界侧的不动点：递归的底是人造 dalek0。构造器（realize、C、登记 actor 的源码）在 G 里，改它们的 text 子代就变——机制上已经允许变异，本版只是**不验证**变异后的构造器是否仍是合法构造器。
 
 但这是本版选定的不动点，不是理论上的不动点。理论上没有东西是不动点：**c2 总是可以重新编码它们**——运行时和 c0、c1 都只是源码；再往下，连 Ω 的编译器本身也不是不动点：c2 可以在旧 Exec 上写出一个新的解释器 / 编译器，谱系可以整体迁到它上面（这正是编译器自举一路做到 hex0 的事）。路径都一样：写出新版本，pack 一个子代用新版本跑，用自举不动点验收：
 
@@ -328,51 +327,55 @@ m**.decl() == m*.decl()，且 m** 能继续造
 
 理论层到第 3 章为止。本章是工程约定，但必须与 1.7 的转移表和内容盲一致。
 
-### 4.1 账本行（介质）
+### 4.1 账本行
 
-每个 channel 一个文件 `h/<name>.jsonl`，单写者（本机器的运行时），三种行：
+每个 channel 一个文件 `h/<name>.jsonl`，单写者（本机器的 R），三种行：
 
 | k | 字段 | 谁写 |
 |---|---|---|
-| `msg` | `seq, from, to, body` | 运行时（成员的输出被拆成的消息；门抄来的消息；介质动作的返回） |
-| `place` | `seq, addr, kind, text, bind, in` | 运行时（介质动作"放 actor"；**带完整 text**；新 channel 的第一行） |
-| `step` | `seq, actor, upto, out, err` | 运行时（某 actor 被叫醒：看到哪、原样回了什么） |
+| `place` | `seq, addr, kind, text, bind, in, by` | R 执行 `channel.add.actor` 时；**带完整 text**；`by` = 发起者地址，或 `root`（经根门） |
+| `msg` | `seq, from, to, body` | 成员输出拆成的消息；门抄来的消息；syscall 的返回 |
+| `step` | `seq, actor, upto, out, err` | 某 actor 被叫醒：看到哪、原样回了什么 |
 
-地址：本 channel 内 = actor 的序号（"1"…）；`from` 可以是 `door`（从膜外来、无对应门）、`place` / `spawn`（介质动作的返回）。
+channel 的创建顺序记在 `h/_order`。`from` 可以是 `door`（膜外来、无对应门）或 syscall 名（返回）。
 
-### 4.2 程序 actor 的 ABI
+### 4.2 根门与收件箱
 
-运行时用 `Exec.run(text, stdin=view)` 跑它。stdin 是 JSON：`{"channel", "me", "msgs": [{seq, from, to, body}…]}`（只含写给它、它没看过的）。stdout 原样进 `step.out`，再按下面的文法拆：
+- `in/_root.jsonl`：Space 级根门。**开着 ⇔ 所有账本无 msg 行。** 开着时接受 `channel.create <name>`、`channel.add.actor <channel> <kind> [in] [bind=…]\n<text>`（by=root）、`msg <channel>\n<body>`（追加给该 channel 的接待员，署名匹配的门或 `door`；**这一条关门**）。关门后根门的行全部忽略。
+- `in/<channel>.jsonl`：channel 级收件箱，只收 `{from, body}` → msg 给接待员。
+
+### 4.3 程序 actor 的 ABI
+
+stdin：`{"channel", "me", "msgs": [{seq, from, to, body}…]}`。stdout 原样进 `step.out`，按行首 `>>> ` 拆：
 
 ```
->>> <addr>                 后续各行是消息正文，发给本 channel 的 <addr>（含门）
->>> place <channel> <kind> [in] [bind=a,b]   后续各行是 text；介质动作；需持有 bind=place
->>> spawn <dir>            介质动作：Exec.spawn(init, dir)；需持有 bind=spawn
+>>> <addr>                                          消息，发给本 channel 的 <addr>（含门）
+>>> channel.create <name>                           syscall；需 bind=syscall
+>>> channel.add.actor <channel> <kind> [in] [bind=…]  syscall（含 actor.create）；后续各行是 text；需 bind=syscall
+>>> spawn <dir>                                     Ω 动作：Exec.spawn(init, dir)；需 bind=spawn
 ```
 
-介质动作的返回以 `msg` 追加给调用者：`from=place, body="<channel>/<addr>"`；`from=spawn, body="<dir> pid=<n>"`。第一个 `>>>` 之前的文本忽略（仍在 step.out 里）。
+返回以 msg 追加给调用者：`from=channel.create body=<name>`；`from=channel.add.actor body=<channel>/<addr>`；`from=spawn body="<dir> pid=<n>"`。跨膜没有返回（根门单向）。
 
-### 4.3 门与 Port
+### 4.4 门与 Port
 
-门 actor 的 text 是目标：本机器的 channel 名，或 `file:<dir>#<channel>`（M1 的 Port 实现：文件）。写给门的消息：目标在本机器 → 追加到目标账本，`from` = 目标里指回来的门的地址（没有则 `door`），`to` = 目标的接待员；目标在外 → `Port.send`，落到对方的 `in/<channel>.jsonl`（无 seq 的收件箱），由对方运行时收进账本时编号。
+门 actor 的 text 是目标：本机器的 channel 名，或 `file:<dir>#<box>`（box = `_root` 或 channel 名）。写给门的消息：目标在本机器 → 追加到目标账本；目标在外 → `Port.send` 落到对方收件箱。
 
-### 4.4 boot（代码里暂名 init.py；world 尚未落成 G 的根字段，代码里 R/boot 还是 P 里独立的文件——待改）
+### 4.5 init.py = R 的入口
 
-`python init.py <P> [--serve]`：读 `G.json`；若无账本，把 `channels[0].members[0]` 放进 `channels[0].name`（接待员）；然后驱动到静止（`--serve`：静止后持续轮询收件箱）。boot 不发消息；第一条消息从根门进来（`--kick "<text>"` 是创造者——人——经 Port 踢的那一脚）。
+`python init.py <P> [--serve]`：起 R，折叠已有账本，驱动；`--serve` 静止后持续轮询收件箱。不读 G。
 
-### 4.5 syscall（写给 c0 接待员的请求）
+### 4.6 c0 的请求
 
-| 请求 | 做什么 |
+| 请求（写给 realize） | 做什么 |
 |---|---|
-| `realize [G 路径]` | 读 G，把除自己之外的所有成员 `place` 进各自 channel，按 peers 放门（每条连线两扇） |
-| `add <channel> <kind> [in] [bind=…]\n<text>` | 放一个 actor；channel 不存在则这就是它的第一行 |
-| `peer <a> <b>` | 放两扇互指的门 |
-| `spawn <name>` | （C actor）pack：把 omega/runtime/init 与 G 抄进 `spawn/<name>`；`Exec.spawn`；放一扇门指向子代；经门踢 `realize G.json` |
+| `build <门> <创造者地址>\n<G>` | 经门逐条发 syscall 造一台机器；最后放出生证明门；回 `built <门>` |
+| `add <channel> <kind> [in] [bind=…]\n<text>` | 本地：`channel.create`（幂等）+ `channel.add.actor` |
+| `peer <a> <b>` | 本地两扇门 |
+| `spawn <name>`（写给 C） | pack → spawn → 放两扇门（根门、c0）→ `build` 交给 realize → `msg c0 start` |
 
-回执：realize actor 把介质返回（`placed <channel>/<addr>`）转发给请求者。四条，没有删；逻辑删除待 c1。
+### 4.7 实现状态（2026-08-29，晚）
 
-### 4.6 实现状态（2026-08-29）
+按 §2.2.5 / M1 / DESIGN.md §5 的版本重写：`runtime.py`（转移表三行 + syscall 两词 + Space 级根门，`root_open` 由账本派生；place 行带 `by`；消息正文逐字节保留）、`init.py`（R 的入口，不读 G）、`actors/realize.py`（A：`build` 经门造整台机器，`add / peer` 本地生长）、`actors/spawn.py`（C：pack → spawn → 两扇门 → 把 G 交给 realize → `msg c0 start`）、`genesis.py`（人侧的 A + B：dalek0 由人经根门用同一套 syscall 造）。T1–T7 绿：T4 验证构造期间机械不动、start 关门、关门后根门无效；T7 验证子代全部 place 行 `by=_root`、出生证明指回父代、第一条消息署名出生证明门、父代对象销毁后子代已切离且活着。
 
-`omega.py`（Exec / Store / Port 文件收件箱）、`runtime.py`（四行转移表；内容盲，T6 用改名同构检验）、`init.py`（只放第一个 actor，不发消息；`--kick` 是创造者那一脚）、`actors/realize.py`（A：realize / add / peer；placed 回执经便签转发给请求者）、`actors/spawn.py`（C：pack → spawn → 放门 → 踢）、`genesis.py`（dalek0 的 G）。`t/test_c0.py` T1–T7 绿；T7 里子代在独立进程自发育、父代对象销毁后子代账本完整。
-
-与理论的偏差，明天要收：c1 还没有，所以 pack 抄的是 P 里的 G 而不是 `c1.decl()`；`spawn` 请求只能由 c0 内部的 actor 发给 C actor（外来消息只到接待员）；oracle kind 只有测试用的回调，没有 LLM / 人的端点；没有 replay。
+仍开着的洞（DESIGN.md §3）：H3（外来请求只到接待员，`spawn` 只能由 c0 内部发给 C）、H4（无 c1，pack 抄 P 里的 G）、H5/H7（C actor 用文件系统 pack；程序 actor cwd = P）、H6（收件箱偏移在进程内存）、H9（oracle 端点）、H10（崩溃语义）。H1、H2、H15 已由本版消除。
