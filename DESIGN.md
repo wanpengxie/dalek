@@ -41,87 +41,87 @@
 
 ---
 
-## 2. 运行时的完整定义
+## 2. 运行时的完整定义（M3.3，2026-08-31 同步；旧的 Exec.run / 视图 / 批量 pending 模型见 git 历史）
 
 ### 2.1 状态
 
 ```
-S = (order, {name → Ledger}, {name → inbox_offset})
+S = (order, {name → Ledger})
 Ledger = 行的序列，seq 从 1 严格递增，单写者（本机器的运行时进程）
 ```
 
-行（三种，字段闭集）：
+行（四种，字段闭集）：
 
 ```
-place  {seq, k:"place", addr, kind ∈ {program, oracle, door}, text, bind ⊆ {place, spawn}, in: bool}
-msg    {seq, k:"msg",   from, to, body}      from ∈ 地址 ∪ {door, place, spawn}
-step   {seq, k:"step",  actor, upto, out, err}
+place  {seq, k:"place", addr, kind ∈ {program, oracle, door}, text, bind ⊆ {syscall, spawn, stop}, in: bool, by, tag?, iface?, at?}
+retire {seq, k:"retire", addr}
+msg    {seq, k:"msg",   from, to, body, run?, at?, by?}     from ∈ 地址 ∪ {0, door, channel.*, spawn, stop}
+step   {seq, k:"step",  actor, upto, out, err, run?}
 ```
 
-派生量（全部由行折叠得到，无别的状态）：
+派生量（全部由行折叠得到）：
 
 ```
-actors(c)        = 按 seq 折叠 place 行：addr → (kind, text, bind)；addr = 该 channel 第 n 条 place 的 n
-receptionist(c)  = 最后一条 in=true 的 place 的 addr；若无，第一条 place 的 addr
-cursor(c, a)     = 该 actor 最后一条 step 的 upto；无则 0
-pending(c, a)    = {msg 行 : to = a, seq > cursor(c, a)}
-door_to(c, x)    = c 里 text = x 的 door 的 addr（可无）
+actors(c)        = 按 seq 折 place / retire：addr → (kind, text, bind, tag, iface, retired, fn)；addr = 该 channel 第 n 条 place 的 n
+receptionist(c)  = 最后一条 in=true 的 place 的 addr；没有就没有
+holder(c, tag)   = tag 相同、未退役、最后放的成员（角色解析）
+cursor(c, a)     = 该 actor 最后一条不带 run 的 step 的 upto；无则 0
+pending(c, a)    = {msg 行 : to = a, 不带 run, seq > cursor(c, a)}
+offset(box)      = 带 at 的行里最大的 at（该收件箱读到哪）
+fn(a)            = place 行折到时实例化一次：program → Exec.load(text, {call, me, channel})；oracle / door → 介质的函数体；retire 折到时丢弃
 ```
 
-`order`（channel 创建顺序）和 `inbox_offset` 不在账本里——见第 3 节 H1、H12。
+`fn` 是常驻函数；它里面的东西（globals、对话、中间值）**不是状态**：H 记的是 call 边界（2.2）。重启 = 重新折叠 = 重新实例化，是一个事件（入账归 M4，H10）。`order` 不在账本里——见 H12。
 
-### 2.2 事件与转移
+### 2.2 调用与转移
 
-事件 = `pending(c, a) ≠ ∅`。转移 `step(c, a)`，令 `msgs = pending(c, a)`，`upto = max seq`：
-
-```
-door:     对每条 m: deliver(text(a), m.body)；追加 step(a, upto, "", "")
-program:  (out, err) = Exec.run(text(a), stdin = view)；追加 step(a, upto, out, err)；
-          对 parse(out) 的每条 (head, body) 依次 execute
-oracle:   同 program，但 out 来自 Ω 侧端点（M1 未定义端点，见 H9）
-```
+事件 = `pending(c, a) ≠ ∅`，取最早一条 m。转移 `invoke(c, a, m)`：
 
 ```
-view               = {"channel": c, "me": a, "msgs": msgs 的 (seq, from, to, body)}
-parse(out)         = 以行首 ">>> " 切分；第一段之前的文本忽略
-execute(head, body):
-  head = "place ch kind [in] [bind=x,y]" ∧ place ∈ bind(a)  → place 动作
-  head = "spawn dir"                    ∧ spawn ∈ bind(a)  → spawn 动作
-  head ∈ actors(c)                                        → 追加 msg(from=a, to=head, body)
-  其他                                                    → 无效果
-deliver(target, body):
-  target ∈ channels ∧ receptionist(target) 存在 → 在 target 追加 msg(from = door_to(target, c) ∨ "door", to = receptionist(target), body)
-  target ∉ channels                             → Port.send(target, {from: "file:<P>#<c>", body})
-  否则                                          → 无效果
-inbox(c):  对 in/<c>.jsonl 新行 {from, body}：receptionist(c) 存在时追加 msg(from = door_to(c, from) ∨ "door", to = receptionist(c), body)
+invoke(a, m):    reply = fn(a)(m)，m = {seq, from, to, body, channel}；期间 a 的每次 call(head, body) 依次 dispatch
+                 追加 step(a, upto = m.seq, out = 各次 call 的帧 + ">>> re\n<reply>\n<<<", err)
+                 事件：reply 非空 → dispatch(a, m.from, reply)（送回发送者；门则出去；不记帧）
+                 嵌套（caller 存在）：step 带 run；reply 非空 → 追加 msg(a → caller, reply, run)；返回 reply
+dispatch(a, head, body):
+  head = "0", body = "show [a] [b]" | "who"        → 追加 msg(0 → a, body, run)；返回行 / 成员表（内容可重算，不入账）
+  head = "channel.* …" ∧ syscall ∈ bind(a)         → 执行；追加 msg(head → a, 回执, run)；返回回执
+  head = "<动词> <参数>" ∧ 动词 ∈ bind(a)           → 执行；追加 msg(动词 → a, 结果, run)；返回结果
+  head 解析为成员 t（序号，或角色 → holder）          → 追加 msg(a → t, body, run)；t 退役则返回 ""，否则返回 invoke(t, 该行, caller = a)
+  其他                                             → 返回 ""（丢弃）
+fn(door)(m):     Port.send(text, {from: 本 channel 的端点, body})；返回 ""
+fn(oracle)(m):   组装 call("0","show") + call("0","who") + m → Port.request(端点, 提示语, 对话) 多轮：
+                 每轮 parse(out) 的帧依次 call，回复喂回下一轮；帧 re → 返回其正文；无帧 → 返回 ""。端点的回话是 run 里面的值，不入账
+inbox(c):        收件箱新行 {from, body} @at → receptionist(c) 存在时追加 msg(from = 指回 from 的门 ∨ "door", to = receptionist, body, at)
 ```
+
+`run` = 当前事件的 seq，一次事件里追加的每一行都带它；只有事件推游标。调用是嵌套的（调用栈），可重入；名字在调用那一刻解析，所以先放的用得了后放的。
 
 ### 2.3 调度
 
 ```
 loop:
   inbox 全部 channel
-  对每个 channel（按 order）：取 pending 非空且最早未读 seq 最小的 actor，step 一次
-  一轮无人 step → 静止；serve 模式则轮询收件箱后继续
+  对每个 channel（按 order）：取 pending 非空且最早消息 seq 最小的 actor，invoke 一次
+  一轮无人 invoke → 静止；serve 模式则轮询收件箱后继续
 预算（max_steps）是宿主的事
 ```
 
-一个 step 内追加的行（便签、介质返回）seq > upto，因此出现在该 actor 的下一次视图里。这是 actor 唯一的跨步记忆。
+actor 跨调用的记忆是账本（`call("0", …)`）；fn 里存的东西活不过重启，不算记忆。
 
 ### 2.4 不变量
 
 | | 不变量 | 靠什么 |
 |---|---|---|
 | I1 | 每本账单写者，seq 严格递增 | 运行时进程是唯一写者；外来消息只经收件箱 |
-| I2 | actor 的每次动作都在它的账本上（step），每个效果都在目标账本上（msg / place） | 转移定义 |
-| I3 | `G = fold(place 行)`：place 行带完整 text | place 行的定义 |
+| I2 | actor 的每次调用都在它的账本上（step），每次 call 都是两行 msg（请求、返回），每个放入/退役都是一行 | 转移定义 |
+| I3 | `A = fold(place / retire 行)`：place 行带完整 text、bind、tag、iface | place 行的定义 |
 | I4 | 内容盲：运行时源码无组织词汇；G 全部改名后账本同构 | T6 |
-| I5 | 确定性：给定账本 + 收件箱内容 + actor 的输出，追加的行序列唯一 | 调度只依赖账本状态 |
-| I6 | 膜：actor 只能写本 channel 的地址；出去只经门；进来只经收件箱 → 接待员 | execute / inbox 定义 |
+| I5 | 确定性：给定账本 + 收件箱内容 + 各 fn 在 call 边界上的行为（返回值、call 序列），追加的行序列唯一 | 调度只依赖账本状态 |
+| I6 | 膜：actor 只能 call 本 channel 的地址；出去只经门；进来只经收件箱 → 接待员 | dispatch / inbox 定义 |
 
 ### 2.5 运行时明确不做的
 
-不删、不改已有行、不检查权限（只看 bind 标志）、不路由、不重试、不认识时间、不读 G、不认识任何名字。
+不删、不改已有行、不检查权限（只看 bind 标志）、不路由、不重试、不认识时间、不读 G、不认识任何名字、不隔离、不限时。
 
 ---
 
@@ -141,13 +141,13 @@ loop:
 
 **H6 · B · 收件箱偏移是进程内存。** 关闭（M3.2）：收进来的行带 `at`（该收件箱行之后的字节偏移），R 折叠账本时把各收件箱的偏移折出来；重起不重收。
 
-**H7 · B · 程序 actor 的沙箱。** `Exec.run` 的 cwd 是 P，actor 能读写任何文件（账本、G）。理论上 actor 只有 stdin/stdout。定法：cwd 是空的临时目录；文件访问只经 `store` 句柄。
+**H7 · B · 程序 actor 的沙箱。** 程序在 R 进程内跑，cwd 是 P，actor 能读写任何文件（账本、G）。理论上 actor 只有 stdin/stdout。定法：cwd 是空的临时目录；文件访问只经 `store` 句柄。
 
 **H8 · B · 消息给不存在的地址。** 现在静默丢弃。定为规则（已写入 1.1），并考虑给发送者一条 `from=runtime` 的错误消息——但那会引入运行时开口说话，倾向不加。
 
-**H9 · B · oracle 的端点。** 关闭（M3.0，2026-08-30）：text 第一行 `<url> <model> <key>`，其余提示语；R 调 `Port.request(text, 视图)`，Port 讲 Anthropic messages 报文；失败同 Exec.run。见 DALEK 1.7（oracle 与门的区分）与 4.8。
+**H9 · B · oracle 的端点。** 关闭（M3.0，2026-08-30）：text 第一行 `<url> <model> <key>`，其余提示语；R 调 `Port.request(text, 视图)`，Port 讲 Anthropic messages 报文；失败记 err。见 DALEK 1.7（oracle 与门的区分）与 4.8。
 
-**H10 · B · 崩溃语义。**（进程一半已做：`Exec.run` 超时或非零退出 → 输出视为空、err 记原因，step 行照写、游标照推——actor 的失败不是机器的失败，T16。剩下的是 R 在一步之中崩溃（step 行已写、动作只执行了一半），归 M4。）
+**H10 · B · 崩溃语义。** 一半已做：actor 抛异常 / 实例化失败 → 返回空、err 记原因，step 行照写、游标照推（器官的失败不是机器的失败，T16）。剩下归 M4：R 在一次事件中间崩溃（行写了一半）；以及**重启本身入账**——重新折叠 = 重新实例化，actor 的内部状态归零，这要在 H 里可见（DALEK 1.7 性质与实现，2026-08-31）。
 
 **H11 · B · 运行时的"返回消息"是伪发送者。** `from ∈ {place, spawn}` 不是地址。要写进 ABI：视图里的 from 可能是介质词。
 
@@ -282,11 +282,11 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 | R 拒绝退役当前接待员 | `runtime.retire` | 接待员先换再退 |
 | syscall 的回执就是回复（同一次运行），失败回 `refused` | `runtime._dispatch` | 介质约定（ABI）：请求有回复 |
 | 登记员只认来自本机门（含退役）的 born/placed/retired | `registrar.py` | 登记处记 c0 的宣称；信任本机 |
-| 视图里门带 `local`；登记员 = 第一扇 local 门那边 | `runtime.step` / `realize.py` | c0 与 c1 有一条连线（G 的第一条连线） |
-| oracle 组装时带成员表（工具列表） | `runtime._run_oracle` | 运行中能请求的地址 = 它的能力面；程序靠角色不需要表 |
-| 0 的回复是全量行；oracle 组装读 1..当前 | `runtime._dispatch` / `runtime._run_oracle` | 读账本是介质的地址 0，对全部成员开放；oracle 的读在转移行里（理论）。全量还是句柄、读多长是工程 |
-| actor 是常驻函数：放入时 `exec` 一次，globals 里能存东西，不拦 | `runtime._instantiate` | "运行之间无私有状态"是性质，靠约定保持；想活过重启的东西写进账本 |
-| 程序在 R 进程内跑：没有隔离、没有超时；oracle 最多 16 轮 | `omega.Exec.load` / `runtime` | Ω 是契约边界不是进程边界；隔离与上限是工程（不要） |
+| 交出的门行带 `local`；登记员 = 第一扇 local 门那边 | `runtime._annot` / `realize.py` | c0 与 c1 有一条连线（G 的第一条连线） |
+| oracle 组装时带成员表（工具列表） | `runtime._oracle` | 运行中能请求的地址 = 它的能力面；程序靠角色不需要表 |
+| 0 的回复是全量行；oracle 组装读 1..当前 | `runtime._dispatch` / `runtime._oracle` | 读账本是介质的地址 0，对全部成员开放；oracle 的读在转移行里（理论）。全量还是句柄、读多长是工程 |
+| actor 是常驻函数：放入时 `exec` 一次，globals 里能存东西，不拦 | `runtime._instantiate` | H 记 call 边界，内部状态不入账；实例化是 H 中的事件（重启入账归 M4）。想活过重启的东西自己从账本重建 |
+| 程序在 R 进程内跑：没有隔离、没有超时；oracle 最多 16 轮；oracle 的模型原文不入账 | `omega.Exec.load` / `runtime._oracle` | Ω 是契约边界不是进程边界；隔离与上限是工程（不要）。oracle 是完整 actor，端点回话在它的 run 里面（DALEK 1.4） |
 | 帧语法只给 oracle：`>>> 地址` 起、单独一行 `<<<` 收；正文不能含单独一行 `<<<` | `runtime.parse` | LLM 要能拼写 call；用什么记号是工程 |
 | 程序的 cwd = P（每次事件 `os.chdir`） | `runtime._invoke` | C 用文件系统 pack（H5/H7）；工程 |
 | 角色解析：后放的活成员接替 | `runtime._resolve` | 形态里的名字指向当前持有者；升级约定 |
