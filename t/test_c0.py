@@ -16,6 +16,7 @@ T12 形态闭包与拒绝；T13 回执稠密（拒绝也占一位）；T14 跨 c
 T16 actor 超时/崩溃机器不死；T17 start/born 只一次
 T18 c2 = L(oracle) + U(program)：task → L 写 → U 测（失败）→ L 改 → U 通过 → 经 c0 的门 add c3 → decl 有 c3 → 回 done；L 的历史含自己说过的
 T19 oracle 端点不通：输出视为空、err 记原因，机器活着
+T20 账本是地址 0：show 全部/窗口；账上只记事实行；带内 == 膜外；0 不是成员
 """
 from __future__ import annotations
 import json, re, sys, tempfile, time, traceback
@@ -450,17 +451,24 @@ class StubL:
 
     @staticmethod
     def answer(v):
+        """固定策略：没看账就先看；看到账再按最新事件行动。"""
+        shown = next((m for m in v["msgs"] if m["from"] == "0"), None)
+        if not shown:
+            return ">>> 0\nshow"
+        rows, me = shown["rows"], v["me"]
+        prev = max((r["seq"] for r in rows if r["k"] == "msg" and r["from"] == "0" and r["to"] == me), default=0)
+        events = [r for r in rows if r["k"] == "msg" and r["to"] == me and r["from"] != "0" and r["seq"] > prev]
         U = next(a["addr"] for a in v["actors"] if a["kind"] == "program")
         door = next(a["addr"] for a in v["actors"] if a["kind"] == "door" and a["text"] == "c0")
         out = []
-        for m in v["msgs"]:
+        for m in events:
             b = m["body"]
             if b.startswith("task\n"):
                 out.append(f">>> {U}\ntest\n{HELLO_BAD}\n===\n{HELLO_T}")
             elif b.startswith("result ") and not b.startswith("result 0"):
                 out.append(f">>> {U}\ntest\n{HELLO}\n===\n{HELLO_T}")
             elif b.startswith("result 0"):
-                asker = next(h["from"] for h in v["history"] if h["body"].startswith("task\n"))
+                asker = next(r["from"] for r in rows if r["k"] == "msg" and r["body"].startswith("task\n"))
                 out.append(f">>> {door}\nadd c3 program in\n{HELLO}\n>>> {asker}\ndone\nc3 已装")
         return "\n".join(out)
 
@@ -485,12 +493,16 @@ def test_T18_c2_is_an_agent():
         assert c2.actors["1"].kind == "oracle" and c2.receptionist == "1" and c2.actors["3"].text == "c0"
         rt.msg("c2", "door", "1", "task\n写一个 actor：收到 hi 回 hello，装进 c3"); rt.run()
         steps = [r for r in rows(rt, "c2", "step") if r["actor"] == "1"]
-        assert len(steps) == 4 and all(r["err"] == "" for r in steps)                              # L 走了四步：写、改、交、收 placed（没话说）
-        assert steps[-1]["out"] == "" and steps[-2]["out"].startswith(">>> 3\nadd c3 program in\n")
+        assert all(r["err"] == "" for r in steps)
+        said = [r["out"] for r in steps if r["out"]]
+        assert [o.startswith(">>> 0\nshow") for o in said] == [True, False] * 3 + [True]           # 每个事件两步：先看账，再行动；placed 看完没话说
+        assert said[1].startswith(">>> 2\ntest\n") and said[3].startswith(">>> 2\ntest\n")
+        assert said[5].startswith(">>> 3\nadd c3 program in\n") and ">>> door\ndone" in said[5]
         results = [m["body"] for m in rows(rt, "c2", "msg") if m["from"] == "2"]
         assert len(results) == 2 and not results[0].startswith("result 0") and results[1].startswith("result 0")   # U：先败后通过
-        assert ">>> door\ndone" in steps[-2]["out"]                                                 # 回任务发起者
         assert any(m["from"] == "3" and m["body"].startswith("placed c3/1") for m in rows(rt, "c2", "msg"))   # c0 的回执从门回来
+        reads = [m for m in rows(rt, "c2", "msg") if m["from"] == "0"]
+        assert len(reads) == 4 and all(m["body"].startswith("show 1 ") and "rows" not in m for m in reads)   # 读账在账上：只记事实
         c3 = rt.channels["c3"]
         assert c3.actors["1"].text == HELLO and c3.receptionist == "1" and rows(rt, "c3", "place")[0]["by"] == "1"   # c0 的手装的
         D = decl_of(rt)
@@ -499,9 +511,12 @@ def test_T18_c2_is_an_agent():
         rt.msg("c3", "door", "1", "hi"); rt.run()
         assert rows(rt, "c3", "step")[-1]["out"] == ">>> door\nhello\n"                              # 新器官在工作
         system, last = L.views[-1]
-        assert system.startswith("你是一台机器") and "history" in last                                # 提示语 + 历史
-        assert any(h["from"] == "1" and "test\n" in h["body"] for h in last["history"])             # 历史含自己上一轮说的
-        assert all(not l.startswith(">>> ") for h in last["history"] if h["from"] == "2" for l in h["body"].splitlines())   # U 的输出没有动作行
+        assert system.startswith("你是一台机器") and "history" not in last                            # 提示语；视图里没有历史字段
+        got = next(m for m in last["msgs"] if m["from"] == "0")["rows"]
+        disk = [json.loads(l) for l in (P / "h" / "c2.jsonl").read_text(encoding="utf-8").splitlines()]
+        assert got == disk[:len(got)] and got[-1]["seq"] == int(got and next(m for m in last["msgs"] if m["from"] == "0")["body"].split()[2])   # 带内看到的 = 膜外看到的
+        assert any(r["k"] == "step" and r["actor"] == "1" and "test\n" in r["out"] for r in got)      # 含自己上一轮说的
+        assert any(r["k"] == "place" for r in got) and any(r["k"] == "step" and r["actor"] == "2" for r in got)   # 整本账：放人、U 的步都在
     finally:
         L.close()
 
@@ -515,6 +530,27 @@ def test_T19_oracle_endpoint_down_machine_alive():
     assert rt._pending(rt.channels["c2"], "1") == []                                                  # 游标照推，机器静止
     rt.msg("c0", "door", "1", "add y program in\n" + ECHO); rt.run()
     assert "y" in rt.channels                                                                          # 别的器官照常工作
+
+PEEK = ('import sys, json\nv = json.load(sys.stdin)\n'
+        'for m in v["msgs"]:\n'
+        '    if m["from"] == "0": print(">>> door\\nsaw %d %s" % (len(m["rows"]), " ".join(r["k"] for r in m["rows"])))\n'
+        '    elif m["body"].startswith("peek"): print(">>> 0\\nshow " + m["body"][4:])')
+
+
+def test_T20_ledger_is_address_zero():
+    G = G_of([{"name": "c0", "members": [{"kind": "program", "text": PEEK}]}])
+    rt, P = fresh(G, creator=None); start(P, G); rt.run()
+    c0 = rt.channels["c0"]
+    rt.msg("c0", "door", "1", "peek"); rt.run()                                       # 全部
+    fact = [m for m in rows(rt, "c0", "msg") if m["from"] == "0"]
+    assert len(fact) == 1 and fact[0]["body"] == f"show 1 {fact[0]['seq'] - 1}" and "rows" not in fact[0]   # 账上只有事实行
+    n = fact[0]["seq"] - 1
+    assert rows(rt, "c0", "step")[-1]["out"].startswith(f">>> door\nsaw {n} place msg step msg")           # 拿到了整本账（放人、start、自己的步、peek）
+    rt.msg("c0", "door", "1", "peek 2 3"); rt.run()                                   # 窗口
+    assert rows(rt, "c0", "step")[-1]["out"] == ">>> door\nsaw 2 msg step\n"
+    disk = [json.loads(l) for l in (P / "h" / "c0.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r["seq"] for r in disk] == list(range(1, len(disk) + 1)) and disk == c0.rows            # 膜外的账 = R 的账
+    assert "0" not in c0.actors and all(r["addr"] != "0" for r in rows(rt, "c0", "place"))         # 0 不是成员
 
 if __name__ == "__main__":
     ok = 0; names = sorted(n for n in dir() if n.startswith("test_"))

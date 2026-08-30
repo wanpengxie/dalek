@@ -32,7 +32,7 @@ def G0() -> dict:
              "receptionist": 1},
             {"name": "c1",
              "members": [
-                 {"kind": "program", "text": src("actors/registrar.py"), "bind": ["ledger"]},
+                 {"kind": "program", "text": src("actors/registrar.py")},
              ],
              "receptionist": 1},
         ],
@@ -46,7 +46,7 @@ def G2() -> dict:
     G["channels"].append(
         {"name": "c2",
          "members": [
-             {"kind": "oracle", "text": src("actors/l.txt"), "bind": ["ledger"]},
+             {"kind": "oracle", "text": src("actors/l.txt")},
              {"kind": "program", "text": src("actors/u.py")},
          ],
          "receptionist": 1})

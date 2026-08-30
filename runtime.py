@@ -3,14 +3,16 @@
 状态    每个 channel 一本只追加的账本（h/<name>.jsonl，四种行 place / retire / msg / step）+ 每个 actor 一个游标。
         全部由账本折叠重建；进程里只另记各收件箱读到的字节偏移。
 事件    某本账上多了一条写给某地址的消息。
-视图    {channel, me, msgs: 写给我且没看过的消息, actors: 本 channel 成员表（addr/kind/bind/in/retired，门带 text 与 local）,
-         history: 写给我的全部消息 + 我自己每步说过的（仅 bind=ledger；按 seq 排）}
+视图    {channel, me, msgs: 写给我且没看过的消息, actors: 本 channel 成员表（addr/kind/bind/in/retired，门带 text 与 local）}
+        投递给我的消息 + 地址簿，没有别的。账本要问地址 0（见动作）；来自 0 的消息投递时附 rows。
 转移表（按被写到的 actor 的 kind；退役的不排步）
   program   视图 → Exec.run(text, 视图) → stdout 原样记 step，按 ">>> " 拆成动作
   oracle    视图 → Port.request(text, 视图)（text 第一行是端点，其余随视图一起送）→ 同上
   door      每条消息原样 Port.send 到 text 所指的端点，署名本 channel 的端点
 动作（program / oracle 输出的每一段）
   >>> <addr>                                                 消息给本 channel 的 <addr>
+  >>> 0                                                      写给账本 = 读账本（介质的读地址，人人可用，不需绑定）：
+      show [a] [b]                                           账上记事实行 msg from=0 body="show a b"；投递给发起者时该条附 rows=第 a–b 行
   >>> channel.create <name>                                  syscall；需 bind=syscall
   >>> channel.add.actor <channel> <kind> [in] [bind=…] + text  syscall；需 bind=syscall
   >>> channel.retire.actor <channel>/<addr>                  syscall：退役（追加 retire 行，不再排步，地址不复用）；需 bind=syscall
@@ -48,7 +50,8 @@ def _stop(P: Path, arg: str) -> str:
 
 
 ACTIONS: dict[str, Callable[[Path, str], str]] = {"spawn": _spawn, "stop": _stop}   # 可绑定的 world 动词：spawn 知道 loader 协议（init.py <P> --serve），这是 world 知道自己的布局
-BINDS = ("syscall", "ledger", *ACTIONS)        # ledger：视图里带本人的全部历史消息
+BINDS = ("syscall", *ACTIONS)
+LEDGER = "0"                                   # 每个 channel 的读地址：写给它 = 读它；不是成员，不放、不退、不遗传
 
 
 @dataclass
@@ -211,15 +214,11 @@ class Runtime:
                 Port.send(self._target(a.text), {"from": self.ep(channel), "body": m["body"]})
             self._append(c, {"k": "step", "actor": addr, "upto": upto, "out": "", "err": ""})
             return True
-        pick = lambda m: {k: m[k] for k in ("seq", "from", "to", "body")}
-        view = {"channel": channel, "me": addr, "msgs": [pick(m) for m in msgs],
+        view = {"channel": channel, "me": addr, "msgs": [self._deliver(c, m) for m in msgs],
                 "actors": [{"addr": x.addr, "kind": x.kind, "bind": list(x.bind), "in": x.addr == c.receptionist,
                             "retired": x.retired,
                             **({"text": x.text, "local": x.text in self.channels} if x.kind == "door" else {})}
                            for x in c.actors.values()]}
-        if "ledger" in a.bind:
-            view["history"] = [pick(r) if r["k"] == "msg" else {"seq": r["seq"], "from": addr, "to": "", "body": r["out"]}
-                               for r in c.rows if (r["k"] == "msg" and r["to"] == addr) or (r["k"] == "step" and r["actor"] == addr)]
         if a.kind == "program":
             out, err = Exec.run(a.text, json.dumps(view, ensure_ascii=False), cwd=self.P)
         else:
@@ -229,9 +228,23 @@ class Runtime:
             self._execute(c, a, head, body)
         return True
 
+    def _deliver(self, c: Channel, m: dict) -> dict:
+        """投递：消息原样；来自 0 的附上它记下的那段账本（可重算，账上只有事实行）。"""
+        d = {k: m[k] for k in ("seq", "from", "to", "body")}
+        if m["from"] == LEDGER:
+            _, a, b = m["body"].split()
+            d["rows"] = [r for r in c.rows if int(a) <= r["seq"] <= int(b)]
+        return d
+
     def _execute(self, c: Channel, a: Actor, head: str, body: str) -> None:
         t = head.split()
         if not t:
+            return
+        if t == [LEDGER]:                                     # 读账本：记事实，投递时展开
+            w = body.split()
+            lo = int(w[1]) if len(w) > 1 and w[1].isdigit() else 1
+            hi = int(w[2]) if len(w) > 2 and w[2].isdigit() else c.seq
+            self.msg(c.name, LEDGER, a.addr, f"show {lo} {hi}")
             return
         if t[0].startswith("channel.") and "syscall" in a.bind:
             r = self._syscall(head, body, by=a.addr, by_channel=c.name)

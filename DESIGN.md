@@ -283,7 +283,8 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 | 每条 syscall 恰好一条回执，失败回 `refused` | `runtime._syscall` | 介质约定（ABI）：发起者能对应请求与回执 |
 | 登记员只认来自本机门（含退役）的 born/placed/retired | `registrar.py` | 登记处记 c0 的宣称；信任本机 |
 | 视图里门带 `local`；登记员 = 第一扇 local 门那边 | `runtime.step` / `realize.py` | c0 与 c1 有一条连线（G 的第一条连线） |
-| `history` 全量进视图（bind=ledger） | `runtime.step` | actor 可读自己 channel 的账本（能力）；搬全量还是给句柄是工程 |
+| 视图带成员表（地址簿） | `runtime.step` | 信封要能寻址；地址簿属于投递，不属于历史 |
+| 来自 0 的消息投递时附 rows（全量） | `runtime._deliver` | 读账本是介质的地址 0，对全部成员开放（理论）；附全量还是给句柄是工程 |
 | 每步起新进程（`Exec.run`） | `omega.Exec` | actor 无私有状态、忠实（性质）；常驻进程 + 纪律亦可 |
 | 地址 = 序号、退役前移，actor 不得硬编码地址 | ABI | 地址属于个体、形态不含地址（理论）；硬编码禁令由序号实现引起 |
 | 首 channel 必须显式接待员（genesis / build 拒绝） | `genesis.py` / `realize.py` | 出生需要一个入口（理论合法性条件）；拒绝是保障 |
@@ -298,8 +299,7 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 - `Exec.spawn` 的日志句柄父进程已关闭（曾泄漏）。
 - 生子测试（T7/T9/T10）靠 sleep 与 20 s 上限等子代，慢机器可能假失败。
 - 出生后再收到 `start` 忽略（有内门 = 已发育），registrar 只认第一个 `born`（T17）。
-- U 跑 L 写的代码不隔离（宿主 python、`P/tmp/u-*`、30 s 超时，不清理）；`history` 每步全量 POST 给 L，长寿命要一个压缩器成员；L 输出不合语法时的清洗程序是退路，未做。
+- U 跑 L 写的代码不隔离（宿主 python、`P/tmp/u-*`、30 s 超时，不清理）；L 每个事件读整本账，长寿命要一个折叠器官（S，上下文策略在它的源码里）；L 输出不合语法时的清洗程序是退路，未做。
 - oracle 的一步是同步的（最长 120 s），期间调度器不走别的 channel——单线程轮转的代价；要并发得让 R 按 channel 分线程或把 request 做成异步的门，M4 以后。
-- `history` 含自己说过的之后，c1 的视图带着它历来吐出的每一份 decl（每份是整个 G）；每次 spawn 一份，原型可忍，长寿命同上要句柄（§6 表 history 行）。
 - 外面直接写收件箱而 channel 里没有指回去的门时，署名是 `door`，回话写给 `door` 会被丢（H8）：任务发起者要收到 `done`，先给自己在 c2 放一扇门（README 的跑法）。测试从 step.out 读。
 - `Port.request` 把 `stop_reason == max_tokens` 记为 err（截断的代码不能当动作）。

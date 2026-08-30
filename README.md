@@ -25,7 +25,7 @@ G 里三个 channel：`c0`（构造）、`c1`（登记，`actors/registrar.py`�
 ## 跑
 
 ```
-python3 t/test_c0.py                 # T0–T19
+python3 t/test_c0.py                 # T0–T20
 python3 genesis.py                   # 重新生成 G.json
 python3 init.py <P> [--serve]        # 起 R；--serve 静止后持续轮询收件箱
 ```
@@ -44,7 +44,8 @@ tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
 - 2026-08-29：Ω、R（含根门）、c0（realize + spawn）、genesis；T1–T7 绿（转移表、syscall、门、根门开关、请求、内容盲、父代的 A 经门造子代 + start 切离）。
 - 2026-08-30：发育版（父代只造 c0，子代的 c0 长其余）；三层命名 Ω / world{ω-bind, loader, R} / dalek；M2：c1 登记员（`actors/registrar.py`，只折自己的账本）、`decl`、第三个 syscall `channel.retire.actor`、视图带成员表、C 的 pack 用 decl；T0–T11 绿；M2.1：接待员显式、R 拒绝自退役/退役接待员、门是成员、c1 只认 c0 的事实，π(A) ≅ G；T0–T12 绿。
 - 2026-08-30 晚：M3.0 c2 骨架——`Port.request`、oracle = 解释器在远处的成员（与门的区分见 DALEK 1.7）、T18 task → L ↔ U → add c3 → decl → done；T19 端点不通机器活着。T0–T19 绿。
-- 待：任务 0（c2 → c2′，show G/H）、真模型跑一遍、M4 的 up/down 与对账、c3（www）。
+- 2026-08-30 晚：M3.1 账本是介质的读地址 0（`>>> 0\nshow [a] [b]`，事实入账、投递附 rows），视图 = 投递的消息 + 地址簿；`bind=ledger` 退役；registrar 两步；L 的固定策略"先看账再行动"。T0–T20 绿。
+- 待：A2 接线（tag）、A3 因果闭环（placed 后 done、真门）、任务 0（c2 → c2′）、真模型跑一遍、M4。
 
 ## 文件
 

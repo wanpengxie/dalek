@@ -183,7 +183,17 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 | **门** | 把这条消息原样 `Port.send` 到 text 所指的端点（本机 channel 名也是端点），署名本 channel 的端点；对面收件箱进账时署名指回来的门，收件人是对面的接待员 |
 | **放 actor**（syscall `channel.add.actor`） | 在该 channel 的下一个地址写下 kind + text，在该账本记一行——**这一行带完整的 kind + text**。channel 存在 = 它账本有第一行；经根门放也走这一行 |
 
-三种 kind 一行一条，加一条放 actor；没有第五行。视图 = 写给该 actor、且它上次没看过的那些条。
+三种 kind 一行一条，加一条放 actor；没有第五行。**视图 = 投递给该 actor 的消息（没看过的）+ 地址簿（本 channel 成员表）**，没有别的。
+
+**介质的地址（2026-08-30 晚，A1）**：介质本身是一组地址，写给它们就是和介质说话，回执以 `from=<那个地址>` 的消息回来：
+
+| 介质的地址 | 方向 | 需要绑定 | 回执 |
+|---|---|---|---|
+| `channel.create` / `channel.add.actor` / `channel.retire.actor` | 写形态 | 是 | 结果或 `refused` |
+| `spawn` / `stop` | 动世界 | 是 | pid / … |
+| **`0`**（本 channel 的账本） | **读历史** | **否** | 那一段账 |
+
+账本是每个 channel 的地址 0：写给它 `show [a] [b]` = 读它。读对全部成员开放（读不改任何东西，所以不是能力），0 不是成员（不放、不退、不遗传）。回执按 1.4 的分法处理：syscall 回执记的是不可重算的外生结果（分到的地址、pid），所以记结果；0 的回答是 H 的投影，可重算，所以**账上只记事实行**（`0 → me: show a b`——谁、何时、看了哪段），**投递时附上那些行**（视图里该条消息带 `rows`）。重演照算不照抄，账不含账。读什么、何时读是成员自己的策略，写在它自己的描述里（L 的固定策略：先看账再行动，借自 pi 一类 agent 的"全量 session"；要变就换 text 或加一个折叠器官）。channel = session。
 
 **kind**：三种，都是"转移表定行为 + 一个 text 参数"，区别只在 text 是什么——程序的 text 是源码，oracle 的 text 是端点 + 提示语（第一行端点，其余随视图一起送过去），门的 text 是对面的地址。门最退化：text 不是行为、不是内容，是指针；但它是唯一 text 指向 channel 外面的 kind。整台机器的拓扑 = 全部门的 text 的集合。
 
@@ -311,7 +321,7 @@ G（dalek0；根门与出生证明都不在 G 里；`peers` 是人写 G 的糖�
   channels: [ { name: c0, members: [ {kind: program, text: <realize 源码>, bind: [syscall]},
                                      {kind: program, text: <C 源码>, bind: [syscall, spawn]} ],
                 receptionist: 1 },
-              { name: c1, members: [ {kind: program, text: <registrar 源码>, bind: [ledger]} ],
+              { name: c1, members: [ {kind: program, text: <registrar 源码>} ],
                 receptionist: 1 } ],
   peers: [[c0, c1]] }
 ```
@@ -462,10 +472,11 @@ channel 的创建顺序记在 `h/_order`。`from` 可以是 `door`（膜外来�
 
 ### 4.3 程序 actor 的 ABI
 
-stdin（视图）：`{"channel", "me", "msgs": [{seq, from, to, body}…], "actors": [{addr, kind, bind, in, retired, text?, local?}…], "history"?}`——`msgs` 是写给我且没看过的；`actors` 是本 channel 的成员表（本 channel 账本的折叠，门带 text 和 local = 指向本机 channel）；`history` 仅 `bind=ledger` 的 actor 有，是写给它的全部消息 + 它自己每步说过的（`from == me`，按 seq 排；c1 的登记员靠它折叠自己的账本，c2 的作者靠它接着上一轮改）。stdout 原样进 `step.out`，按行首 `>>> ` 拆：
+stdin（视图）：`{"channel", "me", "msgs": [{seq, from, to, body}…], "actors": [{addr, kind, bind, in, retired, text?, local?}…], "history"?}`——`msgs` 是写给我且没看过的；`actors` 是本 channel 的成员表（本 channel 账本的折叠，门带 text 和 local = 指向本机 channel）；没有历史字段：历史问地址 0。stdout 原样进 `step.out`，按行首 `>>> ` 拆：
 
 ```
 >>> <addr>                                          消息，发给本 channel 的 <addr>（含门）
+>>> 0                                               读账本：正文 show [a] [b]（缺省 1..当前）；下一步收到 from=0 的消息，带 rows=第 a–b 行（四种行原样）
 >>> channel.create <name>                           syscall；需 bind=syscall
 >>> channel.add.actor <channel> <kind> [in] [bind=…]  syscall（含 actor.create）；后续各行是 text；需 bind=syscall
 >>> channel.retire.actor <channel>/<addr>           syscall：退役；需 bind=syscall
@@ -508,13 +519,13 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 
 **三段因果记账**：realize 每条 syscall 落地后（回执在下一步视图里），回请求者 `placed <ch>/<addr>` / `retired <ch>/<addr>`，并把带完整 text 的 `placed <ch> <addr> <kind> [in] [bind=…]\n<text>` / `retired …` 送给登记员——出生时长出的器官也逐件登记；脐带放的（c0 的成员）由 `born`（world + c0）登记。出生证明门和 C 为生子放的两扇门不经 realize，所以不登记、不遗传（这就是 π 去掉的东西）。
 
-**c1 的登记员**（`actors/registrar.py`，bind=ledger）：只折自己的账本（视图里的 history），且只认来自本机 channel 的门（成员表里 local 的门，含已退役——历史的解释不随拓扑漂，权威随"先加新门再退旧门"迁移）的 `born / placed / retired`：`born` 给 G₀，`placed` 追加条目（带真实地址），`retired` 划掉；`decl` → G₀ ⊕ placed ⊖ retired：channel 按出生 + 首次出现顺序（= `_order`），成员按地址，**门就是成员**（`peers: []`），接待员显式，退役的不输出，world 原样来自 born。不读任何文件。
+**c1 的登记员**（`actors/registrar.py`，无绑定）：只折自己的账本——两步：收到 `decl` → `>>> 0\nshow`；下一步拿到 rows，折写给自己的消息，答上一次看账之后到的每个 `decl`（看账之后又来的请求再看一次）。只认来自本机 channel 的门（成员表里 local 的门，含已退役——历史的解释不随拓扑漂，权威随"先加新门再退旧门"迁移）的 `born / placed / retired`：`born` 给 G₀，`placed` 追加条目（带真实地址），`retired` 划掉；`decl` → G₀ ⊕ placed ⊖ retired：channel 按出生 + 首次出现顺序（= `_order`），成员按地址，**门就是成员**（`peers: []`），接待员显式，退役的不输出，world 原样来自 born。不读任何文件。
 
 ### 4.8 c2：作者（L）与执行器（U）
 
-c2 = {1 L：`kind=oracle, in, bind=ledger`；2 U：`kind=program`；3 门→c0}，G0 加 c2 与连线 [c0, c2] = `genesis.G2()`，dalek0 用它。没有 driver：循环由转移表驱动——任务从收件箱来 → 投给 L → L 写给 U → U 回 result → L 改或交 → 经门给 c0 `add`。
+c2 = {1 L：`kind=oracle, in`；2 U：`kind=program`；3 门→c0}，G0 加 c2 与连线 [c0, c2] = `genesis.G2()`，dalek0 用它。没有 driver：循环由转移表驱动——任务从收件箱来 → 投给 L → L 写给 U → U 回 result → L 改或交 → 经门给 c0 `add`。
 
-**oracle 的 ABI**（R 的转移表第二行）：`Port.request(text, 视图 JSON)`。text 第一行 `<url> <model> <key>`，其余是提示语；第一个实现讲 Anthropic messages 报文（system = 提示语，user = 视图）。应答正文进 `step.out`，按同一 `>>> ` 语法拆；失败（连不上、超时、非 2xx）同 `Exec.run`：输出视为空、err 记原因，游标照推（T19）。一步一轮、无对话状态：上下文全在视图的 `history` 里。重演照抄 step 行（1.4）。
+**oracle 的 ABI**（R 的转移表第二行）：`Port.request(text, 视图 JSON)`。text 第一行 `<url> <model> <key>`，其余是提示语；第一个实现讲 Anthropic messages 报文（system = 提示语，user = 视图）。应答正文进 `step.out`，按同一 `>>> ` 语法拆；失败（连不上、超时、非 2xx）同 `Exec.run`：输出视为空、err 记原因，游标照推（T19）。一步一轮、无对话状态：上下文靠读账本——L 的固定策略是每个事件两步（`>>> 0\nshow`，下一步拿着整本账行动）。重演照抄 step 行（1.4）。
 
 **L 的 text**（`actors/l.txt`）：第一行端点；提示语只讲 ABI——视图格式、`>>> ` 语法、"地址从成员表找不要硬编码"、U 的报文、c0 的门接受的请求、任务协议（`task\n<要求>` → 写 → test → 改 → `add` → 回 `done`）。测试把第一行换成本机 http 桩，提示语一字不改（T18）。
 
@@ -541,5 +552,7 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5
 **M2.3（同日晚）**：`Exec.run` 超时/非零退出 → 输出视为空、err 记原因，机器不死（H10 的进程一半，T16）；出生后再 `start` 忽略、第二个 `born` 不算（T17）；C 的回执守卫；测试的 π 改为按出处投影。T0–T17 绿。
 
 **M2.4（同日晚，措辞收口）**：清掉 A/B 混用——c1 存的是 c0 的承诺（genome commit），不是 R 的结构事实；三段因果记账降为 c0 的次序约定；"纪律是物理"改为"R 拒绝是工程保障、理论上是升级约定"。不改代码。T0–T17 绿。
+
+**M3.1（同日晚，A1）· 账本是地址 0**：视图回到"投递的消息 + 地址簿"；`bind=ledger` 与 `history` 退役；R 加读地址 0（`show [a] [b]` → 事实行入账、投递附 rows）；registrar 两步问账；l.txt 写固定策略（先看账再行动）。T18 改为每事件两步；T20：全部/窗口、账上只有事实行、带内 == 膜外、0 不是成员。T0–T20 绿。
 
 **M3.0（同日晚）· c2 骨架**：Ω 加 `Port.request`（同步的一半，Anthropic 报文）；R 的 oracle 行改为 `Port.request(text, 视图)`，删掉 `Runtime(oracle=)` 桩；`history` 含自己说过的；`actors/l.txt`（端点 + 提示语）、`actors/u.py`（执行器）；`genesis.G2()` = G0 + c2 + 连线，dalek0 的 G.json 改用它。T18：task → L 写 → U 败 → L 改 → U 过 → 经门 `add c3` → c1 有 c3 → 回 done → 新器官在工作，π(A) ≅ decl 仍成立；T19：端点不通机器活着。H9 关闭。T0–T19 绿。未做：任务 0（c2 → c2′）、真模型跑一遍。
