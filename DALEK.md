@@ -133,7 +133,7 @@ space    个体。channel 们 + 门的拓扑 + 一份运行时实例。能被 Ω
 | **world** = ω-bind（omega.py）+ loader（init.py、P 的布局）+ R（runtime.py） | 是 | 否 |
 | G 的其余部分 | 是 | 是 |
 
-**契约是不动点，绑定是基因**：Ω 是抽象契约；ω-bind 是它在某一宿主上的实现，在 world 里随 P 遗传，ω-bind 有两半：R 这边的 omega.py，和 actor 这边的解释器本身——`Exec` 就是 python3，text 用的 `open` / `urllib` / `os` 是解释器的能力，也就是 Ω 的能力，随 `Exec.load` 一起给了 text。所以换宿主 = 换 Exec 指向的解释器 + omega.py（python 写的 text 需要一个 python），pack 一个子代用它跑，自举不动点验收——与换 R 同一条路。loader 知识（入口文件名、`--serve`、目录布局）只能在 world 里：R 的 `spawn` 知道 `init.py <P> --serve` 是 world 知道自己的布局；放到 G 里的 actor 才是组织读世界。
+**契约是不动点，绑定是基因**：Ω 是抽象契约；ω-bind 是它在某一宿主上的实现，在 world 里随 P 遗传，要分清两样：**python3 解释器是 Ω 的前提**（宿主提供，1.5 的清单里，不遗传）；**遗传的是源码和 omega.py**。text 用的 `open` / `urllib` / `os` 是解释器的能力 = Ω 的能力，随 `Exec.load` 给了 text——这是前提在起作用，不是基因。所以换宿主 = 新宿主得提供一个能跑这些 text 的 Exec（或 c2 重写 text）+ 新的 omega.py，pack 一个子代用它跑，自举不动点验收——与换 R 同一条路。loader 知识（入口文件名、`--serve`、目录布局）只能在 world 里：R 的 `spawn` 知道 `init.py <P> --serve` 是 world 知道自己的布局；放到 G 里的 actor 才是组织读世界。
 
 ### 1.4 非确定性的来源
 
@@ -182,12 +182,11 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 
 | kind | 实例化（放入时一次） | 调用（每条消息） |
 |---|---|---|
-| **程序** | `Exec.load(text, {call, me, channel})`：源码在这个命名空间里跑一次，定义 `run` | `run(m)`；返回值 = 回复 |
-| **oracle** | 和程序**同一种实例化**：`Exec.load(text, {call, me, channel})`。text 是它自己的 agent loop 的源码——端点、凭据、提示语、报文、帧语法、轮数都是里面的常量（M3.4） | `run(m)`：自己组装（`call("0","show")` + `call("0","who")` + 初始消息）、自己问端点、自己把输出拆成帧（`>>> 地址 / 正文 / <<<` 是 LLM 拼写 `call` 的方式）、每帧 `call`、返回值喂回下一轮；`>>> re` 收作返回值；不再请求 = 结束。介质看到的只是一串 call 和一个返回值，和程序一模一样 |
+| **程序** | `Exec.load(text, {call, me, channel})`：源码在这个命名空间里跑一次，定义 `run` | `run(m)`；返回值 = 回复。L 也是程序：它的 text 是整个 agent loop（端点、凭据、提示语、组装 `show`/`who`、问端点、把输出拆成帧——`>>> 地址 / 正文 / <<<` 是 LLM 拼写 `call` 的方式——每帧 `call`、返回值喂回、`>>> re` 收作返回值）。介质看到的只是一串 call 和一个返回值 |
 | **门** | 介质的函数体：`Port.send` 到 text 所指的端点 | 送出去，署名本 channel 的端点；返回空。门是连接 |
 | **放 actor**（syscall `channel.add.actor`） | 在该 channel 的下一个地址写下 kind + text（+ 角色 tag、接口 iface），在该账本记一行——**这一行带完整的 kind + text**；折叠到它就实例化 | — |
 
-三种 kind 一行一条，加一条放 actor；没有第五行。**kind 是成员的类别，理论的事**：程序 = 解释器在本地的函数，oracle = 解释器在远处的函数，门 = 连接。**怎么实例化是工程**：程序和 oracle 同一个 exec，门是 Port.send——实现相同不等于类别相同。每个成员都只拿到当前那一条消息；oracle 的组装（成员表 = 它的工具列表）在它自己的 text 里，程序靠角色说话、要形态问 0。R 不知道 python，也不知道模型；Ω 里没有任何 LLM 专用的东西。
+两种 kind 一行一条，加一条放 actor；没有第四行（M3.5，2026-09-01：oracle 从 kind 集里拿掉）。**"oracle"是理论里的类别词，不是介质的原语**：解释器在远处的程序，就是 L；R 认识的只有程序和门。把 L 的 kind 从 oracle 机械改成 program，整条 L→U→add 流程一字不差地跑通——所以它本来就不是一种原语；一个介质不认识的 kind 不该算进转移表。每个成员都只拿到当前那一条消息；L 的组装（成员表 = 它的工具列表）在它自己的 text 里，程序靠角色说话、要形态问 0。R 不知道 python，也不知道模型；Ω 里没有任何 LLM 专用的东西。
 
 **call 的地址**——介质本身是一组地址，写给它们就是和介质说话：
 
@@ -206,9 +205,9 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 
 **性质与实现分开**（2026-08-31 改）：H 记的是 **call 边界**——每条消息、每次 call、每个返回值、每次放入/退役。actor 在一次 run 里面做什么（局部变量、globals、`random`、oracle 与端点的对话）不入账，只有它经边界产生的东西在。记号：D = (G, H) 是持久状态、个体的身份；Σ 是 actor 的易失运行状态；活着的机器是 (G, H, Σ)。invoke : (Σ, m) → (Σ′, calls, reply)，calls 与 reply 入 H，Σ′ 留在活 actor 里；重启 : (G, H, Σ) → (G, H + restart, instantiate(G))。同一个 Dalek，不保证同一个易失现场——电脑重启还是那台电脑，RAM 不在了。Σ 本身是工程（想留什么，给 actor 一个 dump 字节的能力让它自己存），不是理论模型关注的对象。文件不在 Σ 里：它是膜外的世界，活过重启、不随 G 遗传；程序直接 `open` 是工程简化（DESIGN H7）。"没有私有状态"**不是**约定：常驻函数可以有内部状态。确定性的内部状态是 (text, 自上次实例化以来收到的消息) 的函数——全在 H 里，愿意可以重放（call 的返回从账上取），但没人有义务重放：想活过重启的 actor 自己读账本重建（spawn.py 找未办完的请求就是这么做的），不想的从头开始；随机的内部状态本来就不该重放，重启重新抽样，它的后果已在账上。前提只有一条：**实例化是 H 中的事件**——place 行是第一次，重启是再一次（重启入账归 M4，H10）。所以"重启 = 折叠账本 = 同一台机器"照旧成立：机器 = (G, H)，内部状态不是机器的一部分。同理，"一个真的 Ω 边界"是契约边界，不是进程边界：Exec 用进程还是在本进程里 exec，是绑定里的事，R 和理论都看不见。
 
-**kind**：三种，都是"转移表定行为 + 一个 text 参数"，区别只在 text 是什么——程序的 text 是源码，oracle 的 text 是端点 + 提示语（第一行端点，其余作 system 随对话送过去），门的 text 是对面的地址。门最退化：text 不是行为、不是内容，是指针；但它是唯一 text 指向 channel 外面的 kind。整台机器的拓扑 = 全部门的 text 的集合。
+**kind**：两种，都是"转移表定行为 + 一个 text 参数"，区别只在 text 是什么——程序的 text 是源码（L 的源码里含端点和提示语），门的 text 是对面的地址。门最退化：text 不是行为、不是内容，是指针；但它是唯一 text 指向 channel 外面的 kind。整台机器的拓扑 = 全部门的 text 的集合。
 
-**oracle 与门的区分（2026-08-30）**：两者在实现上可以是同一个 POST，理论上是两种东西。门是**连接**：不产生输出、只搬运，text 是拓扑的一部分，对面有自己的账本和主动性，去掉它机器少一条边。oracle 是**功能处理**：解释器在远处的成员，收消息、产生输出，输出是本 channel 里的动作，text 是行为的参数，对面只应答，去掉它机器少一个器官。实现相同不等于概念相同——判据"理论句 = 换实现仍成立"两个方向都用：换实现仍成立的区分是理论，哪怕某个实现把它们做成同一个调用。（M3.4 改）程序与 oracle 的实例化是同一个 `Exec.load(text, {call})`；oracle 的 text 自己去问端点，用什么协议是 text 的事；R 不知道 python 也不知道模型，Ω 不需要 `Port.request`。同一个人两种接法：当成员（收消息、按帧回话）是 oracle；当邻居（有自己的邮箱、自己决定何时说话）是门那边的 peer。
+**oracle 与门的区分（2026-08-30；M3.5 起 oracle 是类别词，指 L 这样的程序）**：两者在实现上可以是同一个 POST，理论上是两种东西。门是**连接**：不产生输出、只搬运，text 是拓扑的一部分，对面有自己的账本和主动性，去掉它机器少一条边。oracle 是**功能处理**：解释器在远处的成员，收消息、产生输出，输出是本 channel 里的动作，text 是行为的参数，对面只应答，去掉它机器少一个器官。实现相同不等于概念相同——判据"理论句 = 换实现仍成立"两个方向都用：换实现仍成立的区分是理论，哪怕某个实现把它们做成同一个调用。（M3.4/M3.5 改）L 就是程序，`Exec.load(text, {call})`；它的 text 自己去问端点，用什么协议是 text 的事；R 不知道 python 也不知道模型，Ω 不需要 `Port.request`。同一个人两种接法：当成员（收消息、按帧回话）是 oracle；当邻居（有自己的邮箱、自己决定何时说话）是门那边的 peer。
 
 **门**：是 actor，不是 channel（没有自己的账本，是两本账之间的管子）。一条连线 = 两扇门互指。膜内成员只能写给本 channel 的地址；要出去只能写给门；外面的东西进来必须先变成账本上的一行——"影响一个 channel 的一切都在它的账本上"由此保证。内外同一种门：门只做一件事——原样 `Port.send` 到 text 所指的端点；对面是本机器另一个 channel 时端点就是本机的收件箱，对面是人、LLM、另一台机器时是外面的端点；运行时里只有一条门的规则。冯诺依曼的"+"在这里有了定义：接上 = 两本账各有一扇门互指。
 
@@ -217,7 +216,7 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 | 运行时认识的（介质词汇） | 运行时不认识的（组织词汇） |
 |---|---|
 | 地址（序号、门） | c0、c1、c2 |
-| kind：程序、oracle、门 | 构造器、登记处、作者 |
+| kind：程序、门 | 构造器、登记处、作者（oracle） |
 | text 作为参数 | text 的含义 |
 | 消息、账本、追加、投递、运行、帧、回复、步记录、放 actor | syscall、realize、pack、decl、clone；谁有权放、放了算不算采纳 |
 
@@ -265,7 +264,7 @@ c0.realize(G)         活的。运行中的 c0 读 G 的结构，逐项发 sysca
 - 组织（JSON）：有哪些 channel、每个里有哪些成员（kind + 指向源码）、接待员、门指向哪。回答"怎么排"。
 - 行为（源码）：每个成员做什么。回答"每个元胞是什么"。
 源码可以作为 JSON 里的 text 叶子，描述就是一个 JSON；展开成目录只是它的另一种形式。分界不在"哪个文件"，在**谁解释**：结构字段（channel、成员 kind、接待员、门指向）由 c0 解释；source 字段（text）c0 不解释、只抄，以后由运行时解释。这正是 A 与 B 的分离落在字段上。守住这条，c1 折叠账本时才分得清哪是组织改动。
-kind 的取值范围由物理封闭（程序、oracle、门）；开放的只有源码内容。
+kind 的取值范围由物理封闭（程序、门）；开放的只有源码内容。
 
 **新描述从哪来。** 最小机器 {c0, c1} 造不出新 actor，不是格式的限制，是它没有作者：它的描述只能被抄，不能被扩展。L + U 接成一个 channel（L 写、U 跑、L 改，账本驱动器让它们来回）就是 coding agent，记为 **c2**。c2 的产出是描述：新 actor 的源码 + 一小段组织（它是谁的成员、接谁）。c0 装，c1 记，描述从 {c0, c1, c2} 变成 {c0, c1, c2, F}，F 可遗传——E → E_F，变异在机器内部发生。
 新东西的**来源**仍在机器外（LLM 是 Ω 的 oracle），但**生产新描述的组织**进了机器里：机器不产生随机性，机器组织随机性。
@@ -532,11 +531,11 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 
 ### 4.8 c2：作者（L）与执行器（U）
 
-c2 = {1 L：`kind=oracle, in, tag=L`；2 U：`kind=program, tag=U`；3 门→c0（`tag=c0`）}，G0 加 c2 与连线 [c0, c2] = `genesis.G2()`，dalek0 用它。没有 driver：**c2 是 agent 循环本身**——对 L 的一次调用 = think → `call("U", …)`（act）→ 返回（observe）→ 再想 → … → 经门 `add` → 返回；`placed` 回来是新的一次调用 → `done`。工具 = 成员（`who` 里的 `tag` + `iface`），记忆 = 账本（组装），多 agent = channel + 门，加工具 = `add`——和加任何器官同一条 syscall。
+c2 = {1 L：`kind=program, in, tag=L`（理论里的 oracle）；2 U：`kind=program, tag=U`；3 门→c0（`tag=c0`）}，G0 加 c2 与连线 [c0, c2] = `genesis.G2()`，dalek0 用它。没有 driver：**c2 是 agent 循环本身**——对 L 的一次调用 = think → `call("U", …)`（act）→ 返回（observe）→ 再想 → … → 经门 `add` → 返回；`placed` 回来是新的一次调用 → `done`。工具 = 成员（`who` 里的 `tag` + `iface`），记忆 = 账本（组装），多 agent = channel + 门，加工具 = `add`——和加任何器官同一条 syscall。
 
 **L 的实例化**（M3.4）：和程序一样——`Exec.load(text, {call, me, channel})` 一次，得到常驻的 `run`。text（`actors/l.py`）里是整个 agent loop：第一行 `ENDPOINT, MODEL, KEY` 三个常量，`SYSTEM` 是提示语；`run(m)` 组装 = `call("0","show")` + `call("0","who")` + 初始消息作第一轮 user 消息（两次读和任何程序读账本一样入账）；POST 端点；每轮输出按帧拆，`>>> re` 收作返回值，其余每帧 `call(地址, 正文)`、返回值收成 `[{to, reply}]` 作下一轮 user 消息；没有帧就结束；最多 16 轮。端点的失败抛异常 → 这次调用 err，机器不死。
 
-**定义一个新的 L** = 放一个 `kind=oracle` 的成员：参数只有 text（一段源码：端点、凭据、提示语、组装、帧语法、轮数全在里面）、`tag`、`iface`、`in`、`bind`。同一个 c2 可以放两个 L（不同模型 / 提示语 / 组装）；L 能写出新的 L（text 就是一段 python），经 c0 add，子代继承——**agent loop 本身是可遗传、可变异的形态**：换组装方式、折叠 context、换帧语法，都是 add 新 L + retire 旧的，不用换 R。介质定死的只有 `run(m)` 和 `call`。
+**定义一个新的 L** = 放一个 `kind=program, tag=L` 的成员：参数只有 text（一段源码：端点、凭据、提示语、组装、帧语法、轮数全在里面）、`tag`、`iface`、`in`、`bind`。同一个 c2 可以放两个 L（不同模型 / 提示语 / 组装）；L 能写出新的 L（text 就是一段 python），经 c0 add，子代继承——**agent loop 本身是可遗传、可变异的形态**：换组装方式、折叠 context、换帧语法，都是 add 新 L + retire 旧的，不用换 R。介质定死的只有 `run(m)` 和 `call`。
 
 **U**（`actors/u.py`）：`run\n<代码>` 或 `test\n<代码>\n===\n<测试>` → 用和 R **同一个 exec** 在进程内实例化候选（命名空间里有真的 `call`、`me`、`channel`），得到它的 `run`；测试代码在 `{run, candidate, call}` 里 exec，没有异常 = 通过 → 返回 `result <退出码>\n<输出>`（stdout 收下来，每行缩进两格）。被测的是一个活函数，能问 c1、能读 0（in vivo）；它拿到的能力 = U 的能力（U 没有 syscall 绑定，候选也没有）。机器里的编译器就是机器的物理：Trusting Trust 的那句话成了字面事实。
 
@@ -563,6 +562,8 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5
 **M2.4（同日晚，措辞收口）**：清掉 A/B 混用——c1 存的是 c0 的承诺（genome commit），不是 R 的结构事实；三段因果记账降为 c0 的次序约定；"纪律是物理"改为"R 拒绝是工程保障、理论上是升级约定"。不改代码。T0–T17 绿。
 
 **M3.3（2026-08-31 凌晨，actor 是常驻函数）**：推翻 M3.2 的进程 + 管道。actor 折叠到 place 行时实例化一次（`Exec.load(text, {call, me, channel})`，Python 的 exec——选 Python 的理由），挂在地址上、活到退役；每条消息调同一个 `run(m)`，**返回值就是回复**；`call` 是每个 actor 专属的真函数（闭包），嵌套 = 调用栈，前面放的用得了后面放的。三种 kind = 三种得到函数的方式（程序 exec 源码；oracle 介质的函数体，帧只是 LLM 拼写 call 的方式，`>>> re` 是返回值；门 `Port.send`）。0 加 `who`（此刻的成员表）：自省 = show（H）+ who（A）+ decl（G）。U 用同一个 exec 在进程内实例化候选、给真 `call`、把 `run` 交给测试（in vivo）。没有帧协议、没有助手代码、没有进程、没有超时。Ω 是契约边界不是进程边界。realize/spawn/registrar/u 全部 `def run(m)`；测试的小 actor 同样。T0–T23 绿（23 个）。
+
+**M3.5（2026-09-01 凌晨，oracle 不是原语）**：审稿把 L 的 kind 从 oracle 机械改成 program，一切照跑——一个介质不认识的 kind 不该算进转移表。R 的 kind 集 = {program, door}；L = `kind=program, tag=L`；"oracle"留作理论类别词（解释器在远处的程序）。同步：DESIGN §2 状态加 Σ、易失记忆措辞；omega.py 注释；1.3 解释器是 Ω 的前提不是基因。**挂起**：膜到底约束什么（审稿第 2 条——只约束对组织和账本的作用，还是内外作用都走同一原语、能力来自注入的 handle）；定了才决定 H5/H7 是否真的关闭、L 是否该拿一个显式 request handle。24/24。
 
 **M3 任务 0（2026-09-01 凌晨）**：T24——c2 + file → c2′ → 子代继承。FileL 桩：task → `add c2 program tag=file iface=…` 经门（变异）→ placed 是新的一次调用 → write / read → done 给发起者的真门；decl 里 c2 多了 file；spawn 子代，子代 c2/5 是 file、目录里无 notes.txt、读报 FileNotFoundError、自己写自己的。24/24。
 

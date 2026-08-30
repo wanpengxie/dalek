@@ -2,9 +2,9 @@
 
 状态    每个 channel 一本只追加的账本（h/<name>.jsonl，四种行 place / retire / msg / step）+ 每个 actor 一个游标。
         全部由账本折叠重建，包括各收件箱读到哪（收进来的行带 at=收件箱偏移）和每个活成员的函数对象（重新实例化）。
-actor   是常驻函数：折叠到 place 行时实例化一次（fn），挂在地址上，活到退役。三种 kind = 三种得到函数的方式：
+actor   是常驻函数：折叠到 place 行时实例化一次（fn），挂在地址上，活到退役。两种 kind = 两种得到函数的方式：
   program   Exec.load(text, {call, me, channel})：源码在这个命名空间里跑一次，定义 run(m)；以后每条消息调同一个 run
-  oracle    和程序同一种实例化：text 是它自己的 agent loop 的源码（组装、问端点、解帧、call 全在 text 里；R 不知道模型）
+  （L 也是 program：text 是它自己的 agent loop——组装、问端点、解帧、call 全在 text 里；"oracle" 是理论里的类别词，R 不认识）
   door      介质实现的函数体：Port.send 到 text 所指的端点，署名本 channel 的端点；返回空。门是连接
 事件    某本账上多了一条写给某地址的消息（不带 run 标记的 msg 行）= 介质替发送者调用它：fn(m)，m = {seq, from, to, body, channel}；
         返回值就是回复，送回发送者（门则出去）。
@@ -36,7 +36,7 @@ from pathlib import Path
 from omega import Exec, Store, Port
 
 
-KINDS = ("program", "oracle", "door")
+KINDS = ("program", "door")
 ROOT = "_root"
 LEDGER = "0"                                   # 每个 channel 的读地址：写给它 = 读它；不是成员，不放、不退、不遗传
 
@@ -150,7 +150,7 @@ class Runtime:
 
     def _instantiate(self, c: Channel, a: Actor) -> None:
         try:
-            if a.kind in ("program", "oracle"):                        # 同一种实例化：oracle 的 text 是它自己的 agent loop
+            if a.kind == "program":
                 a.fn = Exec.load(a.text, {"call": self._caller(c, a), "me": a.addr, "channel": c.name})
             else:
                 a.fn = self._doorfn(c, a)

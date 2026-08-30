@@ -16,8 +16,8 @@ T12 形态闭包与拒绝：单向门、无接待员 channel；自退役 / 退�
 T14 跨 channel 退役（同地址不算自己）；T15 事实来源不随拓扑漂（先加新门再退旧门，历史仍可解释）
 T16 actor 抛异常 / 实例化失败：out 空、err 记原因，游标照推，机器活着
 T17 start 只在出生时有效；第二个 born 不算
-T18 c2 = L(oracle) + U(program)：一次运行里 task → U 败 → U 过 → 经门 add c3；placed 到来是新的运行 → done 经真门回到发起者，seq(done) > seq(placed)
-T19 oracle 端点不通：输出视为空、err 记原因，机器活着
+T18 c2 = L(program, agent loop) + U(program)：一次运行里 task → U 败 → U 过 → 经门 add c3；placed 到来是新的运行 → done 经真门回到发起者，seq(done) > seq(placed)
+T19 L 的端点不通：输出视为空、err 记原因，机器活着
 T20 账本是地址 0：show 全部/窗口；账上只记事实行；带内 == 膜外；0 不是成员
 T21 角色：按 tag 寻址；后放的接替先放的；退役后回到前一个
 T22 脚本化的 L：一次运行里读账本窗口 + 让 U 跑、看回复再测、通过后 add + 回话、不说话结束；对话逐轮增长
@@ -142,7 +142,7 @@ def test_T0_P_equals_own_G():
     assert c0[1]["text"] == (ROOT / "actors" / "spawn.py").read_text(encoding="utf-8")
     assert G["channels"][1]["members"][0]["text"] == (ROOT / "actors" / "registrar.py").read_text(encoding="utf-8")
     c2 = G["channels"][2]["members"]
-    assert c2[0]["kind"] == "oracle" and c2[0]["text"] == (ROOT / "actors" / "l.py").read_text(encoding="utf-8")
+    assert c2[0]["kind"] == "program" and c2[0]["tag"] == "L" and c2[0]["text"] == (ROOT / "actors" / "l.py").read_text(encoding="utf-8")
     assert c2[1]["text"] == (ROOT / "actors" / "u.py").read_text(encoding="utf-8")
     assert G == G2()                                                             # genesis 重生成后不变
 
@@ -483,10 +483,10 @@ class StubL:
 
 
 def with_L(G: dict, url: str) -> dict:
-    """把 c2 里 oracle 源码的第一行（端点、模型、密钥三个常量）换成桩的 url；其余不动。"""
+    """把 c2 里 L 源码的第一行（端点、模型、密钥三个常量）换成桩的 url；其余不动。"""
     for c in G["channels"]:
         for m in c["members"]:
-            if m["kind"] == "oracle":
+            if m.get("tag") == "L":
                 _, _, rest = m["text"].partition("\n"); m["text"] = f'ENDPOINT, MODEL, KEY = "{url}", "stub", "key"\n{rest}'
     return G
 
@@ -499,7 +499,7 @@ def test_T18_c2_hosts_oracle_guided_synthesis_loop():
         me = Path(tempfile.mkdtemp(prefix="me-"))
         rt.msg("c0", "door", "1", f"add c2 door tag=me\nfile:{me}#me"); rt.run()          # 发起者的真门 c2/4
         c2 = rt.channels["c2"]
-        assert c2.actors["1"].kind == "oracle" and c2.actors["1"].tag == "L" and c2.receptionist == "1"
+        assert c2.actors["1"].kind == "program" and c2.actors["1"].tag == "L" and c2.receptionist == "1"
         assert c2.actors["2"].tag == "U" and c2.actors["3"].tag == "c0" and c2.actors["4"].text == f"file:{me}#me"
         say(P, "c2", "task\n写一个 actor：收到 hi 回 hello，装进 c3", frm=f"file:{me}#me"); rt.run()
         ms = rows(rt, "c2", "msg")
@@ -524,7 +524,7 @@ def test_T18_c2_hosts_oracle_guided_synthesis_loop():
         assert c3.actors["1"].text == HELLO and c3.actors["1"].tag == "hello" and c3.actors["1"].iface == "hi -> hello" and rows(rt, "c3", "place")[0]["by"] == "1"
         D = decl_of(rt)
         assert [c["name"] for c in D["channels"]] == ["c0", "c1", "c2", "c3"] and D["channels"][3]["members"][0]["tag"] == "hello"
-        assert D["channels"][2]["members"][0]["kind"] == "oracle" and form_of(rt) == declared(D)    # 作者遗传；形态闭包仍成立
+        assert D["channels"][2]["members"][0]["tag"] == "L" and form_of(rt) == declared(D)    # 作者遗传；形态闭包仍成立
         rt.msg("c3", "door", "1", "hi"); rt.run()
         assert ("re", "hello") in frames_of(rows(rt, "c3", "step")[-1])                              # 新器官在工作
         first = json.loads(L.calls[0]["messages"][0]["content"])

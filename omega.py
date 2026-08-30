@@ -73,8 +73,7 @@ class Store:
 
 
 class Port:
-    """通用双向字节通信。异步的一半 send / recv：文件收件箱，端点形如 file:<dir>#<box>。
-    同步的一半 request：POST 到 http 端点、取回应答。第一个实现讲 Anthropic messages 报文。"""
+    """通用双向字节通信：send / recv，文件收件箱，端点形如 file:<dir>#<box>。只给门用；L 问模型是 L 的 text 自己的事（M3.4 起 Ω 没有 request）。"""
 
     @staticmethod
     def send(endpoint: str, payload: dict) -> bool:

@@ -8,7 +8,7 @@
 
 ```
 Ω        omega.py    宿主契约：Exec / Store / Port。不含任何 Dalek 词。
-运行时    runtime.py  极小状态空间 + 转移表（program / oracle / door）+ 三个 syscall + Space 级根门。内容盲。源码在 G.world 里，机器内无人读。
+运行时    runtime.py  极小状态空间 + 转移表（program / door）+ 三个 syscall + Space 级根门。内容盲。源码在 G.world 里，机器内无人读。
 组织      G.json      channel、成员（kind + text + bind）、门。c0 按它 realize。
 ```
 
@@ -16,7 +16,7 @@
 
 ## dalek0
 
-G 里三个 channel：`c0`（构造）、`c1`（登记，`actors/registrar.py`：只折自己的账本，`decl` 吐出当前形态）、`c2`（作者：`actors/l.py` 一个 oracle = 自带 agent loop 的源码（端点 + 提示语 + 组装 + POST + 解帧），`actors/u.py` 一个执行器；没有 driver），连线 c0–c1、c0–c2（`genesis.G2()`；`G0()` 是没有作者的最小机器）。c0 注册两个 actor：
+G 里三个 channel：`c0`（构造）、`c1`（登记，`actors/registrar.py`：只折自己的账本，`decl` 吐出当前形态）、`c2`（作者：`actors/l.py` 一个 program（理论里的 oracle）= 自带 agent loop 的源码（端点 + 提示语 + 组装 + POST + 解帧），`actors/u.py` 一个执行器；没有 driver），连线 c0–c1、c0–c2（`genesis.G2()`；`G0()` 是没有作者的最小机器）。c0 注册两个 actor：
 - `actors/realize.py` — 装配器（A）。请求：`build <门> <创造者>\n<G>`（经门造一台机器的 c0）、`start\n<G>`（出生：自己长出其余——发育）、`add …`、`peer …`（本地生长）。
 - `actors/spawn.py` — 起子代（C）。请求：`spawn <name>`：pack（G.world 写成文件 + G.json 原样）→ `Exec.spawn` → 放两扇门 → 把 G 交给 realize 经门造子代的 c0 → `msg c0\nstart\n<G>`。关门即切离，子代的 c0 自己长其余。
 
@@ -49,6 +49,7 @@ tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
 - 2026-08-31 凌晨：M3.3 actor 是常驻函数——放入时 exec 一次（Python 的 exec，选 Python 的理由），`call` 是真函数，返回值即回复；帧只给 LLM；0 加 `who`；U 在进程内把候选当活函数测。进程、管道、帧协议、助手代码全部删除。T0–T23 绿。
 - 2026-08-31 上午：M3.4 agent loop 出 R——kind 是类别（理论），实例化是工程：oracle 和程序同一个 exec，L 的 text = `actors/l.py` = 整个 loop（端点、提示语、组装、POST、解帧、轮数）。R 删 `_oracle`，Ω 删 `Port.request`。T0–T23 绿。
 - 2026-09-01 凌晨：M3 任务 0——T24：c2 + file → c2′（L 经门 add 进本 channel，用它写读，done 给发起者）→ spawn 子代继承 file 零件、不继承 notes.txt。24/24。
+- 2026-09-01 凌晨：M3.5 oracle 不是原语——R 的 kind 集 = {program, door}，L = `kind=program, tag=L`；oracle 留作理论类别词。膜的强弱（审稿第 2 条）挂起。24/24。
 - 待：任务 1（自组织）、真模型跑一遍、M4（与 M3 合账，今天）。
 
 ## 文件

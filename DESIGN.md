@@ -12,7 +12,7 @@
 
 | 动作 | 谁能发 | 效果 |
 |---|---|---|
-| **msg** `>>> <addr>` + 正文 | 任何 program / oracle actor | 在本 channel 账本追加一条 `msg(from=我, to=addr)`。addr 不存在 → 丢弃（只留在 step.out） |
+| **msg** `>>> <addr>` + 正文 | 任何 program actor | 在本 channel 账本追加一条 `msg(from=我, to=addr)`。addr 不存在 → 丢弃（只留在 step.out） |
 | **place** `>>> place <channel> <kind> [in] [bind=…]` + text | 持有 `bind=place` 的 actor | 在 `<channel>` 账本追加一条 `place`（带完整 text）；channel 不存在则这就是它的第一行；给调用者追加 `msg(from=place, body="<channel>/<addr>")` |
 | **world 动词** `>>> spawn <dir>` / `>>> stop <pid>` | 持有 `bind=<动词>` 的 actor | 一张表，用 Ω 实现（spawn 按 loader 协议起一台机器）：`Exec.spawn(init, dir)` / `Exec.stop(pid)`；给调用者追加 `msg(from=<动词>, body=…)` |
 
@@ -46,14 +46,14 @@
 ### 2.1 状态
 
 ```
-S = (order, {name → Ledger})
+S = (order, {name → Ledger}, Σ)        Σ = {actor → fn 的内部状态}：易失，不由 H 折出，重启即空（DALEK 1.7）；个体 = (order, Ledgers)
 Ledger = 行的序列，seq 从 1 严格递增，单写者（本机器的运行时进程）
 ```
 
 行（四种，字段闭集）：
 
 ```
-place  {seq, k:"place", addr, kind ∈ {program, oracle, door}, text, bind ⊆ {syscall, spawn, stop}, in: bool, by, tag?, iface?, at?}
+place  {seq, k:"place", addr, kind ∈ {program, door}, text, bind ⊆ {syscall, spawn, stop}, in: bool, by, tag?, iface?, at?}
 retire {seq, k:"retire", addr}
 msg    {seq, k:"msg",   from, to, body, run?, at?, by?}     from ∈ 地址 ∪ {0, door, channel.*, spawn, stop}
 step   {seq, k:"step",  actor, upto, out, err, run?}
@@ -68,7 +68,7 @@ holder(c, tag)   = tag 相同、未退役、最后放的成员（角色解析）
 cursor(c, a)     = 该 actor 最后一条不带 run 的 step 的 upto；无则 0
 pending(c, a)    = {msg 行 : to = a, 不带 run, seq > cursor(c, a)}
 offset(box)      = 带 at 的行里最大的 at（该收件箱读到哪）
-fn(a)            = place 行折到时实例化一次：program / oracle → Exec.load(text, {call, me, channel})（同一种实例化；oracle 的 text 是它自己的 agent loop）；door → 介质的函数体；retire 折到时丢弃
+fn(a)            = place 行折到时实例化一次：program → Exec.load(text, {call, me, channel})（L 也是 program，text 是它自己的 agent loop）；door → 介质的函数体；retire 折到时丢弃
 ```
 
 `fn` 是常驻函数；它里面的东西（globals、对话、中间值）是易失运行状态 Σ，**不入账**：H 记的是 call 边界（2.2）。活着的机器是 (G, H, Σ)，个体是 (G, H)；Σ 是工程（DALEK 1.7）。重启 = 重新折叠 = 重新实例化，是一个事件（入账归 M4，H10）。`order` 不在账本里——见 H12。
@@ -89,7 +89,6 @@ dispatch(a, head, body):
   head 解析为成员 t（序号，或角色 → holder）          → 追加 msg(a → t, body, run)；t 退役则返回 ""，否则返回 invoke(t, 该行, caller = a)
   其他                                             → 返回 ""（丢弃）
 fn(door)(m):     Port.send(text, {from: 本 channel 的端点, body})；返回 ""
-fn(oracle)(m):   = fn(program)(m)：text 自己组装（call("0","show") / who）、自己问端点、自己解帧、自己 call、返回 re 的正文；端点的回话在 run 里面，不入账
 inbox(c):        收件箱新行 {from, body} @at → receptionist(c) 存在时追加 msg(from = 指回 from 的门 ∨ "door", to = receptionist, body, at)
 ```
 
@@ -105,7 +104,7 @@ loop:
 预算（max_steps）是宿主的事
 ```
 
-actor 跨调用的记忆是账本（`call("0", …)`）；fn 里存的东西活不过重启，不算记忆。
+actor 跨调用的持久记忆是账本（`call("0", …)`）；fn 里存的东西是易失记忆（Σ），活不过重启。
 
 ### 2.4 不变量
 
@@ -136,15 +135,15 @@ actor 跨调用的记忆是账本（`call("0", …)`）；fn 里存的东西活�
 
 **H4 · A · pack 抄什么。**（已关，M2：C 经接待员向登记员要 `decl`，pack 抄它） 理论：`pack(c1.decl())`。M1 没有 c1，草稿抄 P 里的 `G.json`。这意味着今天的 dalek0 **不能遗传运行中的形态改动**（add 出来的 actor 不进子代）。明天 c1 落地前，M1 的复制只对"未改动过的机器"成立。要在验收里写明。
 
-**H5 · B · pack 的能力。** 关闭（M3.4，2026-08-31）：不存在"未声明的 Store 能力"。程序的能力 = 解释器（Ω 的 Exec = python3）的能力，`shutil` / `open` / `os` 都是它的；bind 门控的只有介质动作（syscall / spawn / stop），不门控宿主。
+**H5 · B · pack 的能力。** 关闭（M3.4，2026-08-31；**若膜按"内外同一原语、能力来自注入的 handle"定，此处重开**——审稿第 2 条，挂起 2026-09-01）：不存在"未声明的 Store 能力"。程序的能力 = 解释器（Ω 的 Exec = python3）的能力，`shutil` / `open` / `os` 都是它的；bind 门控的只有介质动作（syscall / spawn / stop），不门控宿主。
 
 **H6 · B · 收件箱偏移是进程内存。** 关闭（M3.2）：收进来的行带 `at`（该收件箱行之后的字节偏移），R 折叠账本时把各收件箱的偏移折出来；重起不重收。
 
-**H7 · B · 程序 actor 的沙箱。** 关闭（M3.4，2026-08-31）：前提错了——"actor 只有 stdin/stdout"不是理论，text 是 python，能力面就是 python 的能力面（同 H5）。cwd = P 是 C 用文件系统 pack 的工程约定，留着。隔离不要（§6）。
+**H7 · B · 程序 actor 的沙箱。** 关闭（M3.4，2026-08-31；同 H5，随膜的定义可能重开）：前提错了——"actor 只有 stdin/stdout"不是理论，text 是 python，能力面就是 python 的能力面（同 H5）。cwd = P 是 C 用文件系统 pack 的工程约定，留着。隔离不要（§6）。
 
 **H8 · B · 消息给不存在的地址。** 现在静默丢弃。定为规则（已写入 1.1），并考虑给发送者一条 `from=runtime` 的错误消息——但那会引入运行时开口说话，倾向不加。
 
-**H9 · B · oracle 的端点。** 关闭（M3.0，2026-08-30）：text 第一行 `<url> <model> <key>`，其余提示语；R 调 `Port.request(text, 视图)`，Port 讲 Anthropic messages 报文；失败记 err。见 DALEK 1.7（oracle 与门的区分）与 4.8。M3.4：`Port.request` 删除——端点、报文、组装、帧都在 L 的 text（`actors/l.py`）里，R 与 Ω 没有 LLM 专用的东西。
+**H9 · B · L 的端点。** 关闭（M3.0，2026-08-30）：text 第一行 `<url> <model> <key>`，其余提示语；R 调 `Port.request(text, 视图)`，Port 讲 Anthropic messages 报文；失败记 err。见 DALEK 1.7（oracle 与门的区分）与 4.8。M3.4：`Port.request` 删除——端点、报文、组装、帧都在 L 的 text（`actors/l.py`）里，R 与 Ω 没有 LLM 专用的东西。
 
 **H10 · B · 崩溃语义。** 一半已做：actor 抛异常 / 实例化失败 → 返回空、err 记原因，step 行照写、游标照推（器官的失败不是机器的失败，T16）。剩下归 M4：R 在一次事件中间崩溃（行写了一半）；以及**重启本身入账**——重新折叠 = 重新实例化，actor 的内部状态归零，这要在 H 里可见（DALEK 1.7 性质与实现，2026-08-31）。
 
@@ -282,8 +281,8 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 | syscall 的回执就是回复（同一次运行），失败回 `refused` | `runtime._dispatch` | 介质约定（ABI）：请求有回复 |
 | 登记员只认来自本机门（含退役）的 born/placed/retired | `registrar.py` | 登记处记 c0 的宣称；信任本机 |
 | 交出的门行带 `local`；登记员 = 第一扇 local 门那边 | `runtime._annot` / `realize.py` | c0 与 c1 有一条连线（G 的第一条连线） |
-| oracle 组装时带成员表（工具列表） | `actors/l.py` | 运行中能请求的地址 = 它的能力面；程序靠角色不需要表 |
-| 0 的回复是全量行；oracle 组装读 1..当前 | `runtime._dispatch` / `actors/l.py` | 读账本是介质的地址 0，对全部成员开放；oracle 的读在转移行里（理论）。全量还是句柄、读多长是工程 |
+| L 组装时带成员表（工具列表） | `actors/l.py` | 运行中能请求的地址 = 它的能力面；程序靠角色不需要表 |
+| 0 的回复是全量行；L 组装读 1..当前 | `runtime._dispatch` / `actors/l.py` | 读账本是介质的地址 0，对全部成员开放；oracle 的读在转移行里（理论）。全量还是句柄、读多长是工程 |
 | actor 是常驻函数：放入时 `exec` 一次，globals 里能存东西，不拦 | `runtime._instantiate` | H 记 call 边界，内部状态不入账；实例化是 H 中的事件（重启入账归 M4）。想活过重启的东西自己从账本重建 |
 | 程序在 R 进程内跑：没有隔离、没有超时；L 最多 16 轮；L 的模型原文不入账 | `omega.Exec.load` / `actors/l.py` | Ω 是契约边界不是进程边界；隔离与上限是工程（不要）。oracle 是完整 actor，端点回话在它的 run 里面（DALEK 1.4） |
 | 帧语法是 L 的 text 的事（`>>> 地址` 起、单独一行 `<<<` 收）；R 记 call 用同一格式写 step.out | `actors/l.py` / `runtime.parse` | LLM 要能拼写 call；用什么记号是 L 的 text 的工程，R 不认识它 |
@@ -305,6 +304,6 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 - 生子测试（T7/T9/T10）靠 sleep 与 20 s 上限等子代，慢机器可能假失败。
 - 出生后再收到 `start` 忽略（有内门 = 已发育），registrar 只认第一个 `born`（T17）。
 - U 在进程内 exec L 写的代码，不隔离；L 每次调用读整本账，长寿命要一个折叠器官（S，上下文策略在它的源码里）；L 输出不合语法时的清洗程序是退路，未做。
-- oracle 的一步是同步的（最长 120 s），期间调度器不走别的 channel——单线程轮转的代价；要并发得让 R 按 channel 分线程或把 request 做成异步的门，M4 以后。
+- L 的一步是同步的（最长 120 s），期间调度器不走别的 channel——单线程轮转的代价；要并发得让 R 按 channel 分线程或把 request 做成异步的门，M4 以后。
 - 外面直接写收件箱而 channel 里没有指回去的门时，署名是 `door`，回话写给 `door` 会被丢（H8）：任务发起者要收到 `done`，先给自己在 c2 放一扇门（README 的跑法）。测试从 step.out 读。
 - `actors/l.py` 把 `stop_reason == max_tokens` 当失败抛出（截断的代码不能当动作）。
