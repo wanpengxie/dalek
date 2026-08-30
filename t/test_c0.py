@@ -653,6 +653,77 @@ def test_T23_program_multi_request_nested_runs():
     assert [r["seq"] for r in rows(rt, "c0", "step")] == sorted(r["seq"] for r in rows(rt, "c0", "step"))
     assert rows(rt, "c0", "step")[-1]["actor"] == "2"                                                 # 外层最后收
 
+
+# ---------------------------------------------------------------- M3 任务 0：c2 + file → c2′ → 子代继承
+FILE = ('def run(m):\n'
+        '    op, _, rest = m["body"].partition("\\n"); t = op.split()\n'
+        '    if len(t) == 2 and t[0] == "read": return open(t[1], encoding="utf-8").read()\n'
+        '    if len(t) == 2 and t[0] == "write":\n'
+        '        open(t[1], "w", encoding="utf-8").write(rest); return "ok"')
+FILE_IFACE = "read <path> | write <path>\\n<text>"
+
+
+class FileL(StubL):
+    """任务 0 的 L：缺 file 零件 → 经门 add 进本 channel（变异）→ placed 到来是新的一次调用 → 用它写、读 → done 给 task 的 from。"""
+    @staticmethod
+    def answer(messages):
+        n = len(messages); view = json.loads(messages[0]["content"]); b = view["msg"]["body"]
+        if b.startswith("task\n"):
+            return f">>> c0\nadd c2 program tag=file iface={FILE_IFACE}\n{FILE}\n<<<" if n == 1 else ""
+        if b.startswith("placed c2/"):
+            if n == 1: return ">>> file\nwrite notes.txt\nhello\n<<<"
+            r = json.loads(messages[-1]["content"])[0]
+            if n == 3: assert r == {"to": "file", "reply": "ok"}; return ">>> file\nread notes.txt\n<<<"
+            if n == 5:
+                assert r == {"to": "file", "reply": "hello"}
+                asker = next(x["from"] for x in view["ledger"] if x["k"] == "msg" and x["body"].startswith("task\n"))
+                return f">>> {asker}\ndone\nfile 已装进 c2，写入并读回 hello\n<<<"
+        return ""
+
+
+def test_T24_task0_c2_grows_file_and_child_inherits_it():
+    L = FileL()
+    try:
+        G = with_L(G2(), L.url)
+        rt, P = fresh(G); start(P, G); rt.run()
+        me = Path(tempfile.mkdtemp(prefix="me-"))
+        rt.msg("c0", "door", "1", f"add c2 door tag=me\nfile:{me}#me"); rt.run()                     # 发起者的真门 c2/4
+        c2 = rt.channels["c2"]
+        assert [x.tag for x in c2.actors.values()] == ["L", "U", "c0", "me"]                           # c2：没有 file
+        say(P, "c2", "task\n把 hello 写进 notes.txt 再读回来", frm=f"file:{me}#me"); rt.run()
+        runs = [r for r in rows(rt, "c2", "step") if r["actor"] == "1" and "run" not in r]
+        assert len(runs) == 2 and all(r["err"] == "" for r in runs)                                    # 两次调用：task、placed
+        assert [h for h, _ in frames_of(runs[0])] == ["0", "0", "c0"]                                   # 变异：add 进本 channel
+        assert [h for h, _ in frames_of(runs[1])] == ["0", "0", "file", "file", "4"]                    # 用新零件，再 done
+        f = c2.actors["5"]
+        assert f.tag == "file" and f.iface == FILE_IFACE and f.text == FILE and rows(rt, "c2", "place")[4]["by"] == "1"   # c0 的手放的
+        assert (P / "notes.txt").read_text(encoding="utf-8") == "hello"                                # 世界里真的有了
+        got = json.loads((me / "in" / "me.jsonl").read_text().splitlines()[-1])
+        assert got["body"].startswith("done\n") and "hello" in got["body"]                              # 选择在门外：发起者看结果
+        D = decl_of(rt)
+        assert [x.get("tag") for x in D["channels"][2]["members"]] == ["L", "U", "c0", "me", "file"]   # c2′ 登记了
+        assert D["channels"][2]["members"][4] == {"kind": "program", "text": FILE, "tag": "file", "iface": FILE_IFACE}
+        rt.msg("c0", "door", "1", "spawn kid"); rt.run()                                               # 子代
+        d = P / "spawn" / "kid"
+        pid = int([m for m in rows(rt, "c0", "msg") if m["from"] == "spawn"][0]["body"].split("pid=")[1])
+        try:
+            child = wait_child(d, lambda c: "c2" in c.channels and len(rows(c, "c2", "place")) >= 5 and len(rows(c, "c1", "msg")) >= 8)
+            kf = child.channels["c2"].actors["5"]
+            assert kf.tag == "file" and kf.text == FILE and kf.kind == "program"                      # 零件遗传（text）
+            assert not (d / "notes.txt").exists()                                                      # 文件不遗传（不是 text）
+            time.sleep(0.5)
+            assert decl_of(child) == D                                                                 # 子代的 c2 就是 c2′
+            child.msg("c2", "door", "5", "read notes.txt"); child.run()
+            assert "FileNotFoundError" in rows(child, "c2", "step")[-1]["err"]                         # 子代有器官、没有父代的世界
+            child.msg("c2", "door", "5", "write notes.txt\nmine"); child.run()
+            assert (d / "notes.txt").read_text(encoding="utf-8") == "mine"                             # 自己的世界自己写
+        finally:
+            import os, signal
+            try: os.killpg(pid, signal.SIGTERM)
+            except ProcessLookupError: pass
+    finally:
+        L.close()
+
 if __name__ == "__main__":
     ok = 0; names = sorted(n for n in dir() if n.startswith("test_"))
     for name in names:

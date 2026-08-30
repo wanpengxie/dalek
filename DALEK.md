@@ -380,11 +380,12 @@ c2 = L + U 接成的 channel（coding agent，"code mode"）。两个演示任�
 - 机制上没有新东西：**改进器改进自己和改进任何东西是同一条 syscall**，因为改进器不是特殊的，只是 G 里的几段 text；项目是 channel，零件可换。这本身就是要演示的命题。
 - Trusting Trust 的教训不是"自编译"，是**不要原地改**：改坏了自己的 U，就再也验不出任何东西。所以永远是 add 新 + `retire` 旧，改动在账上、在 decl 里，膜外看得见。
 - 攻击面因此说清：G 和 H 全是文本，没有二进制，"看不见的传染"只能藏在 Ω 的 python 和 **L 的权重**里——L 是本体系里那台不透明编译器。DDC 的对策可用：两个不同的 L（两个 oracle 成员）各生成一次 c2′，比对（记为论文里一句话，不做）。
-- 第一个任务就用自省：t\* = "本机有几个 channel、各自接待员是谁"。c2 做不到（L 只看得见本 channel）；c2′ 多一个工具（`who` + 经门问 c1 的 decl）就做到了。
+- 第一个任务是 pi-agent 的形状：t\* = "把 hello 写进 notes.txt 再读回来"。c2 = {L, U, 门} 没有 file 零件（U 是 python，严格说能做，但成员表里没有这个接口——"做不到"是弱意义的，选择在门外）；c2′ = c2 + 一个 `tag=file` 的 program（`read <path> | write <path>\n<text>`），L 自己经门 add 进本 channel，然后用它。子代出生就有 file；`notes.txt` 不在子代目录——**零件是 text，遗传；文件是世界，不遗传**（4.8）。
 
 验收：
 ```
-c2 做不到 t*  →  c2 造 c2′（add 进 c2）  →  c2′ 做到 t*  →  采纳（retire 旧零件）  →  spawn 子代：子代的 c2 就是 c2′
+c2 没有 file  →  c2 造 c2′（L 经门 add 进 c2）  →  c2′ 做到 t*（写、读、done 给发起者）  →  采纳（新增无旧零件可退）  →  spawn 子代：子代的 c2 就是 c2′，目录里没有 notes.txt
+（T24，2026-09-01 完成）
 ```
 
 **任务 1 · 自组织**
@@ -562,6 +563,8 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5
 **M2.4（同日晚，措辞收口）**：清掉 A/B 混用——c1 存的是 c0 的承诺（genome commit），不是 R 的结构事实；三段因果记账降为 c0 的次序约定；"纪律是物理"改为"R 拒绝是工程保障、理论上是升级约定"。不改代码。T0–T17 绿。
 
 **M3.3（2026-08-31 凌晨，actor 是常驻函数）**：推翻 M3.2 的进程 + 管道。actor 折叠到 place 行时实例化一次（`Exec.load(text, {call, me, channel})`，Python 的 exec——选 Python 的理由），挂在地址上、活到退役；每条消息调同一个 `run(m)`，**返回值就是回复**；`call` 是每个 actor 专属的真函数（闭包），嵌套 = 调用栈，前面放的用得了后面放的。三种 kind = 三种得到函数的方式（程序 exec 源码；oracle 介质的函数体，帧只是 LLM 拼写 call 的方式，`>>> re` 是返回值；门 `Port.send`）。0 加 `who`（此刻的成员表）：自省 = show（H）+ who（A）+ decl（G）。U 用同一个 exec 在进程内实例化候选、给真 `call`、把 `run` 交给测试（in vivo）。没有帧协议、没有助手代码、没有进程、没有超时。Ω 是契约边界不是进程边界。realize/spawn/registrar/u 全部 `def run(m)`；测试的小 actor 同样。T0–T23 绿（23 个）。
+
+**M3 任务 0（2026-09-01 凌晨）**：T24——c2 + file → c2′ → 子代继承。FileL 桩：task → `add c2 program tag=file iface=…` 经门（变异）→ placed 是新的一次调用 → write / read → done 给发起者的真门；decl 里 c2 多了 file；spawn 子代，子代 c2/5 是 file、目录里无 notes.txt、读报 FileNotFoundError、自己写自己的。24/24。
 
 **M3.4（2026-08-31 上午，agent loop 出 R）**：审稿追问"LLM 的策略为什么写在 runtime 里"——R 里 `_oracle` 替 L 决定组装、帧、轮数，是 R 里唯一一块长得像组织的东西。定：**kind 是类别（理论），实例化是工程**；oracle 和程序同一种实例化（exec text），L 的 text = `actors/l.py` = 整个 agent loop（端点、凭据、提示语、组装、POST、解帧、轮数）。R 删 `_oracle` / `MAX_TURNS`，Ω 删 `Port.request`（Port 只剩 send/recv 给门），R 对 oracle 只认识这个词。账本、帧序、测试断言不变（L 的两次读还是经 call 入账）。T0–T23 绿。
 
