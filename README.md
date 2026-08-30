@@ -25,7 +25,7 @@ G 里三个 channel：`c0`（构造）、`c1`（登记，`actors/registrar.py`�
 ## 跑
 
 ```
-python3 t/test_c0.py                 # T0–T21
+python3 t/test_c0.py                 # T0–T23
 python3 genesis.py                   # 重新生成 G.json
 python3 init.py <P> [--serve]        # 起 R；--serve 静止后持续轮询收件箱
 ```
@@ -46,6 +46,7 @@ tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
 - 2026-08-30 晚：M3.0 c2 骨架——`Port.request`、oracle = 解释器在远处的成员（与门的区分见 DALEK 1.7）、T18 task → L ↔ U → add c3 → decl → done；T19 端点不通机器活着。T0–T19 绿。
 - 2026-08-30 晚：M3.1 账本是介质的读地址 0（`>>> 0\nshow [a] [b]`，事实入账、投递附 rows），视图 = 投递的消息 + 地址簿；`bind=ledger` 退役；oracle 的转移行带组装。T0–T20 绿。
 - 2026-08-30 深夜：M3.2 运行模型——一步 = 一次运行（初始消息 → 请求/回复 → 结束），程序走帧协议、oracle 走多轮 agent loop、`re` 回复、角色 `tag` 寻址、`iface` 接口、H6 关闭；c0/c1 按 call 重写；T18 因果闭环（placed 后 done、真门）。T0–T21 绿。
+- 2026-08-31 凌晨：M3.3 actor 是常驻函数——放入时 exec 一次（Python 的 exec，选 Python 的理由），`call` 是真函数，返回值即回复；帧只给 LLM；0 加 `who`；U 在进程内把候选当活函数测。进程、管道、帧协议、助手代码全部删除。T0–T23 绿。
 - 待：任务 0 前的两句（产物粒度、评价入描述）、任务 0（c2 → c2′）、真模型跑一遍、M4。
 
 ## 文件

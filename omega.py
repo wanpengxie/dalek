@@ -4,21 +4,21 @@
 它只认识：源码、进程、字节、路径、端点。第一个实现：Linux + python3 + 文件系统。
 """
 from __future__ import annotations
-import json, os, subprocess, sys, signal, tempfile, urllib.request, urllib.error
+import json, os, subprocess, sys, signal, traceback, urllib.request, urllib.error
 from pathlib import Path
 
 
 class Exec:
-    """通用程序实例化：起一段固定语言（python3）源码的进程并给出它的管道；起一个独立实例；停它。"""
+    """通用程序实例化：把一段固定语言（python3）的源码实例化成可调用对象；起一个独立实例；停它。"""
 
     @staticmethod
-    def open(source: str, cwd: str | os.PathLike) -> subprocess.Popen:
-        """起一个进程跑源码：stdin / stdout 是无缓冲字节管道（宿主只搬字节，怎么分帧是上面的事），stderr 落到临时文件。"""
-        err = tempfile.TemporaryFile()
-        p = subprocess.Popen([sys.executable, "-c", source], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=err, cwd=str(cwd), bufsize=0)
-        p.errfile = err
-        return p
+    def load(source: str, env: dict) -> "callable":
+        """在本进程里 exec 源码，env 里的名字对它可见；源码必须定义 run(m)。怎么实例化是绑定的事，上面看不见。"""
+        ns = dict(env)
+        exec(compile(source, "<actor>", "exec"), ns)
+        if not callable(ns.get("run")):
+            raise TypeError("source defines no run(m)")
+        return ns["run"]
 
     @staticmethod
     def spawn(argv: list[str], cwd: str | os.PathLike, log: str | os.PathLike | None = None) -> int:
@@ -77,11 +77,10 @@ class Port:
     同步的一半 request：POST 到 http 端点、取回应答。第一个实现讲 Anthropic messages 报文。"""
 
     @staticmethod
-    def request(text: str, messages: list[dict], timeout: float = 120) -> tuple[str, str]:
-        """text 第一行 = <url> <model> <key>，其余 = system；messages = 多轮对话 [{role, content}]。
+    def request(endpoint: str, system: str, messages: list[dict], timeout: float = 120) -> tuple[str, str]:
+        """endpoint = "<url> <model> <key>"；system 是提示语；messages = 多轮对话 [{role, content}]。
         返回 (应答正文, err)。失败 → 应答视为空，err 记原因；对面的失败不是宿主的失败。"""
-        head, _, system = text.partition("\n")
-        parts = head.split()
+        parts = endpoint.split()
         if not parts or not parts[0].startswith("http"):
             return "", "no endpoint"
         url, model, key = (parts + ["", ""])[:3]

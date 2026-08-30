@@ -285,8 +285,10 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 | 视图里门带 `local`；登记员 = 第一扇 local 门那边 | `runtime.step` / `realize.py` | c0 与 c1 有一条连线（G 的第一条连线） |
 | oracle 组装时带成员表（工具列表） | `runtime._run_oracle` | 运行中能请求的地址 = 它的能力面；程序靠角色不需要表 |
 | 0 的回复是全量行；oracle 组装读 1..当前 | `runtime._dispatch` / `runtime._run_oracle` | 读账本是介质的地址 0，对全部成员开放；oracle 的读在转移行里（理论）。全量还是句柄、读多长是工程 |
-| 一次运行一个进程（`Exec.open`），60 s 上限，oracle 最多 16 轮 | `omega.Exec` / `runtime` | 运行之间无私有状态、运行之内是进程（性质）；上限是工程 |
-| 帧协议：`>>> 地址` 起、单独一行 `<<<` 收；正文不能含单独一行 `<<<` | `runtime._run_program` / `parse` | 请求/回复要能分帧；用什么记号是工程 |
+| actor 是常驻函数：放入时 `exec` 一次，globals 里能存东西，不拦 | `runtime._instantiate` | "运行之间无私有状态"是性质，靠约定保持；想活过重启的东西写进账本 |
+| 程序在 R 进程内跑：没有隔离、没有超时；oracle 最多 16 轮 | `omega.Exec.load` / `runtime` | Ω 是契约边界不是进程边界；隔离与上限是工程（不要） |
+| 帧语法只给 oracle：`>>> 地址` 起、单独一行 `<<<` 收；正文不能含单独一行 `<<<` | `runtime.parse` | LLM 要能拼写 call；用什么记号是工程 |
+| 程序的 cwd = P（每次事件 `os.chdir`） | `runtime._invoke` | C 用文件系统 pack（H5/H7）；工程 |
 | 角色解析：后放的活成员接替 | `runtime._resolve` | 形态里的名字指向当前持有者；升级约定 |
 | 门的 local 在交出账本时计算 | `runtime._annot` | 指向本机 channel 是此刻的事实；channel 只增所以单调 |
 | 地址 = 序号、退役前移，actor 不得硬编码地址 | ABI | 地址属于个体、形态不含地址（理论）；硬编码禁令由序号实现引起 |
@@ -302,7 +304,7 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 - `Exec.spawn` 的日志句柄父进程已关闭（曾泄漏）。
 - 生子测试（T7/T9/T10）靠 sleep 与 20 s 上限等子代，慢机器可能假失败。
 - 出生后再收到 `start` 忽略（有内门 = 已发育），registrar 只认第一个 `born`（T17）。
-- U 跑 L 写的代码不隔离（宿主 python、`P/tmp/u-*`、30 s 超时，不清理）；L 每个事件读整本账，长寿命要一个折叠器官（S，上下文策略在它的源码里）；L 输出不合语法时的清洗程序是退路，未做。
+- U 在进程内 exec L 写的代码，不隔离；L 每次调用读整本账，长寿命要一个折叠器官（S，上下文策略在它的源码里）；L 输出不合语法时的清洗程序是退路，未做。
 - oracle 的一步是同步的（最长 120 s），期间调度器不走别的 channel——单线程轮转的代价；要并发得让 R 按 channel 分线程或把 request 做成异步的门，M4 以后。
 - 外面直接写收件箱而 channel 里没有指回去的门时，署名是 `door`，回话写给 `door` 会被丢（H8）：任务发起者要收到 `done`，先给自己在 c2 放一扇门（README 的跑法）。测试从 step.out 读。
 - `Port.request` 把 `stop_reason == max_tokens` 记为 err（截断的代码不能当动作）。

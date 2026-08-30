@@ -1,32 +1,24 @@
-# c2 的 U：执行器。这段源码是 G 里的 text。用宿主的 python 跑 L 写的代码——机器里的编译器和机器的物理是同一个解释器。
-#   run\n<代码>                     跑代码
-#   test\n<代码>\n===\n<测试>        代码写成 m.py，测试在同目录跑（可 import m / subprocess 跑 m.py）
-# 回 result <退出码>\n<输出>（输出每行缩进两格，免得里面的 ">>> " 被当成帧）。超时 30 s → 退出码 -1。
-import sys, json, os, subprocess, tempfile
+# c2 的 U：执行器。这段源码是 G 里的 text；R 放入时 exec 一次得到常驻的 run(m)。
+# 用和 R 同一个 exec 跑 L 写的代码——机器里的编译器和机器的物理是同一个解释器。候选在进程内被实例化成活函数，拿到真的 call：
+#   run\n<代码>                     exec 代码（stdout 收下来）
+#   test\n<代码>\n===\n<测试>        exec 代码得到它的 run，再 exec 测试；测试的命名空间里有 run（候选的函数）、candidate（候选的全部名字）、call
+# 返回 result <退出码>\n<输出>（输出每行缩进两格）。退出码 0 = 没有异常。
+import io, contextlib, traceback
 
 
-def call(to, body=""):
-    sys.stdout.write(f">>> {to}\n{body}\n<<<\n"); sys.stdout.flush()
-    r = []
-    while True:
-        line = sys.stdin.readline()
-        if not line or line == "<<<\n": break
-        r.append(line.rstrip("\n"))
-    return "\n".join(r)
-
-
-m = json.loads(sys.stdin.readline())
-op, _, rest = m["body"].partition("\n")
-if op in ("run", "test"):
+def run(m):
+    op, _, rest = m["body"].partition("\n")
+    if op not in ("run", "test"):
+        return
     code, _, tests = rest.partition("\n===\n")
-    os.makedirs("tmp", exist_ok=True)                        # cwd = P；散件放 P/tmp 下
-    d = tempfile.mkdtemp(prefix="u-", dir="tmp")
-    with open(os.path.join(d, "m.py"), "w", encoding="utf-8") as f:
-        f.write(code)
+    buf, rc = io.StringIO(), 0
     try:
-        r = subprocess.run([sys.executable, "-c", tests if op == "test" else code],
-                           capture_output=True, text=True, cwd=d, timeout=30)
-        rc, out = r.returncode, r.stdout + r.stderr
-    except subprocess.TimeoutExpired:
-        rc, out = -1, "timeout 30s"
-    call("re", f"result {rc}\n" + "\n".join("  " + l for l in out[-4000:].splitlines()))
+        with contextlib.redirect_stdout(buf):
+            ns = {"call": call, "me": me, "channel": channel}
+            exec(compile(code, "<candidate>", "exec"), ns)
+            if op == "test":
+                exec(compile(tests, "<tests>", "exec"), {"call": call, "run": ns.get("run"), "candidate": ns})
+    except (Exception, SystemExit):
+        rc = 1; buf.write(traceback.format_exc(limit=3))
+    out = buf.getvalue()
+    return f"result {rc}\n" + "\n".join("  " + l for l in out[-4000:].splitlines())
