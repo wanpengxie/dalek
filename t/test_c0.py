@@ -451,24 +451,18 @@ class StubL:
 
     @staticmethod
     def answer(v):
-        """固定策略：没看账就先看；看到账再按最新事件行动。"""
-        shown = next((m for m in v["msgs"] if m["from"] == "0"), None)
-        if not shown:
-            return ">>> 0\nshow"
-        rows, me = shown["rows"], v["me"]
-        prev = max((r["seq"] for r in rows if r["k"] == "msg" and r["from"] == "0" and r["to"] == me), default=0)
-        events = [r for r in rows if r["k"] == "msg" and r["to"] == me and r["from"] != "0" and r["seq"] > prev]
+        """按当前事件行动；发起者从 ledger 里找。"""
         U = next(a["addr"] for a in v["actors"] if a["kind"] == "program")
         door = next(a["addr"] for a in v["actors"] if a["kind"] == "door" and a["text"] == "c0")
         out = []
-        for m in events:
+        for m in v["msgs"]:
             b = m["body"]
             if b.startswith("task\n"):
                 out.append(f">>> {U}\ntest\n{HELLO_BAD}\n===\n{HELLO_T}")
             elif b.startswith("result ") and not b.startswith("result 0"):
                 out.append(f">>> {U}\ntest\n{HELLO}\n===\n{HELLO_T}")
             elif b.startswith("result 0"):
-                asker = next(r["from"] for r in rows if r["k"] == "msg" and r["body"].startswith("task\n"))
+                asker = next(r["from"] for r in v["ledger"] if r["k"] == "msg" and r["body"].startswith("task\n"))
                 out.append(f">>> {door}\nadd c3 program in\n{HELLO}\n>>> {asker}\ndone\nc3 已装")
         return "\n".join(out)
 
@@ -493,16 +487,15 @@ def test_T18_c2_is_an_agent():
         assert c2.actors["1"].kind == "oracle" and c2.receptionist == "1" and c2.actors["3"].text == "c0"
         rt.msg("c2", "door", "1", "task\n写一个 actor：收到 hi 回 hello，装进 c3"); rt.run()
         steps = [r for r in rows(rt, "c2", "step") if r["actor"] == "1"]
-        assert all(r["err"] == "" for r in steps)
-        said = [r["out"] for r in steps if r["out"]]
-        assert [o.startswith(">>> 0\nshow") for o in said] == [True, False] * 3 + [True]           # 每个事件两步：先看账，再行动；placed 看完没话说
-        assert said[1].startswith(">>> 2\ntest\n") and said[3].startswith(">>> 2\ntest\n")
-        assert said[5].startswith(">>> 3\nadd c3 program in\n") and ">>> door\ndone" in said[5]
+        assert len(steps) == 4 and all(r["err"] == "" for r in steps)                              # 写、改、交、收 placed（没话说）
+        assert steps[0]["out"].startswith(">>> 2\ntest\n") and steps[1]["out"].startswith(">>> 2\ntest\n")
+        assert steps[2]["out"].startswith(">>> 3\nadd c3 program in\n") and ">>> door\ndone" in steps[2]["out"] and steps[3]["out"] == ""
         results = [m["body"] for m in rows(rt, "c2", "msg") if m["from"] == "2"]
         assert len(results) == 2 and not results[0].startswith("result 0") and results[1].startswith("result 0")   # U：先败后通过
         assert any(m["from"] == "3" and m["body"].startswith("placed c3/1") for m in rows(rt, "c2", "msg"))   # c0 的回执从门回来
         reads = [m for m in rows(rt, "c2", "msg") if m["from"] == "0"]
-        assert len(reads) == 4 and all(m["body"].startswith("show 1 ") and "rows" not in m for m in reads)   # 读账在账上：只记事实
+        assert len(reads) == 4 and all(m["body"].startswith("show 1 ") and "rows" not in m for m in reads)   # 组装的读在账上：只记事实
+        assert all(s["upto"] == r["seq"] for s, r in zip(steps, reads))                                # 一步吃掉事件和自己的读
         c3 = rt.channels["c3"]
         assert c3.actors["1"].text == HELLO and c3.receptionist == "1" and rows(rt, "c3", "place")[0]["by"] == "1"   # c0 的手装的
         D = decl_of(rt)
@@ -511,12 +504,13 @@ def test_T18_c2_is_an_agent():
         rt.msg("c3", "door", "1", "hi"); rt.run()
         assert rows(rt, "c3", "step")[-1]["out"] == ">>> door\nhello\n"                              # 新器官在工作
         system, last = L.views[-1]
-        assert system.startswith("你是一台机器") and "history" not in last                            # 提示语；视图里没有历史字段
-        got = next(m for m in last["msgs"] if m["from"] == "0")["rows"]
+        assert system.startswith("你是一台机器") and "history" not in last                            # 提示语；没有 history 字段
+        got = last["ledger"]
         disk = [json.loads(l) for l in (P / "h" / "c2.jsonl").read_text(encoding="utf-8").splitlines()]
-        assert got == disk[:len(got)] and got[-1]["seq"] == int(got and next(m for m in last["msgs"] if m["from"] == "0")["body"].split()[2])   # 带内看到的 = 膜外看到的
+        assert got == disk[:len(got)] and got[-1]["seq"] == last["msgs"][-1]["seq"]                  # 带内看到的 = 膜外看到的，到当前事件为止
         assert any(r["k"] == "step" and r["actor"] == "1" and "test\n" in r["out"] for r in got)      # 含自己上一轮说的
         assert any(r["k"] == "place" for r in got) and any(r["k"] == "step" and r["actor"] == "2" for r in got)   # 整本账：放人、U 的步都在
+        assert all(m["from"] != "0" for m in last["msgs"])                                           # 事件里没有 0：组装不是事件
     finally:
         L.close()
 

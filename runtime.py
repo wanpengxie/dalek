@@ -7,7 +7,8 @@
         投递给我的消息 + 地址簿，没有别的。账本要问地址 0（见动作）；来自 0 的消息投递时附 rows。
 转移表（按被写到的 actor 的 kind；退役的不排步）
   program   视图 → Exec.run(text, 视图) → stdout 原样记 step，按 ">>> " 拆成动作
-  oracle    视图 → Port.request(text, 视图)（text 第一行是端点，其余随视图一起送）→ 同上
+  oracle    视图 + 组装（介质替它向 0 要整本账：记一行 show 事实，视图多一个 ledger）→ Port.request(text, 视图) → 同上
+            （text 第一行是端点，其余随视图一起送。程序和门只吃当前消息；oracle 的"先读 session 再说"固定在这一行里）
   door      每条消息原样 Port.send 到 text 所指的端点，署名本 channel 的端点
 动作（program / oracle 输出的每一段）
   >>> <addr>                                                 消息给本 channel 的 <addr>
@@ -221,7 +222,10 @@ class Runtime:
                            for x in c.actors.values()]}
         if a.kind == "program":
             out, err = Exec.run(a.text, json.dumps(view, ensure_ascii=False), cwd=self.P)
-        else:
+        else:                                                 # 组装：送端点之前先读整本账，读在账上
+            shown = self.msg(channel, LEDGER, addr, f"show 1 {upto}")
+            view["ledger"] = self._deliver(c, shown)["rows"]
+            upto = shown["seq"]
             out, err = Port.request(a.text, json.dumps(view, ensure_ascii=False))
         self._append(c, {"k": "step", "actor": addr, "upto": upto, "out": out, "err": err})
         for head, body in parse(out):

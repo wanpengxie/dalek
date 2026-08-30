@@ -284,7 +284,7 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 | 登记员只认来自本机门（含退役）的 born/placed/retired | `registrar.py` | 登记处记 c0 的宣称；信任本机 |
 | 视图里门带 `local`；登记员 = 第一扇 local 门那边 | `runtime.step` / `realize.py` | c0 与 c1 有一条连线（G 的第一条连线） |
 | 视图带成员表（地址簿） | `runtime.step` | 信封要能寻址；地址簿属于投递，不属于历史 |
-| 来自 0 的消息投递时附 rows（全量） | `runtime._deliver` | 读账本是介质的地址 0，对全部成员开放（理论）；附全量还是给句柄是工程 |
+| 来自 0 的消息投递时附 rows（全量）；oracle 组装时读 1..当前 | `runtime._deliver` / `runtime.step` | 读账本是介质的地址 0，对全部成员开放；oracle 的读在转移行里（理论）。附全量还是给句柄、组装读多长是工程 |
 | 每步起新进程（`Exec.run`） | `omega.Exec` | actor 无私有状态、忠实（性质）；常驻进程 + 纪律亦可 |
 | 地址 = 序号、退役前移，actor 不得硬编码地址 | ABI | 地址属于个体、形态不含地址（理论）；硬编码禁令由序号实现引起 |
 | 首 channel 必须显式接待员（genesis / build 拒绝） | `genesis.py` / `realize.py` | 出生需要一个入口（理论合法性条件）；拒绝是保障 |

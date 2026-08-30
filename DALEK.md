@@ -179,7 +179,7 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 | 事件落在的 actor 的 kind | 转移 |
 |---|---|
 | **程序** | 取视图 → `Exec.run(text, 视图)` → stdout 原样追加为步记录（谁、看到哪、回了什么）+ 拆成动作：消息、syscall、绑定了的 world 动词（spawn / stop，一张表，用 Ω 实现）；游标前移 |
-| **oracle** | 取视图 → Ω 侧的端点 → 回答同程序行；游标前移 |
+| **oracle** | 取视图 → **组装**：介质替它向 0 要整本账（记一行 `show` 事实，视图多一个 `ledger`）→ `Port.request(text, 视图)` → 回答同程序行；游标前移（越过自己的那行读） |
 | **门** | 把这条消息原样 `Port.send` 到 text 所指的端点（本机 channel 名也是端点），署名本 channel 的端点；对面收件箱进账时署名指回来的门，收件人是对面的接待员 |
 | **放 actor**（syscall `channel.add.actor`） | 在该 channel 的下一个地址写下 kind + text，在该账本记一行——**这一行带完整的 kind + text**。channel 存在 = 它账本有第一行；经根门放也走这一行 |
 
@@ -193,7 +193,7 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 | `spawn` / `stop` | 动世界 | 是 | pid / … |
 | **`0`**（本 channel 的账本） | **读历史** | **否** | 那一段账 |
 
-账本是每个 channel 的地址 0：写给它 `show [a] [b]` = 读它。读对全部成员开放（读不改任何东西，所以不是能力），0 不是成员（不放、不退、不遗传）。回执按 1.4 的分法处理：syscall 回执记的是不可重算的外生结果（分到的地址、pid），所以记结果；0 的回答是 H 的投影，可重算，所以**账上只记事实行**（`0 → me: show a b`——谁、何时、看了哪段），**投递时附上那些行**（视图里该条消息带 `rows`）。重演照算不照抄，账不含账。读什么、何时读是成员自己的策略，写在它自己的描述里（L 的固定策略：先看账再行动，借自 pi 一类 agent 的"全量 session"；要变就换 text 或加一个折叠器官）。channel = session。
+账本是每个 channel 的地址 0：写给它 `show [a] [b]` = 读它。读对全部成员开放（读不改任何东西，所以不是能力），0 不是成员（不放、不退、不遗传）。回执按 1.4 的分法处理：syscall 回执记的是不可重算的外生结果（分到的地址、pid），所以记结果；0 的回答是 H 的投影，可重算，所以**账上只记事实行**（`0 → me: show a b`——谁、何时、看了哪段），**投递时附上那些行**（视图里该条消息带 `rows`）。重演照算不照抄，账不含账。程序和门只吃当前消息，要历史自己问 0（策略在源码里）；**oracle 的读固定在它的转移行里**：送端点之前介质替它读整本账（pi 一类 agent 的"全量 session"），这就是 oracle 区别于程序的那一步——组装。channel = session。要变组装策略，是换 world 版本或加一个折叠器官，不是改提示语。
 
 **kind**：三种，都是"转移表定行为 + 一个 text 参数"，区别只在 text 是什么——程序的 text 是源码，oracle 的 text 是端点 + 提示语（第一行端点，其余随视图一起送过去），门的 text 是对面的地址。门最退化：text 不是行为、不是内容，是指针；但它是唯一 text 指向 channel 外面的 kind。整台机器的拓扑 = 全部门的 text 的集合。
 
@@ -472,7 +472,7 @@ channel 的创建顺序记在 `h/_order`。`from` 可以是 `door`（膜外来�
 
 ### 4.3 程序 actor 的 ABI
 
-stdin（视图）：`{"channel", "me", "msgs": [{seq, from, to, body}…], "actors": [{addr, kind, bind, in, retired, text?, local?}…], "history"?}`——`msgs` 是写给我且没看过的；`actors` 是本 channel 的成员表（本 channel 账本的折叠，门带 text 和 local = 指向本机 channel）；没有历史字段：历史问地址 0。stdout 原样进 `step.out`，按行首 `>>> ` 拆：
+stdin（视图）：`{"channel", "me", "msgs": [{seq, from, to, body}…], "actors": [{addr, kind, bind, in, retired, text?, local?}…], "history"?}`——`msgs` 是写给我且没看过的；`actors` 是本 channel 的成员表（本 channel 账本的折叠，门带 text 和 local = 指向本机 channel）；程序没有历史字段：历史问地址 0。oracle 多一个 `ledger`（组装时介质读来的整本账，见 1.7）。stdout 原样进 `step.out`，按行首 `>>> ` 拆：
 
 ```
 >>> <addr>                                          消息，发给本 channel 的 <addr>（含门）
@@ -525,9 +525,9 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 
 c2 = {1 L：`kind=oracle, in`；2 U：`kind=program`；3 门→c0}，G0 加 c2 与连线 [c0, c2] = `genesis.G2()`，dalek0 用它。没有 driver：循环由转移表驱动——任务从收件箱来 → 投给 L → L 写给 U → U 回 result → L 改或交 → 经门给 c0 `add`。
 
-**oracle 的 ABI**（R 的转移表第二行）：`Port.request(text, 视图 JSON)`。text 第一行 `<url> <model> <key>`，其余是提示语；第一个实现讲 Anthropic messages 报文（system = 提示语，user = 视图）。应答正文进 `step.out`，按同一 `>>> ` 语法拆；失败（连不上、超时、非 2xx）同 `Exec.run`：输出视为空、err 记原因，游标照推（T19）。一步一轮、无对话状态：上下文靠读账本——L 的固定策略是每个事件两步（`>>> 0\nshow`，下一步拿着整本账行动）。重演照抄 step 行（1.4）。
+**oracle 的 ABI**（R 的转移表第二行）：`Port.request(text, 视图 JSON)`。text 第一行 `<url> <model> <key>`，其余是提示语；第一个实现讲 Anthropic messages 报文（system = 提示语，user = 视图）。应答正文进 `step.out`，按同一 `>>> ` 语法拆；失败（连不上、超时、非 2xx）同 `Exec.run`：输出视为空、err 记原因，游标照推（T19）。一步一轮、无对话状态：上下文由组装给——视图里的 `ledger` 是整本账，账上多一行 `0 → L: show 1 n`。重演照抄 step 行（1.4）。
 
-**L 的 text**（`actors/l.txt`）：第一行端点；提示语只讲 ABI——视图格式、`>>> ` 语法、"地址从成员表找不要硬编码"、U 的报文、c0 的门接受的请求、任务协议（`task\n<要求>` → 写 → test → 改 → `add` → 回 `done`）。测试把第一行换成本机 http 桩，提示语一字不改（T18）。
+**L 的 text**（`actors/l.txt`）：第一行端点；提示语只讲 ABI——视图格式（含 `ledger` = session）、`>>> ` 语法、"地址从成员表找不要硬编码"、U 的报文、c0 的门接受的请求、任务协议（`task\n<要求>` → 写 → test → 改 → `add` → 回 `done`）。没有读策略：那是 kind 的物理。测试把第一行换成本机 http 桩，提示语一字不改（T18）。
 
 **U 的报文**（`actors/u.py`）：`run\n<代码>` 或 `test\n<代码>\n===\n<测试>` → 代码存成 `m.py`，测试在同目录用宿主 python 跑（30 s）→ `result <退出码>\n<输出>`（输出每行缩进两格，行首不会出现 `>>> `）。U 用的解释器和 Ω 的 Exec 是同一个——机器里的编译器就是机器的物理，Trusting Trust 的攻击面不回避。
 
@@ -553,6 +553,6 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5
 
 **M2.4（同日晚，措辞收口）**：清掉 A/B 混用——c1 存的是 c0 的承诺（genome commit），不是 R 的结构事实；三段因果记账降为 c0 的次序约定；"纪律是物理"改为"R 拒绝是工程保障、理论上是升级约定"。不改代码。T0–T17 绿。
 
-**M3.1（同日晚，A1）· 账本是地址 0**：视图回到"投递的消息 + 地址簿"；`bind=ledger` 与 `history` 退役；R 加读地址 0（`show [a] [b]` → 事实行入账、投递附 rows）；registrar 两步问账；l.txt 写固定策略（先看账再行动）。T18 改为每事件两步；T20：全部/窗口、账上只有事实行、带内 == 膜外、0 不是成员。T0–T20 绿。
+**M3.1（同日晚，A1）· 账本是地址 0**：视图回到"投递的消息 + 地址簿"；`bind=ledger` 与 `history` 退役；R 加读地址 0（`show [a] [b]` → 事实行入账、投递附 rows）；registrar 两步问账（程序的策略在源码里）；**oracle 的转移行带组装**：送端点前介质替它读整本账，记 `show` 事实行，视图多 `ledger`——L 一步一事件，提示语里没有策略。T18：L 四步、四行读事实、`ledger` == 磁盘；T20：程序显式问 0，全部/窗口、账上只有事实行、0 不是成员。T0–T20 绿。
 
 **M3.0（同日晚）· c2 骨架**：Ω 加 `Port.request`（同步的一半，Anthropic 报文）；R 的 oracle 行改为 `Port.request(text, 视图)`，删掉 `Runtime(oracle=)` 桩；`history` 含自己说过的；`actors/l.txt`（端点 + 提示语）、`actors/u.py`（执行器）；`genesis.G2()` = G0 + c2 + 连线，dalek0 的 G.json 改用它。T18：task → L 写 → U 败 → L 改 → U 过 → 经门 `add c3` → c1 有 c3 → 回 done → 新器官在工作，π(A) ≅ decl 仍成立；T19：端点不通机器活着。H9 关闭。T0–T19 绿。未做：任务 0（c2 → c2′）、真模型跑一遍。
