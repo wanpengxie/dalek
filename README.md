@@ -48,7 +48,7 @@ tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
 - 2026-08-30 深夜：M3.2 运行模型——一步 = 一次运行（初始消息 → 请求/回复 → 结束），程序走帧协议、oracle 走多轮 agent loop、`re` 回复、角色 `tag` 寻址、`iface` 接口、H6 关闭；c0/c1 按 call 重写；T18 因果闭环（placed 后 done、真门）。T0–T21 绿。
 - 2026-08-31 凌晨：M3.3 actor 是常驻函数——放入时 exec 一次（Python 的 exec，选 Python 的理由），`call` 是真函数，返回值即回复；帧只给 LLM；0 加 `who`；U 在进程内把候选当活函数测。进程、管道、帧协议、助手代码全部删除。T0–T23 绿。
 - 2026-08-31 上午：M3.4 agent loop 出 R——kind 是类别（理论），实例化是工程：oracle 和程序同一个 exec，L 的 text = `actors/l.py` = 整个 loop（端点、提示语、组装、POST、解帧、轮数）。R 删 `_oracle`，Ω 删 `Port.request`。T0–T23 绿。
-- 2026-09-01 凌晨：M3 任务 0 的路——T24：c2 + file → c2′（L 经门 add 进本 channel，用它写读，done 给发起者）→ spawn 子代继承 file 零件、不继承 notes.txt。T24 是桩版；**真模型（DeepSeek）同日跑通**：作者自己写 file、U 测三版、add、placed 后用它、done；子代继承零件不继承文件（`runs/task0-deepseek-*.jsonl`）。24/24。
+- 2026-09-01 凌晨：M3 任务 0 的路——T24：c2 + file → c2′（L 经门 add 进本 channel，用它写读，done 给发起者）→ spawn 子代继承 file 零件、不继承 notes.txt。T24 是桩版；**真模型（DeepSeek）同日跑通**：作者自己写 file、U 测三版、add、placed 后用它、done；子代继承零件不继承文件（`runs/task0-deepseek-*.jsonl`）。结论：提示语是策略，核心路径是新能力完全靠 syscall + 现有 actor 进入机器（门 → c0 → syscall → 实例化 → 登记 → 回执）。任务 0 关闭。24/24。
 - 2026-09-01 凌晨：M3.5 oracle 不是原语——R 的 kind 集 = {program, door}，L = `kind=program, tag=L`；oracle 留作理论类别词。膜定为窄版（DESIGN I6）。24/24。
 - 待：任务 1（自组织）、M4（与 M3 合账，今天）。
 
