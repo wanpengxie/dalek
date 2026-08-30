@@ -78,7 +78,9 @@ if note:
     reg = registry_door(); replies = {}
     for item, ret in zip(note["pending"], returns):
         lh, _, lt = item["line"].partition("\n"); lw = lh.split()
-        if lw[0] == "channel.add.actor" and "/" in ret:
+        if ret.endswith(" refused"):                                              # 回执稠密：拒绝也占一位
+            if item["who"]: replies.setdefault(item["who"], []).append(f"refused {lh}")
+        elif lw[0] == "channel.add.actor" and "/" in ret:
             cn, _, addr = ret.partition("/")
             if item["who"]: replies.setdefault(item["who"], []).append(f"placed {ret}")
             if reg: out.append(f">>> {reg}\nplaced {cn} {addr} " + " ".join(lw[2:]) + "\n" + lt)
@@ -92,6 +94,8 @@ for frm, t, rest, body in requests:
     op = t[0]
     if op == "build" and len(t) >= 3:
         G = json.loads(rest)
+        if not G["channels"] or G["channels"][0].get("receptionist") is None:       # 首 channel 必须有接待员，否则 start 送不进去
+            out.append(f">>> {frm}\ninvalid {t[1]} first channel needs receptionist"); continue
         for line in lines_first(G, t[2]):
             out.append(f">>> {t[1]}\n{line}")
         out.append(f">>> {frm}\nbuilt {t[1]}")

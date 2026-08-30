@@ -49,7 +49,7 @@ A_t = fold(H_R)     实际形态：R 折全部账本得到的、此刻活着的�
 G_t = fold(H_c1)    遗传形态：c1 折自己的账本得到的、单元认为应当遗传和再生的结构
 静止时  π(A_t) ≅ G_t
 ```
-π 是"从实际里投影出可遗传的"：去掉不经 c0 放的门（出生证明、生子的临时门）、去掉退役的器官、地址重排；保留 kind、text、绑定、接待员、门的位置与方向。**c1 不是实际状态的镜子，是基因组登记处**——它记的是"我应当是什么"，R 记的是"我现在是什么"。形态改动途中和损伤后二者暂时不同；自维护（M4）就是让 π(A) 回到 G。旧句"三个身影逐字相等"撤回：出生证明和临时门本来就故意不进 G。另一条不变：`P.world == G.world`。
+π 是"从实际里投影出可遗传的"，**按出处**定义：保留 c0 的接待员（realize）放的一切（不管门的 text 指向哪里——M3 的外部网络门也遗传）和脐带放的 c0 成员（含指向本机的门）；去掉脐带放的出生证明（指向创造者的门）、c0 里非接待员成员放的门（C 为生子放的临时门）、退役的器官；地址重排；保留 kind、text、绑定、接待员、门的位置与方向。**π(A) ≅ G 由 c0 维护，不是 R 的不变量**：登记处记的是构造器官的宣称，c0 的成员本来就拿着 syscall，能造假的也能真造；R 保证的是 A 和 G 各自是真实账本的折叠。原型不防 c0 内部说谎（工程方案见 DESIGN H16）。**c1 不是实际状态的镜子，是基因组登记处**——它记的是"我应当是什么"，R 记的是"我现在是什么"。形态改动途中和损伤后二者暂时不同；自维护（M4）就是让 π(A) 回到 G。旧句"三个身影逐字相等"撤回：出生证明和临时门本来就故意不进 G。另一条不变：`P.world == G.world`。
 
 一句话：一台机器是一个 JSON；给它一个宿主（Ω）和一个创造者，它把自己长成一个会写日记的 Space；日记能折回 JSON；JSON 能连同世界的拷贝交给下一个进程——于是有了下一台。
 
@@ -164,7 +164,7 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 
 - **判据**：运行时里只能有介质词汇（actor、账本、消息、投递），不能有组织词汇（c0、c1、构造器、登记、复制）。
 - **可遗传且可描述**：R 的源码——连同 ω-bind 和 loader——就是 G 的根字段 `world`。这是冯诺依曼的 CA 做不到的一步（规则表写不进带子），生物也做不到（密码表不在基因组里）；软件可以，因为世界也是文本。守住的一条：**机器内没有任何东西读 `world`**——pack 抄它，Ω 执行它，R 不读 G。改名检验照样通过：同版本世界的所有 G 的 `world` 逐字相同。恢复时它缺不得（world + H，不是只有 H）。
-- **G 是 H 的投影**：因为每一次放 actor 都带完整 text 记在账上，H 是 G 的超集，`G_t = fold(H)`，不需要 G₀ 做起点。从 H 恢复得到的是组织，不是机器——`world` 不是 actor，不进 H。c1 的 decl 把 `world` 从 P 原样抄回来拼上。P 里那份 G 原样仍然要：它是 B 的产物，子代在有任何 H 之前靠它 realize；一致性拆成两条：`fold(H) == G.channels/peers + 后续改动`，`P.world == G.world`。
+- **G 是 H 的投影**：因为每一次放 actor 都带完整 text 记在账上，H 是 G 的超集，`G_t = fold(H)`，不需要 G₀ 做起点。从 H 恢复得到的是组织，不是机器——`world` 不是 actor，不进 H。c1 的 decl 里的 `world` 来自出生时 c0 送去的 born（脐带放的 + world），不从 P 读。P 里那份 G 原样仍然要：它是 B 的产物，子代在有任何 H 之前靠它 realize；一致性拆成两条：`fold(H) == G.channels/peers + 后续改动`，`P.world == G.world`。
 - **代价**：运行时对个体不可改（正在跑的 R 改不了自己）。谱系可以：c2 改 G′.world，pack 一个子代用它跑，自举不动点验收。
 - 旧句"Ω = 硬件 + 物理"撤回。Atoll 对应的是 Ω + 运行时两层，不是 Ω 一层。
 
@@ -313,7 +313,7 @@ G（dalek0；根门与出生证明都不在 G 里；`peers` 是人写 G 的糖�
                 receptionist: 1 } ],
   peers: [[c0, c1]] }
 ```
-接待员必须显式：G 不写就没有（外来消息落空）。
+接待员必须显式：G 不写就没有（外来消息落空）。**合法性条件：G 的第一个 channel 必须显式指定接待员**——否则 start 送不进去、根门关不上；其余 channel 可以没有。genesis 和 realize 的 `build` 都拒绝不合法的 G。
 
 验收：
 ```
@@ -331,8 +331,9 @@ m 造 G′ ≠ 自己的机器，其 decl() == G′                           �
 
 ### M2 · c1：登记与 decl（周日 2026-08-30）——已落地，见 4.6 / 4.7
 
-- c1 = 注册了登记员的 channel（基因组登记处，见 0.0 的 A_t / G_t / π）。**三段因果记账**（不是"同时"）：syscall 落到目标账本 → 下一步 c0 收到回执 → c0 经门送 c1。c1 只认来自 c0 的门的 `born`（脐带放的：world + c0 的成员，地址 = 序号）、`placed`（c0 的手放的，带真实地址，出生时长出的其余器官也走这条）、`retired`；别的来源一律是普通正文，不是形态事实。`decl` = G₀ ⊕ placed ⊖ retired：门就是成员（不折 peers，所以单向门、门的位置都可表达），接待员显式、没有就没有，退役的不输出，world 来自 born。不读 P，不写文件。
-- **R 的两条拒绝**：不能退役自己（器官不能登记自己的死亡，否则回执无人处理、c1 不知道）；不能退役当前接待员（先放新的带 `in`）。接待员只由显式 `in` 决定，R 没有"第一个就是"的默认。**升级纪律由此成为物理：先 add 新的，再由新的退旧的。**
+- c1 = 注册了登记员的 channel（基因组登记处，见 0.0 的 A_t / G_t / π）。**三段因果记账**（不是"同时"）：syscall 落到目标账本 → 下一步 c0 收到回执 → c0 经门送 c1（`born`：脐带放的；`placed`/`retired`：c0 的手做的，带真实地址）。`decl` = G₀ ⊕ placed ⊖ retired：门就是成员，接待员显式、没有就没有，退役的不输出。c1 不读 P、不写文件。π(A) ≅ G 由 c0 的纪律维护（0.0）。
+- **升级纪律**：先 add 新的，再由新的（或第三者）退旧的；器官不登记自己的死亡；接待员先换再退；换登记链路也一样（先加新门再退旧门）。原型把其中几条做成了 R 的拒绝——那是工程保障，不是理论，见 DESIGN §6。
+- （R 的拒绝与事实来源规则是工程保障，见 DESIGN §6。）
 - 失败模型：崩在两步之间，回执与 note 仍是账上的 pending 行，重启后补登记；崩在一步之中（step 行已写、动作只执行了一半）是 H10，M4 处理。
 - C actor 的 pack 改用 `c1.decl()`，不再抄 P 里的 G.json（关 H4）。
 - **退役是第三个 syscall**（2026-08-30 定）：`channel.retire.actor <channel>/<addr>` → 该 channel 账本追加一条 `retire` 行；`_fold` 把该 actor 标为退役，R 不再给它 step（写给它的消息留在账上、不投递）；decl 自然略过；地址不复用（序号只增）。理由：退役是形态改动，形态改动必须是 syscall、落在账上、由 R 照账执行，否则"任何形态改动都在账上"对退役不成立；只在 c1 表上划掉会留下"没人叫但叫了会应"的僵尸器官。
@@ -446,7 +447,7 @@ m**.decl() == m*.decl()，且 m** 能继续造
 | k | 字段 | 谁写 |
 |---|---|---|
 | `place` | `seq, addr, kind, text, bind, in, by` | R 执行 `channel.add.actor` 时；**带完整 text**；`by` = 发起者地址，或 `_root`（经根门） |
-| `retire` | `seq, addr` | R 执行 `channel.retire.actor` 时；该 actor 不再排步，地址不复用；退役的接待员 → 该 channel 无接待员 |
+| `retire` | `seq, addr` | R 执行 `channel.retire.actor` 时；该 actor 不再排步，地址不复用（退役当前接待员会被拒绝，见 DESIGN §6） |
 | `msg` | `seq, from, to, body` | 成员输出拆成的消息；门抄来的消息；syscall 的返回 |
 | `step` | `seq, actor, upto, out, err` | 某 actor 被叫醒：看到哪、原样回了什么 |
 
@@ -469,7 +470,7 @@ stdin（视图）：`{"channel", "me", "msgs": [{seq, from, to, body}…], "acto
 >>> <动词> <参数>                                   绑定了的 world 动词，一张表：spawn <dir>（按 loader 协议 Exec.spawn(init.py <dir> --serve)）、stop <pid>；需 bind=<动词>
 ```
 
-返回以 msg 追加给调用者：`from=channel.create body="<name> new|exists"`；`from=channel.add.actor body=<channel>/<addr>`；`from=channel.retire.actor body=<channel>/<addr>`；`from=spawn body="<dir> pid=<n>"`。跨膜没有返回（根门单向）。
+返回以 msg 追加给调用者：`from=channel.create body="<name> new|exists"`；`from=channel.add.actor body=<channel>/<addr>`；`from=channel.retire.actor body=<channel>/<addr>`；`from=spawn body="<dir> pid=<n>"`。**每条合法的 syscall 恰好一条回执**：失败是 `"<参数> refused"`——回执稠密，发起者按位置对应请求与回执。跨膜没有返回（根门单向）。
 
 **地址不遗传**：地址是本 channel 内、本个体内的序号；退役与追加会让子代的序号前移。actor 不得硬编码地址，用视图里的 `from`、成员表（kind / bind / in / 门的 text）和 syscall 返回解析。
 
@@ -494,8 +495,8 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 
 | 请求（写给 realize） | 做什么 |
 |---|---|
-| `build <门> <创造者地址>\n<G>` | 经门发 syscall 造 G 的第一个 channel（c0）；最后放出生证明门；回 `built <门>` |
-| `start\n<G>` | 出生：本地 syscall 长出 G 的其余 channel 与全部连线（发育）；下一步把 `born\n<G>` 交给登记员。正文为空则不动 |
+| `build <门> <创造者地址>\n<G>` | 经门发 syscall 造 G 的第一个 channel（c0）；最后放出生证明门；回 `built <门>`。首 channel 没有接待员 → 回 `invalid`，不造 |
+| `start\n<G>` | 出生：本地 syscall 长出 G 的其余 channel 与全部连线（发育）；下一步把 `born`（world + c0 的成员）交给登记员，长出的每一件以 `placed` 登记。正文为空则不动 |
 | `add <channel> <kind> [in] [bind=…]\n<text>` | 本地：`channel.create`（幂等）+ `channel.add.actor` |
 | `peer <a> <b>` | 本地两扇门 |
 | `retire <channel>/<addr>` | `channel.retire.actor` |
@@ -505,7 +506,7 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 
 **三段因果记账**：realize 每条 syscall 落地后（回执在下一步视图里），回请求者 `placed <ch>/<addr>` / `retired <ch>/<addr>`，并把带完整 text 的 `placed <ch> <addr> <kind> [in] [bind=…]\n<text>` / `retired …` 送给登记员——出生时长出的器官也逐件登记；脐带放的（c0 的成员）由 `born`（world + c0）登记。出生证明门和 C 为生子放的两扇门不经 realize，所以不登记、不遗传（这就是 π 去掉的东西）。
 
-**c1 的登记员**（`actors/registrar.py`，bind=ledger）：只折自己的账本（视图里的 history），且只认来自本 channel 第一扇 local 门（c0）的 `born / placed / retired`：`born` 给 G₀，`placed` 追加条目（带真实地址），`retired` 划掉；`decl` → G₀ ⊕ placed ⊖ retired：channel 按出生 + 首次出现顺序（= `_order`），成员按地址，**门就是成员**（`peers: []`），接待员显式，退役的不输出，world 原样来自 born。不读任何文件。
+**c1 的登记员**（`actors/registrar.py`，bind=ledger）：只折自己的账本（视图里的 history），且只认来自本机 channel 的门（成员表里 local 的门，含已退役——历史的解释不随拓扑漂，权威随"先加新门再退旧门"迁移）的 `born / placed / retired`：`born` 给 G₀，`placed` 追加条目（带真实地址），`retired` 划掉；`decl` → G₀ ⊕ placed ⊖ retired：channel 按出生 + 首次出现顺序（= `_order`），成员按地址，**门就是成员**（`peers: []`），接待员显式，退役的不输出，world 原样来自 born。不读任何文件。
 
 ### 4.7 实现状态（2026-08-29，晚）
 
@@ -520,3 +521,5 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭）：H5/H7（C actor 用文件�
 **M2 落地（2026-08-30）**：R 加 `retire` 行与 `channel.retire.actor`、视图带成员表（门带 local）与 `history`（bind=ledger）；`actors/registrar.py` 为 c1；realize 加 `start` 后的 `born`、三边记账、`retire`、`spawn`/`decl` 分发；C 的 pack 改用 decl（关 H4），外来 spawn 经接待员到 C（关 H3）；G0 = {c0, c1} + 连线。T8–T11：出生后 `decl == G0` 且 channel 顺序 == `_order`；运行中 add/peer 后 spawn → 子代有、`decl(子) == decl(父)`；add 新 realize′(in) + retire 旧 → 旧不再 step、decl 略过、子代的接待员是 realize′（替换 + 非平凡）；退役后写给它的消息留账不投递。T0–T11 绿。
 
 **M2.1（同日，按 codex 审阅收口）**：接待员只由显式 `in` 决定（R 无默认）；R 拒绝自退役与退役接待员；registrar 只认 c0 门的事实、门就是成员、接待员显式；realize 的 `born` 只带 world + c0 的成员，出生时长出的其余逐件 `placed`（带真实地址）。0.0 的不变量改为 π(A_t) ≅ G_t。T12：自退役 / 退役接待员 / 伪造 placed 无效；单向门与无接待员 channel 可表达；`realize(decl(S)) ≅ S`。T0–T12 绿。
+
+**M2.2（同日，codex 第三轮）**：回执稠密（拒绝也回 `refused`，关掉按位置对应的错位）；自退役判断带 channel；genesis 与 realize 一致地无默认接待员，首 channel 必须显式；registrar 的事实来源改为所有本机门含退役（历史解释不随拓扑漂）。π 改为按出处定义；π(A) ≅ G 明确为 c0 维护。T13–T15。理论/工程分界写进 DESIGN §6。T0–T15 绿。

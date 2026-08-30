@@ -12,6 +12,7 @@ T8 登记：出生后 decl(dalek0) == G0；c1 账本第一行是 born；channels
 T9 遗传运行中的改动：add + peer 后经接待员 spawn（H3）→ 子代有它们；decl(子) == decl(父)
 T10 替换 + 非平凡：add 新 realize′(in) + retire 旧 → 旧不再被 step、decl 略过 → 子代的接待员是 realize′
 T11 retire 后写给它的消息留账不投递；退役的门不再署名
+T12 形态闭包与拒绝；T13 回执稠密（拒绝也占一位）；T14 跨 channel 退役；T15 事实来源不随拓扑漂
 """
 from __future__ import annotations
 import json, re, sys, tempfile, time, traceback
@@ -322,8 +323,8 @@ def test_T12_form_closure_and_refusals():
     G = G0()
     rt, P = fresh(G); start(P, G); rt.run()
     c0 = rt.channels["c0"]
-    assert rt._syscall("channel.retire.actor c0/2", "", by="2") is None and not c0.actors["2"].retired   # 自退役被拒
-    assert rt._syscall("channel.retire.actor c0/1", "", by="2") is None and not c0.actors["1"].retired   # 退役接待员被拒
+    assert rt._syscall("channel.retire.actor c0/2", "", by="2", by_channel="c0")[1] == "c0/2 refused" and not c0.actors["2"].retired   # 自退役被拒
+    assert rt._syscall("channel.retire.actor c0/1", "", by="2", by_channel="c0")[1] == "c0/1 refused" and not c0.actors["1"].retired   # 退役接待员被拒
     rt.msg("c1", "door", "1", "placed z 1 program in\nprint(1)"); rt.run()
     assert "z" not in [c["name"] for c in decl_of(rt)["channels"]]                                    # 不是 c0 说的，不是事实
     rt.msg("c0", "door", "1", "add y program in\n" + ECHO); rt.run()
@@ -335,6 +336,46 @@ def test_T12_form_closure_and_refusals():
     assert ch["y"] == {"name": "y", "members": [{"kind": "program", "text": ECHO}], "receptionist": 1}     # 没有回指的门：如实
     assert ch["z"] == {"name": "z", "members": [{"kind": "door", "text": "c0"}]} and rt.channels["z"].receptionist is None
     assert form_of(rt) == declared(D)                                                                    # π(A) ≅ G
+
+
+def test_T13_dense_returns():
+    """同一步里一条被拒绝的 retire + 一条成功的 add：回执不错位，c1 不会收到假的 retired。"""
+    G = G0()
+    rt, P = fresh(G); start(P, G); rt.run()
+    rt.msg("c0", "door", "1", "retire c0/1")                                        # 退役接待员：拒绝
+    rt.msg("c0", "door", "1", "add y program in\n" + ECHO); rt.run()                 # 同一步处理
+    ret = [m["body"] for m in rows(rt, "c0", "msg") if m["from"].startswith("channel.")]
+    assert "c0/1 refused" in ret and "y/1" in ret                                    # 每条 syscall 恰好一条回执
+    facts = [m["body"].split("\n")[0] for m in rows(rt, "c1", "msg") if m["from"] != "door"]
+    assert not any(f.startswith("retired") for f in facts) and "placed y 1 program in" in facts
+    D = decl_of(rt)
+    assert [c["name"] for c in D["channels"]] == ["c0", "c1", "y"] and form_of(rt) == declared(D)
+
+
+def test_T14_cross_channel_retire():
+    G = G0()
+    rt, P = fresh(G); start(P, G); rt.run()
+    rt.msg("c0", "door", "1", "add y program in\n" + ECHO); rt.run()
+    rt.msg("c0", "door", "1", "add y program\n" + ECHO); rt.run()                    # y/2，不是接待员
+    rt.msg("c0", "door", "1", "retire y/2"); rt.run()                                 # c0/1 退 y/2：不是自退役
+    assert rt.channels["y"].actors["2"].retired
+    assert rt._syscall("channel.retire.actor c0/2", "", by="2", by_channel="c0")[1].endswith("refused")   # 同 channel 同地址才是自己
+    assert rt._syscall("channel.retire.actor y/1", "", by="1", by_channel="c0")[1].endswith("refused")    # y 的接待员：拒绝
+    assert form_of(rt) == declared(decl_of(rt))
+
+
+def test_T15_fact_source_survives_topology():
+    G = G0()
+    rt, P = fresh(G); start(P, G); rt.run()
+    rt.msg("c0", "door", "1", "add y program in\n" + ECHO); rt.run()
+    rt.msg("c0", "door", "1", "add c1 door\nc0"); rt.run()                           # 先加新门 c1→c0（c1/3）
+    rt.msg("c0", "door", "1", "retire c1/2"); rt.run()                                # 再退旧门
+    assert rt.channels["c1"].actors["2"].retired
+    D = decl_of(rt)                                                                  # 历史仍可解释，权威迁到新门
+    assert [c["name"] for c in D["channels"]] == ["c0", "c1", "y"]
+    assert D["channels"][1]["members"][1] == {"kind": "door", "text": "c0"} and len(D["channels"][1]["members"]) == 2
+    rt.msg("c0", "door", "1", "add y program\n" + ECHO); rt.run()                    # 新事实经新门到达
+    assert len(decl_of(rt)["channels"][2]["members"]) == 2 and form_of(rt) == declared(decl_of(rt))
 
 
 if __name__ == "__main__":

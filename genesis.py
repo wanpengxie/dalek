@@ -50,10 +50,11 @@ def pack(G: dict, P: Path) -> Path:
 def lines_first(G: dict, creator: str | None) -> list[str]:
     """与 actors/realize.py 的 lines_first 相同：G 的第一个 channel + 出生证明门 → syscall 行。"""
     c = G["channels"][0]
+    assert c.get("receptionist") is not None, "G 的第一个 channel 必须显式指定接待员"
     L = [f"channel.create {c['name']}"]
     for i, m in enumerate(c["members"]):
         flags = []
-        if i + 1 == c.get("receptionist", 1): flags.append("in")
+        if i + 1 == c.get("receptionist"): flags.append("in")            # 没有默认，与 realize 一致
         if m.get("bind"): flags.append("bind=" + ",".join(m["bind"]))
         L.append(" ".join(["channel.add.actor", c["name"], m["kind"], *flags]) + "\n" + m["text"])
     if creator:

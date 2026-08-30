@@ -1,5 +1,5 @@
 # c1 的登记员：基因组登记处，不是镜子。这段源码是 G 里的 text；bind=ledger：视图里带写给它的全部历史消息。
-# 它只折自己的账本，不碰文件。形态事实三种，只认来自 c0 的门（本 channel 第一扇 local 门）：
+# 它只折自己的账本，不碰文件。形态事实三种，只认来自本机 channel 的门（成员表里 local 的门，含已退役的——历史的解释不随拓扑漂）：
 #   born\n<G>                                         脐带放的：world + 第一个 channel 的成员（地址 = 序号）
 #   placed <ch> <addr> <kind> [in] [bind=…]\n<text>    c0 的手放的，带真实地址（出生时长出的其余器官也走这条）
 #   retired <ch>/<addr>
@@ -10,14 +10,14 @@ import sys, json
 v = json.load(sys.stdin)
 ch, me, msgs, history, actors = v["channel"], v["me"], v["msgs"], v.get("history", []), v["actors"]
 out = []
-fact_door = next((a["addr"] for a in actors if a["kind"] == "door" and not a["retired"] and a.get("local")), None)
+fact_doors = {a["addr"] for a in actors if a["kind"] == "door" and a.get("local")}
 
 
 def fold(rows):
     G, entries = None, {}                       # entries[ch] = [{addr, kind, text, bind, in, retired}]
     for m in rows:
-        if m["from"] != fact_door:
-            continue                                # 不是 c0 说的，不是形态事实
+        if m["from"] not in fact_doors:
+            continue                                # 不是本机 channel 经门说的，不是形态事实
         head, _, rest = m["body"].partition("\n"); t = head.split()
         if not t:
             continue

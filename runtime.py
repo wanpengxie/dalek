@@ -14,9 +14,9 @@
   >>> channel.create <name>                                  syscall；需 bind=syscall
   >>> channel.add.actor <channel> <kind> [in] [bind=…] + text  syscall；需 bind=syscall
   >>> channel.retire.actor <channel>/<addr>                  syscall：退役（追加 retire 行，不再排步，地址不复用）；需 bind=syscall
-                                                             拒绝：退役自己、退役当前接待员（先放新的带 in）
+                                                             拒绝：退役自己（同 channel 同地址）、退役当前接待员（先放新的带 in）
   >>> <动词> <参数>                                            绑定了的 world 动词（ACTIONS 表：起一台机器 / 停一个进程，用 Ω 实现）；需 bind=<动词>
-  返回都是一条 msg：from=<动作名>。其他一律忽略。
+  每条 syscall 恰好一条回执 msg：from=<动作名>，成功是结果，失败是 "<参数> refused"（回执稠密，发起者按位置对应）。其他行一律忽略。
 接待员  只由 place 行的 in 决定，没有默认：G 不写就没有（外来消息落空）。
 入口    每个 channel 一个收件箱 in/<name>.jsonl（Port 的接收侧）：一行 → msg 给接待员，署名指回发信端点的门（没有则 door）。
         根收件箱 in/_root.jsonl 在 channel 之前存在：开着 ⇔ 所有账本无 msg 行。开着时接受两个 syscall（by=_root）
@@ -150,11 +150,11 @@ class Runtime:
                          "bind": [b for b in bind if b in BINDS], "in": bool(receptionist), "by": by})
         return addr
 
-    def retire(self, channel: str, addr: str, by: str) -> bool:
+    def retire(self, channel: str, addr: str, by: str, by_channel: str | None) -> bool:
         c = self.channels.get(channel)
         if not c or addr not in c.actors or c.actors[addr].retired:
             return False
-        if addr == by or addr == c.receptionist:            # 器官不能记下自己的死亡；接待员先换再退
+        if (channel == by_channel and addr == by) or addr == c.receptionist:   # 器官不能记下自己的死亡；接待员先换再退
             return False
         self._append(c, {"k": "retire", "addr": addr})
         return True
@@ -162,7 +162,8 @@ class Runtime:
     def msg(self, channel: str, frm: str, to: str, body: str) -> dict:
         return self._append(self.channels[channel], {"k": "msg", "from": frm, "to": to, "body": body})
 
-    def _syscall(self, head: str, body: str, by: str) -> tuple[str, str] | None:
+    def _syscall(self, head: str, body: str, by: str, by_channel: str | None = None) -> tuple[str, str] | None:
+        """执行一条 syscall 行。合法的头恰好一条回执（成功或 refused）；不是 syscall 的头返回 None。"""
         t = head.split()
         if t and t[0] == "channel.create" and len(t) == 2:
             return ("channel.create", f"{t[1]} {self.create(t[1])}")
@@ -170,10 +171,10 @@ class Runtime:
             flags = t[3:]
             bind = next((f[5:].split(",") for f in flags if f.startswith("bind=")), [])
             addr = self.add(t[1], t[2], body, bind, receptionist=("in" in flags), by=by)
-            return ("channel.add.actor", f"{t[1]}/{addr}") if addr else None
+            return ("channel.add.actor", f"{t[1]}/{addr}" if addr else f"{t[1]} refused")
         if t and t[0] == "channel.retire.actor" and len(t) == 2 and "/" in t[1]:
             ch, _, addr = t[1].partition("/")
-            return ("channel.retire.actor", t[1]) if self.retire(ch, addr, by) else None
+            return ("channel.retire.actor", t[1] if self.retire(ch, addr, by, by_channel) else f"{t[1]} refused")
         return None
 
     # ------------------------------------------------------------ 入口
@@ -239,7 +240,7 @@ class Runtime:
         if not t:
             return
         if t[0].startswith("channel.") and "syscall" in a.bind:
-            r = self._syscall(head, body, by=a.addr)
+            r = self._syscall(head, body, by=a.addr, by_channel=c.name)
             if r:
                 self.msg(c.name, r[0], a.addr, r[1])
         elif t[0] in ACTIONS and t[0] in a.bind and len(t) == 2:
