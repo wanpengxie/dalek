@@ -4,8 +4,7 @@
         全部由账本折叠重建，包括各收件箱读到哪（收进来的行带 at=收件箱偏移）和每个活成员的函数对象（重新实例化）。
 actor   是常驻函数：折叠到 place 行时实例化一次（fn），挂在地址上，活到退役。三种 kind = 三种得到函数的方式：
   program   Exec.load(text, {call, me, channel})：源码在这个命名空间里跑一次，定义 run(m)；以后每条消息调同一个 run
-  oracle    介质实现的函数体：组装（call("0","show") 整本账 + call("0","who") 成员表 + 初始消息）→ Port.request(端点, 提示语, 对话) 多轮；
-            模型输出的每帧 ">>> 地址 / 正文 / <<<" 是一次 call，回复喂回下一轮；帧 ">>> re" 是返回值；不再输出帧 = 结束
+  oracle    和程序同一种实例化：text 是它自己的 agent loop 的源码（组装、问端点、解帧、call 全在 text 里；R 不知道模型）
   door      介质实现的函数体：Port.send 到 text 所指的端点，署名本 channel 的端点；返回空。门是连接
 事件    某本账上多了一条写给某地址的消息（不带 run 标记的 msg 行）= 介质替发送者调用它：fn(m)，m = {seq, from, to, body, channel}；
         返回值就是回复，送回发送者（门则出去）。
@@ -40,7 +39,6 @@ from omega import Exec, Store, Port
 KINDS = ("program", "oracle", "door")
 ROOT = "_root"
 LEDGER = "0"                                   # 每个 channel 的读地址：写给它 = 读它；不是成员，不放、不退、不遗传
-MAX_TURNS = 16                                 # oracle 一次调用最多几轮
 
 
 def _spawn(P: Path, d: str) -> str:
@@ -152,10 +150,8 @@ class Runtime:
 
     def _instantiate(self, c: Channel, a: Actor) -> None:
         try:
-            if a.kind == "program":
+            if a.kind in ("program", "oracle"):                        # 同一种实例化：oracle 的 text 是它自己的 agent loop
                 a.fn = Exec.load(a.text, {"call": self._caller(c, a), "me": a.addr, "channel": c.name})
-            elif a.kind == "oracle":
-                a.fn = self._oracle(c, a)
             else:
                 a.fn = self._doorfn(c, a)
             a.err = ""
@@ -166,30 +162,6 @@ class Runtime:
         def fn(m):
             Port.send(self._target(a.text), {"from": self.ep(c.name), "body": m["body"]})
             return ""
-        return fn
-
-    def _oracle(self, c: Channel, a: Actor):
-        call = self._caller(c, a)
-        endpoint, _, system = a.text.partition("\n")            # text 解析一次：第一行端点，其余提示语
-
-        def fn(m):
-            view = {"msg": m, "ledger": [json.loads(l) for l in call("0", "show").splitlines() if l],
-                    "members": json.loads(call("0", "who"))}
-            messages = [{"role": "user", "content": json.dumps(view, ensure_ascii=False)}]
-            ret = []
-            for _ in range(MAX_TURNS):
-                out, err = Port.request(endpoint, system, messages)
-                if err:
-                    raise RuntimeError(err)
-                fr = parse(out)
-                ret += [b for h, b in fr if h == "re"]
-                reqs = [(h, b) for h, b in fr if h != "re"]
-                if not reqs:
-                    break                                          # 不再请求：结束
-                rs = [{"to": h, "reply": call(h, b)} for h, b in reqs]
-                messages += [{"role": "assistant", "content": out},
-                             {"role": "user", "content": json.dumps(rs, ensure_ascii=False)}]
-            return "\n".join(ret)
         return fn
 
     # ------------------------------------------------------------ syscall
@@ -394,7 +366,7 @@ class Runtime:
 
 
 def parse(out: str) -> list[tuple[str, str]]:
-    """把 oracle 的一段输出拆成帧：行首 ">>> " 起帧，"<<<" 一行收帧（末尾没收就到末尾）。帧内的 ">>> " 是正文；正文逐字节保留。"""
+    """读 step.out：R 记每次 call 用的帧格式——行首 ">>> 地址" 起帧，单独一行 "<<<" 收帧（末尾没收就到末尾）。帧内的 ">>> " 是正文。"""
     res, head, buf = [], None, []
     for line in out.splitlines():
         if head is None:

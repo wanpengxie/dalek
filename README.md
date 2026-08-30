@@ -16,7 +16,7 @@
 
 ## dalek0
 
-G 里三个 channel：`c0`（构造）、`c1`（登记，`actors/registrar.py`：只折自己的账本，`decl` 吐出当前形态）、`c2`（作者：`actors/l.txt` 一个 oracle = LLM 端点 + 提示语，`actors/u.py` 一个执行器；没有 driver，循环由转移表驱动），连线 c0–c1、c0–c2（`genesis.G2()`；`G0()` 是没有作者的最小机器）。c0 注册两个 actor：
+G 里三个 channel：`c0`（构造）、`c1`（登记，`actors/registrar.py`：只折自己的账本，`decl` 吐出当前形态）、`c2`（作者：`actors/l.py` 一个 oracle = 自带 agent loop 的源码（端点 + 提示语 + 组装 + POST + 解帧），`actors/u.py` 一个执行器；没有 driver），连线 c0–c1、c0–c2（`genesis.G2()`；`G0()` 是没有作者的最小机器）。c0 注册两个 actor：
 - `actors/realize.py` — 装配器（A）。请求：`build <门> <创造者>\n<G>`（经门造一台机器的 c0）、`start\n<G>`（出生：自己长出其余——发育）、`add …`、`peer …`（本地生长）。
 - `actors/spawn.py` — 起子代（C）。请求：`spawn <name>`：pack（G.world 写成文件 + G.json 原样）→ `Exec.spawn` → 放两扇门 → 把 G 交给 realize 经门造子代的 c0 → `msg c0\nstart\n<G>`。关门即切离，子代的 c0 自己长其余。
 
@@ -30,7 +30,7 @@ python3 genesis.py                   # 重新生成 G.json
 python3 init.py <P> [--serve]        # 起 R；--serve 静止后持续轮询收件箱
 ```
 
-真模型跑 c2（把 `actors/l.txt` 第一行的 `KEY` 换掉，`python3 genesis.py` 重生成 G.json）：
+真模型跑 c2（把 `actors/l.py` 第一行的 `KEY` 换掉，`python3 genesis.py` 重生成 G.json）：
 ```
 python3 -c "from genesis import *; from pathlib import Path; P=Path('/tmp/d0'); G=G2(); pack(G,P); construct(P,G); start(P,G)"
 python3 init.py /tmp/d0 --serve &
@@ -47,6 +47,7 @@ tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
 - 2026-08-30 晚：M3.1 账本是介质的读地址 0（`>>> 0\nshow [a] [b]`，事实入账、投递附 rows），视图 = 投递的消息 + 地址簿；`bind=ledger` 退役；oracle 的转移行带组装。T0–T20 绿。
 - 2026-08-30 深夜：M3.2 运行模型——一步 = 一次运行（初始消息 → 请求/回复 → 结束），程序走帧协议、oracle 走多轮 agent loop、`re` 回复、角色 `tag` 寻址、`iface` 接口、H6 关闭；c0/c1 按 call 重写；T18 因果闭环（placed 后 done、真门）。T0–T21 绿。
 - 2026-08-31 凌晨：M3.3 actor 是常驻函数——放入时 exec 一次（Python 的 exec，选 Python 的理由），`call` 是真函数，返回值即回复；帧只给 LLM；0 加 `who`；U 在进程内把候选当活函数测。进程、管道、帧协议、助手代码全部删除。T0–T23 绿。
+- 2026-08-31 上午：M3.4 agent loop 出 R——kind 是类别（理论），实例化是工程：oracle 和程序同一个 exec，L 的 text = `actors/l.py` = 整个 loop（端点、提示语、组装、POST、解帧、轮数）。R 删 `_oracle`，Ω 删 `Port.request`。T0–T23 绿。
 - 待：任务 0（c2 做不到 → 造 c2′ → 做到 → 采纳 → 子代继承）、真模型跑一遍、M4。
 
 ## 文件

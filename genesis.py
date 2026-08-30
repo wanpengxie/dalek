@@ -48,7 +48,7 @@ def G2() -> dict:
     G["channels"].append(
         {"name": "c2",
          "members": [
-             {"kind": "oracle", "text": src("actors/l.txt"), "tag": "L", "iface": "task\\n<要求> -> done\\n<说明>"},
+             {"kind": "oracle", "text": src("actors/l.py"), "tag": "L", "iface": "task\\n<要求> -> done\\n<说明>"},
              {"kind": "program", "text": src("actors/u.py"), "tag": "U",
               "iface": "run\\n<code> | test\\n<code>\\n===\\n<tests> -> result <rc>\\n<output>"},
          ],

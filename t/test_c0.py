@@ -142,7 +142,7 @@ def test_T0_P_equals_own_G():
     assert c0[1]["text"] == (ROOT / "actors" / "spawn.py").read_text(encoding="utf-8")
     assert G["channels"][1]["members"][0]["text"] == (ROOT / "actors" / "registrar.py").read_text(encoding="utf-8")
     c2 = G["channels"][2]["members"]
-    assert c2[0]["kind"] == "oracle" and c2[0]["text"] == (ROOT / "actors" / "l.txt").read_text(encoding="utf-8")
+    assert c2[0]["kind"] == "oracle" and c2[0]["text"] == (ROOT / "actors" / "l.py").read_text(encoding="utf-8")
     assert c2[1]["text"] == (ROOT / "actors" / "u.py").read_text(encoding="utf-8")
     assert G == G2()                                                             # genesis 重生成后不变
 
@@ -483,11 +483,11 @@ class StubL:
 
 
 def with_L(G: dict, url: str) -> dict:
-    """把 c2 里 oracle 的第一行（端点 模型 密钥）换成桩的 url；提示语不动。"""
+    """把 c2 里 oracle 源码的第一行（端点、模型、密钥三个常量）换成桩的 url；其余不动。"""
     for c in G["channels"]:
         for m in c["members"]:
             if m["kind"] == "oracle":
-                _, _, rest = m["text"].partition("\n"); m["text"] = f"{url} stub key\n{rest}"
+                _, _, rest = m["text"].partition("\n"); m["text"] = f'ENDPOINT, MODEL, KEY = "{url}", "stub", "key"\n{rest}'
     return G
 
 
