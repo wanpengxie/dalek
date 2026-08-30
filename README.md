@@ -30,7 +30,7 @@ python3 genesis.py                   # 重新生成 G.json
 python3 init.py <P> [--serve]        # 起 R；--serve 静止后持续轮询收件箱
 ```
 
-真模型跑 c2（把 `actors/l.py` 第一行的 `KEY` 换掉，`python3 genesis.py` 重生成 G.json）：
+真模型跑 c2（把 `actors/l.py` 第一行的 `ENDPOINT, MODEL, KEY` 换掉——端点路径含 `/messages` 讲 Anthropic 报文，否则 OpenAI 兼容（DeepSeek：`https://api.deepseek.com/chat/completions`, `deepseek-chat`）；`python3 genesis.py` 重生成 G.json）：
 ```
 python3 -c "from genesis import *; from pathlib import Path; P=Path('/tmp/d0'); G=G2(); pack(G,P); construct(P,G); start(P,G)"
 python3 init.py /tmp/d0 --serve &
@@ -48,9 +48,9 @@ tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
 - 2026-08-30 深夜：M3.2 运行模型——一步 = 一次运行（初始消息 → 请求/回复 → 结束），程序走帧协议、oracle 走多轮 agent loop、`re` 回复、角色 `tag` 寻址、`iface` 接口、H6 关闭；c0/c1 按 call 重写；T18 因果闭环（placed 后 done、真门）。T0–T21 绿。
 - 2026-08-31 凌晨：M3.3 actor 是常驻函数——放入时 exec 一次（Python 的 exec，选 Python 的理由），`call` 是真函数，返回值即回复；帧只给 LLM；0 加 `who`；U 在进程内把候选当活函数测。进程、管道、帧协议、助手代码全部删除。T0–T23 绿。
 - 2026-08-31 上午：M3.4 agent loop 出 R——kind 是类别（理论），实例化是工程：oracle 和程序同一个 exec，L 的 text = `actors/l.py` = 整个 loop（端点、提示语、组装、POST、解帧、轮数）。R 删 `_oracle`，Ω 删 `Port.request`。T0–T23 绿。
-- 2026-09-01 凌晨：M3 任务 0 的路——T24：c2 + file → c2′（L 经门 add 进本 channel，用它写读，done 给发起者）→ spawn 子代继承 file 零件、不继承 notes.txt。**L 是脚本桩，file 源码是测试常量**；真模型未跑（无 key）。24/24。
+- 2026-09-01 凌晨：M3 任务 0 的路——T24：c2 + file → c2′（L 经门 add 进本 channel，用它写读，done 给发起者）→ spawn 子代继承 file 零件、不继承 notes.txt。T24 是桩版；**真模型（DeepSeek）同日跑通**：作者自己写 file、U 测三版、add、placed 后用它、done；子代继承零件不继承文件（`runs/task0-deepseek-*.jsonl`）。24/24。
 - 2026-09-01 凌晨：M3.5 oracle 不是原语——R 的 kind 集 = {program, door}，L = `kind=program, tag=L`；oracle 留作理论类别词。膜定为窄版（DESIGN I6）。24/24。
-- 待：任务 1（自组织）、真模型跑一遍、M4（与 M3 合账，今天）。
+- 待：任务 1（自组织）、M4（与 M3 合账，今天）。
 
 ## 文件
 

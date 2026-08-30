@@ -384,7 +384,7 @@ c2 = L + U 接成的 channel（coding agent，"code mode"）。两个演示任�
 验收：
 ```
 c2 没有 file  →  c2 造 c2′（L 经门 add 进 c2）  →  c2′ 做到 t*（写、读、done 给发起者）  →  采纳（新增无旧零件可退）  →  spawn 子代：子代的 c2 就是 c2′，目录里没有 notes.txt
-（T24，2026-09-01：**路通了，作者没跑**——file 的源码是测试常量，由脚本桩 L 吐出；真模型一次未跑，"c2 自己造出 c2′"待 key）
+（T24 用脚本桩；**真模型 2026-09-01 完成**：DeepSeek `deepseek-chat` 做 L，收 task → 自己写 file 零件 → U test 连败两次、第三版通过 → 经门 add 进 c2（tag=file）→ placed 是新一次调用 → 用它 write/read → done 给发起者；spawn 子代，子代 c2/5 = file、text 逐字相同、没有 notes.txt、decl 相同。账本在 `runs/task0-deepseek-*.jsonl`。第一次跑作者走偏——造了一次性脚本、没用它就报 done、绝对路径——全是提示语（T18 形状）引的，改成"缺能力就添通用零件，placed 后用它做任务"后第二次即对：**作者的行为是 G 里的 text，改 text 就改行为**）
 ```
 
 **任务 1 · 自组织**
@@ -565,7 +565,7 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5
 
 **M3.5（2026-09-01 凌晨，oracle 不是原语）**：审稿把 L 的 kind 从 oracle 机械改成 program，一切照跑——一个介质不认识的 kind 不该算进转移表。R 的 kind 集 = {program, door}；L = `kind=program, tag=L`；"oracle"留作理论类别词（解释器在远处的程序）。同步：DESIGN §2 状态加 Σ、易失记忆措辞；omega.py 注释；1.3 解释器是 Ω 的前提不是基因。**膜定为窄版**（同日）：膜约束的是对组织和账本的作用——进账本只有 call、改形态只有 syscall、边只有门、接收侧只认句柄；actor 在 run 里对世界的访问不是机器的动作，不入账、不遗传、不受限。强版本做得到但刻意（R 变 OS，handle 返回值把模型原文拉回 H）。H5/H7 确认关闭，L 不拿 request handle（DESIGN I6）。24/24。
 
-**M3 任务 0（2026-09-01 凌晨，桩 L）**：T24——c2 + file → c2′ → 子代继承的路。FileL 桩（源码是测试常量，不是模型写的；真模型待 key）：task → `add c2 program tag=file iface=…` 经门（变异）→ placed 是新的一次调用 → write / read → done 给发起者的真门；decl 里 c2 多了 file；spawn 子代，子代 c2/5 是 file、目录里无 notes.txt、读报 FileNotFoundError、自己写自己的。24/24。
+**M3 任务 0（2026-09-01 凌晨）**：真模型（DeepSeek）跑通：c2 自己造 file 零件、U 测三版、add 进 c2、placed 后用它做任务、done；子代继承零件不继承文件。`l.py` 的 `ask` 按端点路径讲 Anthropic 或 OpenAI 兼容报文（报文是 text 的事）。T24 是同一条路的桩版（源码是测试常量）：task → `add c2 program tag=file iface=…` 经门（变异）→ placed 是新的一次调用 → write / read → done 给发起者的真门；decl 里 c2 多了 file；spawn 子代，子代 c2/5 是 file、目录里无 notes.txt、读报 FileNotFoundError、自己写自己的。24/24。
 
 **M3.4（2026-08-31 上午，agent loop 出 R）**：审稿追问"LLM 的策略为什么写在 runtime 里"——R 里 `_oracle` 替 L 决定组装、帧、轮数，是 R 里唯一一块长得像组织的东西。定：**kind 是类别（理论），实例化是工程**；oracle 和程序同一种实例化（exec text），L 的 text = `actors/l.py` = 整个 agent loop（端点、凭据、提示语、组装、POST、解帧、轮数）。R 删 `_oracle` / `MAX_TURNS`，Ω 删 `Port.request`（Port 只剩 send/recv 给门），R 对 oracle 只认识这个词。账本、帧序、测试断言不变（L 的两次读还是经 call 入账）。T0–T23 绿。
 
