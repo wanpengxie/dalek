@@ -1,5 +1,5 @@
 # c1 的登记员：基因组登记处，不是镜子。这段源码是 G 里的 text；bind=ledger：视图里带写给它的全部历史消息。
-# 它只折自己的账本，不碰文件。形态事实三种，只认来自本机 channel 的门（成员表里 local 的门，含已退役的——历史的解释不随拓扑漂）：
+# 它只折自己的账本，不碰文件。形态登记三种（c0 的宣称——基因组的 commit，不是 R 的事实），只认来自本机 channel 的门（成员表里 local 的门，含已退役的——历史的解释不随拓扑漂）：
 #   born\n<G>                                         脐带放的：world + 第一个 channel 的成员（地址 = 序号）
 #   placed <ch> <addr> <kind> [in] [bind=…]\n<text>    c0 的手放的，带真实地址（出生时长出的其余器官也走这条）
 #   retired <ch>/<addr>
@@ -17,7 +17,7 @@ def fold(rows):
     G, entries = None, {}                       # entries[ch] = [{addr, kind, text, bind, in, retired}]
     for m in rows:
         if m["from"] not in fact_doors:
-            continue                                # 不是本机 channel 经门说的，不是形态事实
+            continue                                # 不是本机 channel 经门说的，不算登记
         head, _, rest = m["body"].partition("\n"); t = head.split()
         if not t:
             continue
