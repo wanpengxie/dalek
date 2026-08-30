@@ -1,6 +1,6 @@
 """genesis：人侧的 A + B。第一台机器由手造——用和机器内 realize 同一套 syscall，经根门。
 
-    G0()                 dalek0 的 G：world（R 的源码）+ c0{realize, C}
+    G0()                 dalek0 的 G：world + c0{realize, C} + c1{registrar} + 连线 c0–c1
     pack(G, P)           B：把 G.world 写成文件，G.json 放旁边 → P
     construct(P, G)      A：经 P 的根门造 c0（G 的第一个 channel）+ 出生证明门
     start(P, G)          C：经根门发第一条消息 start\n<G> → 关门；子代的 c0 自己长其余
@@ -29,8 +29,13 @@ def G0() -> dict:
                  {"kind": "program", "text": src("actors/spawn.py"), "bind": ["syscall", "spawn"]},
              ],
              "receptionist": 1},
+            {"name": "c1",
+             "members": [
+                 {"kind": "program", "text": src("actors/registrar.py"), "bind": ["ledger"]},
+             ],
+             "receptionist": 1},
         ],
-        "peers": [],
+        "peers": [["c0", "c1"]],
     }
 
 

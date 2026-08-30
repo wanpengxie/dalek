@@ -320,7 +320,7 @@ m 造 G′ ≠ 自己的机器，其 decl() == G′                           �
 
 Ω：Linux + python3 + 文件系统（M1 不需要网络）。
 
-### M2 · c1：登记与 decl（周日 2026-08-30）
+### M2 · c1：登记与 decl（周日 2026-08-30）——已落地，见 4.6 / 4.7
 
 - c1 = 注册了登记 actor 的 channel。c0 每次 syscall 后把 place 行（含完整 text）经门转发给 c1（三边记账）；c1 折叠自己的账本得到 `channels/peers`，从 P 拼上 `world`，落成文件；`decl` = 原样抄出。
 - C actor 的 pack 改用 `c1.decl()`，不再抄 P 里的 G.json（关 H4）。
@@ -429,11 +429,12 @@ m**.decl() == m*.decl()，且 m** 能继续造
 
 ### 4.1 账本行
 
-每个 channel 一个文件 `h/<name>.jsonl`，单写者（本机器的 R），三种行：
+每个 channel 一个文件 `h/<name>.jsonl`，单写者（本机器的 R），四种行：
 
 | k | 字段 | 谁写 |
 |---|---|---|
 | `place` | `seq, addr, kind, text, bind, in, by` | R 执行 `channel.add.actor` 时；**带完整 text**；`by` = 发起者地址，或 `_root`（经根门） |
+| `retire` | `seq, addr` | R 执行 `channel.retire.actor` 时；该 actor 不再排步，地址不复用；退役的接待员 → 该 channel 无接待员 |
 | `msg` | `seq, from, to, body` | 成员输出拆成的消息；门抄来的消息；syscall 的返回 |
 | `step` | `seq, actor, upto, out, err` | 某 actor 被叫醒：看到哪、原样回了什么 |
 
@@ -446,16 +447,19 @@ channel 的创建顺序记在 `h/_order`。`from` 可以是 `door`（膜外来�
 
 ### 4.3 程序 actor 的 ABI
 
-stdin：`{"channel", "me", "msgs": [{seq, from, to, body}…]}`。stdout 原样进 `step.out`，按行首 `>>> ` 拆：
+stdin（视图）：`{"channel", "me", "msgs": [{seq, from, to, body}…], "actors": [{addr, kind, bind, in, retired, text?, local?}…], "history"?}`——`msgs` 是写给我且没看过的；`actors` 是本 channel 的成员表（本 channel 账本的折叠，门带 text 和 local = 指向本机 channel）；`history` 仅 `bind=ledger` 的 actor 有，是写给它的全部消息（c1 的登记员靠它折叠自己的账本）。stdout 原样进 `step.out`，按行首 `>>> ` 拆：
 
 ```
 >>> <addr>                                          消息，发给本 channel 的 <addr>（含门）
 >>> channel.create <name>                           syscall；需 bind=syscall
 >>> channel.add.actor <channel> <kind> [in] [bind=…]  syscall（含 actor.create）；后续各行是 text；需 bind=syscall
+>>> channel.retire.actor <channel>/<addr>           syscall：退役；需 bind=syscall
 >>> <动词> <参数>                                   绑定了的 world 动词，一张表：spawn <dir>（按 loader 协议 Exec.spawn(init.py <dir> --serve)）、stop <pid>；需 bind=<动词>
 ```
 
-返回以 msg 追加给调用者：`from=channel.create body="<name> new|exists"`；`from=channel.add.actor body=<channel>/<addr>`；`from=spawn body="<dir> pid=<n>"`。跨膜没有返回（根门单向）。
+返回以 msg 追加给调用者：`from=channel.create body="<name> new|exists"`；`from=channel.add.actor body=<channel>/<addr>`；`from=channel.retire.actor body=<channel>/<addr>`；`from=spawn body="<dir> pid=<n>"`。跨膜没有返回（根门单向）。
+
+**地址不遗传**：地址是本 channel 内、本个体内的序号；退役与追加会让子代的序号前移。actor 不得硬编码地址，用视图里的 `from`、成员表（kind / bind / in / 门的 text）和 syscall 返回解析。
 
 ### 4.4 门与 Port
 
@@ -479,10 +483,17 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 | 请求（写给 realize） | 做什么 |
 |---|---|
 | `build <门> <创造者地址>\n<G>` | 经门发 syscall 造 G 的第一个 channel（c0）；最后放出生证明门；回 `built <门>` |
-| `start\n<G>` | 出生：本地 syscall 长出 G 的其余 channel 与全部连线（发育）。正文为空则不动 |
+| `start\n<G>` | 出生：本地 syscall 长出 G 的其余 channel 与全部连线（发育）；下一步把 `born\n<G>` 交给登记员。正文为空则不动 |
 | `add <channel> <kind> [in] [bind=…]\n<text>` | 本地：`channel.create`（幂等）+ `channel.add.actor` |
 | `peer <a> <b>` | 本地两扇门 |
-| `spawn <name>`（写给 C） | pack → spawn → 放两扇门（根门、c0）→ `build` 交给 realize → `msg c0\nstart\n<G>` |
+| `retire <channel>/<addr>` | `channel.retire.actor` |
+| `spawn …` | 转给持有 `spawn` 绑定的成员（C）——外来请求经接待员分发（关 H3） |
+| `decl` | 转给登记员（c0 的第一扇内门那边）；回答 `decl\n<G>` 从门回来后转给 C |
+| `spawn <name>`（C） | 向接待员要 `decl` → 收到 G 后 pack → spawn → 放两扇门（根门、c0）→ `build` 交给 realize → `msg c0\nstart\n<G>`。状态在写给自己的 note 里，没等到的 note 带到下一步 |
+
+**三边记账**：realize 每条 syscall 落地后（返回在下一步视图里），回请求者 `placed <ch>/<addr>` / `retired <ch>/<addr>`，并把带完整 text 的 `placed <ch> <addr> <kind> [in] [bind=…]\n<text>` / `retired …` 送给登记员。出生时不逐条登记，整份 `born\n<G>` 送去。出生证明门和 C 为生子放的两扇门不经 realize，所以不登记、不遗传。
+
+**c1 的登记员**（`actors/registrar.py`，bind=ledger）：只折自己的账本（视图里的 history）：`born` 给 G₀，`placed` 追加条目，`retired` 划掉；`decl` → `G₀ ⊕ placed ⊖ retired`：channel 按出生顺序 + 首次出现顺序（= `_order`），成员按地址，text 是本机 channel 名的门折成 `peers`，指向外面端点的门是 `kind=door` 的成员，退役的不输出，world 原样来自 born。不读任何文件。
 
 ### 4.7 实现状态（2026-08-29，晚）
 
@@ -493,3 +504,5 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 2026-08-30 凌晨收缩 R（规则 16 → 9，不动理论）：world 动词一张表（spawn、stop）而非逐个分支；门只有一条规则（一律 `Port.send`，本机 channel 名是端点缩写）；收件箱读取归 Ω（`Port.recv`），根门与 channel 收件箱走同一条入口；`channel.create` 返回 new|exists。T1–T7 仍绿。
 
 2026-08-30 凌晨改为发育版（2.2.5）：父代的 A 经门只造 c0 + 出生证明；C 发 `start\n<G>`；子代的 realize 收到后本地长出其余（T3、T4、T7 验证 `by=_root` / `by=1` 两只手）。T0–T7 绿。
+
+**M2 落地（2026-08-30）**：R 加 `retire` 行与 `channel.retire.actor`、视图带成员表（门带 local）与 `history`（bind=ledger）；`actors/registrar.py` 为 c1；realize 加 `start` 后的 `born`、三边记账、`retire`、`spawn`/`decl` 分发；C 的 pack 改用 decl（关 H4），外来 spawn 经接待员到 C（关 H3）；G0 = {c0, c1} + 连线。T8–T11：出生后 `decl == G0` 且 channel 顺序 == `_order`；运行中 add/peer 后 spawn → 子代有、`decl(子) == decl(父)`；add 新 realize′(in) + retire 旧 → 旧不再 step、decl 略过、子代的接待员是 realize′（替换 + 非平凡）；退役后写给它的消息留账不投递。T0–T11 绿。

@@ -1,4 +1,4 @@
-"""M1 · c0 + R。跑法：python3 t/test_c0.py
+"""M1 · c0 + R；M2 · c1 + decl + retire。跑法：python3 t/test_c0.py
 
 T0 本目录 = dalek0 的 P：G.json 的 world 与磁盘文件逐字节相等；c0 成员 text 与 actors/*.py 相等
 T1 转移表：program 行——视图、step 记录、拆消息；出生证明门给外来消息署名
@@ -7,7 +7,11 @@ T3 门：c0 发育出 a、b 和两扇互指的门；消息抄到对面账本，�
 T4 根门：R 起来零 channel；膜外经根门只造 c0（by=_root）；构造期间机械不动；start\n<G> 关门；c0 自己长出其余（by=1）；关门后根门无效
 T5 请求 add / peer（本地生长）；placed 回执转发给请求者
 T6 内容盲：R 源码不含组织词汇；G 全部改名后账本同构
-T7 生子：C pack + spawn；父代的 A 经门只造子代的 c0；C 发 start\n<G> 关门；子代的 c0 自己长出 x；父代对象销毁后子代活着且已切离
+T7 生子：C 经接待员向登记员要 decl 后 pack + spawn；父代的 A 经门只造子代的 c0；C 发 start\n<G> 关门；子代的 c0 自己长出 c1、x；父代对象销毁后子代活着且已切离
+T8 登记：出生后 decl(dalek0) == G0；c1 账本第一行是 born；channels 顺序 == _order
+T9 遗传运行中的改动：add + peer 后经接待员 spawn（H3）→ 子代有它们；decl(子) == decl(父)
+T10 替换 + 非平凡：add 新 realize′(in) + retire 旧 → 旧不再被 step、decl 略过 → 子代的接待员是 realize′
+T11 retire 后写给它的消息留账不投递；退役的门不再署名
 """
 from __future__ import annotations
 import json, re, sys, tempfile, time, traceback
@@ -50,6 +54,25 @@ def rows(rt: Runtime, ch: str, k: str):
     return [r for r in rt.channels[ch].rows if r["k"] == k]
 
 
+def decl_of(rt: Runtime, ch="c1") -> dict:
+    """膜外问登记员 decl；回答写给 door（无门可回）→ 只留在 step.out 里，从那里读。"""
+    r = rt.channels[ch].receptionist
+    rt.msg(ch, "door", r, "decl"); rt.run()
+    out = rows(rt, ch, "step")[-1]["out"]
+    assert out.startswith(">>> door\ndecl\n"), out[:80]
+    return json.loads(out.split("\n", 2)[2])
+
+
+def wait_child(d: Path, ready, timeout=20) -> Runtime:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        child = Runtime(d).load()
+        if ready(child):
+            return child
+        time.sleep(0.2)
+    raise AssertionError("child not ready: " + Store.read(d / "init.log")[-800:])
+
+
 def test_T0_P_equals_own_G():
     G = json.loads((ROOT / "G.json").read_text(encoding="utf-8"))
     for f, src in G["world"].items():
@@ -57,6 +80,7 @@ def test_T0_P_equals_own_G():
     c0 = G["channels"][0]["members"]
     assert c0[0]["text"] == (ROOT / "actors" / "realize.py").read_text(encoding="utf-8")
     assert c0[1]["text"] == (ROOT / "actors" / "spawn.py").read_text(encoding="utf-8")
+    assert G["channels"][1]["members"][0]["text"] == (ROOT / "actors" / "registrar.py").read_text(encoding="utf-8")
     assert G == G0()                                                             # genesis 重生成后不变
 
 
@@ -105,7 +129,7 @@ def test_T3_doors():
 def G_realize():
     G = G0()
     G["channels"].append({"name": "x", "members": [{"kind": "program", "text": ECHO}], "receptionist": 1})
-    G["peers"] = [["c0", "x"]]
+    G["peers"].append(["c0", "x"])
     return G
 
 
@@ -122,13 +146,14 @@ def test_T4_root_door():
     start(P, G); rt.run()
     first = rows(rt, "c0", "msg")[0]
     assert (first["from"], first["to"]) == ("3", "1") and first["body"].startswith("start\n") and not rt.root_open   # 关门
-    x = rt.channels["x"]                                                         # c0 自己长出来的
-    assert x.actors["1"].text == ECHO and x.actors["2"].text == "c0" and c0.actors["4"].text == "x"
-    assert all(r["by"] == "1" for r in rows(rt, "x", "place")) and rows(rt, "c0", "place")[-1]["by"] == "1"
+    x = rt.channels["x"]                                                         # c0 自己长出来的：c1、x、门
+    assert x.actors["1"].text == ECHO and x.actors["2"].text == "c0"
+    assert c0.actors["4"].text == "c1" and c0.actors["5"].text == "x" and list(rt.channels) == ["c0", "c1", "x"]
+    assert all(r["by"] == "1" for r in rows(rt, "x", "place") + rows(rt, "c1", "place")) and rows(rt, "c0", "place")[-1]["by"] == "1"
     root_line(P, "channel.add.actor c0 program\nprint(0)"); rt.run()
-    assert len(c0.actors) == 4                                                   # 切离：根门无效
-    rt.msg("c0", "1", "4", "hello"); rt.run()
-    assert any(m["from"] == "4" and m["body"] == "echo:hello" for m in rows(rt, "c0", "msg"))
+    assert len(c0.actors) == 5                                                   # 切离：根门无效
+    rt.msg("c0", "1", "5", "hello"); rt.run()
+    assert any(m["from"] == "5" and m["body"] == "echo:hello" for m in rows(rt, "c0", "msg"))
 
 
 def test_T5_requests_add_peer():
@@ -137,7 +162,7 @@ def test_T5_requests_add_peer():
     rt.msg("c0", "door", "3", "go"); rt.run()
     y = rt.channels["y"]
     assert y.actors["1"].text == ECHO and y.receptionist == "1" and y.actors["2"].text == "c0"
-    assert rt.channels["c0"].actors["5"].text == "y" and rows(rt, "y", "place")[0]["by"] == "1"
+    assert rt.channels["c0"].actors["6"].text == "y" and rows(rt, "y", "place")[0]["by"] == "1"
     relayed = [m["body"] for m in rows(rt, "c0", "msg") if m["from"] == "3" and m["to"] == "4" and m["body"].startswith("relay:")]
     assert any("placed y/1" in b for b in relayed) and any("placed y/2" in b for b in relayed), relayed
 
@@ -150,7 +175,7 @@ def test_T6_content_blind():
         s = json.dumps(G_realize(), ensure_ascii=False)
         s = re.sub(r"\bc0\b", names[0], s); s = re.sub(r"\bx\b", names[1], s)
         G = json.loads(s); rt, P = fresh(G); start(P, G); rt.run()
-        return {c.name: [{k: v for k, v in r.items() if k not in ("out", "err")} for r in c.rows] for c in rt.channels.values()}
+        return [[{k: v for k, v in r.items() if k not in ("out", "err")} for r in c.rows] for c in rt.channels.values()]   # 按创建顺序，不按名字
     def norm(d, n):
         s = json.dumps(d, ensure_ascii=False, sort_keys=True)
         s = re.sub(r"\b%s\b" % re.escape(n[0]), "A", s)
@@ -163,11 +188,11 @@ def test_T7_spawn_child_built_by_parent_A():
         {"kind": "program", "text": 'import sys, json\nv = json.load(sys.stdin)\nfor m in v["msgs"]:\n'
                                     '    if m["body"] == "go": print(">>> 2\\nspawn d1")\n'
                                     '    else: print(">>> 4\\nreply:" + m["body"])'})
-    G["channels"].append({"name": "x", "members": [{"kind": "program", "text": ECHO}]}); G["peers"] = [["c0", "x"]]
+    G["channels"].append({"name": "x", "members": [{"kind": "program", "text": ECHO}]}); G["peers"].append(["c0", "x"])
     rt, P = fresh(G); start(P, G); rt.run()
     rt.msg("c0", "door", "3", "go"); rt.run()
     d = P / "spawn" / "d1"
-    assert (d / "G.json").read_text(encoding="utf-8") == (P / "G.json").read_text(encoding="utf-8")   # B：G 原样
+    assert json.loads((d / "G.json").read_text(encoding="utf-8")) == decl_of(rt)                     # B：抄的是 decl
     assert all((d / f).exists() for f in ("omega.py", "runtime.py", "init.py"))                       # B：world
     pid = int([m for m in rows(rt, "c0", "msg") if m["from"] == "spawn"][0]["body"].split("pid=")[1])
     try:
@@ -178,26 +203,85 @@ def test_T7_spawn_child_built_by_parent_A():
         assert sent[-1].startswith("msg c0\nstart\n{") and sent[-2].startswith("channel.add.actor c0 door\nfile:")   # 出生证明，然后 start 带 G
         assert not any("channel.create x" in b for b in sent)                                         # x 不是父代造的
         assert any(m["to"] == "3" and m["body"].startswith("spawned") for m in rows(rt, "c0", "msg"))
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            child = Runtime(d).load()
-            if "x" in child.channels and rows(child, "x", "place") and len(child.channels["c0"].actors) >= 5:
-                break
-            time.sleep(0.2)
-        else:
-            raise AssertionError("child not started: " + Store.read(d / "init.log")[-800:])
+        child = wait_child(d, lambda c: "x" in c.channels and rows(c, "x", "place") and len(c.channels["c0"].actors) >= 6
+                           and rows(c, "c1", "msg"))
         del rt                                                                                        # 父代死了
         cc = child.channels["c0"]
-        assert [a.kind for a in cc.actors.values()] == ["program", "program", "program", "door", "door"]   # realize, C, 请求者, 出生证明, 门→x
+        assert [a.kind for a in cc.actors.values()] == ["program"] * 3 + ["door"] * 3                # realize, C, 请求者, 出生证明, 门→c1, 门→x
         assert all(r["by"] == "_root" for r in rows(child, "c0", "place")[:4])                        # c0 由膜外（父代）造
         assert cc.actors["1"].text == G["channels"][0]["members"][0]["text"] and cc.actors["2"].bind == ("syscall", "spawn")
         assert cc.actors["4"].text == f"file:{P}#c0"                                                  # 出生证明指回父代
         m0 = rows(child, "c0", "msg")[0]
         assert (m0["from"], m0["to"]) == ("4", "1") and m0["body"].startswith("start\n") and not child.root_open   # 关门 = 切离
         assert rows(child, "x", "place")[0]["by"] == "1" and child.channels["x"].actors["2"].text == "c0"   # 子代的 c0 长出 x
-        assert child.channels["c0"].actors["5"].text == "x" and rows(child, "c0", "place")[-1]["by"] == "1"
+        assert cc.actors["5"].text == "c1" and cc.actors["6"].text == "x" and rows(child, "c0", "place")[-1]["by"] == "1"
+        assert rows(child, "c1", "msg")[0]["body"].startswith("born\n")                              # 登记员收到了基因组
     finally:
         Exec.stop(pid)
+
+
+def test_T8_registrar_decl():
+    G = G0()
+    rt, P = fresh(G); start(P, G); rt.run()
+    born = rows(rt, "c1", "msg")[0]
+    assert born["body"].startswith("born\n") and json.loads(born["body"].split("\n", 1)[1]) == G
+    D = decl_of(rt)
+    assert D == G                                                                 # 三个身影：decl == G
+    assert [c["name"] for c in D["channels"]] == Store.read(P / "h" / "_order").split()
+
+
+def test_T9_inherit_runtime_changes():
+    G = G0()
+    rt, P = fresh(G); start(P, G); rt.run()
+    rt.msg("c0", "door", "1", "add c0 program\n" + ECHO); rt.run()                 # 经接待员本地生长
+    rt.msg("c0", "door", "1", "peer c0 y"); rt.run()
+    D = decl_of(rt)
+    assert D["channels"][0]["members"][2]["text"] == ECHO and D["peers"] == [["c0", "c1"], ["c0", "y"]]
+    assert [c["name"] for c in D["channels"]] == ["c0", "c1", "y"]
+    rt.msg("c0", "door", "1", "spawn d2"); rt.run()                                # 外来 spawn 经接待员到 C（H3）
+    d = P / "spawn" / "d2"
+    pid = int([m for m in rows(rt, "c0", "msg") if m["from"] == "spawn"][0]["body"].split("pid=")[1])
+    try:
+        assert json.loads((d / "G.json").read_text(encoding="utf-8")) == D                      # pack 用的是 decl，不是 P 里的 G.json
+        child = wait_child(d, lambda c: "y" in c.channels and rows(c, "c1", "msg") and len(rows(c, "c0", "msg")) > 1)
+        assert child.channels["c0"].actors["3"].text == ECHO and child.channels["y"].actors["1"].text == "c0"   # 遗传了运行中的改动
+        time.sleep(1.0)
+        assert json.loads(rows(Runtime(d).load(), "c1", "msg")[0]["body"].split("\n", 1)[1]) == D           # decl(子) == decl(父)
+    finally:
+        Exec.stop(pid)
+
+
+def test_T10_replace_realize_is_nontrivial():
+    G = G0()
+    rt, P = fresh(G); start(P, G); rt.run()
+    R2 = G["channels"][0]["members"][0]["text"].replace("# c0 的装配器（A）", "# c0 的装配器（A′）")
+    rt.msg("c0", "door", "1", "add c0 program in bind=syscall\n" + R2); rt.run()  # 先放新的（接待员）
+    c0 = rt.channels["c0"]
+    assert c0.receptionist == "5" and c0.actors["5"].text == R2
+    rt.msg("c0", "door", "5", "retire c0/1"); rt.run()                             # 再退旧的
+    assert c0.actors["1"].retired and rows(rt, "c0", "retire")[0]["addr"] == "1"
+    D = decl_of(rt)
+    assert [m["text"][:20] for m in D["channels"][0]["members"]] == [G["channels"][0]["members"][1]["text"][:20], R2[:20]]
+    assert D["channels"][0]["receptionist"] == 2                                   # 地址前移：不遗传
+    rt.msg("c0", "door", "5", "spawn d3"); rt.run()
+    d = P / "spawn" / "d3"
+    pid = int([m for m in rows(rt, "c0", "msg") if m["from"] == "spawn"][0]["body"].split("pid=")[1])
+    try:
+        child = wait_child(d, lambda c: "c1" in c.channels and rows(c, "c1", "msg"))
+        cc = child.channels["c0"]
+        assert cc.receptionist == "2" and cc.actors["2"].text == R2 and cc.actors["2"].bind == ("syscall",)   # 子代的 A 是新的
+    finally:
+        Exec.stop(pid)
+
+
+def test_T11_retired_not_stepped():
+    G = G0(); G["channels"][0]["members"].append({"kind": "program", "text": ECHO})   # c0/3
+    rt, P = fresh(G); start(P, G); rt.run()
+    rt.msg("c0", "door", "1", "retire c0/3"); rt.run()
+    n = len(rows(rt, "c0", "step"))
+    rt.msg("c0", "door", "3", "hi"); rt.run()
+    assert len(rows(rt, "c0", "step")) == n and not any(s["actor"] == "3" for s in rows(rt, "c0", "step"))   # 留账不投递
+    assert any(m["body"].startswith("retired c0/3") for m in rows(rt, "c1", "msg"))                       # 登记员知道了
 
 
 if __name__ == "__main__":

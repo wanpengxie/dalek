@@ -1,9 +1,11 @@
 """运行时 R：极小状态空间 + 转移表。内容盲。
 
-状态    每个 channel 一本只追加的账本（h/<name>.jsonl，三种行 place / msg / step）+ 每个 actor 一个游标。
+状态    每个 channel 一本只追加的账本（h/<name>.jsonl，四种行 place / retire / msg / step）+ 每个 actor 一个游标。
         全部由账本折叠重建；进程里只另记各收件箱读到的字节偏移。
 事件    某本账上多了一条写给某地址的消息。
-转移表（按被写到的 actor 的 kind）
+视图    {channel, me, msgs: 写给我且没看过的消息, actors: 本 channel 成员表（addr/kind/bind/in/retired，门带 text 与 local）,
+         history: 写给我的全部消息（仅 bind=ledger）}
+转移表（按被写到的 actor 的 kind；退役的不排步）
   program   视图 → Exec.run(text, 视图) → stdout 原样记 step，按 ">>> " 拆成动作
   oracle    视图 → Ω 侧的端点 → 同上
   door      每条消息原样 Port.send 到 text 所指的端点，署名本 channel 的端点
@@ -11,6 +13,7 @@
   >>> <addr>                                                 消息给本 channel 的 <addr>
   >>> channel.create <name>                                  syscall；需 bind=syscall
   >>> channel.add.actor <channel> <kind> [in] [bind=…] + text  syscall；需 bind=syscall
+  >>> channel.retire.actor <channel>/<addr>                  syscall：退役（追加 retire 行，不再排步，地址不复用）；需 bind=syscall
   >>> <动词> <参数>                                            绑定了的 world 动词（ACTIONS 表：起一台机器 / 停一个进程，用 Ω 实现）；需 bind=<动词>
   返回都是一条 msg：from=<动作名>。其他一律忽略。
 入口    每个 channel 一个收件箱 in/<name>.jsonl（Port 的接收侧）：一行 → msg 给接待员，署名指回发信端点的门（没有则 door）。
@@ -18,7 +21,7 @@
         和 msg <channel>（第一条消息，顺手关门）。关门后忽略。
 调度    轮转每个 channel，各取 pending 最早的 actor 走一步；静止则停（serve 模式下继续轮询）。
 
-本文件只认识介质词汇：地址、kind、text、消息、账本、追加、投递、视图、步记录、门、端点、syscall、动词。
+本文件只认识介质词汇：地址、kind、text、消息、账本、追加、投递、视图、步记录、门、端点、syscall、动词、退役。
 它不认识任何组织词汇。检验：把 G 里所有名字换掉，本文件的行为逐字节不变。
 """
 from __future__ import annotations
@@ -44,7 +47,7 @@ def _stop(P: Path, arg: str) -> str:
 
 
 ACTIONS: dict[str, Callable[[Path, str], str]] = {"spawn": _spawn, "stop": _stop}   # 可绑定的 world 动词：spawn 知道 loader 协议（init.py <P> --serve），这是 world 知道自己的布局
-BINDS = ("syscall", *ACTIONS)
+BINDS = ("syscall", "ledger", *ACTIONS)        # ledger：视图里带本人的全部历史消息
 
 
 @dataclass
@@ -53,6 +56,7 @@ class Actor:
     kind: str
     text: str
     bind: tuple[str, ...] = ()
+    retired: bool = False
 
 
 @dataclass
@@ -88,7 +92,7 @@ class Runtime:
 
     def _door(self, c: Channel, sender: str) -> str | None:
         return next((a.addr for a in c.actors.values()
-                     if a.kind == "door" and (a.text == sender or self.ep(a.text) == sender)), None)
+                     if a.kind == "door" and not a.retired and (a.text == sender or self.ep(a.text) == sender)), None)
 
     # ------------------------------------------------------------ 账本
     def _path(self, name: str) -> Path:
@@ -114,6 +118,12 @@ class Runtime:
             c.actors[row["addr"]] = Actor(row["addr"], row["kind"], row["text"], tuple(row.get("bind", ())))
             if row.get("in") or c.receptionist is None:
                 c.receptionist = row["addr"]
+        elif k == "retire":
+            a = c.actors.get(row["addr"])
+            if a:
+                a.retired = True
+                if c.receptionist == row["addr"]:
+                    c.receptionist = None
         elif k == "step":
             c.cursor[row["actor"]] = row["upto"]
 
@@ -138,6 +148,13 @@ class Runtime:
                          "bind": [b for b in bind if b in BINDS], "in": bool(receptionist), "by": by})
         return addr
 
+    def retire(self, channel: str, addr: str) -> bool:
+        c = self.channels.get(channel)
+        if not c or addr not in c.actors or c.actors[addr].retired:
+            return False
+        self._append(c, {"k": "retire", "addr": addr})
+        return True
+
     def msg(self, channel: str, frm: str, to: str, body: str) -> dict:
         return self._append(self.channels[channel], {"k": "msg", "from": frm, "to": to, "body": body})
 
@@ -150,6 +167,9 @@ class Runtime:
             bind = next((f[5:].split(",") for f in flags if f.startswith("bind=")), [])
             addr = self.add(t[1], t[2], body, bind, receptionist=("in" in flags), by=by)
             return ("channel.add.actor", f"{t[1]}/{addr}") if addr else None
+        if t and t[0] == "channel.retire.actor" and len(t) == 2 and "/" in t[1]:
+            ch, _, addr = t[1].partition("/")
+            return ("channel.retire.actor", t[1]) if self.retire(ch, addr) else None
         return None
 
     # ------------------------------------------------------------ 入口
@@ -185,7 +205,7 @@ class Runtime:
     def step(self, channel: str, addr: str) -> bool:
         c = self.channels[channel]; a = c.actors[addr]
         msgs = self._pending(c, addr)
-        if not msgs:
+        if not msgs or a.retired:
             return False
         upto = msgs[-1]["seq"]
         if a.kind == "door":
@@ -193,8 +213,14 @@ class Runtime:
                 Port.send(self._target(a.text), {"from": self.ep(channel), "body": m["body"]})
             self._append(c, {"k": "step", "actor": addr, "upto": upto, "out": "", "err": ""})
             return True
-        view = {"channel": channel, "me": addr,
-                "msgs": [{k: m[k] for k in ("seq", "from", "to", "body")} for m in msgs]}
+        pick = lambda m: {k: m[k] for k in ("seq", "from", "to", "body")}
+        view = {"channel": channel, "me": addr, "msgs": [pick(m) for m in msgs],
+                "actors": [{"addr": x.addr, "kind": x.kind, "bind": list(x.bind), "in": x.addr == c.receptionist,
+                            "retired": x.retired,
+                            **({"text": x.text, "local": x.text in self.channels} if x.kind == "door" else {})}
+                           for x in c.actors.values()]}
+        if "ledger" in a.bind:
+            view["history"] = [pick(r) for r in c.rows if r["k"] == "msg" and r["to"] == addr]
         if a.kind == "program":
             out, err = Exec.run(a.text, json.dumps(view, ensure_ascii=False), cwd=self.P)
         else:
@@ -225,7 +251,9 @@ class Runtime:
             progressed = False
             for c in list(self.channels.values()):
                 best = None
-                for addr in c.actors:
+                for addr, x in c.actors.items():
+                    if x.retired:
+                        continue
                     p = self._pending(c, addr)
                     if p and (best is None or p[0]["seq"] < best[1]):
                         best = (addr, p[0]["seq"])

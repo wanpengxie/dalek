@@ -16,7 +16,7 @@
 
 ## dalek0（M1 第一天）
 
-G 里一个 channel `c0`，注册两个 actor：
+G 里两个 channel：`c0`（构造）和 `c1`（登记，`actors/registrar.py`：只折自己的账本，`decl` 吐出当前形态），一条连线。c0 注册两个 actor：
 - `actors/realize.py` — 装配器（A）。请求：`build <门> <创造者>\n<G>`（经门造一台机器的 c0）、`start\n<G>`（出生：自己长出其余——发育）、`add …`、`peer …`（本地生长）。
 - `actors/spawn.py` — 起子代（C）。请求：`spawn <name>`：pack（G.world 写成文件 + G.json 原样）→ `Exec.spawn` → 放两扇门 → 把 G 交给 realize 经门造子代的 c0 → `msg c0\nstart\n<G>`。关门即切离，子代的 c0 自己长其余。
 
@@ -33,7 +33,8 @@ python3 init.py <P> [--serve]        # 起 R；--serve 静止后持续轮询收�
 ## 状态
 
 - 2026-08-29：Ω、R（含根门）、c0（realize + spawn）、genesis；T1–T7 绿（转移表、syscall、门、根门开关、请求、内容盲、父代的 A 经门造子代 + start 切离）。
-- 待：c1（登记、decl）、c2（L + U 的 coding agent）、oracle 端点（LLM / 人）、replay、c3（www）。
+- 2026-08-30：发育版（父代只造 c0，子代的 c0 长其余）；三层命名 Ω / world{ω-bind, loader, R} / dalek；M2：c1 登记员（`actors/registrar.py`，只折自己的账本）、`decl`、第三个 syscall `channel.retire.actor`、视图带成员表、C 的 pack 用 decl；T0–T11 绿。
+- 待：c2（L + U 的 coding agent）、oracle 端点（LLM / 人）、M4 的 up/down 与对账、replay、c3（www）。
 
 ## 文件
 
