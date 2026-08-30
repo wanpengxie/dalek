@@ -20,6 +20,8 @@ T18 c2 = L(oracle) + U(program)：一次运行里 task → U 败 → U 过 → �
 T19 oracle 端点不通：输出视为空、err 记原因，机器活着
 T20 账本是地址 0：show 全部/窗口；账上只记事实行；带内 == 膜外；0 不是成员
 T21 角色：按 tag 寻址；后放的接替先放的；退役后回到前一个
+T22 脚本化的 L：一次运行里读账本窗口 + 让 U 跑、看回复再测、通过后 add + 回话、不说话结束；对话逐轮增长
+T23 程序的多请求运行：读 0 → 请求另一个程序（它又读 0）→ syscall → 再请求；嵌套运行、一个 run、只有事件推游标
 """
 from __future__ import annotations
 import json, re, sys, tempfile, time, traceback
@@ -590,6 +592,74 @@ def test_T21_roles():
     assert ("re", "got:echo:hi") in frames_of(rows(rt, "c0", "step")[-1])            # 退役后回到前一个
     assert rt._resolve(rt.channels["c0"], "nobody") is None
 
+
+
+class ScriptedL(StubL):
+    """定义了输入输出的 L：一次运行四轮——(1) 读账本窗口 + 让 U 跑一段；(2) 看两个回复再决定测什么；(3) 通过后 add + 回话；(4) 不说话。"""
+    @staticmethod
+    def answer(messages):
+        n = len(messages)
+        if n == 1:
+            if not json.loads(messages[0]["content"])["msg"]["body"].startswith("task\n"):
+                return ""                                                                    # placed 等别的事件：不说话
+            return ">>> 0\nshow 1 3\n<<<\n>>> U\nrun\nprint(6 * 7)\n<<<"                    # 同一轮两帧
+        replies = json.loads(messages[-1]["content"])
+        if n == 3:
+            rows = [json.loads(l) for l in replies[0]["reply"].splitlines()]
+            assert [r["k"] for r in rows] == ["place", "place", "place"] and replies[1]["reply"].startswith("result 0\n  42")
+            return f">>> U\ntest\n{HELLO}\n===\n{HELLO_T}\n<<<"
+        if n == 5:
+            assert replies[0]["to"] == "U" and replies[0]["reply"].startswith("result 0")
+            return f">>> c0\nadd c3 program in tag=hello\n{HELLO}\n<<<\n>>> re\nworking\n<<<"
+        return ""
+
+
+def test_T22_scripted_L_multi_request_run():
+    L = ScriptedL()
+    try:
+        G = with_L(G2(), L.url)
+        rt, P = fresh(G); start(P, G); rt.run()
+        rt.msg("c2", "door", "1", "task\nx"); rt.run()
+        run = [r for r in rows(rt, "c2", "step") if r["actor"] == "1" and "run" not in r][0]
+        heads = [h for h, _ in frames_of(run)]
+        assert heads == ["0", "U", "U", "c0", "re"] and run["err"] == ""                          # 一次运行五个请求、四轮
+        assert [len(c["messages"]) for c in L.calls] == [1, 3, 5, 7, 1]                              # 对话逐轮增长；placed 是新运行（一轮，没话说）
+        ms = rows(rt, "c2", "msg")
+        ev = [m for m in ms if m["body"] == "task\nx"][0]
+        inrun = [m for m in ms if m.get("run") == ev["seq"]]
+        assert [(m["from"], m["to"]) for m in inrun][:2] == [("0", "1"), ("0", "1")]                  # 组装的读 + 自己的读
+        assert [m["body"] for m in inrun if m["from"] == "0"] == [f"show 1 {ev['seq']}", "show 1 3"]
+        assert sum(1 for m in inrun if m["from"] == "1" and m["to"] == "2") == 2 and sum(1 for m in inrun if m["from"] == "2") == 2   # U 两问两答，嵌套在运行里
+        assert all(r.get("run") == ev["seq"] for r in rows(rt, "c2", "step") if r["actor"] == "2")     # U 的运行是嵌套的
+        assert "c3" in rt.channels and rt.channels["c3"].actors["1"].tag == "hello"
+        assert rt._pending(rt.channels["c2"], "1") == [] or rows(rt, "c2", "msg")[-1]["body"].startswith("placed")
+    finally:
+        L.close()
+
+
+def test_T23_program_multi_request_nested_runs():
+    INNER = CALL + ('rows = [json.loads(l) for l in call("0", "show").splitlines() if l]\n'
+                    'call("re", "inner saw %d" % len(rows))\n')
+    OUTER = CALL + ('a = call("0", "show 1 2")\n'
+                    'b = call("in", m["body"])\n'
+                    'c = call("channel.create w")\n'
+                    'd = call("in", "again")\n'
+                    'call("re", "outer: %d | %s | %s | %s" % (len(a.splitlines()), b, c, d))\n')
+    G = G_of([{"name": "c0", "members": [{"kind": "program", "text": INNER, "tag": "in"},
+                                         {"kind": "program", "text": OUTER, "bind": ["syscall"]}], "receptionist": 2}])
+    rt, P = fresh(G, creator=None)
+    rt.msg("c0", "door", "2", "go"); rt.run()
+    c0 = rt.channels["c0"]
+    ev = [m for m in rows(rt, "c0", "msg") if m["body"] == "go"][0]
+    out = dict(frames_of([r for r in rows(rt, "c0", "step") if r["actor"] == "2" and "run" not in r][0]))
+    n1 = 2 + 1 + 1 + 1              # 2 place + go + 外层 show 事实 + 2→1 go（内层的 show 事实在它看到的范围之后）
+    assert out["re"] == f"outer: 2 | inner saw {n1} | w new | inner saw {n1 + 5}", out["re"]   # 四次请求都拿到回复，内层每次看到更长的账
+    inner_steps = [r for r in rows(rt, "c0", "step") if r["actor"] == "1"]
+    assert len(inner_steps) == 2 and all(r["run"] == ev["seq"] for r in inner_steps)                 # 内层两次运行都是嵌套
+    assert all(m.get("run") == ev["seq"] for m in rows(rt, "c0", "msg") if m["seq"] > ev["seq"])      # 整条链一个 run
+    assert c0.cursor["2"] == ev["seq"] and "1" not in c0.cursor and "w" in rt.channels               # 只有事件推游标
+    assert [r["seq"] for r in rows(rt, "c0", "step")] == sorted(r["seq"] for r in rows(rt, "c0", "step"))
+    assert rows(rt, "c0", "step")[-1]["actor"] == "2"                                                 # 外层最后收
 
 if __name__ == "__main__":
     ok = 0; names = sorted(n for n in dir() if n.startswith("test_"))
