@@ -35,7 +35,7 @@
 - born —— channel 存在当且仅当它有 actor；第一次 add 就是出生。
 - copy —— 复制 = 用同一段 text 再 add。B 不需要专门动作。
 - start —— 第一条消息是普通消息，经根门进来。
-- delete / retire —— 需要 c1 的注册表（逻辑删除 = 表上划掉）。M1 没有。
+- delete / retire —— M2 定为第三个 syscall `channel.retire.actor`（追加 `retire` 行，R 不再 step 它，decl 略过，地址不复用）。抹掉账本行的 delete 被原则排除。M1 没有。
 - rebuild / rebind / clone —— 管理器动作，都是 spawn 与 add 的组合，属于 c1/c2 的程序，不是 syscall。
 - 改接待员 —— `add … in` 会把新 actor 设为接待员（fold 规则），所以可以改，但没有"只改接待员不加 actor"的动作。这是有意的：接待员是某个 actor 的属性，不是独立状态。
 

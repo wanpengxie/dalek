@@ -277,7 +277,7 @@ m′.c1.decl() == m.c1.decl()
 **约定**：一台最小的机器 = Space { c0, c1 }，一条连线 c0–c1。按 0.1½ 的三层：c0、c1 是 channel，里面注册的 actor 才有代码。
 
 - **运行时 ≠ c0。** R 驱动所有 channel，包括 c0。R 还带着一扇 Space 级的**根门**（在 channel 之前存在，不在 G 里）。
-- **R 的 syscall 两个词**：`channel.create(name)`、`channel.add.actor(channel, kind, text, bind[, in])`（含 actor.create：actor 只在被加入某个 channel 时诞生，没有游离的 actor）。持有 `bind=syscall` 的 actor 可以在本机器内发；根门开着时膜外可以发。c0 的 `add / build / spawn` 叫**请求**，是 syscall 上的程序。
+- **R 的 syscall 两个词**：`channel.create(name)`、`channel.add.actor(channel, kind, text, bind[, in])`（含 actor.create：actor 只在被加入某个 channel 时诞生，没有游离的 actor）。持有 `bind=syscall` 的 actor 可以在本机器内发；根门开着时膜外可以发。M2 加第三个词 `channel.retire.actor`（退役）。c0 的 `add / build / spawn` 叫**请求**，是 syscall 上的程序。
 - **c0 = 注册了两个 actor 的 channel**：**realize actor**（A：读 G 的结构，逐项发 syscall——本地生长，或经门造子代；接待员）、**C actor**（pack → spawn → 把 G 交给 realize 经门造 → start；绑定 spawn）。c0 是唯一持有形态变更能力的 channel，仅因为这两个 actor 注册在它里面。任何形态改动都是给 c0 的请求。
 - **入账规则**：一条形态改动**三边同时记账**——被改的 channel 记一行，c0 记一行，c0 再经门给 c1 发一行。
 - **c1 = 注册了登记 actor 的 channel**：对自己账本上收到的形态改动折叠一遍得到配置，落成文件；`decl` = 原样抄出 + 从 P 拼上 `world`。不读别的账本。文件是派生物。
@@ -324,7 +324,8 @@ m 造 G′ ≠ 自己的机器，其 decl() == G′                           �
 
 - c1 = 注册了登记 actor 的 channel。c0 每次 syscall 后把 place 行（含完整 text）经门转发给 c1（三边记账）；c1 折叠自己的账本得到 `channels/peers`，从 P 拼上 `world`，落成文件；`decl` = 原样抄出。
 - C actor 的 pack 改用 `c1.decl()`，不再抄 P 里的 G.json（关 H4）。
-- 逻辑删除 `retire <channel>/<addr>`：c1 表上划掉，不再给它送消息；账本不动。
+- **退役是第三个 syscall**（2026-08-30 定）：`channel.retire.actor <channel>/<addr>` → 该 channel 账本追加一条 `retire` 行；`_fold` 把该 actor 标为退役，R 不再给它 step（写给它的消息留在账上、不投递）；decl 自然略过；地址不复用（序号只增）。理由：退役是形态改动，形态改动必须是 syscall、落在账上、由 R 照账执行，否则"任何形态改动都在账上"对退役不成立；只在 c1 表上划掉会留下"没人叫但叫了会应"的僵尸器官。
+  两种 delete 分清：**抹掉**（拿走或改写账本行）被原则排除——place 行不可变，actor 的 text 不能改，改 = 放新的，所以没有 replace，替换 = add 新 + retire 旧，新的拿新地址；**退役**是追加，不违反任何原则，冯诺依曼的自动机可以拆开合成物，细胞有凋亡。形态与历史仍然分开：历史里它永远在，形态里它没了。
 
 验收：
 ```
@@ -352,7 +353,7 @@ t*：回答"本机有几个 channel、各自接待员是谁"     c2 失败（没
 自举：c2′ 接到同一任务 → c2″；decl(c2″) == decl(c2′)   改进器仍是改进器
 遗传：spawn 子代 → 子代的 c2 带着新工具               L3 的改进被继承
 ```
-洞：syscall 只有 create/add，没有 replace；"改 U 的 text" = add 新 + `retire` 旧，接待员怎么切换随 M2 的 retire 一起定。
+洞：没有 replace（原则上不会有）；"改 U 的 text" = add 新 + `channel.retire.actor` 旧（M2 的第三个 syscall），接待员怎么切换随 M2 一起定。
 
 **任务 1 · 自组织**
 
