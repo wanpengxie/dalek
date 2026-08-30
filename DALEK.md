@@ -133,7 +133,7 @@ space    个体。channel 们 + 门的拓扑 + 一份运行时实例。能被 Ω
 | **world** = ω-bind（omega.py）+ loader（init.py、P 的布局）+ R（runtime.py） | 是 | 否 |
 | G 的其余部分 | 是 | 是 |
 
-**契约是不动点，绑定是基因**：Ω 是抽象契约；ω-bind 是它在某一宿主上的实现，在 world 里随 P 遗传，所以换宿主 = c2 写一个新的 omega.py（Port 改 http、Exec 改容器），pack 一个子代用它跑，自举不动点验收——与换 R 同一条路。loader 知识（入口文件名、`--serve`、目录布局）只能在 world 里：R 的 `spawn` 知道 `init.py <P> --serve` 是 world 知道自己的布局；放到 G 里的 actor 才是组织读世界。
+**契约是不动点，绑定是基因**：Ω 是抽象契约；ω-bind 是它在某一宿主上的实现，在 world 里随 P 遗传，ω-bind 有两半：R 这边的 omega.py，和 actor 这边的解释器本身——`Exec` 就是 python3，text 用的 `open` / `urllib` / `os` 是解释器的能力，也就是 Ω 的能力，随 `Exec.load` 一起给了 text。所以换宿主 = 换 Exec 指向的解释器 + omega.py（python 写的 text 需要一个 python），pack 一个子代用它跑，自举不动点验收——与换 R 同一条路。loader 知识（入口文件名、`--serve`、目录布局）只能在 world 里：R 的 `spawn` 知道 `init.py <P> --serve` 是 world 知道自己的布局；放到 G 里的 actor 才是组织读世界。
 
 ### 1.4 非确定性的来源
 
