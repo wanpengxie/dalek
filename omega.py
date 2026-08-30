@@ -13,8 +13,14 @@ class Exec:
 
     @staticmethod
     def run(source: str, stdin: str, cwd: str | os.PathLike, timeout: float = 60) -> tuple[str, str]:
-        r = subprocess.run([sys.executable, "-c", source], input=stdin, capture_output=True,
-                           text=True, cwd=str(cwd), timeout=timeout)
+        """超时或非零退出 → 输出视为空，err 记录原因；进程的失败不是宿主的失败。"""
+        try:
+            r = subprocess.run([sys.executable, "-c", source], input=stdin, capture_output=True,
+                               text=True, cwd=str(cwd), timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return "", f"timeout {timeout}s"
+        if r.returncode != 0:
+            return "", f"exit {r.returncode}\n{r.stderr}"
         return r.stdout, r.stderr
 
     @staticmethod
@@ -22,6 +28,8 @@ class Exec:
         out = open(log, "ab") if log else subprocess.DEVNULL
         p = subprocess.Popen([sys.executable, *argv], cwd=str(cwd), stdin=subprocess.DEVNULL,
                              stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+        if log:
+            out.close()                                  # 子进程已继承句柄，父进程不留
         return p.pid
 
     @staticmethod

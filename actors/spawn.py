@@ -18,7 +18,8 @@ for m in msgs:
     frm, body = m["from"], m["body"]
     head, _, rest = body.partition("\n"); t = head.split()
     if frm == "channel.add.actor":
-        doors.append(body.split("/")[-1]); continue
+        if "/" in body: doors.append(body.split("/")[-1])          # 回执稠密：被拒的不是门
+        continue
     if frm == "spawn" or not t:
         continue
     if frm == me and t[0] == "note":

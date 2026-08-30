@@ -100,6 +100,8 @@ for frm, t, rest, body in requests:
             out.append(f">>> {t[1]}\n{line}")
         out.append(f">>> {frm}\nbuilt {t[1]}")
     elif op == "start" and rest.strip():
+        if any(a["kind"] == "door" and a.get("local") for a in actors):
+            continue                                      # 已发育过（有内门）：start 只在出生时有意义
         for line in lines_rest(json.loads(rest)):
             emit(None, line)                              # 出生：每件以 placed 登记；born 只带脐带放的
         out.append(f">>> {me}\nborn\n{rest}")

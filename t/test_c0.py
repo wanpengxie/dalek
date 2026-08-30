@@ -77,10 +77,20 @@ def decl_of(rt: Runtime, ch="c1") -> dict:
 
 
 def form_of(rt: Runtime):
-    """π(A)：R 的实际形态去掉不经 c0 放的门（出生证明、生子的临时门）与退役，地址重排。"""
+    """π(A)，按出处：去掉脐带放的、不指向本机的门（出生证明），去掉 c0 里持 spawn 绑定的成员（C）放的门（生子的临时门），
+    去掉退役；其余全留（含 realize 放的外部门），地址重排。"""
+    c0 = next(iter(rt.channels.values()))
+    spawners = {a.addr for a in c0.actors.values() if "spawn" in a.bind}
+    by_of = {(c.name, r["addr"]): r["by"] for c in rt.channels.values() for r in c.rows if r["k"] == "place"}
+    def heritable(cn, a):
+        if a.retired: return False
+        if a.kind != "door": return True
+        by = by_of[(cn, a.addr)]
+        if by == "_root": return a.text in rt.channels
+        return not (cn == c0.name and by in spawners)
     out = []
     for c in rt.channels.values():
-        live = [a for a in c.actors.values() if not a.retired and not (a.kind == "door" and (":" in a.text or a.text == "human"))]
+        live = [a for a in c.actors.values() if heritable(c.name, a)]
         if not live:
             continue
         out.append((c.name, [(a.kind, a.text, tuple(a.bind)) for a in live],
@@ -376,6 +386,31 @@ def test_T15_fact_source_survives_topology():
     assert D["channels"][1]["members"][1] == {"kind": "door", "text": "c0"} and len(D["channels"][1]["members"]) == 2
     rt.msg("c0", "door", "1", "add y program\n" + ECHO); rt.run()                    # 新事实经新门到达
     assert len(decl_of(rt)["channels"][2]["members"]) == 2 and form_of(rt) == declared(decl_of(rt))
+
+
+def test_T16_actor_failure_is_not_machine_failure():
+    assert Exec.run("import time; time.sleep(3)", "", ".", timeout=0.5) == ("", "timeout 0.5s")
+    out, err = Exec.run("import sys; print('>>> 1\\nx'); sys.exit(3)", "", ".")
+    assert out == "" and err.startswith("exit 3")                                     # 非零退出 → 输出视为空（H10）
+    G = G_of([{"name": "a", "members": [{"kind": "program", "text": "import time; time.sleep(3)"}]}])
+    rt, P = fresh(G); start(P, G, "hi")
+    Exec.run.__defaults__ = (0.5,)
+    try:
+        rt.run()
+    finally:
+        Exec.run.__defaults__ = (60,)
+    st = rows(rt, "a", "step")
+    assert st and st[-1]["out"] == "" and st[-1]["err"].startswith("timeout") and rt.channels["a"].cursor["1"] == st[-1]["upto"]
+
+
+def test_T17_start_and_born_only_once():
+    G = G0()
+    rt, P = fresh(G); start(P, G); rt.run()
+    n = len(rows(rt, "c1", "place")); D = decl_of(rt)
+    rt.msg("c0", "door", "1", "start\n" + json.dumps(G)); rt.run()                   # 出生后再 start：忽略
+    assert len(rows(rt, "c1", "place")) == n and len(rt.channels["c0"].actors) == 4
+    rt.msg("c1", "door", "1", "born\n" + json.dumps({"world": G["world"], "channels": [], "peers": []})); rt.run()
+    assert decl_of(rt) == D                                                          # 第二个 born 不算
 
 
 if __name__ == "__main__":

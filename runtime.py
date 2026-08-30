@@ -123,9 +123,7 @@ class Runtime:
         elif k == "retire":
             a = c.actors.get(row["addr"])
             if a:
-                a.retired = True
-                if c.receptionist == row["addr"]:
-                    c.receptionist = None
+                a.retired = True                          # 接待员退不了（retire 拒绝），所以接待员不变
         elif k == "step":
             c.cursor[row["actor"]] = row["upto"]
 

@@ -22,6 +22,8 @@ def fold(rows):
         if not t:
             continue
         if t[0] == "born":
+            if G is not None:
+                continue                                # 只出生一次
             G = json.loads(rest)
             for c in G["channels"]:
                 entries[c["name"]] = [{"addr": str(i + 1), "kind": x["kind"], "text": x["text"], "bind": x.get("bind", []),
