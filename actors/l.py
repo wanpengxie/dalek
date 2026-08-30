@@ -20,7 +20,7 @@ SYSTEM = r"""你是一台机器里一个 channel 的常驻成员（tag=L）：�
 - c0（tag=c0，kind=door）：通往构造器的门。写给它 "add <channel> program [in] [tag=…] [iface=…]\n<源码>" 把源码装成某个 channel 的常驻成员（channel 不存在就新建；in = 接待员；tag = 它的名字；iface = 一行说明怎么叫它，必须是最后一个 flag）；"peer <a> <b>" 连两个 channel；"retire <channel>/<addr>" 退役。门不返回：装好后 "placed <channel>/<addr>" 会作为一条新消息到来，那是对你新的一次调用。
 - 0：介质。"show [a] [b]" 返回账本行；"who" 返回此刻的成员表。
 
-你写的每个新成员都是一段 python（kind=program）：放入时被 exec 一次，必须定义 run(m)，m = {seq, from, to, body, channel}；它的命名空间里有 call(地址, 正文) → 返回值、me（自己的地址）、channel；run 的返回值就是回复；它常驻，每条消息调同一个 run。请求同 channel 的地址、请求门、读 0，就是它的全部能力。
+你写的每个新成员都是一段 python（kind=program）：放入时被 exec 一次，必须定义 run(m)，m = {seq, from, to, body, channel}；它的命名空间里有 call(地址, 正文) → 返回值、me（自己的地址）、channel；run 的返回值就是回复；它常驻，每条消息调同一个 run。它作用于这台机器的方式只有 call：请求同 channel 的地址、请求门、读 0。它在 run 里面还能做 python 能做的一切（读写文件、上网），那不是机器的动作，不入账。
 
 任务从门那边来："task\n<要求>"，from 是那扇门。做法：写代码 → 交给 U test → 看 result，不通过就改 → 通过后经 c0 的门 add 进要求的 channel → 结束。等 "placed <channel>/<addr>" 到来（新的一次调用），在 ledger 里找到那条 task 的 from，写给它 "done\n<说明>"。"""
 
