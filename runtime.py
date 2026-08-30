@@ -4,10 +4,10 @@
         全部由账本折叠重建；进程里只另记各收件箱读到的字节偏移。
 事件    某本账上多了一条写给某地址的消息。
 视图    {channel, me, msgs: 写给我且没看过的消息, actors: 本 channel 成员表（addr/kind/bind/in/retired，门带 text 与 local）,
-         history: 写给我的全部消息（仅 bind=ledger）}
+         history: 写给我的全部消息 + 我自己每步说过的（仅 bind=ledger；按 seq 排）}
 转移表（按被写到的 actor 的 kind；退役的不排步）
   program   视图 → Exec.run(text, 视图) → stdout 原样记 step，按 ">>> " 拆成动作
-  oracle    视图 → Ω 侧的端点 → 同上
+  oracle    视图 → Port.request(text, 视图)（text 第一行是端点，其余随视图一起送）→ 同上
   door      每条消息原样 Port.send 到 text 所指的端点，署名本 channel 的端点
 动作（program / oracle 输出的每一段）
   >>> <addr>                                                 消息给本 channel 的 <addr>
@@ -30,7 +30,6 @@ from __future__ import annotations
 import json, time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 from omega import Exec, Store, Port
 
 KINDS = ("program", "oracle", "door")
@@ -74,14 +73,10 @@ class Channel:
         return self.rows[-1]["seq"] if self.rows else 0
 
 
-Oracle = Callable[[str, str, Actor, list[dict]], str]
-
-
 class Runtime:
-    def __init__(self, P: str | Path, oracle: Oracle | None = None):
+    def __init__(self, P: str | Path):
         self.P = Path(P)
         self.h = self.P / "h"
-        self.oracle = oracle
         self.channels: dict[str, Channel] = {}
         self.offsets: dict[str, int] = {}
 
@@ -223,11 +218,12 @@ class Runtime:
                             **({"text": x.text, "local": x.text in self.channels} if x.kind == "door" else {})}
                            for x in c.actors.values()]}
         if "ledger" in a.bind:
-            view["history"] = [pick(r) for r in c.rows if r["k"] == "msg" and r["to"] == addr]
+            view["history"] = [pick(r) if r["k"] == "msg" else {"seq": r["seq"], "from": addr, "to": "", "body": r["out"]}
+                               for r in c.rows if (r["k"] == "msg" and r["to"] == addr) or (r["k"] == "step" and r["actor"] == addr)]
         if a.kind == "program":
             out, err = Exec.run(a.text, json.dumps(view, ensure_ascii=False), cwd=self.P)
         else:
-            out, err = (self.oracle(channel, addr, a, view["msgs"]) if self.oracle else ""), ""
+            out, err = Port.request(a.text, json.dumps(view, ensure_ascii=False))
         self._append(c, {"k": "step", "actor": addr, "upto": upto, "out": out, "err": err})
         for head, body in parse(out):
             self._execute(c, a, head, body)

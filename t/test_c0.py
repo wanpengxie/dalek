@@ -13,6 +13,9 @@ T9 遗传运行中的改动：add + peer 后经接待员 spawn（H3）→ 子代
 T10 替换 + 非平凡：add 新 realize′(in) + retire 旧 → 旧不再被 step、decl 略过 → 子代的接待员是 realize′
 T11 retire 后写给它的消息留账不投递；退役的门不再署名
 T12 形态闭包与拒绝；T13 回执稠密（拒绝也占一位）；T14 跨 channel 退役；T15 事实来源不随拓扑漂
+T16 actor 超时/崩溃机器不死；T17 start/born 只一次
+T18 c2 = L(oracle) + U(program)：task → L 写 → U 测（失败）→ L 改 → U 通过 → 经 c0 的门 add c3 → decl 有 c3 → 回 done；L 的历史含自己说过的
+T19 oracle 端点不通：输出视为空、err 记原因，机器活着
 """
 from __future__ import annotations
 import json, re, sys, tempfile, time, traceback
@@ -23,7 +26,8 @@ sys.path.insert(0, str(ROOT))
 from omega import Exec, Store                       # noqa: E402
 from runtime import Runtime                         # noqa: E402
 from init import up, root as root_line            # noqa: E402
-from genesis import G0, pack, construct, start      # noqa: E402
+from genesis import G0, G2, pack, construct, start  # noqa: E402
+import threading, http.server                         # noqa: E402
 
 ECHO = ('import sys, json\nv = json.load(sys.stdin)\n'
         'print("\\n".join(">>> %s\\necho:%s" % (m["from"], m["body"]) for m in v["msgs"]))')
@@ -120,7 +124,10 @@ def test_T0_P_equals_own_G():
     assert c0[0]["text"] == (ROOT / "actors" / "realize.py").read_text(encoding="utf-8")
     assert c0[1]["text"] == (ROOT / "actors" / "spawn.py").read_text(encoding="utf-8")
     assert G["channels"][1]["members"][0]["text"] == (ROOT / "actors" / "registrar.py").read_text(encoding="utf-8")
-    assert G == G0()                                                             # genesis 重生成后不变
+    c2 = G["channels"][2]["members"]
+    assert c2[0]["kind"] == "oracle" and c2[0]["text"] == (ROOT / "actors" / "l.txt").read_text(encoding="utf-8")
+    assert c2[1]["text"] == (ROOT / "actors" / "u.py").read_text(encoding="utf-8")
+    assert G == G2()                                                             # genesis 重生成后不变
 
 
 def test_T1_transition_program():
@@ -412,6 +419,102 @@ def test_T17_start_and_born_only_once():
     rt.msg("c1", "door", "1", "born\n" + json.dumps({"world": G["world"], "channels": [], "peers": []})); rt.run()
     assert decl_of(rt) == D                                                          # 第二个 born 不算
 
+
+
+# ---------------------------------------------------------------- c2：L 的桩（讲 Anthropic 报文；按视图查表回话）
+HELLO_BAD = 'import sys, json\nv = json.load(sys.stdin)\nfor m in v["msgs"]:\n    if m["body"] == "hi": print(">>> %s\\nhullo" % m["from"])'
+HELLO = 'import sys, json\nv = json.load(sys.stdin)\nfor m in v["msgs"]:\n    if m["body"] == "hi": print(">>> %s\\nhello" % m["from"])'
+HELLO_T = ('import sys, json, subprocess\n'
+           'v = {"channel": "c3", "me": "1", "msgs": [{"seq": 1, "from": "2", "to": "1", "body": "hi"}], "actors": []}\n'
+           'r = subprocess.run([sys.executable, "m.py"], input=json.dumps(v), capture_output=True, text=True)\n'
+           'assert r.stdout == ">>> 2\\nhello\\n", r.stdout')
+
+
+class StubL:
+    """L 的桩：一个 http 服务，收 Anthropic messages 报文，把 user 内容当视图，按状态回固定的话。记下每次看到的视图。"""
+    def __init__(self):
+        self.views = []
+        stub = self
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["content-length"])))
+                view = json.loads(body["messages"][0]["content"]); stub.views.append((body["system"], view))
+                text = stub.answer(view)
+                out = json.dumps({"content": [{"type": "text", "text": text}]}).encode()
+                self.send_response(200); self.send_header("content-type", "application/json")
+                self.send_header("content-length", str(len(out))); self.end_headers(); self.wfile.write(out)
+        self.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}/v1/messages"
+
+    @staticmethod
+    def answer(v):
+        U = next(a["addr"] for a in v["actors"] if a["kind"] == "program")
+        door = next(a["addr"] for a in v["actors"] if a["kind"] == "door" and a["text"] == "c0")
+        out = []
+        for m in v["msgs"]:
+            b = m["body"]
+            if b.startswith("task\n"):
+                out.append(f">>> {U}\ntest\n{HELLO_BAD}\n===\n{HELLO_T}")
+            elif b.startswith("result ") and not b.startswith("result 0"):
+                out.append(f">>> {U}\ntest\n{HELLO}\n===\n{HELLO_T}")
+            elif b.startswith("result 0"):
+                asker = next(h["from"] for h in v["history"] if h["body"].startswith("task\n"))
+                out.append(f">>> {door}\nadd c3 program in\n{HELLO}\n>>> {asker}\ndone\nc3 已装")
+        return "\n".join(out)
+
+    def close(self): self.srv.shutdown()
+
+
+def with_L(G: dict, url: str) -> dict:
+    """把 c2 里 oracle 的第一行（端点 模型 密钥）换成桩的 url；提示语不动。"""
+    for c in G["channels"]:
+        for m in c["members"]:
+            if m["kind"] == "oracle":
+                _, _, rest = m["text"].partition("\n"); m["text"] = f"{url} stub key\n{rest}"
+    return G
+
+
+def test_T18_c2_is_an_agent():
+    L = StubL()
+    try:
+        G = with_L(G2(), L.url)
+        rt, P = fresh(G); start(P, G); rt.run()
+        c2 = rt.channels["c2"]
+        assert c2.actors["1"].kind == "oracle" and c2.receptionist == "1" and c2.actors["3"].text == "c0"
+        rt.msg("c2", "door", "1", "task\n写一个 actor：收到 hi 回 hello，装进 c3"); rt.run()
+        steps = [r for r in rows(rt, "c2", "step") if r["actor"] == "1"]
+        assert len(steps) == 4 and all(r["err"] == "" for r in steps)                              # L 走了四步：写、改、交、收 placed（没话说）
+        assert steps[-1]["out"] == "" and steps[-2]["out"].startswith(">>> 3\nadd c3 program in\n")
+        results = [m["body"] for m in rows(rt, "c2", "msg") if m["from"] == "2"]
+        assert len(results) == 2 and not results[0].startswith("result 0") and results[1].startswith("result 0")   # U：先败后通过
+        assert ">>> door\ndone" in steps[-2]["out"]                                                 # 回任务发起者
+        assert any(m["from"] == "3" and m["body"].startswith("placed c3/1") for m in rows(rt, "c2", "msg"))   # c0 的回执从门回来
+        c3 = rt.channels["c3"]
+        assert c3.actors["1"].text == HELLO and c3.receptionist == "1" and rows(rt, "c3", "place")[0]["by"] == "1"   # c0 的手装的
+        D = decl_of(rt)
+        assert [c["name"] for c in D["channels"]] == ["c0", "c1", "c2", "c3"] and D["channels"][3]["members"][0]["text"] == HELLO
+        assert D["channels"][2]["members"][0]["kind"] == "oracle" and form_of(rt) == declared(D)   # 作者遗传；形态闭包仍成立
+        rt.msg("c3", "door", "1", "hi"); rt.run()
+        assert rows(rt, "c3", "step")[-1]["out"] == ">>> door\nhello\n"                              # 新器官在工作
+        system, last = L.views[-1]
+        assert system.startswith("你是一台机器") and "history" in last                                # 提示语 + 历史
+        assert any(h["from"] == "1" and "test\n" in h["body"] for h in last["history"])             # 历史含自己上一轮说的
+        assert all(not l.startswith(">>> ") for h in last["history"] if h["from"] == "2" for l in h["body"].splitlines())   # U 的输出没有动作行
+    finally:
+        L.close()
+
+
+def test_T19_oracle_endpoint_down_machine_alive():
+    G = with_L(G2(), "http://127.0.0.1:1/v1/messages")
+    rt, P = fresh(G); start(P, G); rt.run()
+    rt.msg("c2", "door", "1", "task\nx"); rt.run()
+    r = [r for r in rows(rt, "c2", "step") if r["actor"] == "1"][-1]
+    assert r["out"] == "" and r["err"].startswith("URLError")                                          # 外生失败入账
+    assert rt._pending(rt.channels["c2"], "1") == []                                                  # 游标照推，机器静止
+    rt.msg("c0", "door", "1", "add y program in\n" + ECHO); rt.run()
+    assert "y" in rt.channels                                                                          # 别的器官照常工作
 
 if __name__ == "__main__":
     ok = 0; names = sorted(n for n in dir() if n.startswith("test_"))

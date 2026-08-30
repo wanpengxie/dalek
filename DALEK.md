@@ -185,7 +185,9 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 
 三种 kind 一行一条，加一条放 actor；没有第五行。视图 = 写给该 actor、且它上次没看过的那些条。
 
-**kind**：三种，都是"转移表定行为 + 一个 text 参数"，区别只在 text 是什么——程序的 text 是源码，oracle 的 text 是提示语/模型绑定，门的 text 是对面的地址。门最退化：text 不是行为、不是内容，是指针；但它是唯一 text 指向 channel 外面的 kind。整台机器的拓扑 = 全部门的 text 的集合。
+**kind**：三种，都是"转移表定行为 + 一个 text 参数"，区别只在 text 是什么——程序的 text 是源码，oracle 的 text 是端点 + 提示语（第一行端点，其余随视图一起送过去），门的 text 是对面的地址。门最退化：text 不是行为、不是内容，是指针；但它是唯一 text 指向 channel 外面的 kind。整台机器的拓扑 = 全部门的 text 的集合。
+
+**oracle 与门的区分（2026-08-30）**：两者在实现上可以是同一个 POST，理论上是两种东西。门是**连接**：不产生输出、只搬运，text 是拓扑的一部分，对面有自己的账本和主动性，去掉它机器少一条边。oracle 是**功能处理**：解释器在远处的成员，取视图、产生输出，输出是本 channel 里的动作，text 是行为的参数，对面只应答，去掉它机器少一个器官。实现相同不等于概念相同——判据"理论句 = 换实现仍成立"两个方向都用：换实现仍成立的区分是理论，哪怕某个实现把它们做成同一个调用。程序与 oracle 正好对应 Ω 的两条绑定：`Exec.run(text, 视图)` 把程序的 text 绑到 python，`Port.request(text, 视图)` 把 oracle 的 text 绑到 LLM 的 API；R 不知道 python 也不知道模型。同一个人两种接法：当成员（看视图、按语法回话）是 oracle；当邻居（有自己的邮箱、自己决定何时说话）是门那边的 peer。
 
 **门**：是 actor，不是 channel（没有自己的账本，是两本账之间的管子）。一条连线 = 两扇门互指。膜内成员只能写给本 channel 的地址；要出去只能写给门；外面的东西进来必须先变成账本上的一行——"影响一个 channel 的一切都在它的账本上"由此保证。内外同一种门：门只做一件事——原样 `Port.send` 到 text 所指的端点；对面是本机器另一个 channel 时端点就是本机的收件箱，对面是人、LLM、另一台机器时是外面的端点；运行时里只有一条门的规则。冯诺依曼的"+"在这里有了定义：接上 = 两本账各有一扇门互指。
 
@@ -460,7 +462,7 @@ channel 的创建顺序记在 `h/_order`。`from` 可以是 `door`（膜外来�
 
 ### 4.3 程序 actor 的 ABI
 
-stdin（视图）：`{"channel", "me", "msgs": [{seq, from, to, body}…], "actors": [{addr, kind, bind, in, retired, text?, local?}…], "history"?}`——`msgs` 是写给我且没看过的；`actors` 是本 channel 的成员表（本 channel 账本的折叠，门带 text 和 local = 指向本机 channel）；`history` 仅 `bind=ledger` 的 actor 有，是写给它的全部消息（c1 的登记员靠它折叠自己的账本）。stdout 原样进 `step.out`，按行首 `>>> ` 拆：
+stdin（视图）：`{"channel", "me", "msgs": [{seq, from, to, body}…], "actors": [{addr, kind, bind, in, retired, text?, local?}…], "history"?}`——`msgs` 是写给我且没看过的；`actors` 是本 channel 的成员表（本 channel 账本的折叠，门带 text 和 local = 指向本机 channel）；`history` 仅 `bind=ledger` 的 actor 有，是写给它的全部消息 + 它自己每步说过的（`from == me`，按 seq 排；c1 的登记员靠它折叠自己的账本，c2 的作者靠它接着上一轮改）。stdout 原样进 `step.out`，按行首 `>>> ` 拆：
 
 ```
 >>> <addr>                                          消息，发给本 channel 的 <addr>（含门）
@@ -508,11 +510,23 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 
 **c1 的登记员**（`actors/registrar.py`，bind=ledger）：只折自己的账本（视图里的 history），且只认来自本机 channel 的门（成员表里 local 的门，含已退役——历史的解释不随拓扑漂，权威随"先加新门再退旧门"迁移）的 `born / placed / retired`：`born` 给 G₀，`placed` 追加条目（带真实地址），`retired` 划掉；`decl` → G₀ ⊕ placed ⊖ retired：channel 按出生 + 首次出现顺序（= `_order`），成员按地址，**门就是成员**（`peers: []`），接待员显式，退役的不输出，world 原样来自 born。不读任何文件。
 
+### 4.8 c2：作者（L）与执行器（U）
+
+c2 = {1 L：`kind=oracle, in, bind=ledger`；2 U：`kind=program`；3 门→c0}，G0 加 c2 与连线 [c0, c2] = `genesis.G2()`，dalek0 用它。没有 driver：循环由转移表驱动——任务从收件箱来 → 投给 L → L 写给 U → U 回 result → L 改或交 → 经门给 c0 `add`。
+
+**oracle 的 ABI**（R 的转移表第二行）：`Port.request(text, 视图 JSON)`。text 第一行 `<url> <model> <key>`，其余是提示语；第一个实现讲 Anthropic messages 报文（system = 提示语，user = 视图）。应答正文进 `step.out`，按同一 `>>> ` 语法拆；失败（连不上、超时、非 2xx）同 `Exec.run`：输出视为空、err 记原因，游标照推（T19）。一步一轮、无对话状态：上下文全在视图的 `history` 里。重演照抄 step 行（1.4）。
+
+**L 的 text**（`actors/l.txt`）：第一行端点；提示语只讲 ABI——视图格式、`>>> ` 语法、"地址从成员表找不要硬编码"、U 的报文、c0 的门接受的请求、任务协议（`task\n<要求>` → 写 → test → 改 → `add` → 回 `done`）。测试把第一行换成本机 http 桩，提示语一字不改（T18）。
+
+**U 的报文**（`actors/u.py`）：`run\n<代码>` 或 `test\n<代码>\n===\n<测试>` → 代码存成 `m.py`，测试在同目录用宿主 python 跑（30 s）→ `result <退出码>\n<输出>`（输出每行缩进两格，行首不会出现 `>>> `）。U 用的解释器和 Ω 的 Exec 是同一个——机器里的编译器就是机器的物理，Trusting Trust 的攻击面不回避。
+
+**写出来的程序有什么能力**：就是 4.3 的 ABI。读视图、写给本 channel 的地址、写给门；能力（`bind`）由装它的那行 `add` 给，不由源码声明；改形态走 c0 的门（记账、进 decl、遗传），直接发 syscall 需要 `bind=syscall`（绕过 c0，不遗传——组织纪律：只有 c0 用）。对照最小 coding agent（read/write/edit/bash）：U ⊇ bash ⊇ file，L + U ≥ pi；多出来的一样是门→c0。
+
 ### 4.7 实现状态（2026-08-29，晚）
 
 按 §2.2.5 / M1 / DESIGN.md §5 的版本重写：`runtime.py`（转移表三行 + syscall 两词 + Space 级根门，`root_open` 由账本派生；place 行带 `by`；消息正文逐字节保留）、`init.py`（R 的入口，不读 G）、`actors/realize.py`（A：`build` 经门造整台机器，`add / peer` 本地生长）、`actors/spawn.py`（C：pack → spawn → 两扇门 → 把 G 交给 realize → `msg c0 start`）、`genesis.py`（人侧的 A + B：dalek0 由人经根门用同一套 syscall 造）。T1–T7 绿：T4 验证构造期间机械不动、start 关门、关门后根门无效；T7 验证子代全部 place 行 `by=_root`、出生证明指回父代、第一条消息署名出生证明门、父代对象销毁后子代已切离且活着。
 
-M1 当时开着的洞（H3、H4 已由 M2 关闭）：H5/H7（C actor 用文件系统 pack；程序 actor cwd = P）、H6（收件箱偏移在进程内存）、H9（oracle 端点）、H10（崩溃语义）。H1、H2、H15 已由本版消除。
+M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5/H7（C actor 用文件系统 pack；程序 actor cwd = P）、H6（收件箱偏移在进程内存）、H10（崩溃语义）。H1、H2、H15 已由本版消除。
 
 2026-08-30 凌晨收缩 R（规则 16 → 9，不动理论）：world 动词一张表（spawn、stop）而非逐个分支；门只有一条规则（一律 `Port.send`，本机 channel 名是端点缩写）；收件箱读取归 Ω（`Port.recv`），根门与 channel 收件箱走同一条入口；`channel.create` 返回 new|exists。T1–T7 仍绿。
 
@@ -527,3 +541,5 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭）：H5/H7（C actor 用文件�
 **M2.3（同日晚）**：`Exec.run` 超时/非零退出 → 输出视为空、err 记原因，机器不死（H10 的进程一半，T16）；出生后再 `start` 忽略、第二个 `born` 不算（T17）；C 的回执守卫；测试的 π 改为按出处投影。T0–T17 绿。
 
 **M2.4（同日晚，措辞收口）**：清掉 A/B 混用——c1 存的是 c0 的承诺（genome commit），不是 R 的结构事实；三段因果记账降为 c0 的次序约定；"纪律是物理"改为"R 拒绝是工程保障、理论上是升级约定"。不改代码。T0–T17 绿。
+
+**M3.0（同日晚）· c2 骨架**：Ω 加 `Port.request`（同步的一半，Anthropic 报文）；R 的 oracle 行改为 `Port.request(text, 视图)`，删掉 `Runtime(oracle=)` 桩；`history` 含自己说过的；`actors/l.txt`（端点 + 提示语）、`actors/u.py`（执行器）；`genesis.G2()` = G0 + c2 + 连线，dalek0 的 G.json 改用它。T18：task → L 写 → U 败 → L 改 → U 过 → 经门 `add c3` → c1 有 c3 → 回 done → 新器官在工作，π(A) ≅ decl 仍成立；T19：端点不通机器活着。H9 关闭。T0–T19 绿。未做：任务 0（c2 → c2′）、真模型跑一遍。

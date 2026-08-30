@@ -8,15 +8,15 @@
 
 ```
 Ω        omega.py    宿主契约：Exec / Store / Port。不含任何 Dalek 词。
-运行时    runtime.py  极小状态空间 + 转移表（program / oracle / door）+ syscall（channel.create / channel.add.actor）+ Space 级根门。内容盲。源码在 G.world 里，机器内无人读。
+运行时    runtime.py  极小状态空间 + 转移表（program / oracle / door）+ 三个 syscall + Space 级根门。内容盲。源码在 G.world 里，机器内无人读。
 组织      G.json      channel、成员（kind + text + bind）、门。c0 按它 realize。
 ```
 
 `init.py` 是 R 的入口：起运行时，根门开着，等。不读 G，不放任何 actor。机器由膜外经根门用 syscall 造出来（父代的 A，或人），第一条消息关门——切离。
 
-## dalek0（M1 第一天）
+## dalek0
 
-G 里两个 channel：`c0`（构造）和 `c1`（登记，`actors/registrar.py`：只折自己的账本，`decl` 吐出当前形态），一条连线。c0 注册两个 actor：
+G 里三个 channel：`c0`（构造）、`c1`（登记，`actors/registrar.py`：只折自己的账本，`decl` 吐出当前形态）、`c2`（作者：`actors/l.txt` 一个 oracle = LLM 端点 + 提示语，`actors/u.py` 一个执行器；没有 driver，循环由转移表驱动），连线 c0–c1、c0–c2（`genesis.G2()`；`G0()` 是没有作者的最小机器）。c0 注册两个 actor：
 - `actors/realize.py` — 装配器（A）。请求：`build <门> <创造者>\n<G>`（经门造一台机器的 c0）、`start\n<G>`（出生：自己长出其余——发育）、`add …`、`peer …`（本地生长）。
 - `actors/spawn.py` — 起子代（C）。请求：`spawn <name>`：pack（G.world 写成文件 + G.json 原样）→ `Exec.spawn` → 放两扇门 → 把 G 交给 realize 经门造子代的 c0 → `msg c0\nstart\n<G>`。关门即切离，子代的 c0 自己长其余。
 
@@ -25,7 +25,7 @@ G 里两个 channel：`c0`（构造）和 `c1`（登记，`actors/registrar.py`�
 ## 跑
 
 ```
-python3 t/test_c0.py                 # T0–T12
+python3 t/test_c0.py                 # T0–T19
 python3 genesis.py                   # 重新生成 G.json
 python3 init.py <P> [--serve]        # 起 R；--serve 静止后持续轮询收件箱
 ```
@@ -34,7 +34,8 @@ python3 init.py <P> [--serve]        # 起 R；--serve 静止后持续轮询收�
 
 - 2026-08-29：Ω、R（含根门）、c0（realize + spawn）、genesis；T1–T7 绿（转移表、syscall、门、根门开关、请求、内容盲、父代的 A 经门造子代 + start 切离）。
 - 2026-08-30：发育版（父代只造 c0，子代的 c0 长其余）；三层命名 Ω / world{ω-bind, loader, R} / dalek；M2：c1 登记员（`actors/registrar.py`，只折自己的账本）、`decl`、第三个 syscall `channel.retire.actor`、视图带成员表、C 的 pack 用 decl；T0–T11 绿；M2.1：接待员显式、R 拒绝自退役/退役接待员、门是成员、c1 只认 c0 的事实，π(A) ≅ G；T0–T12 绿。
-- 待：c2（L + U 的 coding agent）、oracle 端点（LLM / 人）、M4 的 up/down 与对账、replay、c3（www）。
+- 2026-08-30 晚：M3.0 c2 骨架——`Port.request`、oracle = 解释器在远处的成员（与门的区分见 DALEK 1.7）、T18 task → L ↔ U → add c3 → decl → done；T19 端点不通机器活着。T0–T19 绿。
+- 待：任务 0（c2 → c2′，show G/H）、真模型跑一遍、M4 的 up/down 与对账、c3（www）。
 
 ## 文件
 

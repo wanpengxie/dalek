@@ -145,7 +145,7 @@ loop:
 
 **H8 · B · 消息给不存在的地址。** 现在静默丢弃。定为规则（已写入 1.1），并考虑给发送者一条 `from=runtime` 的错误消息——但那会引入运行时开口说话，倾向不加。
 
-**H9 · B · oracle 的端点。** kind=oracle 的 text 是什么（模型 + 提示语？URL？），运行时怎么调（Port.request 的报文）。M1 未定义；明天随 L 定。
+**H9 · B · oracle 的端点。** 关闭（M3.0，2026-08-30）：text 第一行 `<url> <model> <key>`，其余提示语；R 调 `Port.request(text, 视图)`，Port 讲 Anthropic messages 报文；失败同 Exec.run。见 DALEK 1.7（oracle 与门的区分）与 4.8。
 
 **H10 · B · 崩溃语义。**（进程一半已做：`Exec.run` 超时或非零退出 → 输出视为空、err 记原因，step 行照写、游标照推——actor 的失败不是机器的失败，T16。剩下的是 R 在一步之中崩溃（step 行已写、动作只执行了一半），归 M4。）
 
@@ -298,3 +298,4 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 - `Exec.spawn` 的日志句柄父进程已关闭（曾泄漏）。
 - 生子测试（T7/T9/T10）靠 sleep 与 20 s 上限等子代，慢机器可能假失败。
 - 出生后再收到 `start` 忽略（有内门 = 已发育），registrar 只认第一个 `born`（T17）。
+- U 跑 L 写的代码不隔离（宿主 python、P 下临时目录、30 s 超时）；`history` 每步全量 POST 给 L，长寿命要一个压缩器成员；L 输出不合语法时的清洗程序是退路，未做。

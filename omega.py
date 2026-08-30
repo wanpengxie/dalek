@@ -4,7 +4,7 @@
 它只认识：源码、进程、字节、路径、端点。第一个实现：Linux + python3 + 文件系统。
 """
 from __future__ import annotations
-import json, os, subprocess, sys, signal
+import json, os, subprocess, sys, signal, urllib.request, urllib.error
 from pathlib import Path
 
 
@@ -76,7 +76,31 @@ class Store:
 
 
 class Port:
-    """通用双向字节通信。M1 实现：文件收件箱。端点形如 file:<dir>#<box>。"""
+    """通用双向字节通信。异步的一半 send / recv：文件收件箱，端点形如 file:<dir>#<box>。
+    同步的一半 request：POST 到 http 端点、取回应答。第一个实现讲 Anthropic messages 报文。"""
+
+    @staticmethod
+    def request(text: str, payload: str, timeout: float = 120) -> tuple[str, str]:
+        """text 第一行 = <url> <model> <key>，其余 = system；payload 作 user 消息。
+        返回 (应答正文, err)。失败 → 应答视为空，err 记原因；对面的失败不是宿主的失败。"""
+        head, _, system = text.partition("\n")
+        parts = head.split()
+        if not parts or not parts[0].startswith("http"):
+            return "", "no endpoint"
+        url, model, key = (parts + ["", ""])[:3]
+        body = {"model": model, "max_tokens": 8192, "system": system,
+                "messages": [{"role": "user", "content": payload}]}
+        req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
+                                     headers={"content-type": "application/json", "x-api-key": key,
+                                              "anthropic-version": "2023-06-01"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            return "", f"http {e.code}\n{e.read().decode('utf-8', 'replace')[:500]}"
+        except Exception as e:                                   # 连不上、超时、坏 JSON
+            return "", f"{type(e).__name__}: {e}"
+        return "".join(c.get("text", "") for c in data.get("content", []) if c.get("type") == "text"), ""
 
     @staticmethod
     def send(endpoint: str, payload: dict) -> bool:

@@ -1,6 +1,7 @@
 """genesis：人侧的 A + B。第一台机器由手造——用和机器内 realize 同一套 syscall，经根门。
 
-    G0()                 dalek0 的 G：world + c0{realize, C} + c1{registrar} + 连线 c0–c1
+    G0()                 最小机器的 G：world + c0{realize, C} + c1{registrar} + 连线 c0–c1
+    G2()                 dalek0 的 G：G0 + c2{L: oracle, U: program} + 连线 c0–c2（有作者的机器）
     pack(G, P)           B：把 G.world 写成文件，G.json 放旁边 → P
     construct(P, G)      A：经 P 的根门造 c0（G 的第一个 channel）+ 出生证明门
     start(P, G)          C：经根门发第一条消息 start\n<G> → 关门；子代的 c0 自己长其余
@@ -37,6 +38,20 @@ def G0() -> dict:
         ],
         "peers": [["c0", "c1"]],
     }
+
+
+def G2() -> dict:
+    src = lambda p: (HERE / p).read_text(encoding="utf-8")
+    G = G0()
+    G["channels"].append(
+        {"name": "c2",
+         "members": [
+             {"kind": "oracle", "text": src("actors/l.txt"), "bind": ["ledger"]},
+             {"kind": "program", "text": src("actors/u.py")},
+         ],
+         "receptionist": 1})
+    G["peers"].append(["c0", "c2"])
+    return G
 
 
 def pack(G: dict, P: Path) -> Path:
@@ -76,5 +91,5 @@ def start(P: Path, G: dict, body: str | None = None, creator: str = "human") -> 
 
 if __name__ == "__main__":
     out = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else HERE
-    (out / "G.json").write_text(json.dumps(G0(), ensure_ascii=False, indent=1), encoding="utf-8")
+    (out / "G.json").write_text(json.dumps(G2(), ensure_ascii=False, indent=1), encoding="utf-8")
     print(out / "G.json")
