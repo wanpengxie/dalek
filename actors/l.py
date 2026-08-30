@@ -1,4 +1,4 @@
-ENDPOINT, MODEL, KEY = "https://api.anthropic.com/v1/messages", "claude-sonnet-5", "KEY"
+ENDPOINT, MODEL, KEY = "https://api.deepseek.com/chat/completions", "deepseek-v4-pro", "KEY"
 # c2 的 L：作者。一个 program（理论里叫它 oracle：解释器在远处）；这段源码是 G 里的 text，R 放入时 exec 一次得到常驻的 run(m)。
 # 整个 agent loop 在这里，不在 R 里：组装（show + who + 初始消息）→ 问端点 → 解帧 → call → 喂回 → 直到它写 re 或不再请求。
 # 端点、凭据、提示语、报文、帧语法、轮数全是这段 text 的事；换任何一样 = 放一个新 L（tag=L 接替）+ 退旧的。R 只给 call/me/channel。
@@ -35,7 +35,7 @@ def ask(messages):
         body = {"model": MODEL, "max_tokens": 8192, "system": SYSTEM, "messages": messages}
         headers = {"content-type": "application/json", "x-api-key": KEY, "anthropic-version": "2023-06-01"}
     else:
-        body = {"model": MODEL, "max_tokens": 8192, "messages": [{"role": "system", "content": SYSTEM}, *messages]}
+        body = {"model": MODEL, "max_tokens": 32768, "messages": [{"role": "system", "content": SYSTEM}, *messages]}
         headers = {"content-type": "application/json", "authorization": f"Bearer {KEY}"}
     req = urllib.request.Request(ENDPOINT, data=json.dumps(body).encode("utf-8"), method="POST", headers=headers)
     try:
