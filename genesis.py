@@ -26,13 +26,15 @@ def G0() -> dict:
         "channels": [
             {"name": "c0",
              "members": [
-                 {"kind": "program", "text": src("actors/realize.py"), "bind": ["syscall"]},
-                 {"kind": "program", "text": src("actors/spawn.py"), "bind": ["syscall", "spawn"]},
+                 {"kind": "program", "text": src("actors/realize.py"), "bind": ["syscall"], "tag": "A",
+                  "iface": "add <ch> <kind> [in] [bind=..] [tag=..] [iface=..]\\n<text> | peer <a> <b> | retire <ch>/<addr> | spawn <name> | decl"},
+                 {"kind": "program", "text": src("actors/spawn.py"), "bind": ["syscall", "spawn"], "tag": "C",
+                  "iface": "spawn <name> -> spawned <dir> door=<addr>"},
              ],
              "receptionist": 1},
             {"name": "c1",
              "members": [
-                 {"kind": "program", "text": src("actors/registrar.py")},
+                 {"kind": "program", "text": src("actors/registrar.py"), "tag": "registrar", "iface": "decl -> decl\\n<G>"},
              ],
              "receptionist": 1},
         ],
@@ -46,8 +48,9 @@ def G2() -> dict:
     G["channels"].append(
         {"name": "c2",
          "members": [
-             {"kind": "oracle", "text": src("actors/l.txt")},
-             {"kind": "program", "text": src("actors/u.py")},
+             {"kind": "oracle", "text": src("actors/l.txt"), "tag": "L", "iface": "task\\n<要求> -> done\\n<说明>"},
+             {"kind": "program", "text": src("actors/u.py"), "tag": "U",
+              "iface": "run\\n<code> | test\\n<code>\\n===\\n<tests> -> result <rc>\\n<output>"},
          ],
          "receptionist": 1})
     G["peers"].append(["c0", "c2"])
@@ -71,6 +74,8 @@ def lines_first(G: dict, creator: str | None) -> list[str]:
         flags = []
         if i + 1 == c.get("receptionist"): flags.append("in")            # 没有默认，与 realize 一致
         if m.get("bind"): flags.append("bind=" + ",".join(m["bind"]))
+        if m.get("tag"): flags.append("tag=" + m["tag"])
+        if m.get("iface"): flags.append("iface=" + m["iface"])            # 最后一个 flag
         L.append(" ".join(["channel.add.actor", c["name"], m["kind"], *flags]) + "\n" + m["text"])
     if creator:
         L.append(f"channel.add.actor {c['name']} door\n{creator}")

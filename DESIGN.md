@@ -139,7 +139,7 @@ loop:
 
 **H5 · B · pack 的能力。** C actor 用 `shutil` 抄文件——未声明的 Store 能力。bind 集合应扩到 Ω 的句柄：`store`（读写 P 与子目录）、`port`。运行时把句柄内容盲地交给 actor（怎么交是工程：环境变量、参数）。
 
-**H6 · B · 收件箱偏移是进程内存。** 崩溃重起后收件箱行会被重新收进账本（重复消息）。定法：把"收到收件箱第 n 行"作为一种账本行记下（`k: "in", offset`），或收件箱行带 id 去重。
+**H6 · B · 收件箱偏移是进程内存。** 关闭（M3.2）：收进来的行带 `at`（该收件箱行之后的字节偏移），R 折叠账本时把各收件箱的偏移折出来；重起不重收。
 
 **H7 · B · 程序 actor 的沙箱。** `Exec.run` 的 cwd 是 P，actor 能读写任何文件（账本、G）。理论上 actor 只有 stdin/stdout。定法：cwd 是空的临时目录；文件访问只经 `store` 句柄。
 
@@ -280,12 +280,15 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 |---|---|---|
 | R 拒绝 actor 退役自己（同 channel 同地址） | `runtime.retire` | 器官不登记自己的死亡（升级纪律） |
 | R 拒绝退役当前接待员 | `runtime.retire` | 接待员先换再退 |
-| 每条 syscall 恰好一条回执，失败回 `refused` | `runtime._syscall` | 介质约定（ABI）：发起者能对应请求与回执 |
+| syscall 的回执就是回复（同一次运行），失败回 `refused` | `runtime._dispatch` | 介质约定（ABI）：请求有回复 |
 | 登记员只认来自本机门（含退役）的 born/placed/retired | `registrar.py` | 登记处记 c0 的宣称；信任本机 |
 | 视图里门带 `local`；登记员 = 第一扇 local 门那边 | `runtime.step` / `realize.py` | c0 与 c1 有一条连线（G 的第一条连线） |
-| 视图带成员表（地址簿） | `runtime.step` | 信封要能寻址；地址簿属于投递，不属于历史 |
-| 来自 0 的消息投递时附 rows（全量）；oracle 组装时读 1..当前 | `runtime._deliver` / `runtime.step` | 读账本是介质的地址 0，对全部成员开放；oracle 的读在转移行里（理论）。附全量还是给句柄、组装读多长是工程 |
-| 每步起新进程（`Exec.run`） | `omega.Exec` | actor 无私有状态、忠实（性质）；常驻进程 + 纪律亦可 |
+| oracle 组装时带成员表（工具列表） | `runtime._run_oracle` | 运行中能请求的地址 = 它的能力面；程序靠角色不需要表 |
+| 0 的回复是全量行；oracle 组装读 1..当前 | `runtime._dispatch` / `runtime._run_oracle` | 读账本是介质的地址 0，对全部成员开放；oracle 的读在转移行里（理论）。全量还是句柄、读多长是工程 |
+| 一次运行一个进程（`Exec.open`），60 s 上限，oracle 最多 16 轮 | `omega.Exec` / `runtime` | 运行之间无私有状态、运行之内是进程（性质）；上限是工程 |
+| 帧协议：`>>> 地址` 起、单独一行 `<<<` 收；正文不能含单独一行 `<<<` | `runtime._run_program` / `parse` | 请求/回复要能分帧；用什么记号是工程 |
+| 角色解析：后放的活成员接替 | `runtime._resolve` | 形态里的名字指向当前持有者；升级约定 |
+| 门的 local 在交出账本时计算 | `runtime._annot` | 指向本机 channel 是此刻的事实；channel 只增所以单调 |
 | 地址 = 序号、退役前移，actor 不得硬编码地址 | ABI | 地址属于个体、形态不含地址（理论）；硬编码禁令由序号实现引起 |
 | 首 channel 必须显式接待员（genesis / build 拒绝） | `genesis.py` / `realize.py` | 出生需要一个入口（理论合法性条件）；拒绝是保障 |
 

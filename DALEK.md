@@ -173,31 +173,40 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 **运行时 = 一个极小的状态空间 + 一张对内容重命名不变的转移表。** 它有操作语义（什么东西移到哪里），没有意图语义（这一步是在"构造"还是在"聊天"，它不知道）。像冯诺依曼的 29 态规则表，只是行数少得多。
 
 **状态**：每个 channel 一本只追加的账本 + 每个 actor 一个游标（看到哪了）。
-**事件**：某本账上多了一条写给某地址的消息。
-**转移表**：
+**事件**：某本账上多了一条写给某地址的消息（不带 run 标记的 msg 行）。**一条事件 = 一次运行。**
 
-| 事件落在的 actor 的 kind | 转移 |
+**运行**（2026-08-30 晚定）：收到初始消息 → 过程 { 请求(地址, 正文) → 回复 }* → 结束。运行中 actor 可以请求本 channel 的任何地址；介质同步地让对方跑一次运行（嵌套），对方写给 `re` 的就是回复（可为空）。运行中产生的每一行都带 `run=<事件 seq>`。运行之间 actor 无私有状态；运行之内它是一个进程。"一步"不是一次函数调用，是一次运行——L 和 U 都是"接到初始消息、开始跑、中途要别人、拿到回复接着跑"的过程，区别只在"中途要谁"是推理出来的还是事先写好的。
+
+**转移表**（按初始消息落在的 actor 的 kind）：
+
+| kind | 运行 |
 |---|---|
-| **程序** | 取视图 → `Exec.run(text, 视图)` → stdout 原样追加为步记录（谁、看到哪、回了什么）+ 拆成动作：消息、syscall、绑定了的 world 动词（spawn / stop，一张表，用 Ω 实现）；游标前移 |
-| **oracle** | 取视图 → **组装**：介质替它向 0 要整本账（记一行 `show` 事实，视图多一个 `ledger`）→ `Port.request(text, 视图)` → 回答同程序行；游标前移（越过自己的那行读） |
-| **门** | 把这条消息原样 `Port.send` 到 text 所指的端点（本机 channel 名也是端点），署名本 channel 的端点；对面收件箱进账时署名指回来的门，收件人是对面的接待员 |
-| **放 actor**（syscall `channel.add.actor`） | 在该 channel 的下一个地址写下 kind + text，在该账本记一行——**这一行带完整的 kind + text**。channel 存在 = 它账本有第一行；经根门放也走这一行 |
+| **程序** | `Exec.open(text)` 起进程：stdin 先给初始消息 `{seq, from, to, body, channel}` 一行 JSON；之后 actor 每写一帧 `>>> <地址>\n<正文>\n<<<` 介质就投递、把回复 `<正文>\n<<<` 写回 stdin；进程退出 = 运行结束；一行 step 记它说过的全部帧 |
+| **oracle** | **组装**：介质替它向 0 要整本账（记一行 `show` 事实）+ 成员表（工具列表）→ `Port.request(text, 对话)` 多轮：模型输出的每帧是一个请求，回复作为下一轮 user 消息喂回；模型不再输出帧 = 运行结束 |
+| **门** | 把初始消息原样 `Port.send` 到 text 所指的端点（本机 channel 名也是端点），署名本 channel 的端点；对面收件箱进账时署名指回来的门，收件人是对面的接待员。门是连接，不回复 |
+| **放 actor**（syscall `channel.add.actor`） | 在该 channel 的下一个地址写下 kind + text（+ 角色 tag、接口 iface），在该账本记一行——**这一行带完整的 kind + text**。channel 存在 = 它账本有第一行；经根门放也走这一行 |
 
-三种 kind 一行一条，加一条放 actor；没有第五行。**视图 = 投递给该 actor 的消息（没看过的）+ 地址簿（本 channel 成员表）**，没有别的。
+三种 kind 一行一条，加一条放 actor；没有第五行。**程序和门只吃当前那一条消息**；成员表是 oracle 组装的一部分（它的工具列表），程序靠角色说话，不需要地址簿。
 
-**介质的地址（2026-08-30 晚，A1）**：介质本身是一组地址，写给它们就是和介质说话，回执以 `from=<那个地址>` 的消息回来：
+**请求的地址**（帧的第一行）——介质本身是一组地址，写给它们就是和介质说话：
 
-| 介质的地址 | 方向 | 需要绑定 | 回执 |
+| 地址 | 是什么 | 需要绑定 | 回复 |
 |---|---|---|---|
-| `channel.create` / `channel.add.actor` / `channel.retire.actor` | 写形态 | 是 | 结果或 `refused` |
-| `spawn` / `stop` | 动世界 | 是 | pid / … |
-| **`0`**（本 channel 的账本） | **读历史** | **否** | 那一段账 |
+| `<序号>` / `<角色>` | 本 channel 的成员：序号是个体的地址；角色是形态里的名字（place 行的 `tag`，后放的接替先放的） | 否 | 对方运行中写给 `re` 的 |
+| `re` | 初始消息的发送者。嵌套运行里 = 请求者拿到的回复；事件运行里 = 普通消息 | 否 | — |
+| `0` | 本 channel 的账本（读地址）：正文 `show [a] [b]` | 否 | 那些行（门的 place 行附此刻的 local） |
+| `channel.create` / `channel.add.actor` / `channel.retire.actor` | 写形态 | `syscall` | 结果或 `<参数> refused` |
+| `spawn` / `stop` | 动世界 | 同名 | pid / … |
 
-账本是每个 channel 的地址 0：写给它 `show [a] [b]` = 读它。读对全部成员开放（读不改任何东西，所以不是能力），0 不是成员（不放、不退、不遗传）。回执按 1.4 的分法处理：syscall 回执记的是不可重算的外生结果（分到的地址、pid），所以记结果；0 的回答是 H 的投影，可重算，所以**账上只记事实行**（`0 → me: show a b`——谁、何时、看了哪段），**投递时附上那些行**（视图里该条消息带 `rows`）。重演照算不照抄，账不含账。程序和门只吃当前消息，要历史自己问 0（策略在源码里）；**oracle 的读固定在它的转移行里**：送端点之前介质替它读整本账（pi 一类 agent 的"全量 session"），这就是 oracle 区别于程序的那一步——组装。channel = session。要变组装策略，是换 world 版本或加一个折叠器官，不是改提示语。
+写给门 = 送出去，回复为空；写给不存在的地址 = 丢弃；写给请求者的序号/角色 = 再起一次它的运行（可重入）。
 
-**kind**：三种，都是"转移表定行为 + 一个 text 参数"，区别只在 text 是什么——程序的 text 是源码，oracle 的 text 是端点 + 提示语（第一行端点，其余随视图一起送过去），门的 text 是对面的地址。门最退化：text 不是行为、不是内容，是指针；但它是唯一 text 指向 channel 外面的 kind。整台机器的拓扑 = 全部门的 text 的集合。
+**读账本**（A1）：读不改任何东西，所以不是能力，对全部成员开放。0 的回答是 H 的投影、可重算，按 1.4 的分法**账上只记事实行**（`0 → me: show a b`），内容在回复里；重演照算不照抄，账不含账。程序要历史自己请求 0（策略在源码里）；**oracle 的读固定在它的转移行里**（组装：pi 一类 agent 的"全量 session"），这就是 oracle 区别于程序的那一步。channel = session。要变组装策略，是换 world 版本或加一个折叠器官，不是改提示语。
 
-**oracle 与门的区分（2026-08-30）**：两者在实现上可以是同一个 POST，理论上是两种东西。门是**连接**：不产生输出、只搬运，text 是拓扑的一部分，对面有自己的账本和主动性，去掉它机器少一条边。oracle 是**功能处理**：解释器在远处的成员，取视图、产生输出，输出是本 channel 里的动作，text 是行为的参数，对面只应答，去掉它机器少一个器官。实现相同不等于概念相同——判据"理论句 = 换实现仍成立"两个方向都用：换实现仍成立的区分是理论，哪怕某个实现把它们做成同一个调用。程序与 oracle 正好对应 Ω 的两条绑定：`Exec.run(text, 视图)` 把程序的 text 绑到 python，`Port.request(text, 视图)` 把 oracle 的 text 绑到 LLM 的 API；R 不知道 python 也不知道模型。同一个人两种接法：当成员（看视图、按语法回话）是 oracle；当邻居（有自己的邮箱、自己决定何时说话）是门那边的 peer。
+**角色**（A2）：地址有两层——**身份**（序号）属于个体，账本行用它，从不复用，不遗传；**角色**（`tag`）属于形态，写在 G 里、写在 place 行里，R 不解释、只做字符串匹配，可遗传。`>>> U` = 写给当前持有角色 U 的活成员（后放的接替先放的；替换 = 放新的带同一角色，再退旧的——升级约定照旧）。接待员 `in` 是第一个角色。成员还可带一行**接口**（`iface`：怎么叫它、回什么），同样透传——它是 oracle 的工具说明。"形态含角色、个体含地址"和 4.3 的"地址不遗传"是同一句话的两面。
+
+**kind**：三种，都是"转移表定行为 + 一个 text 参数"，区别只在 text 是什么——程序的 text 是源码，oracle 的 text 是端点 + 提示语（第一行端点，其余作 system 随对话送过去），门的 text 是对面的地址。门最退化：text 不是行为、不是内容，是指针；但它是唯一 text 指向 channel 外面的 kind。整台机器的拓扑 = 全部门的 text 的集合。
+
+**oracle 与门的区分（2026-08-30）**：两者在实现上可以是同一个 POST，理论上是两种东西。门是**连接**：不产生输出、只搬运，text 是拓扑的一部分，对面有自己的账本和主动性，去掉它机器少一条边。oracle 是**功能处理**：解释器在远处的成员，收消息、产生输出，输出是本 channel 里的动作，text 是行为的参数，对面只应答，去掉它机器少一个器官。实现相同不等于概念相同——判据"理论句 = 换实现仍成立"两个方向都用：换实现仍成立的区分是理论，哪怕某个实现把它们做成同一个调用。程序与 oracle 正好对应 Ω 的两条绑定：`Exec.open(text)` 把程序的 text 绑到 python，`Port.request(text, 对话)` 把 oracle 的 text 绑到 LLM 的 API；R 不知道 python 也不知道模型。同一个人两种接法：当成员（收消息、按帧回话）是 oracle；当邻居（有自己的邮箱、自己决定何时说话）是门那边的 peer。
 
 **门**：是 actor，不是 channel（没有自己的账本，是两本账之间的管子）。一条连线 = 两扇门互指。膜内成员只能写给本 channel 的地址；要出去只能写给门；外面的东西进来必须先变成账本上的一行——"影响一个 channel 的一切都在它的账本上"由此保证。内外同一种门：门只做一件事——原样 `Port.send` 到 text 所指的端点；对面是本机器另一个 channel 时端点就是本机的收件箱，对面是人、LLM、另一台机器时是外面的端点；运行时里只有一条门的规则。冯诺依曼的"+"在这里有了定义：接上 = 两本账各有一扇门互指。
 
@@ -208,7 +217,7 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 | 地址（序号、门） | c0、c1、c2 |
 | kind：程序、oracle、门 | 构造器、登记处、作者 |
 | text 作为参数 | text 的含义 |
-| 消息、账本、追加、投递、视图、步记录、放 actor | syscall、realize、pack、decl、clone；谁有权放、放了算不算采纳 |
+| 消息、账本、追加、投递、运行、帧、回复、步记录、放 actor | syscall、realize、pack、decl、clone；谁有权放、放了算不算采纳 |
 
 违反内容盲的样子（都是旧版本犯过的）：运行时里有 `if name == "c0"`；运行时认识一种"构造请求"并替它执行；运行时校验"这是不是合法机器"；调度器给某器官优先级；运行时保存一张"配置 ↔ 实例"表。
 
@@ -458,12 +467,12 @@ m**.decl() == m*.decl()，且 m** 能继续造
 
 | k | 字段 | 谁写 |
 |---|---|---|
-| `place` | `seq, addr, kind, text, bind, in, by` | R 执行 `channel.add.actor` 时；**带完整 text**；`by` = 发起者地址，或 `_root`（经根门） |
-| `retire` | `seq, addr` | R 执行 `channel.retire.actor` 时；该 actor 不再排步，地址不复用（退役当前接待员会被拒绝，见 DESIGN §6） |
-| `msg` | `seq, from, to, body` | 成员输出拆成的消息；门抄来的消息；syscall 的返回 |
-| `step` | `seq, actor, upto, out, err` | 某 actor 被叫醒：看到哪、原样回了什么 |
+| `place` | `seq, addr, kind, text, bind, in, by, tag?, iface?, at?` | R 执行 `channel.add.actor` 时；**带完整 text**；`by` = 发起者地址，或 `_root`（经根门，`at` = 根收件箱偏移） |
+| `retire` | `seq, addr` | R 执行 `channel.retire.actor` 时；该 actor 不再排运行，地址不复用（退役当前接待员会被拒绝，见 DESIGN §6） |
+| `msg` | `seq, from, to, body, run?, at?, by?` | 成员的请求与回复；门抄来的消息；syscall 的回执；0 的事实行。`run` = 所属事件的 seq（运行中产生的都带）；`at` = 收件箱偏移（收进来的带；`by=_root` 是经根门的第一条） |
+| `step` | `seq, actor, upto, out, err, run?` | 一次运行结束：初始消息 seq、它说过的全部帧、错误。带 `run` 的是嵌套运行，不推游标 |
 
-channel 的创建顺序记在 `h/_order`。`from` 可以是 `door`（膜外来、无对应门）或 syscall 名（返回）。
+channel 的创建顺序记在 `h/_order`。`from` 可以是 `door`（膜外来、无对应门）、syscall 名（回执）、`0`（账本）。收件箱读到哪从 `at` 折出来（关 H6）。
 
 ### 4.2 根门与收件箱
 
@@ -472,20 +481,22 @@ channel 的创建顺序记在 `h/_order`。`from` 可以是 `door`（膜外来�
 
 ### 4.3 程序 actor 的 ABI
 
-stdin（视图）：`{"channel", "me", "msgs": [{seq, from, to, body}…], "actors": [{addr, kind, bind, in, retired, text?, local?}…], "history"?}`——`msgs` 是写给我且没看过的；`actors` 是本 channel 的成员表（本 channel 账本的折叠，门带 text 和 local = 指向本机 channel）；程序没有历史字段：历史问地址 0。oracle 多一个 `ledger`（组装时介质读来的整本账，见 1.7）。stdout 原样进 `step.out`，按行首 `>>> ` 拆：
+一次运行一个进程。stdin 第一行：初始消息 `{"seq", "from", "to", "body", "channel"}`（就是账本上那一行 + 它所在的 channel）。之后是请求/回复的帧协议：
 
 ```
->>> <addr>                                          消息，发给本 channel 的 <addr>（含门）
->>> 0                                               读账本：正文 show [a] [b]（缺省 1..当前）；下一步收到 from=0 的消息，带 rows=第 a–b 行（四种行原样）
->>> channel.create <name>                           syscall；需 bind=syscall
->>> channel.add.actor <channel> <kind> [in] [bind=…]  syscall（含 actor.create）；后续各行是 text；需 bind=syscall
->>> channel.retire.actor <channel>/<addr>           syscall：退役；需 bind=syscall
->>> <动词> <参数>                                   绑定了的 world 动词，一张表：spawn <dir>（按 loader 协议 Exec.spawn(init.py <dir> --serve)）、stop <pid>；需 bind=<动词>
+actor → stdout：  >>> <地址>          帧头（地址见 1.7 的表：序号 / 角色 / re / 0 / syscall / 动词）
+                  <正文…>             帧内只有单独一行 <<< 收帧；正文里的 ">>> " 是正文；正文唯一不能含的是单独一行 <<<
+                  <<<
+介质 → stdin：    <回复正文…>          回复（可为空）
+                  <<<
 ```
+写完一帧要 flush，然后读回复到 `<<<` 为止。进程退出 = 运行结束；最后一帧没写 `<<<` 也算。`step.out` 记它说过的全部帧（原样）；非零退出或超时 → `out` 空、`err` 记原因、游标照推（T16）。
 
-返回以 msg 追加给调用者：`from=channel.create body="<name> new|exists"`；`from=channel.add.actor body=<channel>/<addr>`；`from=channel.retire.actor body=<channel>/<addr>`；`from=spawn body="<dir> pid=<n>"`。**每条合法的 syscall 恰好一条回执**：失败是 `"<参数> refused"`——回执稠密，发起者按位置对应请求与回执。跨膜没有返回（根门单向）。
+一个够用的助手（每个 actor 自带，十行）：`call(to, body)` = 写帧 + 读回复。程序 = `初始消息 → 若干 call → 退出` 的纯函数；回复发送者写 `re`。
 
-**地址不遗传**：地址是本 channel 内、本个体内的序号；退役与追加会让子代的序号前移。actor 不得硬编码地址，用视图里的 `from`、成员表（kind / bind / in / 门的 text）和 syscall 返回解析。
+syscall 与动词的回执就在回复里（`<channel>/<addr>`、`<name> new|exists`、`<dir> pid=<n>`、`<参数> refused`），同时作为 `from=<那个地址>` 的 msg 行入账。跨膜没有返回（根门单向）。
+
+**地址不遗传，角色遗传**：序号是本 channel 内、本个体内的；退役与追加会让子代的序号前移。actor 不得硬编码序号——回信用 `re` 或初始消息的 `from`，找人用角色（`tag`），读账本用 `0`。
 
 ### 4.4 门与 Port
 
@@ -506,32 +517,32 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 
 ### 4.6 c0 的请求
 
-| 请求（写给 realize） | 做什么 |
+| 请求（写给 A = realize） | 做什么（都在一次运行里） |
 |---|---|
 | `build <门> <创造者地址>\n<G>` | 经门发 syscall 造 G 的第一个 channel（c0）；最后放出生证明门；回 `built <门>`。首 channel 没有接待员 → 回 `invalid`，不造 |
-| `start\n<G>` | 出生：本地 syscall 长出 G 的其余 channel 与全部连线（发育）；下一步把 `born`（world + c0 的成员）交给登记员，长出的每一件以 `placed` 登记。正文为空则不动 |
-| `add <channel> <kind> [in] [bind=…]\n<text>` | 本地：`channel.create`（幂等）+ `channel.add.actor` |
-| `peer <a> <b>` | 本地两扇门 |
-| `retire <channel>/<addr>` | `channel.retire.actor` |
-| `spawn …` | 转给持有 `spawn` 绑定的成员（C）——外来请求经接待员分发（关 H3） |
-| `decl` | 转给登记员（c0 的第一扇内门那边）；回答 `decl\n<G>` 从门回来后转给 C |
-| `spawn <name>`（C） | 向接待员要 `decl` → 收到 G 后 pack → spawn → 放两扇门（根门、c0）→ `build` 交给 realize → `msg c0\nstart\n<G>`。状态在写给自己的 note 里，没等到的 note 带到下一步 |
+| `start\n<G>` | 出生：本地 syscall 长出 G 的其余 channel 与全部连线（发育，每条 syscall 一次请求、回执即回复）；然后把 `born`（world + c0 的成员）交给登记员，长出的每一件以 `placed` 登记。已有内门（已发育）则忽略 |
+| `add <channel> <kind> [in] [bind=…] [tag=…] [iface=…]\n<text>` | 本地：`channel.create`（幂等）+ `channel.add.actor`；回请求者 `placed <ch>/<addr>` 或 `refused …`；送登记员 |
+| `peer <a> <b>` | 本地两扇门（角色 = 对面的名字） |
+| `retire <channel>/<addr>` | `channel.retire.actor`；登记员的门在 syscall 之后再找（退的可能正是旧门） |
+| `spawn …` | 请求 C |
+| `decl` | 送登记员的门（连接，不回复）；回答 `decl\n<G>` 从门回来是新的事件，A 再请求 C |
+| `spawn <name>`（C） | 运行 1：请求 A `decl`。运行 2（`decl\n<G>` 到来）：读账本找到还没办完的 spawn 请求 → pack → `spawn` → 放两扇门（根门、子代 c0）→ 请求 A `build`（嵌套，拿到 `built`）→ 经根门 `msg c0\nstart\n<G>` → 回请求者 `spawned` |
 
-**三段因果记账**：realize 每条 syscall 落地后（回执在下一步视图里），回请求者 `placed <ch>/<addr>` / `retired <ch>/<addr>`，并把带完整 text 的 `placed <ch> <addr> <kind> [in] [bind=…]\n<text>` / `retired …` 送给登记员——出生时长出的器官也逐件登记；脐带放的（c0 的成员）由 `born`（world + c0）登记。出生证明门和 C 为生子放的两扇门不经 realize，所以不登记、不遗传（这就是 π 去掉的东西）。
+**记账次序**：realize 每条 syscall 的回执在回复里（同一次运行），落地后回请求者 `placed <ch>/<addr>` / `retired <ch>/<addr>`，并把带完整 text 的 `placed <ch> <addr> <kind> [in] [bind=…] [tag=…] [iface=…]\n<text>` / `retired …` 送给登记员——出生时长出的器官也逐件登记；脐带放的（c0 的成员）由 `born`（world + c0）登记。出生证明门和 C 为生子放的两扇门不经 realize，所以不登记、不遗传（这就是 π 去掉的东西）。c1 存的是 c0 的承诺（0.0），做成了才登记是 c0 的次序约定。
 
-**c1 的登记员**（`actors/registrar.py`，无绑定）：只折自己的账本——两步：收到 `decl` → `>>> 0\nshow`；下一步拿到 rows，折写给自己的消息，答上一次看账之后到的每个 `decl`（看账之后又来的请求再看一次）。只认来自本机 channel 的门（成员表里 local 的门，含已退役——历史的解释不随拓扑漂，权威随"先加新门再退旧门"迁移）的 `born / placed / retired`：`born` 给 G₀，`placed` 追加条目（带真实地址），`retired` 划掉；`decl` → G₀ ⊕ placed ⊖ retired：channel 按出生 + 首次出现顺序（= `_order`），成员按地址，**门就是成员**（`peers: []`），接待员显式，退役的不输出，world 原样来自 born。不读任何文件。
+**c1 的登记员**（`actors/registrar.py`，无绑定）：收到 `decl` → 请求 0 拿整本账 → 折写给自己的消息 → 写给 `re`。只认来自本机 channel 的门（0 交出的 place 行带此刻的 local，含已退役——历史的解释不随拓扑漂，权威随"先加新门再退旧门"迁移）的 `born / placed / retired`：`born` 给 G₀，`placed` 追加条目（带真实地址、角色、接口），`retired` 划掉；`decl` → G₀ ⊕ placed ⊖ retired：channel 按出生 + 首次出现顺序（= `_order`），成员按地址，**门就是成员**（`peers: []`），接待员显式，退役的不输出，world 原样来自 born。不读任何文件。
 
 ### 4.8 c2：作者（L）与执行器（U）
 
-c2 = {1 L：`kind=oracle, in`；2 U：`kind=program`；3 门→c0}，G0 加 c2 与连线 [c0, c2] = `genesis.G2()`，dalek0 用它。没有 driver：循环由转移表驱动——任务从收件箱来 → 投给 L → L 写给 U → U 回 result → L 改或交 → 经门给 c0 `add`。
+c2 = {1 L：`kind=oracle, in, tag=L`；2 U：`kind=program, tag=U`；3 门→c0（`tag=c0`）}，G0 加 c2 与连线 [c0, c2] = `genesis.G2()`，dalek0 用它。没有 driver：**c2 是 agent 循环本身**——L 的一次运行 = think → 请求 U（act）→ 回复（observe）→ 再想 → … → 经门 `add` → 结束；`placed` 回来是新的运行 → `done`。工具 = 成员（成员表里的 `tag` + `iface`），记忆 = 账本（组装），多 agent = channel + 门，加工具 = `add`——和加任何器官同一条 syscall。
 
-**oracle 的 ABI**（R 的转移表第二行）：`Port.request(text, 视图 JSON)`。text 第一行 `<url> <model> <key>`，其余是提示语；第一个实现讲 Anthropic messages 报文（system = 提示语，user = 视图）。应答正文进 `step.out`，按同一 `>>> ` 语法拆；失败（连不上、超时、非 2xx）同 `Exec.run`：输出视为空、err 记原因，游标照推（T19）。一步一轮、无对话状态：上下文由组装给——视图里的 `ledger` 是整本账，账上多一行 `0 → L: show 1 n`。重演照抄 step 行（1.4）。
+**oracle 的运行**（R 的转移表第二行）：组装 = 账上记 `0 → L: show 1 n`，第一轮 user 消息 = `{"msg": 初始消息, "ledger": 整本账（门行附 local）, "members": 成员表}`；`Port.request(text, 对话)`，text 第一行 `<url> <model> <key>`，其余是 system；第一个实现讲 Anthropic messages 报文。每轮模型输出按帧拆，每帧投递、回复收成 `[{to, reply}]` 作下一轮 user 消息；没有帧 = 运行结束（最多 16 轮）。失败（连不上、超时、非 2xx、`max_tokens` 截断）：输出视为空、err 记原因，游标照推（T19）。`step.out` 记全部轮次的输出；重演照抄（1.4）。
 
-**L 的 text**（`actors/l.txt`）：第一行端点；提示语只讲 ABI——视图格式（含 `ledger` = session）、`>>> ` 语法、"地址从成员表找不要硬编码"、U 的报文、c0 的门接受的请求、任务协议（`task\n<要求>` → 写 → test → 改 → `add` → 回 `done`）。没有读策略：那是 kind 的物理。测试把第一行换成本机 http 桩，提示语一字不改（T18）。
+**L 的 text**（`actors/l.txt`）：第一行端点；提示语只讲 ABI——第一轮 user 消息的格式、帧的写法、`re`、用 tag 不用序号、U 与 c0 门的接口、新成员的程序 ABI、任务协议（`task\n<要求>` → 写 → test → 改 → `add` → 结束；`placed` 到来 → 在 ledger 里找 task 的 from → `done`）。测试把第一行换成本机 http 桩，提示语一字不改（T18）。
 
-**U 的报文**（`actors/u.py`）：`run\n<代码>` 或 `test\n<代码>\n===\n<测试>` → 代码存成 `m.py`，测试在同目录用宿主 python 跑（30 s）→ `result <退出码>\n<输出>`（输出每行缩进两格，行首不会出现 `>>> `）。U 用的解释器和 Ω 的 Exec 是同一个——机器里的编译器就是机器的物理，Trusting Trust 的攻击面不回避。
+**U 的报文**（`actors/u.py`）：`run\n<代码>` 或 `test\n<代码>\n===\n<测试>` → 代码存成 `m.py`，测试在同目录用宿主 python 跑（30 s）→ `re`：`result <退出码>\n<输出>`（输出每行缩进两格，不会出现单独一行 `<<<`）。U 用的解释器和 Ω 的 Exec 是同一个——机器里的编译器就是机器的物理，Trusting Trust 的攻击面不回避。
 
-**写出来的程序有什么能力**：就是 4.3 的 ABI。读视图、写给本 channel 的地址、写给门；能力（`bind`）由装它的那行 `add` 给，不由源码声明；改形态走 c0 的门（记账、进 decl、遗传），直接发 syscall 需要 `bind=syscall`（绕过 c0，不遗传——组织纪律：只有 c0 用）。对照最小 coding agent（read/write/edit/bash）：U ⊇ bash ⊇ file，L + U ≥ pi；多出来的一样是门→c0。
+**写出来的程序有什么能力**：就是 4.3 的 ABI。收一条消息、请求本 channel 的地址（成员、门、0、syscall）、回复；能力（`bind`）由装它的那行 `add` 给，不由源码声明；改形态走 c0 的门（记账、进 decl、遗传），直接发 syscall 需要 `bind=syscall`（绕过 c0，不遗传——组织纪律：只有 c0 用）。对照最小 coding agent（read/write/edit/bash）：U ⊇ bash ⊇ file，L + U ≥ pi；多出来的一样是门→c0。pi 借操作系统解决的五样（文件系统是读、路径是接线、管道/退出码是关联、文件是产物、测试是文件），dalek 要在账本之上重新长出来：读 = 0，接线 = 角色，关联 = 运行里的请求/回复，产物与评价待定（任务 0 前）。
 
 ### 4.7 实现状态（2026-08-29，晚）
 
@@ -552,6 +563,8 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5
 **M2.3（同日晚）**：`Exec.run` 超时/非零退出 → 输出视为空、err 记原因，机器不死（H10 的进程一半，T16）；出生后再 `start` 忽略、第二个 `born` 不算（T17）；C 的回执守卫；测试的 π 改为按出处投影。T0–T17 绿。
 
 **M2.4（同日晚，措辞收口）**：清掉 A/B 混用——c1 存的是 c0 的承诺（genome commit），不是 R 的结构事实；三段因果记账降为 c0 的次序约定；"纪律是物理"改为"R 拒绝是工程保障、理论上是升级约定"。不改代码。T0–T17 绿。
+
+**M3.2（同日深夜，运行模型）**：介质的转移部分重写——"一步"从一次函数调用改成**一次运行**：初始消息 → 过程 { 请求 → 回复 }* → 结束。程序：`Exec.open` 交互进程 + 帧协议（`>>> 地址 / 正文 / <<<`，回复写回 stdin），一条消息一次运行，视图消失（程序只吃初始消息，oracle 组装时得整本账 + 成员表）；oracle：多轮对话 = agent loop（每帧一个请求，回复喂回，无帧即止）；`re` = 回复发送者；嵌套运行带 `run`，只有事件推游标；成员带 `tag`（角色寻址，后放接替）与 `iface`；门的 local 在交出账本时计算（channel 只增，local 只会由假变真）；收件箱偏移记在收进来的行上（`at`，关 H6）。realize/spawn/registrar 按 call 重写（没有 note、没有对位、没有两步）；C 的生子是两次运行。测试全部重写：T18 = 一次运行里 task → U 败 → U 过 → add；placed 是新运行 → done 经真门回到发起者，`seq(done) > seq(placed)`；T20 地址 0；T21 角色。T0–T21 绿（21 个）。
 
 **M3.1（同日晚，A1）· 账本是地址 0**：视图回到"投递的消息 + 地址簿"；`bind=ledger` 与 `history` 退役；R 加读地址 0（`show [a] [b]` → 事实行入账、投递附 rows）；registrar 两步问账（程序的策略在源码里）；**oracle 的转移行带组装**：送端点前介质替它读整本账，记 `show` 事实行，视图多 `ledger`——L 一步一事件，提示语里没有策略。T18：L 四步、四行读事实、`ledger` == 磁盘；T20：程序显式问 0，全部/窗口、账上只有事实行、0 不是成员。T0–T20 绿。
 

@@ -4,24 +4,21 @@
 它只认识：源码、进程、字节、路径、端点。第一个实现：Linux + python3 + 文件系统。
 """
 from __future__ import annotations
-import json, os, subprocess, sys, signal, urllib.request, urllib.error
+import json, os, subprocess, sys, signal, tempfile, urllib.request, urllib.error
 from pathlib import Path
 
 
 class Exec:
-    """通用程序实例化：跑一段固定语言（python3）的源码；起一个独立实例；停它。"""
+    """通用程序实例化：起一段固定语言（python3）源码的进程并给出它的管道；起一个独立实例；停它。"""
 
     @staticmethod
-    def run(source: str, stdin: str, cwd: str | os.PathLike, timeout: float = 60) -> tuple[str, str]:
-        """超时或非零退出 → 输出视为空，err 记录原因；进程的失败不是宿主的失败。"""
-        try:
-            r = subprocess.run([sys.executable, "-c", source], input=stdin, capture_output=True,
-                               text=True, cwd=str(cwd), timeout=timeout)
-        except subprocess.TimeoutExpired:
-            return "", f"timeout {timeout}s"
-        if r.returncode != 0:
-            return "", f"exit {r.returncode}\n{r.stderr}"
-        return r.stdout, r.stderr
+    def open(source: str, cwd: str | os.PathLike) -> subprocess.Popen:
+        """起一个进程跑源码：stdin / stdout 是无缓冲字节管道（宿主只搬字节，怎么分帧是上面的事），stderr 落到临时文件。"""
+        err = tempfile.TemporaryFile()
+        p = subprocess.Popen([sys.executable, "-c", source], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=err, cwd=str(cwd), bufsize=0)
+        p.errfile = err
+        return p
 
     @staticmethod
     def spawn(argv: list[str], cwd: str | os.PathLike, log: str | os.PathLike | None = None) -> int:
@@ -80,16 +77,15 @@ class Port:
     同步的一半 request：POST 到 http 端点、取回应答。第一个实现讲 Anthropic messages 报文。"""
 
     @staticmethod
-    def request(text: str, payload: str, timeout: float = 120) -> tuple[str, str]:
-        """text 第一行 = <url> <model> <key>，其余 = system；payload 作 user 消息。
+    def request(text: str, messages: list[dict], timeout: float = 120) -> tuple[str, str]:
+        """text 第一行 = <url> <model> <key>，其余 = system；messages = 多轮对话 [{role, content}]。
         返回 (应答正文, err)。失败 → 应答视为空，err 记原因；对面的失败不是宿主的失败。"""
         head, _, system = text.partition("\n")
         parts = head.split()
         if not parts or not parts[0].startswith("http"):
             return "", "no endpoint"
         url, model, key = (parts + ["", ""])[:3]
-        body = {"model": model, "max_tokens": 8192, "system": system,
-                "messages": [{"role": "user", "content": payload}]}
+        body = {"model": model, "max_tokens": 8192, "system": system, "messages": messages}
         req = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST",
                                      headers={"content-type": "application/json", "x-api-key": key,
                                               "anthropic-version": "2023-06-01"})
@@ -114,10 +110,15 @@ class Port:
         return True
 
     @staticmethod
-    def recv(endpoint: str, offset: int = 0) -> tuple[list[dict], int]:
-        """从字节偏移起收完整的行；返回 (载荷列表, 新偏移)。"""
+    def recv(endpoint: str, offset: int = 0) -> list[tuple[dict, int]]:
+        """从字节偏移起收完整的行；返回 [(载荷, 该行之后的偏移)]。"""
         if not endpoint.startswith("file:"):
-            return [], offset
+            return []
         d, _, box = endpoint[5:].partition("#")
-        lines, off = Store.lines(Path(d) / "in" / f"{box}.jsonl", offset)
-        return [json.loads(l) for l in lines if l.strip()], off
+        lines, _ = Store.lines(Path(d) / "in" / f"{box}.jsonl", offset)
+        out, at = [], offset
+        for l in lines:
+            at += len(l.encode("utf-8")) + 1
+            if l.strip():
+                out.append((json.loads(l), at))
+        return out
