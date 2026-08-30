@@ -27,21 +27,21 @@ S 里的三层：actor（kind + text + bind，行为）→ channel（账本 + �
         ▼                                      │
         G ──pack──▶ P ──Ω.run──▶ S ──R 边跑边写──▶ H
         │  (B: 抄)    (Ω)        ▲
-        │                        │ realize（创造者的 A：读 G 的结构，经根门逐条 syscall）
+        │                        │ realize（创造者的 A 经根门只造 c0；子代的 c0 收到 start\n<G> 后自己长其余——发育）
         └────────────────────────┘
                                  ▲
-                      start：创造者经根门发第一条消息，关门 = 切离（人 → dalek0；C actor → dalek1）
+                      start\n<G>：创造者经根门发第一条消息，带着基因组，关门 = 切离（人 → dalek0；C actor → dalek1）
 ```
 
 | 箭头 | 输入 → 输出 | 谁做 | 读不读 G |
 |---|---|---|---|
 | pack | G → P（换形态，不换内容） | c0 的 C actor | 不读，抄 |
 | Ω.run | P → S（空的 R：零 channel，根门开着） | Ω | 不读 |
-| start | 创造者 → S 的第一条消息，关根门 = 切离 | 人 / 父代 C actor | 不读 |
-| realize | G → S 里的全部器官（经根门造子代；或在本机器内 add / peer 生长） | 创造者的 A：父代 c0 的 realize actor，或人侧 genesis | **读**：唯一解释 G 的地方 |
+| start | 创造者 → S 的第一条消息 `start\n<G>`，关根门 = 切离，把 G 交给子代的 c0 | 人 / 父代 C actor | 不读，抄 |
+| realize | G → S 里的器官。两段：创造者的 A 经根门只造 c0（+ 出生证明门）；子代自己的 c0 收到 `start\n<G>` 后长出其余 channel 与连线（发育）；之后 add / peer 生长 | 父代 c0 的 realize actor 或人侧 genesis（c0）；子代的 realize（其余） | **读**：唯一解释 G 的地方 |
 | 写 H | S 的每一步 → H 的行 | R | — |
 | decl | H → G_t | c1 | 折叠 |
-| spawn | S → S′ | C actor = pack + Ω.run + 把 G 交给本机 A 经门造 + start | — |
+| spawn | S → S′ | C actor = pack + Ω.run + 把 G 交给本机 A 经门造 c0 + `start\n<G>` | — |
 
 不变量：G 在 S 里有三个身影——P 里的 G.json、H 里的 place 行、c1 折叠出的文件——三者相等。`world` 不是 actor，不进 H，所以拆成两条：`fold(H) == G.channels/peers + 改动`，`P.world == G.world`。
 
@@ -80,7 +80,7 @@ space    个体。channel 们 + 门的拓扑 + 一份运行时实例。能被 Ω
 三者的关系：
 
 ```
-描述 ──pack──▶ 机器 ──Ω.run──▶ 空的 R（根门开）──创造者的 A 经根门 realize──▶ 运行的机器（完整 Space）
+描述 ──pack──▶ 机器 ──Ω.run──▶ 空的 R（根门开）──创造者的 A 经根门造 c0──start\n<G>──▶ c0 自己长出其余 ──▶ 运行的机器（完整 Space）
   ▲               │
   └──── decl ─────┘          （机器里原样带着描述；decl 把它取出来）
 ```
@@ -88,7 +88,7 @@ space    个体。channel 们 + 门的拓扑 + 一份运行时实例。能被 Ω
 - **pack** 是 Dalek 的事：输入 G，输出 P——换形态不换内容：把 `world` 写成文件，G.json 放旁边。死的、确定的、不解释描述。
 - **run** 是 Ω 的事：输入机器，输出进程。Ω 不读描述。
 - **realize** 是运行中的 c0 的事：读描述的结构，逐项发 syscall——经根门造一台新机器（造子代；人造 dalek0 用同一套 syscall），或在本机器内生长（add / peer）。**解释描述的只有这一步。**
-- 只有一条构造路径：空的 R + 创造者经根门逐条 syscall + start 关门。不存在"在静态目录里先造好全部器官再运行"的路径，也没有 boot。
+- 只有一条构造路径：空的 R + 创造者经根门造 c0 + `start\n<G>` 关门 + c0 发育出其余。不存在"在静态目录里先造好全部器官再运行"的路径，也没有 boot。
 
 ---
 
@@ -262,7 +262,7 @@ m′.c1.decl() == m.c1.decl()
 5. ~~启动（C）放哪~~ → 定：**C 住在 c0 里。** C 是普通程序 actor：pack → `Exec.spawn` → 把 G 交给本机的 A 经根门造子代 → 发 start。它必须是描述里的成员，不能是外面的脚本。
    - **根门**是 Space 级的、属于 R、在任何 channel 之前存在，不在 G 里。它接受三个词：`channel.create`、`channel.add.actor`（含 actor.create）、`msg`。前两个造，`msg` 是第一条消息——启动，并顺手关门。**根门开着 ⇔ 账本里没有任何 msg 行**，由账本派生，无隐藏状态。
    - **boot 不存在**：Ω.run 起 R，R 开着根门等。零行构造、零次读 G。
-   - **子代由父代的 A 造**：父代的 realize 读 G 的结构，把每一项写成 syscall 发给指向子代根门的门；子代账本的前 n 行就是 G。父代的 A 只搬运 text 不解释它——A 读结构不读内容。最后一行是指回父代的普通门：出生证明，不在 G 里（放在 G 的成员之后，成员地址才与 G 里的序号一致）。
+   - **发育版（2026-08-30 定）：父代只做三件事——造 c0、复制 G、发 start。** 父代的 realize 读 G 的第一个 channel（c0），把它的成员写成 syscall 发给指向子代根门的门，最后放一扇指回父代的普通门（出生证明，不在 G 里；放在 c0 的成员之后，成员地址才与 G 里的序号一致）。然后 C 经根门发 `msg c0\nstart\n<G>`：第一条消息带着基因组，关门。子代的 c0 收到它，把其余 channel 和全部连线用本地 syscall 长出来（`by=c0/1`）。父代的 A 只搬运 text 不解释它——A 读结构不读内容。账本上因此看得见两只手：c0 的行 `by=_root`（父代），其余 `by=1`（自己）。**唯一不是 c0 造的器官是 c0 自己。** 之前的冯诺依曼原版（父代的 A 造全部，子代的 realize 出生时无事可做）撤回：发育版让子代的 A 在出生时就被使用和检验，父代的义务缩到最小，并与生物一致——亲代给的是带机器的细胞（world + c0），其余按基因组发育。这不是有性繁殖（那要两份 G 重组，见 M3 之后），是母体效应。
    - **切离 = 关门 = start**，一个动作。门开着：形态由膜外的 A 决定，机器是被造的对象；门一关：形态只能经自己的 c0 改，机器成了主体。封闭性由此从"要守护的不变量"变成一次事件——出生。
    - 构造期间机器机械地不动（没有 msg 行就没有 pending）：准静止是自动的。
 6. **内部原语还要不要**。旧模型里的 born / add / copy / peer / start 是运行时的 syscall；现在 pack 是纯函数、realize 在运行中做，这些词变成了什么？
@@ -286,10 +286,11 @@ m′.c1.decl() == m.c1.decl()
 1. `G = c1.decl()`（c1 落地前：P 里的 G.json）。
 2. **B** `P′ = pack(G)`：把 G.world 写成文件，G.json 放旁边。C actor 做。
 3. `Ω.run(P′)`：子代的 R 起来，根门开着，账本全空，等。
-4. **A** 父代的 realize 收到 `build <门> <父代地址>\n<G>`，经门逐条发 syscall：每个 channel `channel.create`；每个成员 `channel.add.actor`（text 逐字搬运，不解释）；每条 peers 两扇门；最后在第一个 channel 放一扇指回父代的门（出生证明）。子代账本前 n 行 = G。
-5. **C** 父代的 C actor 经根门发 `msg c0 start`：第一条消息，署名出生证明那扇门。**门关，切离。** 父代义务结束。
+4. **A（父代的手）** 父代的 realize 收到 `build <门> <父代地址>\n<G>`，经门发 syscall 只造 c0：`channel.create c0`；c0 的每个成员 `channel.add.actor`（text 逐字搬运，不解释）；最后放一扇指回父代的门（出生证明）。子代账本：c0 的前 n 行 `by=_root`。
+5. **C** 父代的 C actor 经根门发 `msg c0\nstart\n<G>`：第一条消息，署名出生证明那扇门，正文带着 G。**门关，切离。** 父代义务结束。
+6. **A（自己的手）** 子代的 realize 收到 `start\n<G>`，用本地 syscall 长出其余 channel、成员和全部连线（`by=1`）。发育完成，静止，等收件箱。
 
-父代从不进入子代的进程；它只往子代的根门收件箱写行。子代的 realize 出生时无事可做——它是给以后生长和造孙代用的：造出来的 A 要能干父代 A 干的事。
+父代从不进入子代的进程；它只往子代的根门收件箱写行。子代的 realize 出生时就干活：它造出的器官和父代造它时用的是同一套 syscall——造出来的 A 出生即被检验。
 
 **同一份 G 的两次使用**：pack 抄（B，不读）；realize 读结构、搬 text（A）。父代账本上有发出的每一条 syscall，子代账本上有落地的每一条：复制在两边都可重演。
 
@@ -475,10 +476,11 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 
 | 请求（写给 realize） | 做什么 |
 |---|---|
-| `build <门> <创造者地址>\n<G>` | 经门逐条发 syscall 造一台机器；最后放出生证明门；回 `built <门>` |
+| `build <门> <创造者地址>\n<G>` | 经门发 syscall 造 G 的第一个 channel（c0）；最后放出生证明门；回 `built <门>` |
+| `start\n<G>` | 出生：本地 syscall 长出 G 的其余 channel 与全部连线（发育）。正文为空则不动 |
 | `add <channel> <kind> [in] [bind=…]\n<text>` | 本地：`channel.create`（幂等）+ `channel.add.actor` |
 | `peer <a> <b>` | 本地两扇门 |
-| `spawn <name>`（写给 C） | pack → spawn → 放两扇门（根门、c0）→ `build` 交给 realize → `msg c0 start` |
+| `spawn <name>`（写给 C） | pack → spawn → 放两扇门（根门、c0）→ `build` 交给 realize → `msg c0\nstart\n<G>` |
 
 ### 4.7 实现状态（2026-08-29，晚）
 
@@ -487,3 +489,5 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 仍开着的洞（DESIGN.md §3）：H3（外来请求只到接待员，`spawn` 只能由 c0 内部发给 C）、H4（无 c1，pack 抄 P 里的 G）、H5/H7（C actor 用文件系统 pack；程序 actor cwd = P）、H6（收件箱偏移在进程内存）、H9（oracle 端点）、H10（崩溃语义）。H1、H2、H15 已由本版消除。
 
 2026-08-30 凌晨收缩 R（规则 16 → 9，不动理论）：world 动词一张表（spawn、stop）而非逐个分支；门只有一条规则（一律 `Port.send`，本机 channel 名是端点缩写）；收件箱读取归 Ω（`Port.recv`），根门与 channel 收件箱走同一条入口；`channel.create` 返回 new|exists。T1–T7 仍绿。
+
+2026-08-30 凌晨改为发育版（2.2.5）：父代的 A 经门只造 c0 + 出生证明；C 发 `start\n<G>`；子代的 realize 收到后本地长出其余（T3、T4、T7 验证 `by=_root` / `by=1` 两只手）。T0–T7 绿。

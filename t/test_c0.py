@@ -3,11 +3,11 @@
 T0 本目录 = dalek0 的 P：G.json 的 world 与磁盘文件逐字节相等；c0 成员 text 与 actors/*.py 相等
 T1 转移表：program 行——视图、step 记录、拆消息；出生证明门给外来消息署名
 T2 syscall（本地）：channel.create / channel.add.actor 带完整 text 记一行；返回；无绑定则忽略
-T3 门：两扇门互指；抄到对面账本，署名对面的门，收件人是接待员；回信原路回来
-T4 根门：R 起来零 channel；膜外经根门造全部（by=_root）；构造期间机械不动；start 关门；关门后根门无效
+T3 门：c0 发育出 a、b 和两扇互指的门；消息抄到对面账本，署名对面的门，收件人是接待员；回信原路回来
+T4 根门：R 起来零 channel；膜外经根门只造 c0（by=_root）；构造期间机械不动；start\n<G> 关门；c0 自己长出其余（by=1）；关门后根门无效
 T5 请求 add / peer（本地生长）；placed 回执转发给请求者
 T6 内容盲：R 源码不含组织词汇；G 全部改名后账本同构
-T7 生子：C pack + spawn；父代的 A 经门造子代全部；C 发 start 关门；父代对象销毁后子代活着且已切离
+T7 生子：C pack + spawn；父代的 A 经门只造子代的 c0；C 发 start\n<G> 关门；子代的 c0 自己长出 x；父代对象销毁后子代活着且已切离
 """
 from __future__ import annotations
 import json, re, sys, tempfile, time, traceback
@@ -87,10 +87,14 @@ def test_T2_local_syscall():
 
 
 def test_T3_doors():
-    G = G_of([{"name": "a", "members": [{"kind": "program", "text": PING}]},
-              {"name": "b", "members": [{"kind": "program", "text": ECHO}]}], peers=[["a", "b"]])
-    rt, P = fresh(G); start(P, G, "hi"); rt.run()
-    # a: 1 PING, 2 门→b, 3 出生证明；b: 1 ECHO, 2 门→a
+    G = G0()
+    G["channels"] += [{"name": "a", "members": [{"kind": "program", "text": PING}]},
+                      {"name": "b", "members": [{"kind": "program", "text": ECHO}]}]
+    G["peers"] = [["a", "b"]]
+    rt, P = fresh(G); start(P, G); rt.run()
+    # c0 长出来的：a: 1 PING, 2 门→b；b: 1 ECHO, 2 门→a
+    assert all(r["by"] == "1" for r in rows(rt, "a", "place") + rows(rt, "b", "place"))
+    rt.msg("a", "door", "1", "hi"); rt.run()
     b = rows(rt, "b", "msg")
     assert (b[0]["from"], b[0]["to"], b[0]["body"]) == ("2", "1", "ping")       # 署名 b 里指回 a 的门
     assert (b[1]["from"], b[1]["to"], b[1]["body"]) == ("1", "2", "echo:ping")
@@ -108,20 +112,23 @@ def G_realize():
 def test_T4_root_door():
     G = G_realize()
     rt, P = fresh(G)
-    c0, x = rt.channels["c0"], rt.channels["x"]
-    assert [a.kind for a in c0.actors.values()] == ["program", "program", "door", "door"]
+    c0 = rt.channels["c0"]
+    assert list(rt.channels) == ["c0"]                                           # 父代只造 c0
+    assert [a.kind for a in c0.actors.values()] == ["program", "program", "door"]
     assert c0.actors["1"].bind == ("syscall",) and c0.actors["2"].bind == ("syscall", "spawn")
-    assert c0.actors["3"].text == "x" and c0.actors["4"].text == "human" and c0.receptionist == "1"
-    assert x.actors["1"].text == ECHO and x.actors["2"].text == "c0"
-    assert all(r["by"] == "_root" for r in rows(rt, "c0", "place") + rows(rt, "x", "place"))
+    assert c0.actors["3"].text == "human" and c0.receptionist == "1"
+    assert all(r["by"] == "_root" for r in rows(rt, "c0", "place"))
     assert rt.root_open and not rows(rt, "c0", "msg") and not rows(rt, "c0", "step")     # 门开着，机器不动
     start(P, G); rt.run()
     first = rows(rt, "c0", "msg")[0]
-    assert (first["from"], first["to"], first["body"]) == ("4", "1", "start") and not rt.root_open   # 关门
+    assert (first["from"], first["to"]) == ("3", "1") and first["body"].startswith("start\n") and not rt.root_open   # 关门
+    x = rt.channels["x"]                                                         # c0 自己长出来的
+    assert x.actors["1"].text == ECHO and x.actors["2"].text == "c0" and c0.actors["4"].text == "x"
+    assert all(r["by"] == "1" for r in rows(rt, "x", "place")) and rows(rt, "c0", "place")[-1]["by"] == "1"
     root_line(P, "channel.add.actor c0 program\nprint(0)"); rt.run()
     assert len(c0.actors) == 4                                                   # 切离：根门无效
-    rt.msg("c0", "1", "3", "hello"); rt.run()
-    assert any(m["from"] == "3" and m["body"] == "echo:hello" for m in rows(rt, "c0", "msg"))
+    rt.msg("c0", "1", "4", "hello"); rt.run()
+    assert any(m["from"] == "4" and m["body"] == "echo:hello" for m in rows(rt, "c0", "msg"))
 
 
 def test_T5_requests_add_peer():
@@ -156,6 +163,7 @@ def test_T7_spawn_child_built_by_parent_A():
         {"kind": "program", "text": 'import sys, json\nv = json.load(sys.stdin)\nfor m in v["msgs"]:\n'
                                     '    if m["body"] == "go": print(">>> 2\\nspawn d1")\n'
                                     '    else: print(">>> 4\\nreply:" + m["body"])'})
+    G["channels"].append({"name": "x", "members": [{"kind": "program", "text": ECHO}]}); G["peers"] = [["c0", "x"]]
     rt, P = fresh(G); start(P, G); rt.run()
     rt.msg("c0", "door", "3", "go"); rt.run()
     d = P / "spawn" / "d1"
@@ -167,24 +175,27 @@ def test_T7_spawn_child_built_by_parent_A():
         rdoor, cdoor = rt._door(c0, f"file:{d}#_root"), rt._door(c0, f"file:{d}#c0")
         sent = [m["body"] for m in rows(rt, "c0", "msg") if m["to"] == rdoor]                        # 父代 A 发出的 syscall
         assert sent[0] == "channel.create c0" and sum(b.startswith("channel.add.actor") for b in sent) == 4
-        assert sent[-1] == "msg c0\nstart" and sent[-2].startswith("channel.add.actor c0 door\nfile:")   # 出生证明，然后 start
+        assert sent[-1].startswith("msg c0\nstart\n{") and sent[-2].startswith("channel.add.actor c0 door\nfile:")   # 出生证明，然后 start 带 G
+        assert not any("channel.create x" in b for b in sent)                                         # x 不是父代造的
         assert any(m["to"] == "3" and m["body"].startswith("spawned") for m in rows(rt, "c0", "msg"))
         deadline = time.time() + 15
         while time.time() < deadline:
             child = Runtime(d).load()
-            if "c0" in child.channels and any(r["k"] == "msg" for r in child.channels["c0"].rows):
+            if "x" in child.channels and rows(child, "x", "place") and len(child.channels["c0"].actors) >= 5:
                 break
             time.sleep(0.2)
         else:
             raise AssertionError("child not started: " + Store.read(d / "init.log")[-800:])
         del rt                                                                                        # 父代死了
         cc = child.channels["c0"]
-        assert [a.kind for a in cc.actors.values()] == ["program", "program", "program", "door"]   # realize, C, 请求者, 出生证明
-        assert all(r["by"] == "_root" for r in rows(child, "c0", "place"))                            # 全部由膜外（父代）造
+        assert [a.kind for a in cc.actors.values()] == ["program", "program", "program", "door", "door"]   # realize, C, 请求者, 出生证明, 门→x
+        assert all(r["by"] == "_root" for r in rows(child, "c0", "place")[:4])                        # c0 由膜外（父代）造
         assert cc.actors["1"].text == G["channels"][0]["members"][0]["text"] and cc.actors["2"].bind == ("syscall", "spawn")
         assert cc.actors["4"].text == f"file:{P}#c0"                                                  # 出生证明指回父代
         m0 = rows(child, "c0", "msg")[0]
-        assert (m0["from"], m0["to"], m0["body"]) == ("4", "1", "start") and not child.root_open       # 关门 = 切离
+        assert (m0["from"], m0["to"]) == ("4", "1") and m0["body"].startswith("start\n") and not child.root_open   # 关门 = 切离
+        assert rows(child, "x", "place")[0]["by"] == "1" and child.channels["x"].actors["2"].text == "c0"   # 子代的 c0 长出 x
+        assert child.channels["c0"].actors["5"].text == "x" and rows(child, "c0", "place")[-1]["by"] == "1"
     finally:
         Exec.stop(pid)
 

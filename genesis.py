@@ -2,8 +2,8 @@
 
     G0()                 dalek0 的 G：world（R 的源码）+ c0{realize, C}
     pack(G, P)           B：把 G.world 写成文件，G.json 放旁边 → P
-    construct(P, G)      A：经 P 的根门逐条发 syscall（最后放出生证明门）
-    start(P, G)          C：经根门发第一条消息 → 关门
+    construct(P, G)      A：经 P 的根门造 c0（G 的第一个 channel）+ 出生证明门
+    start(P, G)          C：经根门发第一条消息 start\n<G> → 关门；子代的 c0 自己长其余
 
     python genesis.py            把 dalek0 的 G.json 写到本目录（本目录就是 dalek0 的 P）
 """
@@ -42,28 +42,29 @@ def pack(G: dict, P: Path) -> Path:
     return P
 
 
-def lines_of(G: dict, creator: str | None) -> list[str]:
-    """与 actors/realize.py 的 lines_of 相同：G → syscall 行。"""
-    L = [f"channel.create {c['name']}" for c in G["channels"]]
-    for c in G["channels"]:
-        for i, m in enumerate(c["members"]):
-            flags = []
-            if i + 1 == c.get("receptionist", 1): flags.append("in")
-            if m.get("bind"): flags.append("bind=" + ",".join(m["bind"]))
-            L.append(" ".join(["channel.add.actor", c["name"], m["kind"], *flags]) + "\n" + m["text"])
-    for a, b in G.get("peers", []):
-        L += [f"channel.add.actor {a} door\n{b}", f"channel.add.actor {b} door\n{a}"]
-    if creator and G["channels"]:
-        L.append(f"channel.add.actor {G['channels'][0]['name']} door\n{creator}")
+def lines_first(G: dict, creator: str | None) -> list[str]:
+    """与 actors/realize.py 的 lines_first 相同：G 的第一个 channel + 出生证明门 → syscall 行。"""
+    c = G["channels"][0]
+    L = [f"channel.create {c['name']}"]
+    for i, m in enumerate(c["members"]):
+        flags = []
+        if i + 1 == c.get("receptionist", 1): flags.append("in")
+        if m.get("bind"): flags.append("bind=" + ",".join(m["bind"]))
+        L.append(" ".join(["channel.add.actor", c["name"], m["kind"], *flags]) + "\n" + m["text"])
+    if creator:
+        L.append(f"channel.add.actor {c['name']} door\n{creator}")
     return L
 
 
 def construct(P: Path, G: dict, creator: str = "human") -> None:
-    for line in lines_of(G, creator):
+    for line in lines_first(G, creator):
         root(P, line, frm=creator)
 
 
-def start(P: Path, G: dict, body: str = "start", creator: str = "human") -> None:
+def start(P: Path, G: dict, body: str | None = None, creator: str = "human") -> None:
+    """第一条消息。默认 start\n<G>：关门，并把基因组交给子代的 c0 去发育。测试可给别的正文。"""
+    if body is None:
+        body = "start\n" + json.dumps(G, ensure_ascii=False)
     root(P, f"msg {G['channels'][0]['name']}\n{body}", frm=creator)
 
 

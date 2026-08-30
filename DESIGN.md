@@ -264,9 +264,9 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 
 **旧 boot（硬编码，已废）**：boot 自己经根门执行 `channel.create(c0)`、`actor.create(G.channels[0].members[0])`、`channel.add.actor(c0, 它, in)`，然后根门关闭构造 handler。→ 子代的 A 是世界放的，**H15 · A**。
 
-**严谨版（已采用）**：R 起来根门就开着，不需要任何人打开；"boot"缩到零。父代的 A（realize）读 G，经根门逐条发 syscall：每个 channel `channel.create`，每个成员 `channel.add.actor`（realize 带 in、C、其余全部），peers 两扇门，最后放一扇指回父代的普通门（出生证明，不在 G 里；放在最后，成员地址才与 G 里的序号一致）。父代的 C 经根门发 `start` → 根门关闭构造 handler → 从此只收消息，形态改动只经子代自己的 c0。
+**严谨版（已采用）**：R 起来根门就开着，不需要任何人打开；"boot"缩到零。父代的 A（realize）读 G 的第一个 channel，经根门发 syscall 造 c0：`channel.create c0`，每个成员 `channel.add.actor`（realize 带 in、C、……），最后放一扇指回父代的普通门（出生证明，不在 G 里；放在最后，成员地址才与 G 里的序号一致）。父代的 C 经根门发 `start\n<G>` → 根门关闭构造 handler → 子代的 realize 收到 G，本地 syscall 长出其余 channel 与连线（发育版，2026-08-30 定；之前的"父代造全部"撤回）→ 从此只收消息，形态改动只经子代自己的 c0。
 
 推论：
 - **关门的时刻 = start**。准静止有了操作定义：构造门开着时机器无消息；第一条消息一到门就关。"切离 = 什么都不用做"改为"切离 = 关构造门，由 start 顺带完成"。
 - **根门在 channel 之前存在**，是 R 的一部分（Space 级），不是 G 的成员、不是 c0 的成员。放进 c0 的"指回父代的门"是另一样东西：出生证明，普通门。H2 消失。
-- H1 消失：G 经根门以 syscall 行进入，子代账本前 n 行就是 G；realize 不读文件。
+- H1 消失：c0 经根门以 syscall 行进入，G 整体作为 `start` 的正文进入；realize 不读文件。

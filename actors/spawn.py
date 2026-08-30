@@ -3,8 +3,8 @@
 #   A. pack：把 G.world 写成 spawn/<name>/ 下的文件，G.json 原样放旁边（B：抄，不读）
 #      >>> spawn spawn/<name>                          Ω：Exec.spawn(init, dir)；子代 R 起来，根门开着
 #      放两扇门：一扇指向子代根门，一扇指向子代的第一个 channel
-#   B. 收到门的地址后：把 G 交给本机的 realize：build <根门> <本机地址>\n<G>      （A 经门造）
-#   C. 收到 built 后：经根门发 msg <first> start —— 第一条消息，关门，切离。回 r：spawned
+#   B. 收到门的地址后：把 G 交给本机的 realize：build <根门> <本机地址>\n<G>      （A 经门只造子代的 c0）
+#   C. 收到 built 后：经根门发 msg <first> start\n<G> —— 第一条消息带着 G：关门、切离，子代的 c0 自己长其余。回 r：spawned
 import sys, json, os
 v = json.load(sys.stdin)
 ch, me, msgs = v["channel"], v["me"], v["msgs"]
@@ -43,7 +43,8 @@ for n in notes:
         out.append(f">>> {me}\nnote B {r} {ad} {first} {doors[0]} {doors[1]}")
     elif n[0] == "B" and built:
         _, r, ad, first, root, c0door = n
-        out.append(f">>> {root}\nmsg {first}\nstart")
+        G = json.load(open("G.json", encoding="utf-8"))
+        out.append(f">>> {root}\nmsg {first}\nstart\n" + json.dumps(G, ensure_ascii=False))
         out.append(f">>> {r}\nspawned {ad} door={c0door}")
 
 print("\n".join(out))
