@@ -291,6 +291,7 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 | 角色解析：后放的活成员接替 | `runtime._resolve` | 形态里的名字指向当前持有者；升级约定 |
 | 门的 local 在交出账本时计算 | `runtime._annot` | 指向本机 channel 是此刻的事实；channel 只增所以单调 |
 | 地址 = 序号、退役前移，actor 不得硬编码地址 | ABI | 地址属于个体、形态不含地址（理论）；硬编码禁令由序号实现引起 |
+| 收件箱是文件，人人可 append；text 拿着 urllib / open 也能绕过门写进别的机器 | `omega.Port.send/recv` | 膜的接收侧：收件箱只认合法句柄写入，句柄只在门那里——那时"穿过介质的只有 call"是 Port 的性质，不是约定。文件收件箱是 M1 的工程简化（2026-08-31） |
 | 首 channel 必须显式接待员（genesis / build 拒绝） | `genesis.py` / `realize.py` | 出生需要一个入口（理论合法性条件）；拒绝是保障 |
 
 **H16 · C · c0 内部经合法门说假形态事实。** 原型不防：π(A) ≅ G 是 c0 维护的。工程方案：`bind=registry` 的媒介能力——R 每落一条 place/retire 行就把该行原样投给持有它的 actor（像 syscall 回执一样 `from=place`），登记事实的来源变成 R，伪造路径消失，三段记账变回同时；R 仍内容盲。代价：c1 不再是"只经门喂出来的"。
