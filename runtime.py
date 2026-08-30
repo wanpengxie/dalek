@@ -11,7 +11,7 @@
   >>> <addr>                                                 消息给本 channel 的 <addr>
   >>> channel.create <name>                                  syscall；需 bind=syscall
   >>> channel.add.actor <channel> <kind> [in] [bind=…] + text  syscall；需 bind=syscall
-  >>> <动词> <参数>                                            绑定了的 Ω 动词转交 Ω（ACTIONS 表）；需 bind=<动词>
+  >>> <动词> <参数>                                            绑定了的 world 动词（ACTIONS 表：起一台机器 / 停一个进程，用 Ω 实现）；需 bind=<动词>
   返回都是一条 msg：from=<动作名>。其他一律忽略。
 入口    每个 channel 一个收件箱 in/<name>.jsonl（Port 的接收侧）：一行 → msg 给接待员，署名指回发信端点的门（没有则 door）。
         根收件箱 in/_root.jsonl 在 channel 之前存在：开着 ⇔ 所有账本无 msg 行。开着时接受两个 syscall（by=_root）
@@ -43,7 +43,7 @@ def _stop(P: Path, arg: str) -> str:
     return arg
 
 
-ACTIONS: dict[str, Callable[[Path, str], str]] = {"spawn": _spawn, "stop": _stop}   # 可绑定的 Ω 动词
+ACTIONS: dict[str, Callable[[Path, str], str]] = {"spawn": _spawn, "stop": _stop}   # 可绑定的 world 动词：spawn 知道 loader 协议（init.py <P> --serve），这是 world 知道自己的布局
 BINDS = ("syscall", *ACTIONS)
 
 

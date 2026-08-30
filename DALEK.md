@@ -12,8 +12,9 @@ codex 审阅（2026-08-29）指出四个阻塞问题；1（运行时归包 P，�
 | 符号 | 名字 | 是什么 | 死/活 | 谁产生 |
 |---|---|---|---|---|
 | **Ω** | 宿主 | Exec / Store / Port 三条契约（第 1 章） | — | 外面给的，不是 Dalek |
-| **R** | 运行时 | 三种 kind 的转移表 + 账本 + 根门（第 1½ 章） | 软件 | 在 G 的根字段 `world` 里；机器内无人读它，Ω 执行它；对个体不可改 |
-| **G** | 描述（基因），配置形态 | 一个 JSON：`world`（R 的源码）、channels、members(kind, text, bind)、receptionist、peers | 死 | 初代：人写；之后：c1 从 H 折叠出（decl） |
+| **world** | 世界 | G 的根字段：随 P 运走、且携带零比特关于这台机器的信息的三样——**ω-bind**（omega.py：Ω 契约在本宿主上的实现）、**loader**（init.py + P 的布局与启动协议）、**R** | 软件 | 机器内无人读它：pack 抄，Ω 执行；对个体冻结、对谱系可变 |
+| **R** | 运行时 | 三种 kind 的转移表 + 账本 + 根门（第 1½ 章）；world 的一部分 | 软件 | 同上 |
+| **G** | 描述（基因），配置形态 | 一个 JSON：`world`（ω-bind + loader + R 的源码）、channels、members(kind, text, bind)、receptionist、peers | 死 | 初代：人写；之后：c1 从 H 折叠出（decl） |
 | **P** | 机器，G 的可运行形态 | 同一个 G 展开到目录：`world` 写成文件 + G.json 原样。自包含，Ω 能跑 | 死 | pack = 展开（B：抄，不读） |
 | **S** | 运行的机器（Space） | Ω.run(P) 得到的进程：R 驱动着一组 channel | 活 | Ω.run + 创造者的 A 经根门造 + start |
 | **H** | 账本（历史） | 每 channel 一本，三种行：place / msg / step | 死，只增 | R 在 S 运行时写 |
@@ -44,7 +45,7 @@ S 里的三层：actor（kind + text + bind，行为）→ channel（账本 + �
 
 不变量：G 在 S 里有三个身影——P 里的 G.json、H 里的 place 行、c1 折叠出的文件——三者相等。`world` 不是 actor，不进 H，所以拆成两条：`fold(H) == G.channels/peers + 改动`，`P.world == G.world`。
 
-一句话：一台机器是一个 JSON；给它一个世界（Ω + R）和一个创造者，它把自己长成一个会写日记的 Space；日记能折回 JSON；JSON 能连同世界的拷贝交给下一个进程——于是有了下一台。
+一句话：一台机器是一个 JSON；给它一个宿主（Ω）和一个创造者，它把自己长成一个会写日记的 Space；日记能折回 JSON；JSON 能连同世界的拷贝交给下一个进程——于是有了下一台。
 
 
 ### 0.1 公理
@@ -72,7 +73,7 @@ space    个体。channel 们 + 门的拓扑 + 一份运行时实例。能被 Ω
 
 | 词 | 定义 |
 |---|---|
-| **描述** | 一个配置文件（JSON）。死的。说一台机器**是什么**——含根字段 `world`（R 的源码）。G 的配置形态。 |
+| **描述** | 一个配置文件（JSON）。死的。说一台机器**是什么**——含根字段 `world`（ω-bind + loader + R 的源码）。G 的配置形态。 |
 | **机器** | 同一个 G 的可运行形态：展开到目录，`world` 成为文件。死的。自包含 = 除了 Ω 什么都不缺，**包括自己的描述原样在内**。 |
 | **运行的机器** | `Ω.run(机器)` 得到的进程，加上它运行后写下的账本。活的。 |
 
@@ -118,6 +119,16 @@ space    个体。channel 们 + 门的拓扑 + 一份运行时实例。能被 Ω
 
 Ω 的接口表上出现任何一个 Dalek 词，就是作弊——把要证明的能力偷偷放进了宿主。反过来，只要一个底层系统满足 1.1 的三条，它就是一个合法的 Ω；Dalek 的身份不依赖任何特定宿主。
 
+分层不靠"去掉它跑不跑得起来"（R 也满足），靠两个问题：
+
+| | 随 P 运走？ | 携带这台机器的信息？ |
+|---|---|---|
+| **Ω**（Linux + python3 + 文件系统） | 否，落地处提供 | 否 |
+| **world** = ω-bind（omega.py）+ loader（init.py、P 的布局）+ R（runtime.py） | 是 | 否 |
+| G 的其余部分 | 是 | 是 |
+
+**契约是不动点，绑定是基因**：Ω 是抽象契约；ω-bind 是它在某一宿主上的实现，在 world 里随 P 遗传，所以换宿主 = c2 写一个新的 omega.py（Port 改 http、Exec 改容器），pack 一个子代用它跑，自举不动点验收——与换 R 同一条路。loader 知识（入口文件名、`--serve`、目录布局）只能在 world 里：R 的 `spawn` 知道 `init.py <P> --serve` 是 world 知道自己的布局；放到 G 里的 actor 才是组织读世界。
+
 ### 1.4 非确定性的来源
 
 **凡不能由 G、H 和确定程序重新推出的 Ω 返回值，都必须作为外生观察入账。** LLM 和人是主要来源，但不是唯一来源：时间、失败、并发顺序、外部文件都可能成为外生结果。（旧句"只有网络非确定"撤回。）
@@ -140,13 +151,13 @@ Linux + python3 + 文件系统 + http。
 两刀切完（不是 Ω、不是 c0），它住在 **G 的根字段 `world` 里**，P 是它的文件形态。三层：
 
 ```
-Ω        硬件契约：Exec / Store / Port。不含任何 Dalek 词。
-运行时    账本驱动器、视图、kind、门。在 G.world 里；机器内无人读它；Ω 执行它。
-组织      G：channel、成员、连线。c0 按它 realize。
+Ω        宿主契约：Exec / Store / Port。不含任何 Dalek 词。不随 P 运走。
+world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在本宿主的实现）、loader（P 的布局与启动协议）、R（转移表）。机器内无人读它；Ω 执行它。
+组织      G 的其余部分：channel、成员、连线。c0 按它 realize。
 ```
 
 - **判据**：运行时里只能有介质词汇（actor、账本、消息、投递），不能有组织词汇（c0、c1、构造器、登记、复制）。
-- **可遗传且可描述**：R 的源码就是 G 的根字段 `world`。这是冯诺依曼的 CA 做不到的一步（规则表写不进带子），生物也做不到（密码表不在基因组里）；软件可以，因为世界也是文本。守住的一条：**机器内没有任何东西读 `world`**——pack 抄它，Ω 执行它，R 不读 G。改名检验照样通过：同版本世界的所有 G 的 `world` 逐字相同。恢复时它缺不得（world + H，不是只有 H）。
+- **可遗传且可描述**：R 的源码——连同 ω-bind 和 loader——就是 G 的根字段 `world`。这是冯诺依曼的 CA 做不到的一步（规则表写不进带子），生物也做不到（密码表不在基因组里）；软件可以，因为世界也是文本。守住的一条：**机器内没有任何东西读 `world`**——pack 抄它，Ω 执行它，R 不读 G。改名检验照样通过：同版本世界的所有 G 的 `world` 逐字相同。恢复时它缺不得（world + H，不是只有 H）。
 - **G 是 H 的投影**：因为每一次放 actor 都带完整 text 记在账上，H 是 G 的超集，`G_t = fold(H)`，不需要 G₀ 做起点。从 H 恢复得到的是组织，不是机器——`world` 不是 actor，不进 H。c1 的 decl 把 `world` 从 P 原样抄回来拼上。P 里那份 G 原样仍然要：它是 B 的产物，子代在有任何 H 之前靠它 realize；一致性拆成两条：`fold(H) == G.channels/peers + 后续改动`，`P.world == G.world`。
 - **代价**：运行时对个体不可改（正在跑的 R 改不了自己）。谱系可以：c2 改 G′.world，pack 一个子代用它跑，自举不动点验收。
 - 旧句"Ω = 硬件 + 物理"撤回。Atoll 对应的是 Ω + 运行时两层，不是 Ω 一层。
@@ -161,7 +172,7 @@ Linux + python3 + 文件系统 + http。
 
 | 事件落在的 actor 的 kind | 转移 |
 |---|---|
-| **程序** | 取视图 → `Exec.run(text, 视图)` → stdout 原样追加为步记录（谁、看到哪、回了什么）+ 拆成动作：消息、syscall、绑定了的 Ω 动词（spawn / stop，一张表，转交 Ω）；游标前移 |
+| **程序** | 取视图 → `Exec.run(text, 视图)` → stdout 原样追加为步记录（谁、看到哪、回了什么）+ 拆成动作：消息、syscall、绑定了的 world 动词（spawn / stop，一张表，用 Ω 实现）；游标前移 |
 | **oracle** | 取视图 → Ω 侧的端点 → 回答同程序行；游标前移 |
 | **门** | 把这条消息原样 `Port.send` 到 text 所指的端点（本机 channel 名也是端点），署名本 channel 的端点；对面收件箱进账时署名指回来的门，收件人是对面的接待员 |
 | **放 actor**（syscall `channel.add.actor`） | 在该 channel 的下一个地址写下 kind + text，在该账本记一行——**这一行带完整的 kind + text**。channel 存在 = 它账本有第一行；经根门放也走这一行 |
@@ -438,7 +449,7 @@ stdin：`{"channel", "me", "msgs": [{seq, from, to, body}…]}`。stdout 原样�
 >>> <addr>                                          消息，发给本 channel 的 <addr>（含门）
 >>> channel.create <name>                           syscall；需 bind=syscall
 >>> channel.add.actor <channel> <kind> [in] [bind=…]  syscall（含 actor.create）；后续各行是 text；需 bind=syscall
->>> <动词> <参数>                                   绑定了的 Ω 动词，一张表：spawn <dir>（Exec.spawn(init, dir)）、stop <pid>；需 bind=<动词>
+>>> <动词> <参数>                                   绑定了的 world 动词，一张表：spawn <dir>（按 loader 协议 Exec.spawn(init.py <dir> --serve)）、stop <pid>；需 bind=<动词>
 ```
 
 返回以 msg 追加给调用者：`from=channel.create body="<name> new|exists"`；`from=channel.add.actor body=<channel>/<addr>`；`from=spawn body="<dir> pid=<n>"`。跨膜没有返回（根门单向）。
@@ -447,9 +458,18 @@ stdin：`{"channel", "me", "msgs": [{seq, from, to, body}…]}`。stdout 原样�
 
 门 actor 的 text 是端点：`file:<dir>#<box>`（box = `_root` 或 channel 名），或本机器的 channel 名（= `file:<P>#<名>` 的缩写）。写给门的消息一律 `Port.send` 到该端点，署名 `file:<P>#<本 channel>`；本机目标也经自己的收件箱进账。
 
-### 4.5 init.py = R 的入口
+### 4.5 loader：init.py 与 P 的布局
 
-`python init.py <P> [--serve]`：起 R，折叠已有账本，驱动；`--serve` 静止后持续轮询收件箱。不读 G。
+P 的启动协议（world 的一部分，与 ω-bind、R 同版本遗传）：
+```
+P/omega.py runtime.py init.py     world 三文件（= G.world 逐字节）
+P/G.json                          描述原样
+P/h/<channel>.jsonl, h/_order     账本（运行时产生）
+P/in/<box>.jsonl                  收件箱：_root 与各 channel（运行时产生）
+P/spawn/<name>/                   子代的 P（C 的 pack 产生）
+python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 静止后持续轮询收件箱。不读 G
+```
+不变量：`P.world == G.world`，对每个 f：`bytes(P/f) == G.world[f]`（T0）。
 
 ### 4.6 c0 的请求
 
@@ -466,4 +486,4 @@ stdin：`{"channel", "me", "msgs": [{seq, from, to, body}…]}`。stdout 原样�
 
 仍开着的洞（DESIGN.md §3）：H3（外来请求只到接待员，`spawn` 只能由 c0 内部发给 C）、H4（无 c1，pack 抄 P 里的 G）、H5/H7（C actor 用文件系统 pack；程序 actor cwd = P）、H6（收件箱偏移在进程内存）、H9（oracle 端点）、H10（崩溃语义）。H1、H2、H15 已由本版消除。
 
-2026-08-30 凌晨收缩 R（规则 16 → 9，不动理论）：Ω 动词一张表（spawn、stop）而非逐个分支；门只有一条规则（一律 `Port.send`，本机 channel 名是端点缩写）；收件箱读取归 Ω（`Port.recv`），根门与 channel 收件箱走同一条入口；`channel.create` 返回 new|exists。T1–T7 仍绿。
+2026-08-30 凌晨收缩 R（规则 16 → 9，不动理论）：world 动词一张表（spawn、stop）而非逐个分支；门只有一条规则（一律 `Port.send`，本机 channel 名是端点缩写）；收件箱读取归 Ω（`Port.recv`），根门与 channel 收件箱走同一条入口；`channel.create` 返回 new|exists。T1–T7 仍绿。

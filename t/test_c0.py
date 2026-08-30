@@ -1,5 +1,6 @@
 """M1 · c0 + R。跑法：python3 t/test_c0.py
 
+T0 本目录 = dalek0 的 P：G.json 的 world 与磁盘文件逐字节相等；c0 成员 text 与 actors/*.py 相等
 T1 转移表：program 行——视图、step 记录、拆消息；出生证明门给外来消息署名
 T2 syscall（本地）：channel.create / channel.add.actor 带完整 text 记一行；返回；无绑定则忽略
 T3 门：两扇门互指；抄到对面账本，署名对面的门，收件人是接待员；回信原路回来
@@ -47,6 +48,16 @@ def fresh(G: dict, creator="human"):
 
 def rows(rt: Runtime, ch: str, k: str):
     return [r for r in rt.channels[ch].rows if r["k"] == k]
+
+
+def test_T0_P_equals_own_G():
+    G = json.loads((ROOT / "G.json").read_text(encoding="utf-8"))
+    for f, src in G["world"].items():
+        assert (ROOT / f).read_bytes() == src.encode("utf-8"), f                 # P.world == G.world
+    c0 = G["channels"][0]["members"]
+    assert c0[0]["text"] == (ROOT / "actors" / "realize.py").read_text(encoding="utf-8")
+    assert c0[1]["text"] == (ROOT / "actors" / "spawn.py").read_text(encoding="utf-8")
+    assert G == G0()                                                             # genesis 重生成后不变
 
 
 def test_T1_transition_program():
