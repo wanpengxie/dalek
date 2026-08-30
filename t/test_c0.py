@@ -29,7 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from omega import Store                              # noqa: E402
+from omega import Store, Exec                        # noqa: E402
 from runtime import Runtime, parse                   # noqa: E402
 from init import up, root as root_line, say          # noqa: E402
 from genesis import G0, G2, pack, construct, start   # noqa: E402
@@ -722,6 +722,145 @@ def test_T24_task0_c2_grows_file_and_child_inherits_it():
             try: os.killpg(pid, signal.SIGTERM)
             except ProcessLookupError: pass
     finally:
+        L.close()
+
+
+# ---------------------------------------------------------------- M4：生命周期与自维护
+def test_T25_restart_is_the_same_individual():
+    G = G0(); G["channels"].append({"name": "x", "members": [{"kind": "program", "text": ECHO}], "receptionist": 1}); G["peers"].append(["c0", "x"])
+    rt, P = fresh(G); start(P, G); rt.run()
+    rt.msg("x", "door", "1", "hi"); rt.run()
+    D = decl_of(rt); cur = dict(rt.channels["x"].cursor)
+    rt.msg("x", "door", "1", "late")                                                       # 硬杀：消息落账、没人跑
+    del rt
+    rt2 = up(P)                                                                             # 醒来 = 折叠 + up 入账
+    w = [(r["from"], r["body"]) for r in rows(rt2, "x", "msg") if r["from"] == "world"]
+    assert w == [("world", "up")]                                                           # 有 up 没 down = 上次是硬杀
+    assert cur == {k: v for k, v in rt2.channels["x"].cursor.items()}                       # 游标不变（折出来的）
+    late = [r for r in rows(rt2, "x", "msg") if r["body"] == "late"][0]
+    assert late in rt2._pending(rt2.channels["x"], "1")                                     # 没写 step 的消息重跑（at-least-once）
+    rt2.run()
+    assert any(r["k"] == "step" and r["actor"] == "1" and r["upto"] >= late["seq"] for r in rows(rt2, "x", "step"))
+    assert decl_of(rt2) == D                                                                # 同一个体：decl 不变
+    rt2.down(); rt2.run()                                                                   # 停下入账 → 跑到静止
+    rt3 = up(P)
+    w = [r["body"] for r in rows(rt3, "x", "msg") if r["from"] == "world"]
+    assert w == ["up", "down", "up"]                                                        # 第几条 up = 第几次 incarnation
+    del rt3
+
+
+def test_T26_local_damage_rebuilt_from_registry():
+    G = G0(); rt, P = fresh(G); start(P, G); rt.run()
+    rt.msg("c0", "door", "1", "add c8 program in tag=e\n" + ECHO); rt.run()
+    rt.msg("c0", "door", "1", "peer c0 c8"); rt.run()
+    D = decl_of(rt)
+    registered = len([r for r in rows(rt, "c1", "msg") if r["body"].startswith("placed c8")])
+    del rt
+    (P / "h" / "c8.jsonl").unlink()                                                        # 本地损伤：一个器官的账没了
+    rt2 = up(P)
+    assert "c8" not in rt2.channels                                                        # channel 存在 ⇔ 账本至少一条 place 行
+    rt2.run()                                                                               # up → 登记员对账 → rebuild → c0 重造
+    c8 = rt2.channels["c8"]
+    assert c8.actors["1"].text == ECHO and c8.actors["1"].tag == "e" and c8.receptionist == "1"
+    assert c8.actors["2"].kind == "door" and c8.actors["2"].text == "c0"                   # 连线也回来了
+    assert rows(rt2, "c8", "msg") == []                                                    # 新器官：同样的 text、空的账本（照 spec 重造，不是照 WAL 重放）
+    assert len([r for r in rows(rt2, "c1", "msg") if r["body"].startswith("placed c8")]) == registered   # 不重复登记
+    assert any(r["from"] == "channel.create" and "exists" in r["body"] for r in rows(rt2, "c0", "msg"))  # 没损伤的：exists 跳过
+    assert decl_of(rt2) == D                                                               # 期望 == 实际
+
+
+# ---------------------------------------------------------------- M3 任务 1：自组织（种群）+ M4 远端维护
+HUB = (ROOT / "actors" / "hub.py").read_text(encoding="utf-8").rstrip("\n")
+REPORTER = (ROOT / "actors" / "reporter.py").read_text(encoding="utf-8").rstrip("\n")
+
+
+class HubL(StubL):
+    """任务 1 的 L：task → 装 hub 进 c3；placed c3/1 → 装 reporter 进 c4（bind=spawn）；placed c4/1 → 连线 c0–c3、c0–c4，给 c4 一扇指向本机 hub 的门（外部形式，遗传）。"""
+    def __init__(self, P0):
+        super().__init__(); HubL.P0 = P0
+    @staticmethod
+    def answer(messages):
+        if len(messages) != 1: return ""
+        b = json.loads(messages[0]["content"])["msg"]["body"]
+        if b.startswith("task\n"):
+            return f">>> c0\nadd c3 program in tag=hub iface=hello <endpoint> | ping -> pong\n{HUB}\n<<<"
+        if b.startswith("placed c3/1"):
+            return f">>> c0\nadd c4 program in bind=spawn tag=reporter iface=tick | peers <endpoint..> | ping -> pong\n{REPORTER}\n<<<"
+        if b.startswith("placed c4/1"):
+            return f">>> c0\npeer c0 c3\n<<<\n>>> c0\npeer c0 c4\n<<<\n>>> c0\nadd c4 door tag=hub\nfile:{HubL.P0}#c3\n<<<"
+        return ""
+
+
+def boot(G: dict, P: Path) -> int:
+    """整台机器起成进程：pack → spawn（--serve）→ 经根门 construct + start。返回 pid。"""
+    pack(G, P)
+    pid = Exec.spawn(["init.py", str(P), "--serve"], cwd=P, log=P / "log")
+    construct(P, G); start(P, G)
+    return pid
+
+
+def wait_for(P: Path, ready, timeout=30.0) -> Runtime:
+    return wait_child(P, ready, timeout)
+
+
+def c4_doors(rt: Runtime) -> set:
+    return {a.text for a in rt.channels["c4"].actors.values() if a.kind == "door" and not a.retired and not a.text.startswith("c")}
+
+
+def has_msg(rt: Runtime, ch: str, pred) -> bool:
+    return ch in rt.channels and any(pred(r) for r in rows(rt, ch, "msg"))
+
+
+def door_msg(rt: Runtime, ch: str, body: str, text: str) -> bool:
+    """账上有一条 body，且 from 是 text 所指的门。"""
+    if ch not in rt.channels: return False
+    A = rt.channels[ch].actors
+    return any(r["body"] == body and (a := A.get(r["from"])) and a.kind == "door" and a.text == text
+               for r in rows(rt, ch, "msg"))
+
+
+def test_T27_population_self_organizes_and_wakes_a_dead_hub():
+    import os, signal
+    P0 = Path(tempfile.mkdtemp(prefix="dalek0-")); L = HubL(P0); pids = []
+    try:
+        G = with_L(G2(), L.url)
+        pids.append(boot(G, P0))
+        wait_for(P0, lambda c: "c2" in c.channels and len(rows(c, "c2", "place")) >= 3)
+        say(P0, "c2", "task\n写一个 hub 和一个 reporter，装进 c3、c4")                                     # 自改进：c2 造 c3、c4
+        wait_for(P0, lambda c: "c4" in c.channels and len(rows(c, "c4", "place")) >= 3)
+        d0 = Runtime(P0).load()
+        assert d0.channels["c3"].actors["1"].tag == "hub" and d0.channels["c4"].actors["1"].bind == ("spawn",)
+        assert d0.channels["c4"].actors["3"].text == f"file:{P0}#c3"                                          # 指向本机 hub 的外部门
+        say(P0, "c4", "tick")                                                                                  # 手造的机器：人踢第一脚
+        wait_for(P0, lambda c: has_msg(c, "c3", lambda r: r["body"].startswith("peers ")))                    # hub 回路：报到 → 放门 → 广播
+        say(P0, "c0", "spawn d1"); say(P0, "c0", "spawn d2")                                                   # 自复制：子代生来带 hub、reporter 和那扇门
+        P1, P2 = P0 / "spawn" / "d1", P0 / "spawn" / "d2"
+        wait_for(P0, lambda c: sum(1 for r in rows(c, "c0", "msg") if r["from"] == "spawn") == 2)
+        pids += [int(r["body"].split("pid=")[1]) for r in rows(Runtime(P0).load(), "c0", "msg") if r["from"] == "spawn"]
+        eps = {f"file:{p}#c4" for p in (P0, P1, P2)}
+        for P in (P0, P1, P2):                                                                                 # 自组织：每台的 c4 长出指向另两台的门
+            wait_for(P, lambda c: "c4" in c.channels and c4_doors(c) >= eps - {f"file:{P}#c4"}, timeout=60)
+        for A, B in ((P1, P2), (P2, P1), (P1, P0)):                                                            # ping/pong 两边账上都有
+            wait_for(A, lambda c, B=B: door_msg(c, "c4", "pong", f"file:{B}#c4"), timeout=60)
+            wait_for(B, lambda c, A=A: door_msg(c, "c4", "ping", f"file:{A}#c4"), timeout=60)
+        # 杀掉 dalek0（硬杀：账上有 start 没 down）
+        os.killpg(pids[0], signal.SIGKILL); time.sleep(0.5)
+        n_up0 = sum(1 for r in rows(Runtime(P0).load(), "c3", "msg") if r["body"] == "up")
+        say(P1, "c4", "tick")                                                                                  # d1：ping hub 无 pong，ping d2 有 pong
+        wait_for(P1, lambda c: sum(1 for r in rows(c, "c4", "msg") if r["body"] == "ping" and r["from"] == "1") >= 2, timeout=30)
+        wait_for(P2, lambda c: sum(1 for r in rows(c, "c4", "msg") if r["body"] == "ping") >= 2, timeout=30)   # d1↔d2 仍在 ping
+        time.sleep(1.0)
+        say(P1, "c4", "tick")                                                                                  # 上一轮 hub 没 pong → spawn P0（照 H 唤醒）
+        wait_for(P1, lambda c: has_msg(c, "c4", lambda r: r["from"] == "spawn"), timeout=30)
+        pids.append(int([r for r in rows(Runtime(P1).load(), "c4", "msg") if r["from"] == "spawn"][0]["body"].split("pid=")[1]))
+        wait_for(P0, lambda c: sum(1 for r in rows(c, "c3", "msg") if r["body"] == "up") == n_up0 + 1, timeout=30)   # 同一本账醒来：多一条 up
+        wait_for(P1, lambda c: door_msg(c, "c4", "pong", f"file:{P0}#c3"), timeout=60)                              # hub 回来了：pong 恢复
+        d0 = Runtime(P0).load()
+        assert rows(d0, "c3", "place")[0]["text"] == HUB and not any(r["body"] == "down" for r in rows(d0, "c3", "msg"))   # 硬杀：有 up 没 down
+    finally:
+        for pid in pids:
+            try: os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError: pass
         L.close()
 
 if __name__ == "__main__":

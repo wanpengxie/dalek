@@ -47,8 +47,9 @@ WORLD = "world"                                # 起停的署名：up / down 是
 
 
 def _spawn(P: Path, d: str) -> str:
+    """起一台机器：<d> 相对本机目录或绝对路径。用目标目录自己的 world（init.py）跑它——同一个 P 再起一次 = 唤醒（同一个体醒来）。"""
     target = (P / d).resolve()
-    pid = Exec.spawn(["init.py", str(target), "--serve"], cwd=P, log=target / "log")
+    pid = Exec.spawn(["init.py", str(target), "--serve"], cwd=target, log=target / "log")
     return f"{d} pid={pid}"
 
 

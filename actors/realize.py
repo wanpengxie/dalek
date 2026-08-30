@@ -114,7 +114,7 @@ def run(m):
                 call(a["addr"], "start")
         return
     if op == "rebuild" and len(t) == 2 and rest.strip():
-        if syscall(f"channel.create {t[1]}")[2] != "new":
+        if not syscall(f"channel.create {t[1]}")[2].endswith(" new"):
             return f"exists {t[1]}"
         for line in add_lines(json.loads(rest))[1:]:
             syscall(line)

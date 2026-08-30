@@ -50,7 +50,8 @@ tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
 - 2026-08-31 上午：M3.4 agent loop 出 R——kind 是类别（理论），实例化是工程：oracle 和程序同一个 exec，L 的 text = `actors/l.py` = 整个 loop（端点、提示语、组装、POST、解帧、轮数）。R 删 `_oracle`，Ω 删 `Port.request`。T0–T23 绿。
 - 2026-09-01 凌晨：M3 任务 0 的路——T24：c2 + file → c2′（L 经门 add 进本 channel，用它写读，done 给发起者）→ spawn 子代继承 file 零件、不继承 notes.txt。T24 是桩版；**真模型（DeepSeek）同日跑通**：作者自己写 file、U 测三版、add、placed 后用它、done；子代继承零件不继承文件（`runs/task0-deepseek-*.jsonl`）。结论：提示语是策略，核心路径是新能力完全靠 syscall + 现有 actor 进入机器（门 → c0 → syscall → 实例化 → 登记 → 回执）。任务 0 关闭。24/24。
 - 2026-09-01 凌晨：M3.5 oracle 不是原语——R 的 kind 集 = {program, door}，L = `kind=program, tag=L`；oracle 留作理论类别词。膜定为窄版（DESIGN I6）。24/24。
-- 待：任务 1（自组织）、M4（与 M3 合账，今天）。
+- 2026-09-01 晨：M3 任务 1 + M4——up/down 入账（第几条 up = 第几次 incarnation）、channel 存在 ⇔ 有 place 行、A 的 start 广播与 rebuild、登记员 up 对账；hub/reporter（`actors/hub.py`、`actors/reporter.py`）；T25 重启 = 同一个体、T26 本地损伤重建、T27 三台机器自组织 + SIGKILL dalek0 后被 d1 照 H 唤醒。27/27。
+- 待：R 事件中崩溃的中间态（H10 残）、真模型跑任务 1、H16、长账本的折叠器官。
 
 ## 文件
 
