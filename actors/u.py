@@ -9,7 +9,8 @@ for m in v["msgs"]:
     if op not in ("run", "test"):
         continue
     code, _, tests = rest.partition("\n===\n")
-    d = tempfile.mkdtemp(prefix="u-", dir=os.getcwd())
+    os.makedirs("tmp", exist_ok=True)                        # cwd = P；散件放 P/tmp 下
+    d = tempfile.mkdtemp(prefix="u-", dir="tmp")
     with open(os.path.join(d, "m.py"), "w", encoding="utf-8") as f:
         f.write(code)
     try:

@@ -30,6 +30,15 @@ python3 genesis.py                   # 重新生成 G.json
 python3 init.py <P> [--serve]        # 起 R；--serve 静止后持续轮询收件箱
 ```
 
+真模型跑 c2（把 `actors/l.txt` 第一行的 `KEY` 换掉，`python3 genesis.py` 重生成 G.json）：
+```
+python3 -c "from genesis import *; from pathlib import Path; P=Path('/tmp/d0'); G=G2(); pack(G,P); construct(P,G); start(P,G)"
+python3 init.py /tmp/d0 --serve &
+python3 -c "from init import say; say('/tmp/d0','c0','add c2 door\nfile:/tmp/me#me','x')"      # 给自己一扇门，L 的 done 才回得来
+python3 -c "from init import say; say('/tmp/d0','c2','task\n写一个 actor：收到 hi 回 hello，装进 c3','file:/tmp/me#me')"
+tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
+```
+
 ## 状态
 
 - 2026-08-29：Ω、R（含根门）、c0（realize + spawn）、genesis；T1–T7 绿（转移表、syscall、门、根门开关、请求、内容盲、父代的 A 经门造子代 + start 切离）。

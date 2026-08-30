@@ -298,4 +298,8 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 - `Exec.spawn` 的日志句柄父进程已关闭（曾泄漏）。
 - 生子测试（T7/T9/T10）靠 sleep 与 20 s 上限等子代，慢机器可能假失败。
 - 出生后再收到 `start` 忽略（有内门 = 已发育），registrar 只认第一个 `born`（T17）。
-- U 跑 L 写的代码不隔离（宿主 python、P 下临时目录、30 s 超时）；`history` 每步全量 POST 给 L，长寿命要一个压缩器成员；L 输出不合语法时的清洗程序是退路，未做。
+- U 跑 L 写的代码不隔离（宿主 python、`P/tmp/u-*`、30 s 超时，不清理）；`history` 每步全量 POST 给 L，长寿命要一个压缩器成员；L 输出不合语法时的清洗程序是退路，未做。
+- oracle 的一步是同步的（最长 120 s），期间调度器不走别的 channel——单线程轮转的代价；要并发得让 R 按 channel 分线程或把 request 做成异步的门，M4 以后。
+- `history` 含自己说过的之后，c1 的视图带着它历来吐出的每一份 decl（每份是整个 G）；每次 spawn 一份，原型可忍，长寿命同上要句柄（§6 表 history 行）。
+- 外面直接写收件箱而 channel 里没有指回去的门时，署名是 `door`，回话写给 `door` 会被丢（H8）：任务发起者要收到 `done`，先给自己在 c2 放一扇门（README 的跑法）。测试从 step.out 读。
+- `Port.request` 把 `stop_reason == max_tokens` 记为 err（截断的代码不能当动作）。

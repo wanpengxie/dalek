@@ -100,7 +100,10 @@ class Port:
             return "", f"http {e.code}\n{e.read().decode('utf-8', 'replace')[:500]}"
         except Exception as e:                                   # 连不上、超时、坏 JSON
             return "", f"{type(e).__name__}: {e}"
-        return "".join(c.get("text", "") for c in data.get("content", []) if c.get("type") == "text"), ""
+        text = "".join(c.get("text", "") for c in data.get("content", []) if c.get("type") == "text")
+        if data.get("stop_reason") == "max_tokens":              # 截断的回答不算回答
+            return "", f"truncated at max_tokens\n{text[-500:]}"
+        return text, ""
 
     @staticmethod
     def send(endpoint: str, payload: dict) -> bool:
