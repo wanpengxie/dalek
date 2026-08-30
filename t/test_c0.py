@@ -840,6 +840,7 @@ def test_T27_population_self_organizes_and_wakes_a_dead_hub():
         eps = {f"file:{p}#c4" for p in (P0, P1, P2)}
         for P in (P0, P1, P2):                                                                                 # 自组织：每台的 c4 长出指向另两台的门
             wait_for(P, lambda c: "c4" in c.channels and c4_doors(c) >= eps - {f"file:{P}#c4"}, timeout=60)
+        for P in (P0, P1, P2): say(P, "c4", "tick")                                                            # 一轮心跳：早到的 ping 可能在对方放好回门前被丢（回给 door），tick 自愈
         for A, B in ((P1, P2), (P2, P1), (P1, P0)):                                                            # ping/pong 两边账上都有
             wait_for(A, lambda c, B=B: door_msg(c, "c4", "pong", f"file:{B}#c4"), timeout=60)
             wait_for(B, lambda c, A=A: door_msg(c, "c4", "ping", f"file:{A}#c4"), timeout=60)
