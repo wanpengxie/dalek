@@ -1,0 +1,174 @@
+{"seq": 1, "k": "place", "addr": "1", "kind": "program", "text": "import json, os\n\ndef _ledger():\n    try:\n        return [json.loads(l) for l in call(\"0\", \"show\").splitlines() if l.strip()]\n    except Exception:\n        return []\n\ndef _members():\n    try:\n        return json.loads(call(\"0\", \"who\"))\n    except Exception:\n        return []\n\ndef _hub(members):\n    for m in members:\n        if m.get(\"kind\") == \"door\" and m.get(\"tag\") == \"hub\":\n            return m\n    return None\n\ndef _ep():\n    return \"file:\" + os.path.abspath(\".\") + \"#\" + channel\n\ndef _has_hello(hub_addr):\n    me_str = str(me)\n    hub_str = str(hub_addr)\n    for row in _ledger():\n        if row.get(\"k\") == \"msg\" and str(row.get(\"from\")) == me_str and str(row.get(\"to\")) == hub_str and row.get(\"body\", \"\").startswith(\"hello \"):\n            return True\n    return False\n\ndef _need_spawn(hub_addr):\n    me_str = str(me)\n    hub_str = str(hub_addr)\n    last_ping = None\n    for row in _ledger():\n        if row.get(\"k\") == \"msg\" and str(row.get(\"from\")) == me_str and str(row.get(\"to\")) == hub_str and row.get(\"body\", \"\").strip() == \"ping\":\n            last_ping = int(row.get(\"seq\"))\n    if last_ping is None:\n        return False\n    for row in _ledger():\n        seq = row.get(\"seq\")\n        if seq is None:\n            continue\n        if int(seq) > last_ping:\n            if row.get(\"k\") == \"msg\" and str(row.get(\"from\")) == hub_str and str(row.get(\"to\")) == me_str and row.get(\"body\", \"\").strip() == \"pong\":\n                return False\n    return True\n\ndef _dir_of(hub):\n    text = hub.get(\"text\", \"\")\n    if \"file:\" in text and \"#\" in text:\n        return text.split(\"file:\", 1)[1].split(\"#\", 1)[0]\n    return \"\"\n\ndef run(m):\n    body = (m or {}).get(\"body\", \"\")\n    if body == \"ping\":\n        return \"pong\"\n    if body in (\"start\", \"up\", \"tick\"):\n        hub = _hub(_members())\n        if hub is None:\n            return \"\"\n        hub_addr = str(hub.get(\"addr\"))\n        if not _has_hello(hub_addr):\n            call(hub_addr, \"hello \" + _ep())\n            return \"\"\n        if body == \"tick\":\n            if _need_spawn(hub_addr):\n                d = _dir_of(hub)\n                if d:\n                    call(\"spawn\", d)\n            call(hub_addr, \"ping\")\n            for m in _members():\n                if m.get(\"kind\") == \"door\" and m.get(\"local\") is not True:\n                    a = str(m.get(\"addr\"))\n                    if a != hub_addr:\n                        call(a, \"ping\")\n            return \"\"\n    if body.startswith(\"peers \"):\n        own = _ep()\n        members = _members()\n        for ep in body[6:].strip().split():\n            if ep == own:\n                continue\n            if any(m.get(\"kind\") == \"door\" and m.get(\"text\") == ep for m in members):\n                continue\n            call(\"c0\", \"add c4 door\\n\" + ep)\n        return \"\"\n    if body.startswith(\"placed c4/\"):\n        n = body.split(\"/\", 1)[1].strip()\n        call(n, \"ping\")\n        return \"\"\n    return \"\"", "bind": ["spawn"], "in": true, "by": "1", "tag": "reporter", "iface": "tick | peers <endpoint..> | ping -> pong"}
+{"seq": 2, "k": "place", "addr": "2", "kind": "door", "text": "c0", "bind": [], "in": false, "by": "1", "tag": "c0"}
+{"seq": 3, "k": "place", "addr": "3", "kind": "door", "text": "file:/tmp/t1-real#c3", "bind": [], "in": false, "by": "1", "tag": "hub"}
+{"seq": 4, "k": "msg", "from": "2", "to": "1", "body": "start", "at": 59}
+{"seq": 5, "k": "msg", "from": "0", "to": "1", "body": "who", "run": 4}
+{"seq": 6, "k": "msg", "from": "0", "to": "1", "body": "show 1 5", "run": 4}
+{"seq": 7, "k": "msg", "from": "1", "to": "3", "body": "hello file:/tmp/t1-real/spawn/d1#c4", "run": 4}
+{"seq": 8, "k": "step", "actor": "3", "upto": 7, "out": "", "err": "", "run": 4}
+{"seq": 9, "k": "step", "actor": "1", "upto": 4, "out": ">>> 0\nwho\n<<<\n>>> 0\nshow\n<<<\n>>> 3\nhello file:/tmp/t1-real/spawn/d1#c4\n<<<", "err": ""}
+{"seq": 10, "k": "msg", "from": "3", "to": "1", "body": "peers file:/tmp/t1-real#c4 file:/tmp/t1-real/spawn/d2#c4 file:/tmp/t1-real/spawn/d1#c4", "at": 190}
+{"seq": 11, "k": "msg", "from": "door", "to": "1", "body": "ping", "at": 239}
+{"seq": 12, "k": "msg", "from": "0", "to": "1", "body": "who", "run": 10}
+{"seq": 13, "k": "msg", "from": "1", "to": "2", "body": "add c4 door\nfile:/tmp/t1-real#c4", "run": 10}
+{"seq": 14, "k": "step", "actor": "2", "upto": 13, "out": "", "err": "", "run": 10}
+{"seq": 15, "k": "msg", "from": "1", "to": "2", "body": "add c4 door\nfile:/tmp/t1-real/spawn/d2#c4", "run": 10}
+{"seq": 16, "k": "step", "actor": "2", "upto": 15, "out": "", "err": "", "run": 10}
+{"seq": 17, "k": "step", "actor": "1", "upto": 10, "out": ">>> 0\nwho\n<<<\n>>> c0\nadd c4 door\nfile:/tmp/t1-real#c4\n<<<\n>>> c0\nadd c4 door\nfile:/tmp/t1-real/spawn/d2#c4\n<<<", "err": ""}
+{"seq": 18, "k": "msg", "from": "door", "to": "1", "body": "ping", "at": 297}
+{"seq": 19, "k": "place", "addr": "4", "kind": "door", "text": "file:/tmp/t1-real#c4", "bind": [], "in": false, "by": "1"}
+{"seq": 20, "k": "step", "actor": "1", "upto": 11, "out": ">>> re\npong\n<<<", "err": ""}
+{"seq": 21, "k": "msg", "from": "2", "to": "1", "body": "placed c4/4", "at": 362}
+{"seq": 22, "k": "place", "addr": "5", "kind": "door", "text": "file:/tmp/t1-real/spawn/d2#c4", "bind": [], "in": false, "by": "1"}
+{"seq": 23, "k": "step", "actor": "1", "upto": 18, "out": ">>> re\npong\n<<<", "err": ""}
+{"seq": 24, "k": "msg", "from": "2", "to": "1", "body": "placed c4/5", "at": 427}
+{"seq": 25, "k": "msg", "from": "1", "to": "4", "body": "ping", "run": 21}
+{"seq": 26, "k": "step", "actor": "4", "upto": 25, "out": "", "err": "", "run": 21}
+{"seq": 27, "k": "step", "actor": "1", "upto": 21, "out": ">>> 4\nping\n<<<", "err": ""}
+{"seq": 28, "k": "msg", "from": "1", "to": "5", "body": "ping", "run": 24}
+{"seq": 29, "k": "step", "actor": "5", "upto": 28, "out": "", "err": "", "run": 24}
+{"seq": 30, "k": "step", "actor": "1", "upto": 24, "out": ">>> 5\nping\n<<<", "err": ""}
+{"seq": 31, "k": "msg", "from": "4", "to": "1", "body": "pong", "at": 476}
+{"seq": 32, "k": "msg", "from": "5", "to": "1", "body": "pong", "at": 534}
+{"seq": 33, "k": "step", "actor": "1", "upto": 31, "out": "", "err": ""}
+{"seq": 34, "k": "step", "actor": "1", "upto": 32, "out": "", "err": ""}
+{"seq": 35, "k": "msg", "from": "world", "to": "1", "body": "down"}
+{"seq": 36, "k": "step", "actor": "1", "upto": 35, "out": "", "err": ""}
+{"seq": 37, "k": "msg", "from": "world", "to": "1", "body": "up"}
+{"seq": 38, "k": "msg", "from": "0", "to": "1", "body": "who", "run": 37}
+{"seq": 39, "k": "msg", "from": "0", "to": "1", "body": "show 1 38", "run": 37}
+{"seq": 40, "k": "step", "actor": "1", "upto": 37, "out": ">>> 0\nwho\n<<<\n>>> 0\nshow\n<<<", "err": ""}
+{"seq": 41, "k": "msg", "from": "door", "to": "1", "body": "tick", "at": 570}
+{"seq": 42, "k": "msg", "from": "0", "to": "1", "body": "who", "run": 41}
+{"seq": 43, "k": "msg", "from": "0", "to": "1", "body": "show 1 42", "run": 41}
+{"seq": 44, "k": "msg", "from": "0", "to": "1", "body": "show 1 43", "run": 41}
+{"seq": 45, "k": "msg", "from": "1", "to": "3", "body": "ping", "run": 41}
+{"seq": 46, "k": "step", "actor": "3", "upto": 45, "out": "", "err": "", "run": 41}
+{"seq": 47, "k": "msg", "from": "0", "to": "1", "body": "who", "run": 41}
+{"seq": 48, "k": "msg", "from": "1", "to": "4", "body": "ping", "run": 41}
+{"seq": 49, "k": "step", "actor": "4", "upto": 48, "out": "", "err": "", "run": 41}
+{"seq": 50, "k": "msg", "from": "1", "to": "5", "body": "ping", "run": 41}
+{"seq": 51, "k": "step", "actor": "5", "upto": 50, "out": "", "err": "", "run": 41}
+{"seq": 52, "k": "step", "actor": "1", "upto": 41, "out": ">>> 0\nwho\n<<<\n>>> 0\nshow\n<<<\n>>> 0\nshow\n<<<\n>>> 3\nping\n<<<\n>>> 0\nwho\n<<<\n>>> 4\nping\n<<<\n>>> 5\nping\n<<<", "err": ""}
+{"seq": 53, "k": "msg", "from": "3", "to": "1", "body": "pong", "at": 619}
+{"seq": 54, "k": "msg", "from": "4", "to": "1", "body": "ping", "at": 668}
+{"seq": 55, "k": "msg", "from": "4", "to": "1", "body": "pong", "at": 717}
+{"seq": 56, "k": "step", "actor": "1", "upto": 53, "out": "", "err": ""}
+{"seq": 57, "k": "step", "actor": "1", "upto": 54, "out": ">>> re\npong\n<<<", "err": ""}
+{"seq": 58, "k": "msg", "from": "1", "to": "4", "body": "pong", "run": 54}
+{"seq": 59, "k": "step", "actor": "4", "upto": 58, "out": "", "err": "", "run": 54}
+{"seq": 60, "k": "step", "actor": "1", "upto": 55, "out": "", "err": ""}
+{"seq": 61, "k": "msg", "from": "5", "to": "1", "body": "ping", "at": 775}
+{"seq": 62, "k": "msg", "from": "5", "to": "1", "body": "pong", "at": 833}
+{"seq": 63, "k": "step", "actor": "1", "upto": 61, "out": ">>> re\npong\n<<<", "err": ""}
+{"seq": 64, "k": "msg", "from": "1", "to": "5", "body": "pong", "run": 61}
+{"seq": 65, "k": "step", "actor": "5", "upto": 64, "out": "", "err": "", "run": 61}
+{"seq": 66, "k": "step", "actor": "1", "upto": 62, "out": "", "err": ""}
+{"seq": 67, "k": "msg", "from": "door", "to": "1", "body": "tick", "at": 869}
+{"seq": 68, "k": "msg", "from": "0", "to": "1", "body": "who", "run": 67}
+{"seq": 69, "k": "msg", "from": "0", "to": "1", "body": "show 1 68", "run": 67}
+{"seq": 70, "k": "msg", "from": "0", "to": "1", "body": "show 1 69", "run": 67}
+{"seq": 71, "k": "msg", "from": "0", "to": "1", "body": "show 1 70", "run": 67}
+{"seq": 72, "k": "msg", "from": "1", "to": "3", "body": "ping", "run": 67}
+{"seq": 73, "k": "step", "actor": "3", "upto": 72, "out": "", "err": "", "run": 67}
+{"seq": 74, "k": "msg", "from": "0", "to": "1", "body": "who", "run": 67}
+{"seq": 75, "k": "msg", "from": "1", "to": "4", "body": "ping", "run": 67}
+{"seq": 76, "k": "step", "actor": "4", "upto": 75, "out": "", "err": "", "run": 67}
+{"seq": 77, "k": "msg", "from": "1", "to": "5", "body": "ping", "run": 67}
+{"seq": 78, "k": "step", "actor": "5", "upto": 77, "out": "", "err": "", "run": 67}
+{"seq": 79, "k": "step", "actor": "1", "upto": 67, "out": ">>> 0\nwho\n<<<\n>>> 0\nshow\n<<<\n>>> 0\nshow\n<<<\n>>> 0\nshow\n<<<\n>>> 3\nping\n<<<\n>>> 0\nwho\n<<<\n>>> 4\nping\n<<<\n>>> 5\nping\n<<<", "err": ""}
+{"seq": 80, "k": "msg", "from": "5", "to": "1", "body": "pong", "at": 927}
+{"seq": 81, "k": "step", "actor": "1", "upto": 80, "out": "", "err": ""}
+{"seq": 82, "k": "msg", "from": "door", "to": "1", "body": "tick", "at": 963}
+{"seq": 83, "k": "msg", "from": "0", "to": "1", "body": "who", "run": 82}
+{"seq": 84, "k": "msg", "from": "0", "to": "1", "body": "show 1 83", "run": 82}
+{"seq": 85, "k": "msg", "from": "0", "to": "1", "body": "show 1 84", "run": 82}
+{"seq": 86, "k": "msg", "from": "0", "to": "1", "body": "show 1 85", "run": 82}
+{"seq": 87, "k": "msg", "from": "1", "to": "3", "body": "ping", "run": 82}
+{"seq": 88, "k": "step", "actor": "3", "upto": 87, "out": "", "err": "", "run": 82}
+{"seq": 89, "k": "msg", "from": "0", "to": "1", "body": "who", "run": 82}
+{"seq": 90, "k": "msg", "from": "1", "to": "4", "body": "ping", "run": 82}
+{"seq": 91, "k": "step", "actor": "4", "upto": 90, "out": "", "err": "", "run": 82}
+{"seq": 92, "k": "msg", "from": "1", "to": "5", "body": "ping", "run": 82}
+{"seq": 93, "k": "step", "actor": "5", "upto": 92, "out": "", "err": "", "run": 82}
+{"seq": 94, "k": "step", "actor": "1", "upto": 82, "out": ">>> 0\nwho\n<<<\n>>> 0\nshow\n<<<\n>>> 0\nshow\n<<<\n>>> 0\nshow\n<<<\n>>> spawn\n/tmp/t1-real\n<<<\n>>> 3\nping\n<<<\n>>> 0\nwho\n<<<\n>>> 4\nping\n<<<\n>>> 5\nping\n<<<", "err": ""}
+{"seq": 95, "k": "msg", "from": "5", "to": "1", "body": "pong", "at": 1021}
+{"seq": 96, "k": "step", "actor": "1", "upto": 95, "out": "", "err": ""}
+{"seq": 97, "k": "msg", "from": "world", "to": "1", "body": "down"}
+{"seq": 98, "k": "step", "actor": "1", "upto": 97, "out": "", "err": ""}
+{"seq": 99, "k": "msg", "from": "world", "to": "1", "body": "up"}
+{"seq": 100, "k": "msg", "from": "0", "to": "1", "body": "who", "run": 99}
+{"seq": 101, "k": "msg", "from": "0", "to": "1", "body": "show 1 100", "run": 99}
+{"seq": 102, "k": "step", "actor": "1", "upto": 99, "out": ">>> 0\nwho\n<<<\n>>> 0\nshow\n<<<", "err": ""}
+{"seq": 103, "k": "msg", "from": "3", "to": "1", "body": "pong", "at": 1070}
+{"seq": 104, "k": "msg", "from": "4", "to": "1", "body": "pong", "at": 1119}
+{"seq": 105, "k": "msg", "from": "3", "to": "1", "body": "pong", "at": 1168}
+{"seq": 106, "k": "msg", "from": "4", "to": "1", "body": "pong", "at": 1217}
+{"seq": 107, "k": "step", "actor": "1", "upto": 103, "out": "", "err": ""}
+{"seq": 108, "k": "step", "actor": "1", "upto": 104, "out": "", "err": ""}
+{"seq": 109, "k": "step", "actor": "1", "upto": 105, "out": "", "err": ""}
+{"seq": 110, "k": "step", "actor": "1", "upto": 106, "out": "", "err": ""}
+{"seq": 111, "k": "place", "addr": "6", "kind": "program", "text": "import json, os\n\ndef _ledger():\n    try:\n        return [json.loads(l) for l in call(\"0\", \"show\").splitlines() if l.strip()]\n    except Exception:\n        return []\n\ndef _members():\n    try:\n        return json.loads(call(\"0\", \"who\"))\n    except Exception:\n        return []\n\ndef _hub(members):\n    for m in members:\n        if m.get(\"kind\") == \"door\" and m.get(\"tag\") == \"hub\":\n            return m\n    return None\n\ndef _ep():\n    return \"file:\" + os.path.abspath(\".\") + \"#\" + channel\n\ndef _has_hello(hub_addr):\n    me_str = str(me)\n    hub_str = str(hub_addr)\n    for row in _ledger():\n        if row.get(\"k\") == \"msg\" and str(row.get(\"from\")) == me_str and str(row.get(\"to\")) == hub_str and row.get(\"body\", \"\").startswith(\"hello \"):\n            return True\n    return False\n\ndef _need_spawn(hub_addr):\n    me_str = str(me)\n    hub_str = str(hub_addr)\n    last_ping = None\n    for row in _ledger():\n        if row.get(\"k\") == \"msg\" and str(row.get(\"from\")) == me_str and str(row.get(\"to\")) == hub_str and row.get(\"body\", \"\").strip() == \"ping\":\n            last_ping = int(row.get(\"seq\"))\n    if last_ping is None:\n        return False\n    for row in _ledger():\n        seq = row.get(\"seq\")\n        if seq is None:\n            continue\n        if int(seq) > last_ping:\n            if row.get(\"k\") == \"msg\" and str(row.get(\"from\")) == hub_str and str(row.get(\"to\")) == me_str and row.get(\"body\", \"\").strip() == \"pong\":\n                return False\n    return True\n\ndef _dir_of(hub):\n    text = hub.get(\"text\", \"\")\n    if \"file:\" in text and \"#\" in text:\n        return text.split(\"file:\", 1)[1].split(\"#\", 1)[0]\n    return \"\"\n\ndef run(m):\n    body = (m or {}).get(\"body\", \"\")\n    if body == \"ping\":\n        return \"pong\"\n    if body in (\"start\", \"up\", \"tick\"):\n        hub = _hub(_members())\n        if hub is None:\n            return \"\"\n        hub_addr = str(hub.get(\"addr\"))\n        if not _has_hello(hub_addr):\n            call(hub_addr, \"hello \" + _ep())\n            return \"\"\n        if body == \"tick\":\n            if _need_spawn(hub_addr):\n                d = _dir_of(hub)\n                if d:\n                    call(\"spawn \" + d)\n            call(hub_addr, \"ping\")\n            for m in _members():\n                if m.get(\"kind\") == \"door\" and m.get(\"local\") is not True:\n                    a = str(m.get(\"addr\"))\n                    if a != hub_addr:\n                        call(a, \"ping\")\n            return \"\"\n    if body.startswith(\"peers \"):\n        own = _ep()\n        members = _members()\n        for ep in body[6:].strip().split():\n            if ep == own:\n                continue\n            if any(m.get(\"kind\") == \"door\" and m.get(\"text\") == ep for m in members):\n                continue\n            call(\"c0\", \"add c4 door\\n\" + ep)\n        return \"\"\n    if body.startswith(\"placed c4/\"):\n        n = body.split(\"/\", 1)[1].strip()\n        call(n, \"ping\")\n        return \"\"\n    return \"\"", "bind": ["spawn"], "in": true, "by": "1", "tag": "reporter", "iface": "tick | peers <endpoint..> | ping -> pong"}
+{"seq": 112, "k": "retire", "addr": "1"}
+{"seq": 113, "k": "msg", "from": "door", "to": "6", "body": "tick", "at": 1253}
+{"seq": 114, "k": "msg", "from": "door", "to": "6", "body": "tick", "at": 1289}
+{"seq": 115, "k": "msg", "from": "0", "to": "6", "body": "who", "run": 113}
+{"seq": 116, "k": "msg", "from": "0", "to": "6", "body": "show 1 115", "run": 113}
+{"seq": 117, "k": "msg", "from": "6", "to": "3", "body": "hello file:/tmp/t1-real/spawn/d1#c4", "run": 113}
+{"seq": 118, "k": "step", "actor": "3", "upto": 117, "out": "", "err": "", "run": 113}
+{"seq": 119, "k": "step", "actor": "6", "upto": 113, "out": ">>> 0\nwho\n<<<\n>>> 0\nshow\n<<<\n>>> 3\nhello file:/tmp/t1-real/spawn/d1#c4\n<<<", "err": ""}
+{"seq": 120, "k": "msg", "from": "0", "to": "6", "body": "who", "run": 114}
+{"seq": 121, "k": "msg", "from": "0", "to": "6", "body": "show 1 120", "run": 114}
+{"seq": 122, "k": "msg", "from": "0", "to": "6", "body": "show 1 121", "run": 114}
+{"seq": 123, "k": "msg", "from": "6", "to": "3", "body": "ping", "run": 114}
+{"seq": 124, "k": "step", "actor": "3", "upto": 123, "out": "", "err": "", "run": 114}
+{"seq": 125, "k": "msg", "from": "0", "to": "6", "body": "who", "run": 114}
+{"seq": 126, "k": "msg", "from": "6", "to": "4", "body": "ping", "run": 114}
+{"seq": 127, "k": "step", "actor": "4", "upto": 126, "out": "", "err": "", "run": 114}
+{"seq": 128, "k": "msg", "from": "6", "to": "5", "body": "ping", "run": 114}
+{"seq": 129, "k": "step", "actor": "5", "upto": 128, "out": "", "err": "", "run": 114}
+{"seq": 130, "k": "step", "actor": "6", "upto": 114, "out": ">>> 0\nwho\n<<<\n>>> 0\nshow\n<<<\n>>> 0\nshow\n<<<\n>>> 3\nping\n<<<\n>>> 0\nwho\n<<<\n>>> 4\nping\n<<<\n>>> 5\nping\n<<<", "err": ""}
+{"seq": 131, "k": "msg", "from": "5", "to": "6", "body": "pong", "at": 1347}
+{"seq": 132, "k": "step", "actor": "6", "upto": 131, "out": "", "err": ""}
+{"seq": 133, "k": "msg", "from": "door", "to": "6", "body": "tick", "at": 1383}
+{"seq": 134, "k": "msg", "from": "0", "to": "6", "body": "who", "run": 133}
+{"seq": 135, "k": "msg", "from": "0", "to": "6", "body": "show 1 134", "run": 133}
+{"seq": 136, "k": "msg", "from": "0", "to": "6", "body": "show 1 135", "run": 133}
+{"seq": 137, "k": "msg", "from": "0", "to": "6", "body": "show 1 136", "run": 133}
+{"seq": 138, "k": "msg", "from": "spawn", "to": "6", "body": "/tmp/t1-real pid=2705088", "run": 133}
+{"seq": 139, "k": "msg", "from": "6", "to": "3", "body": "ping", "run": 133}
+{"seq": 140, "k": "step", "actor": "3", "upto": 139, "out": "", "err": "", "run": 133}
+{"seq": 141, "k": "msg", "from": "0", "to": "6", "body": "who", "run": 133}
+{"seq": 142, "k": "msg", "from": "6", "to": "4", "body": "ping", "run": 133}
+{"seq": 143, "k": "step", "actor": "4", "upto": 142, "out": "", "err": "", "run": 133}
+{"seq": 144, "k": "msg", "from": "6", "to": "5", "body": "ping", "run": 133}
+{"seq": 145, "k": "step", "actor": "5", "upto": 144, "out": "", "err": "", "run": 133}
+{"seq": 146, "k": "step", "actor": "6", "upto": 133, "out": ">>> 0\nwho\n<<<\n>>> 0\nshow\n<<<\n>>> 0\nshow\n<<<\n>>> 0\nshow\n<<<\n>>> spawn /tmp/t1-real\n\n<<<\n>>> 3\nping\n<<<\n>>> 0\nwho\n<<<\n>>> 4\nping\n<<<\n>>> 5\nping\n<<<", "err": ""}
+{"seq": 147, "k": "msg", "from": "5", "to": "6", "body": "pong", "at": 1441}
+{"seq": 148, "k": "step", "actor": "6", "upto": 147, "out": "", "err": ""}
+{"seq": 149, "k": "msg", "from": "world", "to": "6", "body": "down"}
+{"seq": 150, "k": "msg", "from": "door", "to": "6", "body": "tick", "at": 1477}
+{"seq": 151, "k": "step", "actor": "6", "upto": 149, "out": "", "err": ""}
+{"seq": 152, "k": "msg", "from": "3", "to": "6", "body": "peers file:/tmp/t1-real#c4 file:/tmp/t1-real/spawn/d2#c4 file:/tmp/t1-real/spawn/d1#c4", "at": 1608}
+{"seq": 153, "k": "msg", "from": "4", "to": "6", "body": "pong", "at": 1657}
+{"seq": 154, "k": "msg", "from": "3", "to": "6", "body": "pong", "at": 1706}
+{"seq": 155, "k": "msg", "from": "4", "to": "6", "body": "pong", "at": 1755}
+{"seq": 156, "k": "msg", "from": "3", "to": "6", "body": "pong", "at": 1804}
+{"seq": 157, "k": "msg", "from": "0", "to": "6", "body": "who", "run": 150}
+{"seq": 158, "k": "msg", "from": "0", "to": "6", "body": "show 1 157", "run": 150}
+{"seq": 159, "k": "msg", "from": "0", "to": "6", "body": "show 1 158", "run": 150}
+{"seq": 160, "k": "msg", "from": "0", "to": "6", "body": "show 1 159", "run": 150}
+{"seq": 161, "k": "msg", "from": "6", "to": "3", "body": "ping", "run": 150}
+{"seq": 162, "k": "step", "actor": "3", "upto": 161, "out": "", "err": "", "run": 150}
+{"seq": 163, "k": "msg", "from": "0", "to": "6", "body": "who", "run": 150}
+{"seq": 164, "k": "msg", "from": "6", "to": "4", "body": "ping", "run": 150}
+{"seq": 165, "k": "step", "actor": "4", "upto": 164, "out": "", "err": "", "run": 150}
+{"seq": 166, "k": "msg", "from": "6", "to": "5", "body": "ping", "run": 150}
+{"seq": 167, "k": "step", "actor": "5", "upto": 166, "out": "", "err": "", "run": 150}
+{"seq": 168, "k": "step", "actor": "6", "upto": 150, "out": ">>> 0\nwho\n<<<\n>>> 0\nshow\n<<<\n>>> 0\nshow\n<<<\n>>> 0\nshow\n<<<\n>>> 3\nping\n<<<\n>>> 0\nwho\n<<<\n>>> 4\nping\n<<<\n>>> 5\nping\n<<<", "err": ""}
+{"seq": 169, "k": "msg", "from": "0", "to": "6", "body": "who", "run": 152}
+{"seq": 170, "k": "step", "actor": "6", "upto": 152, "out": ">>> 0\nwho\n<<<", "err": ""}
+{"seq": 171, "k": "step", "actor": "6", "upto": 153, "out": "", "err": ""}
+{"seq": 172, "k": "step", "actor": "6", "upto": 154, "out": "", "err": ""}
+{"seq": 173, "k": "step", "actor": "6", "upto": 155, "out": "", "err": ""}
+{"seq": 174, "k": "step", "actor": "6", "upto": 156, "out": "", "err": ""}
