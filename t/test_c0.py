@@ -506,8 +506,8 @@ def test_T18_c2_hosts_oracle_guided_synthesis_loop():
         task = [m for m in ms if m["body"].startswith("task\n")][0]
         assert task["from"] == "4" and "run" not in task                                            # 事件，署名真门
         runs = [r for r in rows(rt, "c2", "step") if r["actor"] == "1" and "run" not in r]
-        assert len(runs) == 2 and all(r["err"] == "" for r in runs)                                 # 两次运行：task、placed
-        fr = frames_of(runs[0])
+        assert len(runs) == 3 and all(r["err"] == "" for r in runs)                                 # 三次调用：start（出生，桩不说话）、task、placed
+        fr = frames_of(runs[1])
         assert [h for h, _ in fr] == ["0", "0", "U", "U", "c0"] and fr[4][1].startswith("add c3 program in tag=hello iface=hi -> hello\n")   # 组装两读 + 三个请求
         results = [m["body"] for m in ms if m["from"] == "2" and m["to"] == "1"]
         assert len(results) == 2 and not results[0].startswith("result 0") and results[1].startswith("result 0")   # U：先败后通过，都在运行里
@@ -519,7 +519,7 @@ def test_T18_c2_hosts_oracle_guided_synthesis_loop():
         got = json.loads((me / "in" / "me.jsonl").read_text().splitlines()[-1])
         assert got["body"].startswith("done\n") and got["from"] == f"file:{P}#c2"                    # 发起者真的收到了
         reads = [m["body"] for m in ms if m["from"] == "0"]
-        assert len(reads) == 4 and reads[0].startswith("show 1 ") and reads[1] == "who"               # 每次调用组装读两次：账、成员表
+        assert len(reads) == 6 and reads[0].startswith("show 1 ") and reads[1] == "who"               # 每次调用组装读两次：账、成员表（三次调用）
         c3 = rt.channels["c3"]
         assert c3.actors["1"].text == HELLO and c3.actors["1"].tag == "hello" and c3.actors["1"].iface == "hi -> hello" and rows(rt, "c3", "place")[0]["by"] == "1"
         D = decl_of(rt)
@@ -527,13 +527,13 @@ def test_T18_c2_hosts_oracle_guided_synthesis_loop():
         assert D["channels"][2]["members"][0]["tag"] == "L" and form_of(rt) == declared(D)    # 作者遗传；形态闭包仍成立
         rt.msg("c3", "door", "1", "hi"); rt.run()
         assert ("re", "hello") in frames_of(rows(rt, "c3", "step")[-1])                              # 新器官在工作
-        first = json.loads(L.calls[0]["messages"][0]["content"])
+        first = json.loads(L.calls[1]["messages"][0]["content"])                                     # calls[0] 是出生的 start
         assert set(first) == {"msg", "ledger", "members"} and first["msg"]["body"].startswith("task\n")
         disk = [json.loads(l) for l in (P / "h" / "c2.jsonl").read_text(encoding="utf-8").splitlines()]
         strip = lambda r: {k: v for k, v in r.items() if k != "local"}
         assert [strip(r) for r in first["ledger"]] == disk[:len(first["ledger"])]                     # 带内看到的 = 膜外看到的（门行多一个此刻的 local）
         assert [x["tag"] for x in first["members"]] == ["L", "U", "c0", "me"] and "iface" in first["members"][1]
-        assert len(L.calls[0]["messages"]) == 1 and len(L.calls[2]["messages"]) == 5                  # 多轮：第三次请求带两轮回复
+        assert len(L.calls[1]["messages"]) == 1 and len(L.calls[3]["messages"]) == 5                  # 多轮：task 的第三次请求带两轮回复
     finally:
         L.close()
 
@@ -610,10 +610,10 @@ def test_T22_scripted_L_multi_request_run():
         G = with_L(G2(), L.url)
         rt, P = fresh(G); start(P, G); rt.run()
         rt.msg("c2", "door", "1", "task\nx"); rt.run()
-        run = [r for r in rows(rt, "c2", "step") if r["actor"] == "1" and "run" not in r][0]
+        run = [r for r in rows(rt, "c2", "step") if r["actor"] == "1" and "run" not in r][1]           # [0] 是出生的 start
         heads = [h for h, _ in frames_of(run)]
         assert heads == ["0", "0", "0", "U", "U", "c0", "re"] and run["err"] == ""                # 组装两读 + 五个请求（含一次自己读账）、四轮
-        assert [len(c["messages"]) for c in L.calls] == [1, 3, 5, 7, 1]                              # 对话逐轮增长；placed 是新运行（一轮，没话说）
+        assert [len(c["messages"]) for c in L.calls] == [1, 1, 3, 5, 7, 1]                           # start 一轮；task 对话逐轮增长；placed 是新运行（一轮，没话说）
         ms = rows(rt, "c2", "msg")
         ev = [m for m in ms if m["body"] == "task\nx"][0]
         inrun = [m for m in ms if m.get("run") == ev["seq"]]
@@ -692,9 +692,9 @@ def test_T24_task0_c2_grows_file_and_child_inherits_it():
         assert [x.tag for x in c2.actors.values()] == ["L", "U", "c0", "me"]                           # c2：没有 file
         say(P, "c2", "task\n把 hello 写进 notes.txt 再读回来", frm=f"file:{me}#me"); rt.run()
         runs = [r for r in rows(rt, "c2", "step") if r["actor"] == "1" and "run" not in r]
-        assert len(runs) == 2 and all(r["err"] == "" for r in runs)                                    # 两次调用：task、placed
-        assert [h for h, _ in frames_of(runs[0])] == ["0", "0", "c0"]                                   # 变异：add 进本 channel
-        assert [h for h, _ in frames_of(runs[1])] == ["0", "0", "file", "file", "4"]                    # 用新零件，再 done
+        assert len(runs) == 3 and all(r["err"] == "" for r in runs)                                    # 三次调用：start、task、placed
+        assert [h for h, _ in frames_of(runs[1])] == ["0", "0", "c0"]                                   # 变异：add 进本 channel
+        assert [h for h, _ in frames_of(runs[2])] == ["0", "0", "file", "file", "4"]                    # 用新零件，再 done
         f = c2.actors["5"]
         assert f.tag == "file" and f.iface == FILE_IFACE and f.text == FILE and rows(rt, "c2", "place")[4]["by"] == "1"   # c0 的手放的
         assert (P / "notes.txt").read_text(encoding="utf-8") == "hello"                                # 世界里真的有了

@@ -9,6 +9,8 @@
 #   retire <channel>/<addr>                 退役
 #   spawn …                                 转给 C
 #   decl                                    转给登记员；登记员的回答 decl\n<G> 从门回来后转给 C
+#   rebuild <channel>\n<{name, members, receptionist}>   对账（登记员在 up 时发）：channel.create → exists 跳过；new 才把成员逐个放回去，不再登记（登记处本来就有）
+#   start 长完之后给每扇本机门那边送一句 start（出生 = 父代的 start；醒来 = 世界的 up，两个来源都在账上）；up / down / start 到 A 自己：不做事
 # 每条 syscall 是一次 call：回执就是返回值。落地后送登记员；返回值回请求者。
 # 登记员在 c0 的第一扇内门（who 里 local 的门）那边（G.peers 的第一条是 [c0, c1]）。
 import json
@@ -107,7 +109,16 @@ def run(m):
             call(reg, "born\n" + json.dumps({"world": G["world"], "channels": G["channels"][:1], "peers": []}, ensure_ascii=False))
             for lh, lt, ret in done:
                 register(lh, lt, ret, reg)
+        for a in who():                                          # 发育完成：告诉每个器官它出生了
+            if a["kind"] == "door" and a.get("local") and not a["retired"]:
+                call(a["addr"], "start")
         return
+    if op == "rebuild" and len(t) == 2 and rest.strip():
+        if syscall(f"channel.create {t[1]}")[2] != "new":
+            return f"exists {t[1]}"
+        for line in add_lines(json.loads(rest))[1:]:
+            syscall(line)
+        return f"rebuilt {t[1]}"
     if op == "add" and len(t) >= 3:
         syscall(f"channel.create {t[1]}")
         return place("channel.add.actor " + " ".join(t[1:]) + "\n" + rest)

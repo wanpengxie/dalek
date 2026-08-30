@@ -4,6 +4,7 @@
 #   placed <ch> <addr> <kind> [in] [bind=…] [tag=…] [iface=…]\n<text>    c0 的手放的，带真实地址（出生时长出的其余器官也走这条）
 #   retired <ch>/<addr>
 # 请求 decl（任何人）→ 读账本、折叠、返回 decl\n<G_t>：G₀ ⊕ placed ⊖ retired。
+# 醒来 up（世界发的）→ 对账：对 decl 里每个 channel 经门向 c0 发 rebuild <name>\n<channel>；c0 回 exists / rebuilt，不用管。期望 = 登记处，实际 = R 折的。
 #   channel 按出生 + 首次出现顺序；成员按地址；门就是成员（kind=door，text 原样），不折 peers；接待员显式，没有就没有；
 #   退役的不输出；world 原样来自 born。这就是 π(A_t)：去掉不经 c0 放的门（出生证明、生子的临时门）、去掉退役、地址重排。
 import json
@@ -66,9 +67,17 @@ def decl(G, entries):
 
 
 def run(m):
-    if m["body"].strip() != "decl":
+    body = m["body"].strip()
+    if body not in ("decl", "up"):
         return
     rows = [json.loads(l) for l in call("0", "show").splitlines() if l]
     G, entries = fold(rows)
-    if G:
-        return "decl\n" + json.dumps(decl(G, entries), ensure_ascii=False)
+    if not G:
+        return
+    D = decl(G, entries)
+    if body == "decl":
+        return "decl\n" + json.dumps(D, ensure_ascii=False)
+    c0 = next((a["addr"] for a in json.loads(call("0", "who")) if a["kind"] == "door" and a.get("local") and not a["retired"]), None)
+    if c0:
+        for c in D["channels"]:
+            call(c0, f"rebuild {c['name']}\n" + json.dumps(c, ensure_ascii=False))

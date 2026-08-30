@@ -22,6 +22,9 @@ call 的地址
 账本    每次 call 两行 msg（请求、返回）；每次调用一行 step（out = 它发出的每个 call，加一帧 re = 它的返回值；err = 异常）。
         实例化失败的成员每次被调用都 err；调用抛异常也 err——器官的失败不是机器的失败。
 接待员  只由 place 行的 in 决定，没有默认：G 不写就没有（外来消息落空）。
+起停    醒来：折叠 H 后若已出生，每个有接待员的 channel 记一行 msg world→接待员 up（第几条 up = 第几次 incarnation；重启 = 重新实例化，Σ 归零）。
+        停下：SIGTERM → 每个 channel 记一行 down → 跑到静止 → 退出。硬杀 = 有 up 没 down；没写 step 行的消息重启后重跑（at-least-once）。
+        channel 存在 ⇔ 账本至少一条 place 行；空账本（损伤）= 不存在，create 返回 new。
 入口    每个 channel 一个收件箱 in/<name>.jsonl（Port 的接收侧）：一行 → msg 给接待员（事件），署名指回发信端点的门（没有则 door）。
         根收件箱 in/_root.jsonl 在 channel 之前存在：开着 ⇔ 所有账本无 msg 行。开着时接受两个 syscall（by=_root）
         和 msg <channel>（第一条消息，顺手关门）。关门后忽略。
@@ -31,7 +34,7 @@ call 的地址
 它不认识任何组织词汇。检验：把 G 里所有名字换掉，本文件的行为逐字节不变。
 """
 from __future__ import annotations
-import json, os, time, traceback
+import json, os, signal, time, traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from omega import Exec, Store, Port
@@ -40,6 +43,7 @@ from omega import Exec, Store, Port
 KINDS = ("program", "door")
 ROOT = "_root"
 LEDGER = "0"                                   # 每个 channel 的读地址：写给它 = 读它；不是成员，不放、不退、不遗传
+WORLD = "world"                                # 起停的署名：up / down 是世界说的，不是成员说的
 
 
 def _spawn(P: Path, d: str) -> str:
@@ -91,6 +95,7 @@ class Runtime:
         self.offsets: dict[str, int] = {}
         self._events: list[int] = []           # 正在处理的事件（调用栈的根）
         self._calls: list[list[str]] = []      # 每层调用发出的 call（写进 step.out）
+        self._stopping = False                       # down 之后：静止即退出
 
     # ------------------------------------------------------------ 端点
     def ep(self, box: str) -> str:
@@ -108,11 +113,31 @@ class Runtime:
         return self.h / f"{name}.jsonl"
 
     def load(self) -> "Runtime":
-        for name in Store.read(self.h / "_order").split():
+        """纯折叠：不写任何行。channel 存在 ⇔ 它的账本至少一条 place 行（不看 _order）。"""
+        for name in dict.fromkeys(Store.read(self.h / "_order").split()):
+            lines = Store.read(self._path(name)).splitlines()
+            if not any(json.loads(l)["k"] == "place" for l in lines):
+                continue                                                # 空账本 = 不存在（损伤或从未放过）
             c = self.channels[name] = Channel(name)
-            for line in Store.read(self._path(name)).splitlines():
+            for line in lines:
                 self._fold(c, json.loads(line))
         return self
+
+    def wake(self) -> "Runtime":
+        """醒来入账：已出生（根门已关）的机器，每个有接待员的 channel 追加 msg world→接待员 "up"。第几条 up = 第几次 incarnation。
+        重启 = 重新折叠 = 重新实例化每个 actor（Σ 归零），这一行让它在 H 里可见。未出生不发：出生的第一条消息是父代的 start。"""
+        if not self.root_open:
+            for c in list(self.channels.values()):
+                if c.receptionist is not None:
+                    self.msg(c.name, WORLD, c.receptionist, "up")
+        return self
+
+    def down(self) -> None:
+        """停下入账：每个有接待员的 channel 追加 "down"；之后 run 跑到静止即退出（各器官对 down 做什么由 G 定）。"""
+        self._stopping = True
+        for c in list(self.channels.values()):
+            if c.receptionist is not None:
+                self.msg(c.name, WORLD, c.receptionist, "down")
 
     def _append(self, c: Channel, row: dict) -> dict:
         row = {"seq": c.seq + 1, **row}
@@ -170,7 +195,8 @@ class Runtime:
         if name in self.channels:
             return "exists"
         self.channels[name] = Channel(name)
-        Store.append(self.h / "_order", name)
+        if name not in Store.read(self.h / "_order").split():
+            Store.append(self.h / "_order", name)
         return "new"
 
     def add(self, channel: str, kind: str, text: str, bind=(), receptionist: bool = False, by: str = ROOT,
@@ -232,7 +258,8 @@ class Runtime:
     def _receive(self, box: str, p: dict, at: int) -> None:
         sender, body = p.get("from", ""), p.get("body", "")
         if box != ROOT:
-            self._inbound(self.channels[box], sender, body, at)
+            if box in self.channels:
+                self._inbound(self.channels[box], sender, body, at)
             return
         if not self.root_open:
             return                                                     # 关门后全部忽略
@@ -345,7 +372,10 @@ class Runtime:
 
     # ------------------------------------------------------------ 驱动
     def run(self, max_steps: int = 10_000, serve: bool = False, poll: float = 0.2) -> int:
+        """驱动到静止。serve：静止后轮询收件箱；收到 SIGTERM → down 入账 → 跑到静止 → 返回（外面只给信号，停是账上的事）。"""
         steps = 0
+        if serve:
+            signal.signal(signal.SIGTERM, lambda *_: self.down())
         while steps < max_steps:
             self.drain()
             progressed = False
@@ -360,7 +390,7 @@ class Runtime:
                 if best:
                     self._invoke(c, best[0], best[1]); steps += 1; progressed = True
             if not progressed:
-                if not serve:
+                if not serve or self._stopping:
                     break
                 time.sleep(poll)
         return steps

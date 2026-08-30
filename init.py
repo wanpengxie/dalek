@@ -1,4 +1,4 @@
-"""loader 的入口。没有 boot：起 R，折叠已有账本，根门开着，等。
+"""loader 的入口。没有 boot：起 R，折叠已有账本（已出生则 up 入账），根门开着，等。
 
     python init.py <P> [--serve]     起这台机器；--serve 静止后持续轮询收件箱
 不读 G，不放任何 actor。第一个动作来自膜外（根门）。
@@ -14,7 +14,8 @@ from runtime import Runtime, ROOT   # noqa: E402
 
 
 def up(P: Path) -> Runtime:
-    return Runtime(P).load()
+    """起 R：折叠 H；已出生的机器醒来入账（up）。"""
+    return Runtime(P).load().wake()
 
 
 def root(P: Path, body: str, frm: str = "creator") -> None:
