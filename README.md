@@ -25,7 +25,7 @@ G 里两个 channel：`c0`（构造）和 `c1`（登记，`actors/registrar.py`�
 ## 跑
 
 ```
-python3 t/test_c0.py                 # T1–T7
+python3 t/test_c0.py                 # T0–T12
 python3 genesis.py                   # 重新生成 G.json
 python3 init.py <P> [--serve]        # 起 R；--serve 静止后持续轮询收件箱
 ```
@@ -33,7 +33,7 @@ python3 init.py <P> [--serve]        # 起 R；--serve 静止后持续轮询收�
 ## 状态
 
 - 2026-08-29：Ω、R（含根门）、c0（realize + spawn）、genesis；T1–T7 绿（转移表、syscall、门、根门开关、请求、内容盲、父代的 A 经门造子代 + start 切离）。
-- 2026-08-30：发育版（父代只造 c0，子代的 c0 长其余）；三层命名 Ω / world{ω-bind, loader, R} / dalek；M2：c1 登记员（`actors/registrar.py`，只折自己的账本）、`decl`、第三个 syscall `channel.retire.actor`、视图带成员表、C 的 pack 用 decl；T0–T11 绿。
+- 2026-08-30：发育版（父代只造 c0，子代的 c0 长其余）；三层命名 Ω / world{ω-bind, loader, R} / dalek；M2：c1 登记员（`actors/registrar.py`，只折自己的账本）、`decl`、第三个 syscall `channel.retire.actor`、视图带成员表、C 的 pack 用 decl；T0–T11 绿；M2.1：接待员显式、R 拒绝自退役/退役接待员、门是成员、c1 只认 c0 的事实，π(A) ≅ G；T0–T12 绿。
 - 待：c2（L + U 的 coding agent）、oracle 端点（LLM / 人）、M4 的 up/down 与对账、replay、c3（www）。
 
 ## 文件

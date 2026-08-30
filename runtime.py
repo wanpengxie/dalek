@@ -14,8 +14,10 @@
   >>> channel.create <name>                                  syscall；需 bind=syscall
   >>> channel.add.actor <channel> <kind> [in] [bind=…] + text  syscall；需 bind=syscall
   >>> channel.retire.actor <channel>/<addr>                  syscall：退役（追加 retire 行，不再排步，地址不复用）；需 bind=syscall
+                                                             拒绝：退役自己、退役当前接待员（先放新的带 in）
   >>> <动词> <参数>                                            绑定了的 world 动词（ACTIONS 表：起一台机器 / 停一个进程，用 Ω 实现）；需 bind=<动词>
   返回都是一条 msg：from=<动作名>。其他一律忽略。
+接待员  只由 place 行的 in 决定，没有默认：G 不写就没有（外来消息落空）。
 入口    每个 channel 一个收件箱 in/<name>.jsonl（Port 的接收侧）：一行 → msg 给接待员，署名指回发信端点的门（没有则 door）。
         根收件箱 in/_root.jsonl 在 channel 之前存在：开着 ⇔ 所有账本无 msg 行。开着时接受两个 syscall（by=_root）
         和 msg <channel>（第一条消息，顺手关门）。关门后忽略。
@@ -116,8 +118,8 @@ class Runtime:
         k = row["k"]
         if k == "place":
             c.actors[row["addr"]] = Actor(row["addr"], row["kind"], row["text"], tuple(row.get("bind", ())))
-            if row.get("in") or c.receptionist is None:
-                c.receptionist = row["addr"]
+            if row.get("in"):
+                c.receptionist = row["addr"]                # 没有默认：接待员只由显式 in 决定
         elif k == "retire":
             a = c.actors.get(row["addr"])
             if a:
@@ -148,9 +150,11 @@ class Runtime:
                          "bind": [b for b in bind if b in BINDS], "in": bool(receptionist), "by": by})
         return addr
 
-    def retire(self, channel: str, addr: str) -> bool:
+    def retire(self, channel: str, addr: str, by: str) -> bool:
         c = self.channels.get(channel)
         if not c or addr not in c.actors or c.actors[addr].retired:
+            return False
+        if addr == by or addr == c.receptionist:            # 器官不能记下自己的死亡；接待员先换再退
             return False
         self._append(c, {"k": "retire", "addr": addr})
         return True
@@ -169,7 +173,7 @@ class Runtime:
             return ("channel.add.actor", f"{t[1]}/{addr}") if addr else None
         if t and t[0] == "channel.retire.actor" and len(t) == 2 and "/" in t[1]:
             ch, _, addr = t[1].partition("/")
-            return ("channel.retire.actor", t[1]) if self.retire(ch, addr) else None
+            return ("channel.retire.actor", t[1]) if self.retire(ch, addr, by) else None
         return None
 
     # ------------------------------------------------------------ 入口
