@@ -1,4 +1,4 @@
-"""R 的入口。boot 不存在：起运行时，根门开着，等。
+"""loader 的入口。没有 boot：起 R，折叠已有账本，根门开着，等。
 
     python init.py <P> [--serve]     起这台机器；--serve 静止后持续轮询收件箱
 不读 G，不放任何 actor。第一个动作来自膜外（根门）。
@@ -13,8 +13,8 @@ from omega import Port          # noqa: E402
 from runtime import Runtime, ROOT   # noqa: E402
 
 
-def boot(P: Path, oracle=None) -> Runtime:
-    return Runtime(P, oracle=oracle).load()
+def up(P: Path) -> Runtime:
+    return Runtime(P).load()
 
 
 def root(P: Path, body: str, frm: str = "creator") -> None:
@@ -28,4 +28,4 @@ def say(P: Path, channel: str, body: str, frm: str = "creator") -> None:
 
 
 if __name__ == "__main__":
-    boot(Path(sys.argv[1]).resolve()).run(serve="--serve" in sys.argv)
+    up(Path(sys.argv[1]).resolve()).run(serve="--serve" in sys.argv)

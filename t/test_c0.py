@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from omega import Exec, Store                       # noqa: E402
 from runtime import Runtime                         # noqa: E402
-from init import boot, root as root_line            # noqa: E402
+from init import up, root as root_line            # noqa: E402
 from genesis import G0, pack, construct, start      # noqa: E402
 
 ECHO = ('import sys, json\nv = json.load(sys.stdin)\n'
@@ -40,7 +40,7 @@ def G_of(channels, peers=()):
 
 def fresh(G: dict, creator="human"):
     P = pack(G, Path(tempfile.mkdtemp(prefix="dalek-")))
-    rt = boot(P)
+    rt = up(P)
     assert rt.channels == {}                                   # R 起来：零 channel，零 actor
     construct(P, G, creator); rt.run()
     return rt, P
