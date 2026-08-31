@@ -131,7 +131,9 @@ M4 的验收不需要作者参与，故为机制层实验（确定性，可无�
 | 2 | `[0, 0, U, c0]` | 写出 C（2112 字）→ `U run` 验证能 exec（`result 0`）→ 经门 `add c0 program bind=syscall,spawn,stop tag=C` |
 | 3 | `[0, 0, me]` | `placed c0/C` 到来是新的一次调用 → 回 `done` 给发起者 |
 
-随后 `spawn kid` 拿到回执 `spawn/kid pid=…`，子代起来、发育完成；**子代继承的 C 与父代逐字相同**，bind 一致，`decl(child) == decl(parent)`。全程约 4 分钟。
+随后 `spawn kid` 拿到回执 `spawn/kid pid=…`，子代起来、发育完成；**子代继承的 C 与父代逐字相同**（2112 字），bind 一致，`decl(child) == decl(parent)`。全程约 4 分钟。
+
+**遗传的是能力，不只是文本（同日补验）**：把子代起来，向它的 c0 发 `spawn grand`——它**用继承来的那段 C** 生出了孙代（回执 `spawn/grand pid=…`），孙代的 C 与子代逐字相同、bind 一致、`decl(孙代) == decl(子代)`。**三代都带着作者写的这段 C,而且每一代都用它繁殖过**。账本：父 `runs/restore-deepseek-{c0,c1,c2}.jsonl`，子 `runs/restore-deepseek-kid-{c0,c1}.jsonl`，孙 `runs/restore-deepseek-grand-c0.jsonl`。这一步把"补回来的器官"从"在基因组里"抬到了"在谱系里持续工作"——与 T29 换 world 的不动点验收同一形状：**新写的东西必须自己能撑起下一次繁殖，才算真的补上了。**
 
 **值得记的三点**：
 1. **无特权的作者造出了有特权的器官**。c2 的 L 和 U 都 `bind=[]`，但它请求的 `add` 带 `bind=syscall,spawn,stop`，c0 照办——特权由 c0 授予，而当前的 A 对请求不做判断。要判断就是 A 的 policy（第一层），不是 R 的事。
