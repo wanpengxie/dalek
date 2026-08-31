@@ -114,6 +114,34 @@ M4 的验收不需要作者参与，故为机制层实验（确定性，可无�
 
 ---
 
+## E5 · 完整性由 D 维护：丢掉的器官被重新写回来
+
+**命题**：完整的 Dalek = A + B + C + D（c0 = A+C 构造器与控制器，c1 = B 档案馆，c2 = D 能力构造器，加上把它们连起来的门）。**组织完整性不由 R 保证，由 D 维护**：丢一个器官，机器不是死了，而是"暂时不完整"，D 能把它写回来。这是与 VN48 最直接的分别——冯诺依曼的机器掉一个零件就是死的。
+
+**方法**：退掉 c0 的 C（负责繁殖与关机的器官），观察繁殖能力消失，然后让 c2 自己把它写回来，再繁殖一次。
+关键的方法学前提（实测确认）：退役成员的 text **取不回来**——`decl` 折叠时跳过退役者，而 `0` 是本 channel 的读地址，c2 读不到 c0 的账本。所以"恢复"必须是**重新创作**，不是从某处抄回。
+
+**E5-a（机制层，T33，确定性）**：桩 L 走完整条路。断言链：退役后 `decl` 的 c0 只剩 [A, c1, c2] → `spawn kid` 落空（无 `from=spawn` 回执、无目录）→ c2 经 U 验证候选、经门请 c0 `add c0 program bind=syscall,spawn,stop tag=C` → C 回到形态与基因组 → 再 `spawn` 成功 → 子代继承重写的 C，`decl(child) == decl(parent)`。
+
+**E5-b（真模型，2026-09-01 15:16–15:20，deepseek-v4-pro）**：账本在 `runs/restore-deepseek-{c0,c1,c2}.jsonl`，驱动 `runs/drivers/run_restore.py`。任务只给**协议规格**（C 必须实现的两步：收 `spawn <name>` 先要 decl；收 `decl\n<G>` 再 pack、起子代、放两扇门、请 A build、发 start、回执），不给旧源码。三次调用完成：
+
+| 调用 | 帧 | 做了什么 |
+|---|---|---|
+| 1 | `[0, 0]` | 读账、读成员表（task 到达时的组装） |
+| 2 | `[0, 0, U, c0]` | 写出 C（2112 字）→ `U run` 验证能 exec（`result 0`）→ 经门 `add c0 program bind=syscall,spawn,stop tag=C` |
+| 3 | `[0, 0, me]` | `placed c0/C` 到来是新的一次调用 → 回 `done` 给发起者 |
+
+随后 `spawn kid` 拿到回执 `spawn/kid pid=…`，子代起来、发育完成；**子代继承的 C 与父代逐字相同**，bind 一致，`decl(child) == decl(parent)`。全程约 4 分钟。
+
+**值得记的三点**：
+1. **无特权的作者造出了有特权的器官**。c2 的 L 和 U 都 `bind=[]`，但它请求的 `add` 带 `bind=syscall,spawn,stop`，c0 照办——特权由 c0 授予，而当前的 A 对请求不做判断。要判断就是 A 的 policy（第一层），不是 R 的事。
+2. **作者写出的 C 与原版不同但等价**：它用 `0` 的 `who` 找接待员（原版用第一扇 local 门的启发式），`spawns[len(receipts):]` 取未办请求（原版按计数比较），`os.path.dirname` 处理嵌套路径（原版没有）。协议对了，实现是它自己的。
+3. **R 的"不能退役当前接待员"这条结构规则，恰好保住了三个 channel 的门面**（A、登记员、L）：唯一能丢的核心器官是 C 和 U——都是"手"，不是"嘴"。R 保护入口，不保护能力；能力的完整性归 D。
+
+**边界**：桩版（E5-a）里作者吐出的是一段已知可用的 C，检验的是路径；真模型版（E5-b）检验的是作者能不能照规格写出来——**规格是给的**，"机器自己发现缺了什么、自己决定要补"不在本实验内（那是 policy，见 H19）。n=1。
+
+---
+
 ## 复现
 
 ```
@@ -121,6 +149,7 @@ python3 runs/drivers/run_real.py  <key>     # E1：起机、发 task、打印 c2
 python3 runs/drivers/run_task1.py <key>     # E2-b：全链路（写器官 → spawn → 自组织 → 杀 → 唤醒）
 python3 runs/drivers/run_task1b.py          # E2-b 续跑：唤醒三台 + 心跳 + 终局（不再调模型写码）
 python3 runs/drivers/run_task1c.py          # E2-c：修复任务 + 终局（d1 的 c2 换 reporter；要 key 在机器 G 里）
+python3 runs/drivers/run_restore.py <key>   # E5-b：退掉 C → c2 照规格重写 → 繁殖恢复 → 子代继承
 python3 t/test_c0.py                        # 机制层：T24=E1；T25/T26/T28/T31=E3；T27=E2；T29=E4；31/31
 ```
 
