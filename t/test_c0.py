@@ -769,6 +769,47 @@ def test_T26_local_damage_rebuilt_from_registry():
     assert decl_of(rt2) == D                                                               # 期望 == 实际
 
 
+def test_T28_process_level_stop_and_respawn_same_individual():
+    import os, signal
+    def gone(pid, timeout=10.0):
+        t0 = time.time()
+        while time.time() - t0 < timeout:                      # killpg(pid, 0) 会把僵尸当活的：父进程是我们，得 waitpid 收尸
+            try:
+                w, _ = os.waitpid(pid, os.WNOHANG)
+                if w == pid: return True
+            except ChildProcessError:
+                return True
+            time.sleep(0.1)
+        return False
+    G = G0(); G["channels"].append({"name": "x", "members": [{"kind": "program", "text": ECHO}], "receptionist": 1}); G["peers"].append(["c0", "x"])
+    P = pack(G, Path(tempfile.mkdtemp(prefix="dalek-")))
+    pid = Exec.spawn(["init.py", str(P), "--serve"], cwd=P, log=P / "log")
+    try:
+        construct(P, G); start(P, G)
+        wait_child(P, lambda c: "x" in c.channels and rows(c, "x", "step"))                       # 出生、发育、x 收到 start
+        say(P, "x", "hi")
+        wait_child(P, lambda c: any(r["body"] == "hi" for r in rows(c, "x", "msg")) and rows(c, "x", "step")[-1]["upto"] >= [r for r in rows(c, "x", "msg") if r["body"] == "hi"][0]["seq"])
+        os.killpg(pid, signal.SIGTERM)                                                            # 外面只给信号
+        assert gone(pid)                                                                          # down 入账 → 静止 → 退出
+        rt = Runtime(P).load()
+        assert [r["body"] for r in rows(rt, "x", "msg") if r["from"] == "world"] == ["down"]      # 优雅停：账上有 down
+        D1 = decl_of(rt)                                                                          # 机器死了，膜外读它的基因组
+        say(P, "x", "late")                                                                       # 休眠中的来信：躺在收件箱等它醒
+        pid = Exec.spawn(["init.py", str(P), "--serve"], cwd=P, log=P / "log")                    # 同一个 P 再起 = 同一个体醒来
+        wait_child(P, lambda c: [r["body"] for r in rows(c, "x", "msg") if r["from"] == "world"] == ["down", "up"]
+                   and any(r["body"] == "late" for r in rows(c, "x", "msg"))
+                   and rows(c, "x", "step")[-1]["upto"] >= [r for r in rows(c, "x", "msg") if r["body"] == "late"][0]["seq"])   # 醒来入账；来信被处理
+        os.killpg(pid, signal.SIGTERM); assert gone(pid)
+        rt2 = Runtime(P).load()
+        assert [r["body"] for r in rows(rt2, "x", "msg") if r["from"] == "world"] == ["down", "up", "down"]   # 第几条 up = 第几次 incarnation
+        assert rows(rt2, "x", "place") == rows(rt, "x", "place") and decl_of(rt2) == D1           # 同一个体：形态一行没变
+        hi = [r for r in rows(rt2, "x", "msg") if r["body"] == "hi"][0]
+        assert rt2.channels["x"].cursor["1"] >= hi["seq"] and rt.channels["x"].cursor["1"] >= hi["seq"]   # 游标折出来，跨进程不丢
+    finally:
+        try: os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+
+
 # ---------------------------------------------------------------- M3 任务 1：自组织（种群）+ M4 远端维护
 HUB = (ROOT / "actors" / "hub.py").read_text(encoding="utf-8").rstrip("\n")
 REPORTER = (ROOT / "actors" / "reporter.py").read_text(encoding="utf-8").rstrip("\n")
