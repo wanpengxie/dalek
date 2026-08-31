@@ -810,6 +810,56 @@ def test_T28_process_level_stop_and_respawn_same_individual():
         except ProcessLookupError: pass
 
 
+# ---------------------------------------------------------------- 换 world 的自举不动点：换打包器官 C′，谱系换 R，个体不换
+def CP() -> str:
+    """C′ = spawn.py + pack 前给 G.world["runtime.py"] 打标记（幂等）。世界变异从打包器官进入。"""
+    src = (ROOT / "actors" / "spawn.py").read_text(encoding="utf-8")
+    a = '    G = json.loads(rest); d = os.path.join("spawn", name); os.makedirs(d, exist_ok=True)\n'
+    patch = (a +
+             '    w = G["world"]["runtime.py"]\n'
+             '    if \'"w": 2\' not in w:\n'
+             '        G["world"]["runtime.py"] = w.replace(\'{"seq": c.seq + 1, **row}\', \'{"seq": c.seq + 1, "w": 2, **row}\')\n')
+    assert a in src
+    return src.replace(a, patch)
+
+
+def test_T29_lineage_changes_the_world_individual_cannot():
+    import os, signal
+    G = G0()
+    rt, P = fresh(G); start(P, G); rt.run()
+    cp = CP()
+    rt.msg("c0", "door", "1", "add c0 program tag=C bind=syscall,spawn\n" + cp); rt.run()      # 变异：C′ 同角色接替
+    rt.msg("c0", "door", "1", "retire c0/2"); rt.run()                                          # 采纳：退旧打包器
+    assert rt.channels["c0"].actors["2"].retired and rt.channels["c0"].actors["5"].tag == "C"
+    rt.msg("c0", "door", "1", "spawn w2"); rt.run()                                             # 普通地生：走的已是 C′
+    d = P / "spawn" / "w2"
+    pid = int([m for m in rows(rt, "c0", "msg") if m["from"] == "spawn"][0]["body"].split("pid=")[1])
+    pid2 = None
+    try:
+        child = wait_child(d, lambda c: "c1" in c.channels and len(rows(c, "c1", "msg")) >= 3)
+        assert all("w" not in r for c in rt.channels.values() for r in c.rows)                  # 个体不可改：父代的行没有标记
+        assert '"w": 2' in (d / "runtime.py").read_text(encoding="utf-8")                       # 子代的 world 是 R′
+        for cn in ("c0", "c1"):
+            assert all(r.get("w") == 2 for r in child.channels[cn].rows)                        # 子代的每一行都是 R′ 写的
+        kc = next(a for a in child.channels["c0"].actors.values() if a.tag == "C" and not a.retired)
+        assert kc.text == cp and "spawn" in kc.bind                                            # 子代的打包器 = 继承的 C′（地址重排，角色不变）
+        time.sleep(0.5)
+        D = decl_of(child)
+        assert '"w": 2' in D["world"]["runtime.py"]                                             # 变异进了登记处：谱系可遗传
+        say(d, "c0", "spawn w2g")                                                               # 不动点：R′ 上繁殖仍成立
+        g = d / "spawn" / "w2g"
+        grand = wait_child(g, lambda c: "c1" in c.channels and len(rows(c, "c1", "msg")) >= 3)
+        pid2 = int([m for m in rows(wait_child(d, lambda c: any(m["from"] == "spawn" for m in rows(c, "c0", "msg"))), "c0", "msg") if m["from"] == "spawn"][0]["body"].split("pid=")[1])
+        assert '"w": 2' in (g / "runtime.py").read_text(encoding="utf-8")                       # 孙代继承 world′
+        assert all(r.get("w") == 2 for r in grand.channels["c0"].rows)
+        assert next(a for a in grand.channels["c0"].actors.values() if a.tag == "C" and not a.retired).text == cp   # 孙代的打包器还是 C′（幂等空转）
+    finally:
+        for x in (pid, pid2):
+            if x:
+                try: os.killpg(x, signal.SIGTERM)
+                except ProcessLookupError: pass
+
+
 # ---------------------------------------------------------------- M3 任务 1：自组织（种群）+ M4 远端维护
 HUB = (ROOT / "actors" / "hub.py").read_text(encoding="utf-8").rstrip("\n")
 REPORTER = (ROOT / "actors" / "reporter.py").read_text(encoding="utf-8").rstrip("\n")
