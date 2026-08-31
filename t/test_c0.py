@@ -28,6 +28,7 @@ T28 进程级 SIGTERM/down、休眠来信、respawn/up，形态和游标不丢
 T30 R 分配唯一 tag（t/t1/t2）；retire 形成空洞后损伤、rebuild、再按 tag retire，实际形态与 c1 声明一致
 T31 无接待员 channel 重启后成员确实重新实例化（Σ 归零），但物理只留在根 channel
 T32 关机三层：外部 kill 不写 down（异常终止），经门 stop → A → C → stop 动词 → 根边界 down → 自行退出
+T33 完整性由 D 维护：退掉 C → 生不出子代 → c2 重新写一个装回去 → 又能生，子代继承新的 C
 """
 from __future__ import annotations
 import json, re, sys, tempfile, time, traceback
@@ -915,6 +916,68 @@ def test_T32_external_kill_is_not_a_legal_stop():
     finally:
         try: os.killpg(pid, signal.SIGKILL)
         except ProcessLookupError: pass
+
+
+# ---------------------------------------------------------------- 完整性由 D 维护：丢了器官，作者把它写回来
+CSRC = (ROOT / "actors" / "spawn.py").read_text(encoding="utf-8")
+CIFACE = "spawn <name> -> spawned <dir> door=<tag> | stop -> stopping"
+
+
+class RestoreL(StubL):
+    """补器官的 L：收 task → 让 U 体外验一遍候选（能 exec 出来）→ 经 c0 的门把它装回 c0，并要回它该有的能力 → placed 到来再回话。
+    桩替作者吐出一段已知可用的 C；"作者能不能自己写出来"由真模型版检验（EXPERIMENTS E5）。"""
+    @staticmethod
+    def answer(messages):
+        n = len(messages); view = json.loads(messages[0]["content"]); b = view["msg"]["body"]
+        if b.startswith("task\n"):
+            if n == 1:
+                return f">>> U\nrun\n{CSRC}\n<<<"
+            r = json.loads(messages[-1]["content"])[0]
+            if r["to"] == "U" and r["reply"].startswith("result 0"):
+                return f">>> c0\nadd c0 program bind=syscall,spawn,stop tag=C iface={CIFACE}\n{CSRC}\n<<<"
+            return ""
+        if b.startswith("placed c0/C"):
+            asker = next(x["from"] for x in view["ledger"] if x["k"] == "msg" and x["body"].startswith("task\n"))
+            return f">>> {asker}\ndone\nC 已重新写好并装回 c0\n<<<"
+        return ""
+
+
+def test_T33_a_lost_organ_is_re_authored_by_D():
+    """VN 的机器掉了零件就是死的；完整的 Dalek 不是——组织完整性不由 R 保证，由 D 维护。
+    退掉 C（繁殖与关机的器官）→ 机器生不出子代 → c2 自己写一个装回去 → 机器重新能生，子代继承新的 C。"""
+    import os, signal
+    L = RestoreL(); pid = None
+    try:
+        G = with_L(G2(), L.url)
+        rt, P = fresh(G); start(P, G); rt.run()
+        me = Path(tempfile.mkdtemp(prefix="me-"))
+        rt.msg("c0", "door", "1", f"add c2 door tag=me\nfile:{me}#me"); rt.run()
+        rt.msg("c0", "door", "1", "retire c0/C"); rt.run()                                   # 器官丢失
+        assert [m.get("tag") for m in decl_of(rt)["channels"][0]["members"]] == ["A", "c1", "c2"]   # 基因组里 C 没了
+        rt.msg("c0", "door", "1", "spawn kid"); rt.run()                                     # 繁殖能力没了
+        assert not any(r["from"] == "spawn" for r in rows(rt, "c0", "msg")) and not (P / "spawn").exists()
+        D0 = decl_of(rt)
+        assert not any(CSRC == m["text"] for c in D0["channels"] for m in c["members"])       # 旧 text 不在 c2 拿得到的描述里
+        say(P, "c2", "task\n本机缺了 tag=C 的器官（繁殖与关机），写一个装回 c0", frm=f"file:{me}#me"); rt.run()
+        cs = [a for a in rt.channels["c0"].actors.values() if a.tag == "C" and not a.retired]
+        assert len(cs) == 1 and cs[0].bind == ("syscall", "spawn", "stop")                    # 无特权的作者，造出了有特权的器官
+        assert cs[0].text == CSRC and [r for r in rows(rt, "c0", "place") if r.get("tag") == "C"][-1]["by"] == "1"   # c0 的手放的
+        assert json.loads((me / "in" / "me.jsonl").read_text().splitlines()[-1])["body"].startswith("done\n")
+        D1 = decl_of(rt)
+        assert [m.get("tag") for m in D1["channels"][0]["members"]] == ["A", "c1", "c2", "C"] # 补回来的进了基因组
+        rt.msg("c0", "door", "1", "spawn kid"); rt.run()                                     # 繁殖能力回来了
+        d = P / "spawn" / "kid"
+        pid = int([m for m in rows(rt, "c0", "msg") if m["from"] == "spawn"][0]["body"].split("pid=")[1])
+        child = wait_child(d, lambda c: "c2" in c.channels and len(rows(c, "c1", "msg")) >= 6)
+        kc = next(a for a in child.channels["c0"].actors.values() if a.tag == "C" and not a.retired)
+        assert kc.text == CSRC and kc.bind == ("syscall", "spawn", "stop")                    # 子代继承的是重写的那一个
+        time.sleep(0.5)
+        assert decl_of(child) == D1                                                           # 补全之后的形态照常遗传
+    finally:
+        if pid:
+            try: os.killpg(pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+        L.close()
 
 
 # ---------------------------------------------------------------- 换 world 的自举不动点：换打包器官 C′，谱系换 R，个体不换
