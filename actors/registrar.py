@@ -1,8 +1,8 @@
 # c1 的登记员：基因组登记处，不是镜子。这段源码是 G 里的 text；R 放入时 exec 一次得到常驻的 run(m)。没有任何绑定：它读账本和别人一样——call("0", "show")。
 # 它只折自己的账本，不碰文件。形态登记三种（c0 的宣称——基因组的 commit，不是 R 的事实），只认来自本机 channel 的门（0 交出的 place 行 local 的门，含已退役——历史的解释不随拓扑漂）：
 #   born\n<G>                                         脐带放的：world + 第一个 channel 的成员（地址 = 序号）
-#   placed <ch> <addr> <kind> [in] [bind=…] [tag=…] [iface=…]\n<text>    c0 的手放的，带真实地址（出生时长出的其余器官也走这条）
-#   retired <ch>/<addr>
+#   placed <ch> <tag> <kind> [in] [bind=…] [iface=…]\n<text>    c0 的手放的，tag 是 R 实际分配的 channel 内唯一逻辑地址
+#   retired <ch>/<tag>
 # 请求 decl（任何人）→ 读账本、折叠、返回 decl\n<G_t>：G₀ ⊕ placed ⊖ retired。
 # 醒来 up（世界发的）→ 对账：对 decl 里每个 channel 经门向 c0 发 rebuild <name>\n<channel>；c0 回 exists / rebuilt，不用管。期望 = 登记处，实际 = R 折的。
 #   channel 按出生 + 首次出现顺序；成员按地址；门就是成员（kind=door，text 原样），不折 peers；接待员显式，没有就没有；
@@ -12,7 +12,7 @@ import json
 
 def fold(rows):
     fact_doors = {r["addr"] for r in rows if r["k"] == "place" and r["kind"] == "door" and r.get("local")}
-    G, entries = None, {}                       # entries[ch] = [{addr, kind, text, bind, tag, iface, in, retired}]
+    G, entries = None, {}                       # entries[ch] = [{kind, text, bind, tag, iface, in, retired}]
     for r in rows:
         if r["k"] != "msg" or r["to"] != me or r["from"] not in fact_doors:
             continue                                # 不是本机 channel 经门说的，不算登记
@@ -24,26 +24,26 @@ def fold(rows):
                 continue                                # 只出生一次
             G = json.loads(rest)
             for c in G["channels"]:
-                entries[c["name"]] = [{"addr": str(i + 1), "kind": x["kind"], "text": x["text"], "bind": x.get("bind", []),
+                entries[c["name"]] = [{"kind": x["kind"], "text": x["text"], "bind": x.get("bind", []),
                                        "tag": x.get("tag"), "iface": x.get("iface"),
                                        "in": i + 1 == c.get("receptionist"), "retired": False}
                                       for i, x in enumerate(c["members"])]
         elif t[0] == "placed" and len(t) >= 4:
-            flags = t[4:]; bind, tag, iface = [], None, None
+            flags = t[4:]; bind, tag, iface = [], t[2], None
             for i, f in enumerate(flags):
                 if f.startswith("bind="): bind = f[5:].split(",")
-                elif f.startswith("tag="): tag = f[4:]
                 elif f.startswith("iface="): iface = " ".join([f[6:], *flags[i + 1:]]); break
             e = entries.setdefault(t[1], [])
             if "in" in flags:
                 for x in e: x["in"] = False
-            e.append({"addr": t[2], "kind": t[3], "text": rest, "bind": bind, "tag": tag, "iface": iface,
+            e.append({"kind": t[3], "text": rest, "bind": bind, "tag": tag, "iface": iface,
                       "in": "in" in flags, "retired": False})
         elif t[0] == "retired" and len(t) == 2:
-            cn, _, addr = t[1].partition("/")
-            for x in entries.get(cn, []):
-                if x["addr"] == addr:
+            cn, _, tag = t[1].partition("/")
+            for x in reversed(entries.get(cn, [])):
+                if x["tag"] == tag and not x["retired"]:
                     x["retired"] = True; x["in"] = False
+                    break
     return G, entries
 
 
@@ -51,7 +51,7 @@ def decl(G, entries):
     channels = []
     for name, e in entries.items():
         members, recept = [], None
-        for x in sorted(e, key=lambda x: int(x["addr"])):
+        for x in e:
             if x["retired"]:
                 continue
             mm = {"kind": x["kind"], "text": x["text"]}

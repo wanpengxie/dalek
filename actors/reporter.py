@@ -2,7 +2,7 @@
 #   start / up / tick   还没向 hub 报到就报到（hello <我的端点>）；tick 时再给 hub 和每个 peer 发 ping；
 #                       上一轮给 hub 的 ping 没等到 pong → hub 那台机器死了 → spawn <它的目录>（照 H 唤醒，同一个体）
 #   peers <端点…>       对每个不是自己、还没有门的端点经 c0 门 add 一扇门（组织：边长在用它的器官旁边）
-#   placed <ch>/<n>     新门放好：ping 它
+#   placed <ch>/<tag>   新门放好：ping 它
 #   ping                回 pong
 import json, os
 
@@ -39,16 +39,16 @@ def run(m):
             return
         R = rows()
         if not any(r["k"] == "msg" and r["from"] == me and r["to"] == h["addr"] and r["body"].startswith("hello ") for r in R):
-            call(h["addr"], "hello " + mine()); return
+            call(h["tag"], "hello " + mine()); return
         if t[0] == "tick":
             pings = [r["seq"] for r in R if r["k"] == "msg" and r["from"] == me and r["to"] == h["addr"] and r["body"] == "ping"]
             pongs = [r["seq"] for r in R if r["k"] == "msg" and r["from"] == h["addr"] and r["to"] == me and r["body"] == "pong"]
             if pings and not any(p > pings[-1] for p in pongs):
                 call("spawn " + h["text"][5:].partition("#")[0])          # hub 没回：把它那台机器照 H 叫醒
-            call(h["addr"], "ping")
+            call(h["tag"], "ping")
             for d in doors():
                 if d["addr"] != h["addr"]:
-                    call(d["addr"], "ping")
+                    call(d["tag"], "ping")
         return
     if t[0] == "peers":
         have = {d["text"] for d in doors()}

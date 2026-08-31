@@ -16,7 +16,7 @@ def broadcast():
             e = r["body"].split()[1]
             if e not in eps: eps.append(e)
     for d in doors():
-        call(d["addr"], "peers " + " ".join(eps))
+        call(d["tag"], "peers " + " ".join(eps))
 
 
 def run(m):

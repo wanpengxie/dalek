@@ -34,7 +34,7 @@ call 的地址
 它不认识任何组织词汇。检验：把 G 里所有名字换掉，本文件的行为逐字节不变。
 """
 from __future__ import annotations
-import json, os, signal, time, traceback
+import json, os, re, signal, time, traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from omega import Exec, Store, Port
@@ -200,27 +200,43 @@ class Runtime:
             Store.append(self.h / "_order", name)
         return "new"
 
+    def _tag(self, c: Channel, requested: str | None) -> str | None:
+        """分配 channel 内唯一的逻辑地址。命名策略是介质 ABI：t → t1 → t2；数字 addr 只留在 H 内部。"""
+        base = requested or "t"
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", base):
+            return None
+        used = {a.tag for a in c.actors.values() if not a.retired}
+        if base not in used:
+            return base
+        n = 1
+        while f"{base}{n}" in used:
+            n += 1
+        return f"{base}{n}"
+
     def add(self, channel: str, kind: str, text: str, bind=(), receptionist: bool = False, by: str = ROOT,
             tag: str | None = None, iface: str | None = None, at: int | None = None) -> str | None:
         if kind not in KINDS or channel not in self.channels:
             return None
         c = self.channels[channel]
+        tag = self._tag(c, tag)
+        if tag is None:
+            return None
         addr = str(len(c.actors) + 1)
         row = {"k": "place", "addr": addr, "kind": kind, "text": text,
-               "bind": [b for b in bind if b in BINDS], "in": bool(receptionist), "by": by}
-        if tag: row["tag"] = tag
+               "bind": [b for b in bind if b in BINDS], "in": bool(receptionist), "by": by, "tag": tag}
         if iface: row["iface"] = iface
         if at is not None: row["at"] = at
         self._append(c, row)
-        return addr
+        return tag
 
-    def retire(self, channel: str, addr: str, by: str, by_channel: str | None) -> bool:
+    def retire(self, channel: str, tag: str, by: str, by_channel: str | None) -> bool:
         c = self.channels.get(channel)
-        if not c or addr not in c.actors or c.actors[addr].retired:
+        a = next((a for a in c.actors.values() if a.tag == tag and not a.retired), None) if c else None
+        if a is None:
             return False
-        if (channel == by_channel and addr == by) or addr == c.receptionist:   # 器官不能记下自己的死亡；接待员先换再退
+        if (channel == by_channel and a.addr == by) or a.addr == c.receptionist:   # 器官不能记下自己的死亡；接待员先换再退
             return False
-        self._append(c, {"k": "retire", "addr": addr})
+        self._append(c, {"k": "retire", "addr": a.addr})
         return True
 
     def msg(self, channel: str, frm: str, to: str, body: str, run: int | None = None) -> dict:
@@ -242,11 +258,11 @@ class Runtime:
                 elif f.startswith("tag="): tag = f[4:]
                 elif f.startswith("iface="):                                   # iface 吞掉头行剩下的全部
                     iface = " ".join([f[6:], *flags[i + 1:]]); break
-            addr = self.add(t[1], t[2], body, bind, receptionist=recept, by=by, tag=tag, iface=iface, at=at)
-            return ("channel.add.actor", f"{t[1]}/{addr}" if addr else f"{t[1]} refused")
+            effective = self.add(t[1], t[2], body, bind, receptionist=recept, by=by, tag=tag, iface=iface, at=at)
+            return ("channel.add.actor", f"{t[1]}/{effective}" if effective else f"{t[1]} refused")
         if t and t[0] == "channel.retire.actor" and len(t) == 2 and "/" in t[1]:
-            ch, _, addr = t[1].partition("/")
-            return ("channel.retire.actor", t[1] if self.retire(ch, addr, by, by_channel) else f"{t[1]} refused")
+            ch, _, tag = t[1].partition("/")
+            return ("channel.retire.actor", t[1] if self.retire(ch, tag, by, by_channel) else f"{t[1]} refused")
         return None
 
     # ------------------------------------------------------------ 入口

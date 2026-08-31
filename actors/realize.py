@@ -4,9 +4,9 @@
 #   build <门> <创造者地址>\n<G JSON>      经门造一台机器的 c0：只造 G 的第一个 channel，最后放出生证明门；返回 built <门>
 #   start\n<G JSON>                        出生：本地长出其余 channel 与连线（发育）；然后把 born（world + c0 的成员）交给登记员，
 #                                          长出来的每一件以 placed（带真实地址）登记
-#   add <channel> <kind> [in] [bind=..] [tag=..] [iface=..]\n<text>   本地放一个 actor（channel 不存在则先 create）；返回 placed <ch>/<addr>
+#   add <channel> <kind> [in] [bind=..] [tag=..] [iface=..]\n<text>   本地放一个 actor（channel 不存在则先 create）；返回 R 分配的 placed <ch>/<tag>
 #   peer <a> <b>                            本地两扇互指的门（角色 = 对面的名字）
-#   retire <channel>/<addr>                 退役
+#   retire <channel>/<tag>                  退役
 #   spawn …                                 转给 C
 #   decl                                    转给登记员；登记员的回答 decl\n<G> 从门回来后转给 C
 #   rebuild <channel>\n<{name, members, receptionist}>   对账（登记员在 up 时发）：channel.create → exists 跳过；new 才把成员逐个放回去，不再登记（登记处本来就有）
@@ -69,8 +69,9 @@ def register(lh, lt, ret, reg=None):
     if reg is None:
         return
     if lw[0] == "channel.add.actor":
-        cn, _, addr = ret.partition("/")
-        call(reg, f"placed {cn} {addr} " + " ".join(lw[2:]) + "\n" + lt)
+        cn, _, tag = ret.partition("/")
+        flags = [f for f in lw[3:] if not f.startswith("tag=")]
+        call(reg, f"placed {cn} {tag} {lw[2]} " + " ".join(flags) + "\n" + lt)
     elif lw[0] == "channel.retire.actor":
         call(reg, f"retired {ret}")
 

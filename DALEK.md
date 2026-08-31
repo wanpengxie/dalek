@@ -384,7 +384,7 @@ c2 = L + U 接成的 channel（coding agent，"code mode"）。两个演示任�
 验收：
 ```
 c2 没有 file  →  c2 造 c2′（L 经门 add 进 c2）  →  c2′ 做到 t*（写、读、done 给发起者）  →  采纳（新增无旧零件可退）  →  spawn 子代：子代的 c2 就是 c2′，目录里没有 notes.txt
-（T24 用脚本桩；**真模型 2026-09-01 完成**：DeepSeek `deepseek-chat` 做 L，收 task → 自己写 file 零件 → U test 连败两次、第三版通过 → 经门 add 进 c2（tag=file）→ placed 是新一次调用 → 用它 write/read → done 给发起者；spawn 子代，子代 c2/5 = file、text 逐字相同、没有 notes.txt、decl 相同。账本在 `runs/task0-deepseek-*.jsonl`。第一次跑作者走偏——造了一次性脚本、没用它就报 done、绝对路径——全是提示语（T18 形状）引的，改成"缺能力就添通用零件，placed 后用它做任务"后第二次即对：**作者的行为是 G 里的 text，改 text 就改行为**。**任务 0 的结论（2026-09-01 收尾）**：提示语里点不点名 file 是策略；核心命题是**新能力完全靠 syscall 和现有 actor 进入机器**——L 经门请 c0 → c0 做 syscall → R 放行并实例化 → 登记员记下 → 回执经门回来成为下一次调用的起点，L 全程只有 call，没有第二条路。桩版和真模型走的是同一条路。任务 0 关闭。）
+（T24 用脚本桩；**真模型 2026-09-01 完成**：DeepSeek `deepseek-chat` 做 L，收 task → 自己写 file 零件 → U test 连败两次、第三版通过 → 经门 add 进 c2（tag=file）→ placed 是新一次调用 → 用它 write/read → done 给发起者；spawn 子代，子代 c2/5 = file、text 逐字相同、没有 notes.txt、decl 相同。账本在 `runs/task0-deepseek-*.jsonl`。第一次跑作者走偏——造了一次性脚本、没用它就报 done、绝对路径——全是提示语（T18 形状）引的，改成"缺能力就添通用零件，placed 后用它做任务"后第二次即对：**作者的行为是 G 里的 text，改 text 就改行为**。**任务 0 的结论（2026-09-01 收尾）**：提示语里点不点名 file 是策略；核心命题是**新能力完全靠 syscall 和现有 actor 进入机器**——L 经门请 c0 → c0 做 syscall → R 放行并实例化 → 登记员记下 → 回执经门回来成为下一次调用的起点，L 全程只有 call。桩版和真模型走的是同一条路。（"没有第二条路"是**理论句**：模型里收件箱接收侧有句柄、text 拿不到别人的句柄；本原型用明文文件收件箱，实际上任意 actor 能伪造 placed 遗传假形态——工程洞 H17，真实系统靠句柄解决、演示模型靠约定不做。）任务 0 关闭。）
 ```
 
 **任务 1 · 自组织**

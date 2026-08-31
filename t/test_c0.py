@@ -10,7 +10,7 @@ T6 内容盲：R 源码不含组织词汇；G 全部改名后账本同构
 T7 生子：C 经 A 向登记员要 decl（两次运行）→ pack + spawn + 两扇门 + A 经门造子代的 c0 + start；父代对象销毁后子代活着且已切离
 T8 登记：出生后 decl(dalek0) == G0；c1 账本第一条消息是 born；channels 顺序 == _order
 T9 遗传运行中的改动：add + peer 后经接待员 spawn → 子代有它们；decl(子) == decl(父)
-T10 替换 + 非平凡：add 新 realize′(in, tag=A) + retire 旧 → 角色 A 解析到新的、旧不再被运行、decl 略过 → 子代的接待员是 realize′
+T10 替换 + 非平凡：add 新 realize′(in, tag=A) → R 分配 A1；retire 旧 A → 旧不再运行、decl 略过 → 子代接待员是 A1
 T11 retire 后写给它的消息留账不投递；退役的门不再署名
 T12 形态闭包与拒绝：单向门、无接待员 channel；自退役 / 退役接待员 / 伪造 placed 无效；refused 是同步回复
 T14 跨 channel 退役（同地址不算自己）；T15 事实来源不随拓扑漂（先加新门再退旧门，历史仍可解释）
@@ -19,7 +19,7 @@ T17 start 只在出生时有效；第二个 born 不算
 T18 c2 = L(program, agent loop) + U(program)：一次运行里 task → U 败 → U 过 → 经门 add c3；placed 到来是新的运行 → done 经真门回到发起者，seq(done) > seq(placed)
 T19 L 的端点不通：输出视为空、err 记原因，机器活着
 T20 账本是地址 0：show 全部/窗口；账上只记事实行；带内 == 膜外；0 不是成员
-T21 角色：按 tag 寻址；后放的接替先放的；退役后回到前一个
+T21 逻辑地址：按 tag 寻址；重名由 R 分配 e1；退役按 tag，不回退到同名旧件
 T22 脚本化的 L：一次运行里读账本窗口 + 让 U 跑、看回复再测、通过后 add + 回话、不说话结束；对话逐轮增长
 T23 程序的多请求运行：读 0 → 请求另一个程序（它又读 0）→ syscall → 再请求；嵌套运行、一个 run、只有事件推游标
 """
@@ -45,7 +45,15 @@ ASKER = ('def run(m):\n    if m["body"] == "go": call("A", "add y program in tag
 
 
 def G_of(channels, peers=()):
-    for c in channels: c.setdefault("receptionist", 1)                         # 接待员必须显式
+    for c in channels:
+        c.setdefault("receptionist", 1)                                        # 接待员必须显式
+        used = set()
+        for m in c["members"]:
+            base, n = m.get("tag") or "t", 1
+            tag = base
+            while tag in used:
+                tag = f"{base}{n}"; n += 1
+            m["tag"] = tag; used.add(tag)
     return {"world": G0()["world"], "channels": channels, "peers": list(peers)}
 
 
@@ -169,7 +177,7 @@ def test_T2_syscall_is_a_request():
     rt.msg("c0", "door", "1", "go"); rt.run()
     assert "y" in rt.channels and rt.channels["y"].actors["1"].text == NOOP and rt.channels["y"].receptionist == "1"
     rets = [m for m in rows(rt, "c0", "msg") if m["from"].startswith("channel.")]
-    assert [m["body"] for m in rets] == ["y new", "y/1"] and all(m["to"] == "1" and "run" in m for m in rets)   # 回执在账上，带 run
+    assert [m["body"] for m in rets] == ["y new", "y/t"] and all(m["to"] == "1" and "run" in m for m in rets)   # 回执在账上，带 run
     st = [r for r in rows(rt, "c0", "step") if r["actor"] == "1"][0]
     assert [h for h, _ in frames_of(st)] == ["channel.create y", "channel.add.actor y program in"]
     G = G_of([{"name": "c0", "members": [{"kind": "program", "text": PLACER}]}])                # 无绑定
@@ -180,8 +188,8 @@ def test_T2_syscall_is_a_request():
 
 def test_T3_doors():
     SENDER = 'def run(m):\n    if m["body"] == "go": call("a", "hello")\n'
-    G = G0(); G["channels"][0]["members"].append({"kind": "program", "text": SENDER})     # c0/3
-    G["channels"].append({"name": "a", "members": [{"kind": "program", "text": ECHO}], "receptionist": 1}); G["peers"].append(["c0", "a"])
+    G = G0(); G["channels"][0]["members"].append({"kind": "program", "text": SENDER, "tag": "sender"})     # c0/3
+    G["channels"].append({"name": "a", "members": [{"kind": "program", "text": ECHO, "tag": "e"}], "receptionist": 1}); G["peers"].append(["c0", "a"])
     rt, P = fresh(G); start(P, G); rt.run()
     c0, a = rt.channels["c0"], rt.channels["a"]
     assert c0.actors["6"].text == "a" and c0.actors["6"].tag == "a" and a.actors["2"].text == "c0" and a.actors["2"].tag == "c0"   # 两扇互指的门，角色 = 对面
@@ -194,7 +202,7 @@ def test_T3_doors():
 
 
 def test_T4_root_door():
-    G = G0(); G["channels"].append({"name": "x", "members": [{"kind": "program", "text": ECHO}], "receptionist": 1}); G["peers"].append(["c0", "x"])
+    G = G0(); G["channels"].append({"name": "x", "members": [{"kind": "program", "text": ECHO, "tag": "e"}], "receptionist": 1}); G["peers"].append(["c0", "x"])
     P = pack(G, Path(tempfile.mkdtemp(prefix="dalek-")))
     rt = up(P); assert rt.channels == {}
     construct(P, G); rt.run()
@@ -216,7 +224,7 @@ def test_T4_root_door():
 
 
 def test_T5_requests_add_peer():
-    G = G0(); G["channels"][0]["members"].append({"kind": "program", "text": ASKER})   # c0/3；出生证明门 c0/4
+    G = G0(); G["channels"][0]["members"].append({"kind": "program", "text": ASKER, "tag": "asker"})   # c0/3；出生证明门 c0/4
     rt, P = fresh(G); start(P, G); rt.run()
     rt.msg("c0", "door", "3", "go"); rt.run()
     y = rt.channels["y"]
@@ -225,10 +233,10 @@ def test_T5_requests_add_peer():
     ms = rows(rt, "c0", "msg")
     ev = [m for m in ms if m["body"] == "go"][0]
     assert [m["body"] for m in ms if m["from"] == "3" and m["to"] == "1"] == ["add y program in tag=e\n" + ECHO, "peer c0 y"]
-    assert [m["body"] for m in ms if m["from"] == "1" and m["to"] == "3"] == ["placed y/1", "placed c0/6\nplaced y/2"]   # 返回值回请求者
+    assert [m["body"] for m in ms if m["from"] == "1" and m["to"] == "3"] == ["placed y/e", "placed c0/y\nplaced y/c0"]   # 返回值回请求者
     assert all(m.get("run") == ev["seq"] for m in ms if m["seq"] > ev["seq"])                             # 全在一次运行里
-    reg = [m["body"] for m in rows(rt, "c1", "msg") if m["body"].startswith("placed y 1 ")]
-    assert reg and reg[0].startswith("placed y 1 program in tag=e\n")                                    # 登记员知道了
+    reg = [m["body"] for m in rows(rt, "c1", "msg") if m["body"].startswith("placed y e ")]
+    assert reg and reg[0].startswith("placed y e program in\n")                                         # 登记员知道 R 实际分配的 tag
 
 
 def test_T6_content_blind():
@@ -238,7 +246,7 @@ def test_T6_content_blind():
     def run(names):
         a, b = names
         G = json.loads(json.dumps(G0(), ensure_ascii=False).replace("c0", a).replace("c1", b))
-        G["channels"][0]["members"].append({"kind": "program", "text": ASKER.replace("c0", a)})
+        G["channels"][0]["members"].append({"kind": "program", "text": ASKER.replace("c0", a), "tag": "asker"})
         rt, P = fresh(G); start(P, G); rt.run()
         rt.msg(a, "door", "3", "go"); rt.run()
         return [(n, c.rows) for n, c in rt.channels.items()]
@@ -251,8 +259,8 @@ def test_T6_content_blind():
 
 def test_T7_spawn_child_built_by_parent_A():
     G = G0(); G["channels"][0]["members"].append(
-        {"kind": "program", "text": 'def run(m):\n    if m["body"] == "go": call("C", "spawn d1")\n    else: call("4", "reply:" + m["body"])\n'})
-    G["channels"].append({"name": "x", "members": [{"kind": "program", "text": ECHO}], "receptionist": 1}); G["peers"].append(["c0", "x"])
+        {"kind": "program", "tag": "asker", "text": 'def run(m):\n    if m["body"] == "go": call("C", "spawn d1")\n    else: call("4", "reply:" + m["body"])\n'})
+    G["channels"].append({"name": "x", "members": [{"kind": "program", "text": ECHO, "tag": "e"}], "receptionist": 1}); G["peers"].append(["c0", "x"])
     rt, P = fresh(G); start(P, G); rt.run()
     rt.msg("c0", "door", "3", "go"); rt.run()
     d = P / "spawn" / "d1"
@@ -334,9 +342,9 @@ def test_T10_replace_realize_is_nontrivial():
     G = G0()
     rt, P = fresh(G); start(P, G); rt.run()
     c0 = rt.channels["c0"]
-    rt.msg("c0", "door", "1", "add c0 program in bind=syscall tag=A\n" + R2); rt.run()   # 新的接待员 c0/5，同角色
-    assert c0.receptionist == "5" and c0.actors["5"].text == R2 and rt._resolve(c0, "A").addr == "5"   # 后放的接替
-    rt.msg("c0", "door", "5", "retire c0/1"); rt.run()                             # 再退旧的
+    rt.msg("c0", "door", "1", "add c0 program in bind=syscall tag=A\n" + R2); rt.run()   # A 已占用，R 分配 A1
+    assert c0.receptionist == "5" and c0.actors["5"].text == R2 and rt._resolve(c0, "A1").addr == "5"
+    rt.msg("c0", "door", "5", "retire c0/A"); rt.run()                             # 新接待员退旧 A
     assert c0.actors["1"].retired and rows(rt, "c0", "retire")[0]["addr"] == "1"
     rt.msg("c0", "door", "1", "add z program\n" + ECHO); rt.run()
     assert "z" not in rt.channels                                                  # 旧的不再运行
@@ -349,7 +357,7 @@ def test_T10_replace_realize_is_nontrivial():
     try:
         child = wait_child(d, lambda c: "c1" in c.channels and rows(c, "c1", "msg"))
         cc = child.channels["c0"]
-        assert cc.receptionist == "3" and cc.actors["3"].text == R2 and cc.actors["3"].bind == ("syscall",) and cc.actors["3"].tag == "A"
+        assert cc.receptionist == "3" and cc.actors["3"].text == R2 and cc.actors["3"].bind == ("syscall",) and cc.actors["3"].tag == "A1"
     finally:
         import os, signal
         try: os.killpg(pid, signal.SIGTERM)
@@ -357,31 +365,31 @@ def test_T10_replace_realize_is_nontrivial():
 
 
 def test_T11_retired_not_run():
-    G = G0(); G["channels"][0]["members"].append({"kind": "program", "text": ECHO})   # c0/3
+    G = G0(); G["channels"][0]["members"].append({"kind": "program", "text": ECHO, "tag": "e"})   # c0/3
     rt, P = fresh(G); start(P, G); rt.run()
-    rt.msg("c0", "door", "1", "retire c0/3"); rt.run()
+    rt.msg("c0", "door", "1", "retire c0/e"); rt.run()
     assert rt.channels["c0"].actors["3"].retired
     n = len(rows(rt, "c0", "step"))
     rt.msg("c0", "door", "3", "hi"); rt.run()
     assert len(rows(rt, "c0", "step")) == n and rows(rt, "c0", "msg")[-1]["body"] == "hi"       # 留账不投递
-    assert any(m["body"].startswith("retired c0/3") for m in rows(rt, "c1", "msg"))             # 登记员知道了
-    rt.msg("c0", "door", "1", "retire c0/5"); rt.run()                                          # 退了通往 c1 的门
+    assert any(m["body"].startswith("retired c0/e") for m in rows(rt, "c1", "msg"))             # 登记员知道了
+    rt.msg("c0", "door", "1", "retire c0/c1"); rt.run()                                        # 退了通往 c1 的门
     say(P, "c0", "x", frm=f"file:{P}#c1"); rt.run()
     assert rows(rt, "c0", "msg")[-1]["from"] == "door"                                          # 退役的门不再署名
 
 
 def test_T12_form_closure_and_refusals():
     G = G0()
-    G["channels"].append({"name": "y", "members": [{"kind": "program", "text": ECHO}, {"kind": "door", "text": "c0"}]})   # 单向门，无接待员
-    G["channels"].append({"name": "z", "members": [{"kind": "door", "text": "y"}]})                                     # 只有门
+    G["channels"].append({"name": "y", "members": [{"kind": "program", "text": ECHO, "tag": "e"}, {"kind": "door", "text": "c0", "tag": "c0"}]})   # 单向门，无接待员
+    G["channels"].append({"name": "z", "members": [{"kind": "door", "text": "y", "tag": "y"}]})                                     # 只有门
     rt, P = fresh(G); start(P, G); rt.run()
     D = decl_of(rt)
     assert D == expand(G) and form_of(rt) == declared(D)                          # 单向门、无接待员、只有门都能表达
     c0 = rt.channels["c0"]
-    assert rt._syscall("channel.retire.actor c0/2", "", by="2", by_channel="c0")[1] == "c0/2 refused" and not c0.actors["2"].retired   # 自退役被拒
-    assert rt._syscall("channel.retire.actor c0/1", "", by="2", by_channel="c0")[1] == "c0/1 refused" and not c0.actors["1"].retired   # 退役接待员被拒
+    assert rt._syscall("channel.retire.actor c0/C", "", by="2", by_channel="c0")[1] == "c0/C refused" and not c0.actors["2"].retired   # 自退役被拒
+    assert rt._syscall("channel.retire.actor c0/A", "", by="2", by_channel="c0")[1] == "c0/A refused" and not c0.actors["1"].retired   # 退役接待员被拒
     assert rt._syscall("channel.add.actor nope program", "x", by="1", by_channel="c0")[1] == "nope refused"
-    rt.msg("c1", "door", "1", "placed q 1 program in\nprint(1)"); rt.run()          # 不是本机门说的
+    rt.msg("c1", "door", "1", "placed q x program in\nprint(1)"); rt.run()          # 不是本机门说的
     assert decl_of(rt) == D
     REF = 'def run(m): return "got:" + call("channel.add.actor nope program", "x")\n'
     rt.msg("c0", "door", "1", "add c0 program bind=syscall tag=r\n" + REF); rt.run()
@@ -390,9 +398,9 @@ def test_T12_form_closure_and_refusals():
 
 
 def test_T14_cross_channel_retire():
-    G = G0(); G["channels"].append({"name": "y", "members": [{"kind": "program", "text": ECHO}, {"kind": "program", "text": ECHO}], "receptionist": 1})
+    G = G0(); G["channels"].append({"name": "y", "members": [{"kind": "program", "text": ECHO, "tag": "e"}, {"kind": "program", "text": ECHO, "tag": "e2"}], "receptionist": 1})
     rt, P = fresh(G); start(P, G); rt.run()
-    assert rt._syscall("channel.retire.actor y/2", "", by="2", by_channel="c0")[1] == "y/2"      # c0/2 退 y/2：不是自己
+    assert rt._syscall("channel.retire.actor y/e2", "", by="2", by_channel="c0")[1] == "y/e2"      # c0/C 退 y/e2：不是自己
     assert rt.channels["y"].actors["2"].retired
 
 
@@ -400,7 +408,7 @@ def test_T15_fact_source_survives_topology():
     G = G0()
     rt, P = fresh(G); start(P, G); rt.run()
     rt.msg("c0", "door", "1", "peer c0 c1"); rt.run()                              # 先加新门
-    rt.msg("c0", "door", "1", "retire c0/4"); rt.run()                             # 再退旧门
+    rt.msg("c0", "door", "1", "retire c0/c1"); rt.run()                           # 再退旧门；新门已被 R 命名为 c11
     rt.msg("c0", "door", "1", "add c0 program\n" + ECHO); rt.run()                 # 新门送的事实
     D = decl_of(rt)
     assert [m["kind"] for m in D["channels"][0]["members"]] == ["program", "program", "door", "program"]   # 旧门退了、新门在、新成员在

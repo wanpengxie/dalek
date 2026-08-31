@@ -3,15 +3,21 @@
 #   调用 1：向 A 要 decl（A 转给登记员；答案 decl\n<G> 经门回来，A 再转给我——那是下一次调用）
 #   调用 2（decl\n<G>）：读账本找到还没办完的 spawn 请求；pack——G.world 写成 spawn/<name>/ 下的文件，G.json 原样放旁边（抄，不读）；
 #      spawn spawn/<name>（子代 R 起来，根门开）；放两扇门（子代根门、子代第一个 channel）；
-#      请求 A：build <根门> <本机地址>\n<G>（A 经门只造子代的 c0），拿到 built；
+#      请求当前接待员：build <根门> <本机地址>\n<G>（A 经门只造子代的 c0），拿到 built；
 #      经根门发 msg <first>\nstart\n<G>——第一条消息带着 G：关门、切离，子代的 c0 自己长其余；告诉 r：spawned
 import json, os
+
+
+def receptionist():
+    return next((a["tag"] for a in json.loads(call("0", "who")) if a["in"] and not a["retired"]), None)
 
 
 def run(m):
     head, _, rest = m["body"].partition("\n"); t = head.split()
     if t and t[0] == "spawn" and len(t) == 2:
-        call("A", "decl"); return
+        a = receptionist()
+        if a: call(a, "decl")
+        return
     if not (t and t[0] == "decl" and rest.strip()):
         return
     rows = [json.loads(l) for l in call("0", "show").splitlines() if l]
@@ -28,6 +34,7 @@ def run(m):
     call(f"spawn {d}")
     root = call(f"channel.add.actor {channel} door", f"file:{ad}#_root").split("/")[-1]
     door = call(f"channel.add.actor {channel} door tag={name}", f"file:{ad}#{first}").split("/")[-1]
-    call("A", f"build {root} file:{P}#{channel}\n" + json.dumps(G, ensure_ascii=False))
+    a = receptionist()
+    if a: call(a, f"build {root} file:{P}#{channel}\n" + json.dumps(G, ensure_ascii=False))
     call(root, f"msg {first}\nstart\n" + json.dumps(G, ensure_ascii=False))
     call(r, f"spawned {ad} door={door}")

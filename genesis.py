@@ -27,9 +27,9 @@ def G0() -> dict:
             {"name": "c0",
              "members": [
                  {"kind": "program", "text": src("actors/realize.py"), "bind": ["syscall"], "tag": "A",
-                  "iface": "add <ch> <kind> [in] [bind=..] [tag=..] [iface=..]\\n<text> | peer <a> <b> | retire <ch>/<addr> | spawn <name> | decl"},
+                  "iface": "add <ch> <kind> [in] [bind=..] [tag=..] [iface=..]\\n<text> | peer <a> <b> | retire <ch>/<tag> | spawn <name> | decl"},
                  {"kind": "program", "text": src("actors/spawn.py"), "bind": ["syscall", "spawn"], "tag": "C",
-                  "iface": "spawn <name> -> spawned <dir> door=<addr>"},
+                  "iface": "spawn <name> -> spawned <dir> door=<tag>"},
              ],
              "receptionist": 1},
             {"name": "c1",
