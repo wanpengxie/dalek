@@ -58,6 +58,7 @@ tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
 
 ```
 DALEK.md      理论：公理、定义、Ω、运行时、构造器、里程碑、ABI
+EXPERIMENTS.md  真模型实验记录（任务 0 / 任务 1，DeepSeek；账本在 runs/）
 DESIGN.md     M1 设计：syscall 闭集、R 的完整定义、洞、创世流程
 MODEL.md      面向不了解概念的读者的机制说明（部分已过时，以 DALEK.md 为准）
 FAILURES.md   旧内核时代每条规则的出生证明（F1–F24）
