@@ -1,5 +1,5 @@
 # c4 的 reporter：这台机器在种群里的嘴和耳朵。这段源码是 G 里的 text（c2 写的）；bind=spawn（能唤醒休眠的邻居）。记忆 = 账本。
-#   start / up / tick   还没向 hub 报到就报到（hello <我的端点>）；tick 时再给 hub 和每个 peer 发 ping；
+#   start / tick        还没向 hub 报到就报到（hello <我的端点>）；tick 时再给 hub 和每个 peer 发 ping；
 #                       上一轮给 hub 的 ping 没等到 pong → hub 那台机器死了 → spawn <它的目录>（照 H 唤醒，同一个体）
 #   peers <端点…>       对每个不是自己、还没有门的端点经 c0 门 add 一扇门（组织：边长在用它的器官旁边）
 #   placed <ch>/<tag>   新门放好：ping 它
@@ -33,7 +33,7 @@ def run(m):
         return
     if t[0] == "ping":
         return "pong"
-    if t[0] in ("start", "up", "tick"):
+    if t[0] in ("start", "tick"):
         h = hub()
         if not h:
             return

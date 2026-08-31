@@ -50,10 +50,11 @@ tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
 - 2026-08-31 上午：M3.4 agent loop 出 R——kind 是类别（理论），实例化是工程：oracle 和程序同一个 exec，L 的 text = `actors/l.py` = 整个 loop（端点、提示语、组装、POST、解帧、轮数）。R 删 `_oracle`，Ω 删 `Port.request`。T0–T23 绿。
 - 2026-09-01 凌晨：M3 任务 0 的路——T24：c2 + file → c2′（L 经门 add 进本 channel，用它写读，done 给发起者）→ spawn 子代继承 file 零件、不继承 notes.txt。T24 是桩版；**真模型（DeepSeek）同日跑通**：作者自己写 file、U 测三版、add、placed 后用它、done；子代继承零件不继承文件（`runs/task0-deepseek-*.jsonl`）。结论：提示语是策略，核心路径是新能力完全靠 syscall + 现有 actor 进入机器（门 → c0 → syscall → 实例化 → 登记 → 回执）。任务 0 关闭。24/24。
 - 2026-09-01 凌晨：M3.5 oracle 不是原语——R 的 kind 集 = {program, door}，L = `kind=program, tag=L`；oracle 留作理论类别词。膜定为窄版（DESIGN I6）。24/24。
-- 2026-09-01 晨：M3 任务 1 + M4——up/down 入账（第几条 up = 第几次 incarnation）、channel 存在 ⇔ 有 place 行、A 的 start 广播与 rebuild、登记员 up 对账；hub/reporter（`actors/hub.py`、`actors/reporter.py`）；T25/T28 重启 = 同一个体（进程内 + 真 SIGTERM 进程级：down/up 入账、休眠来信醒来即处理、形态一行不变）、T26 本地损伤重建、T27 三台机器自组织 + SIGKILL dalek0 后被 d1 照 H 唤醒。27/27。
+- 2026-09-01 晨：M3 任务 1 + M4——channel 存在 ⇔ 有 place 行；生命周期物理事件最终收紧为只在 G 的首 channel 记 `_root up/down`，A 把 up 翻译为给 c1 的 `reconcile`，内脏账本不受 R 广播；A 的出生 start 协作广播保留。T25/T28 验证进程内与真 SIGTERM 重启，T26 验证 `up→A→reconcile→rebuild`，T31 验证无接待员 channel 的成员仍重新实例化且 Σ 归零，T27 验证三机自组织与 peer 唤醒。
 - 2026-09-01 晨：**真模型任务 1**（deepseek-v4-pro，thinking 默认开）——c2 自己写出 hub/reporter 并装好连线，spawn d1/d2，三台互长门、ping/pong；reporter 有一处 ABI bug（`call("spawn", d)` 两参数，动词参数须在头行），**用机器自己的路修**：给 d1 的 c2 发修复任务 → 写新 reporter → `add c4 … in tag=reporter` 接替接待员 → `retire c4/1` → SIGKILL dalek0 → d1 连续 tick 后 `spawn` 唤醒它（同一本账多一条 up）→ hub pong 恢复。账本在 `runs/task1-*.jsonl`。
 - 2026-09-01 午：**T29 换 world 的自举不动点**——换打包器官 C′（pack 前给 runtime.py 打幂等标记），子代跑 R′、decl 遗传 world′、R′ 上能生孙代；父代不受影响。R/Ω/syscall 零改动。29/29。
 - 2026-09-01 晚：**逻辑地址收口**——actor 的组织层地址统一为 `channel/tag`；R 用从 H 折出的活跃路由表原子保证 channel 内 tag 唯一，重名分配 `tag1/tag2/…`，数字 addr 只留在 H；c0/c1 只透传最终 tag。T30 覆盖重名、retire 空洞、损伤 rebuild、再次按 tag retire。30/30。
+- 2026-09-01 晚：**生命周期边界收口**——删除逐 channel `world up/down`；R 仅在首 channel 留一条 `_root up/down`，由 A 经门触发 c1 对账。新增 T31 的无接待员反例。31/31。
 - 待：R 事件中崩溃的中间态（H10 残）、自停（stop 请求 / C 停自己——pid 怎么可见是设计点）、H16、长账本的折叠器官。
 
 ## 文件

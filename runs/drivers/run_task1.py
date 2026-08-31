@@ -30,7 +30,7 @@ try:
     TASK = f"""task
 造两个器官装进本机并连线（新成员都是 def run(m) 的 python，命名空间有 call/me/channel）：
 1) c3 的 hub：接待员，tag=hub，iface=hello <endpoint> | ping -> pong。行为：收 "hello <端点>"——读 0 who，若还没有 text 等于该端点的门，经 c0 的门发 "add c3 door\\n<端点>"，否则广播；收 "placed" 开头的消息就广播；广播 = 读 0 show 收集所有 "hello " 消息里的端点（按出现顺序去重），对成员表里每扇 local 不为真的门 call(它的 addr, "peers <端点们空格连接>")；收 "ping" 返回 "pong"。
-2) c4 的 reporter：接待员，bind=spawn，tag=reporter，iface=tick | peers <endpoint..> | ping -> pong。行为：收 "start"/"up"/"tick"——找成员表里 tag=hub 的门，若账上（0 show）还没有我发给它的 "hello " 消息，就 call(它, "hello file:" + os.path.abspath(".") + "#" + channel) 然后返回；若是 "tick"：先看账上我发给 hub 门的最后一条 "ping" 之后有没有它回我的 "pong"，若有 ping 且没有 pong，就 call("spawn <hub 门 text 里 file: 和 # 之间的目录>")；然后 call(hub 门, "ping")，再对每扇其他非 local 门 call(它, "ping")；收 "peers <端点…>"——对每个不等于自己端点、且还没有同 text 门的端点，经 c0 的门 "add c4 door\\n<端点>"；收 "placed c4/<n>" 就 call(<n>, "ping")；收 "ping" 返回 "pong"。
+2) c4 的 reporter：接待员，bind=spawn，tag=reporter，iface=tick | peers <endpoint..> | ping -> pong。行为：收 "start"/"tick"——找成员表里 tag=hub 的门，若账上（0 show）还没有我发给它的 "hello " 消息，就 call(它, "hello file:" + os.path.abspath(".") + "#" + channel) 然后返回；若是 "tick"：先看账上我发给 hub 门的最后一条 "ping" 之后有没有它回我的 "pong"，若有 ping 且没有 pong，就 call("spawn <hub 门 text 里 file: 和 # 之间的目录>")；然后 call(hub 门, "ping")，再对每扇其他非 local 门 call(它, "ping")；收 "peers <端点…>"——对每个不等于自己端点、且还没有同 text 门的端点，经 c0 的门 "add c4 door\\n<端点>"；收 "placed c4/<n>" 就 call(<n>, "ping")；收 "ping" 返回 "pong"。
 3) 装法：经 c0 的门 "add c3 program in tag=hub iface=…\\n<源码>"、"add c4 program in bind=spawn tag=reporter iface=…\\n<源码>"、"peer c0 c3"、"peer c0 c4"，最后 "add c4 door tag=hub\\nfile:" + 本机目录 + "#c3"（本机目录用 U 跑 import os; print(os.path.abspath('.')) 得到，或写进源码里算）。
 都装好后 done。可以先用 U test 验证源码。"""
     say(P0, "c2", TASK, frm=f"file:{me}#me")
@@ -56,14 +56,14 @@ try:
         wait_child(A, lambda c, B=B: door_msg(c, "c4", "pong", f"file:{B}#c4"), timeout=300)
     log("ping/pong across the population ok")
     os.killpg(pids[0], signal.SIGKILL); time.sleep(0.5)
-    n_up = sum(1 for r in rows(Runtime(P0).load(), "c3", "msg") if r["body"] == "up")
-    log("dalek0 SIGKILLed; c3 up-count =", n_up)
+    n_up = sum(1 for r in rows(Runtime(P0).load(), "c0", "msg") if r["from"] == "_root" and r["body"] == "up")
+    log("dalek0 SIGKILLed; root up-count =", n_up)
     say(P1, "c4", "tick"); time.sleep(3)
     say(P1, "c4", "tick")
     wait_child(P1, lambda c: has_msg(c, "c4", lambda r: r["from"] == "spawn"), timeout=120)
     pids.append(int([r for r in rows(Runtime(P1).load(), "c4", "msg") if r["from"] == "spawn"][0]["body"].split("pid=")[1]))
     log("d1 respawned dalek0")
-    wait_child(P0, lambda c: sum(1 for r in rows(c, "c3", "msg") if r["body"] == "up") == n_up + 1, timeout=120)
+    wait_child(P0, lambda c: sum(1 for r in rows(c, "c0", "msg") if r["from"] == "_root" and r["body"] == "up") == n_up + 1, timeout=120)
     wait_child(P1, lambda c: door_msg(c, "c4", "pong", f"file:{P0}#c3"), timeout=300)
     log("dalek0 woke from its own ledger; hub pong restored. TASK 1 REAL: PASS")
 except Exception:

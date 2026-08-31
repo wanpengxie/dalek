@@ -71,7 +71,7 @@ offset(box)      = 带 at 的行里最大的 at（该收件箱读到哪）
 fn(a)            = place 行折到时实例化一次：program → Exec.load(text, {call, me, channel})（L 也是 program，text 是它自己的 agent loop）；door → 介质的函数体；retire 折到时丢弃
 ```
 
-`fn` 是常驻函数；它里面的东西（globals、对话、中间值）是易失运行状态 Σ，**不入账**：H 记的是 call 边界（2.2）。活着的机器是 (G, H, Σ)，个体是 (G, H)；Σ 是工程（DALEK 1.7）。重启 = 重新折叠 = 重新实例化，是一个事件（入账归 M4，H10）。`order` 不在账本里——见 H12。
+`fn` 是常驻函数；它里面的东西（globals、对话、中间值）是易失运行状态 Σ，**不入账**：H 记的是 call 边界（2.2）。活着的机器是 (G, H, Σ)，个体是 (G, H)；Σ 是工程（DALEK 1.7）。已出生机器的重启 = 重新折叠 = 重新实例化；H 只在生命周期边界（G 的首 channel）记一条 incarnation 事件，各 actor 的重新实例化由该事件 + 各自有效 place/retire 派生，不在每个 channel 复制 up（M4，H10）。`order` 不在账本里——见 H12。
 
 ### 2.2 调用与转移
 
@@ -146,7 +146,7 @@ actor 跨调用的持久记忆是账本（`call("0", …)`）；fn 里存的东�
 
 **H9 · B · L 的端点。** 关闭（M3.0，2026-08-30）：text 第一行 `<url> <model> <key>`，其余提示语；R 调 `Port.request(text, 视图)`，Port 讲 Anthropic messages 报文；失败记 err。见 DALEK 1.7（oracle 与门的区分）与 4.8。M3.4：`Port.request` 删除——端点、报文、组装、帧都在 L 的 text（`actors/l.py`）里，R 与 Ω 没有 LLM 专用的东西。
 
-**H10 · B · 崩溃语义。** 大半已关（M4，2026-09-01）：actor 失败 → err 入账、机器不死（T16）；**重启入账**——`up`/`down` 行，硬杀 = 有 up 没 down，pending 重跑（T25）；本地损伤照登记处重建（T26）。剩：R 在一次事件中间崩溃（行写了一半，动作执行了一半）——未定。
+**H10 · B · 崩溃语义。** 大半已关（M4，2026-09-01）：actor 失败 → err 入账、机器不死（T16）；**重启入账**收紧为一条机器级边界行——已出生时只在 `_order` 的首 channel 记 `_root→接待员 up/down`，其他 channel 永远不受 R 的物理广播。硬杀 = 根 channel 最后的开启边界（start 或 up）没有匹配 down；pending 重跑（T25/T28）。A 把 up 翻译为给 c1 的 `reconcile`，本地损伤照登记处重建（T26）。T31 证明无接待员 channel 的 actor 仍被重新实例化、Σ 归零，而其账本无 up/down：重新实例化是根事件与 place/retire 的派生事实，不是逐 actor 行。剩：R 在一次事件中间崩溃（行写了一半，动作执行了一半）——未定。
 
 **H11 · B · 运行时的"返回消息"是伪发送者。** `from ∈ {place, spawn}` 不是地址。要写进 ABI：视图里的 from 可能是介质词。
 
@@ -284,7 +284,8 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 | 交出的门行带 `local`；登记员 = 第一扇 local 门那边 | `runtime._annot` / `realize.py` | c0 与 c1 有一条连线（G 的第一条连线） |
 | L 组装时带成员表（工具列表） | `actors/l.py` | 运行中能请求的地址 = 它对机器的作用面；程序靠角色不需要表 |
 | 0 的回复是全量行；L 组装读 1..当前 | `runtime._dispatch` / `actors/l.py` | 读账本是介质的地址 0，对全部成员开放；oracle 的读在转移行里（理论）。全量还是句柄、读多长是工程 |
-| actor 是常驻函数：放入时 `exec` 一次，globals 里能存东西，不拦 | `runtime._instantiate` | H 记 call 边界，内部状态不入账；实例化是 H 中的事件（重启入账归 M4）。想活过重启的东西自己从账本重建 |
+| actor 是常驻函数：放入时 `exec` 一次，globals 里能存东西，不拦 | `runtime._instantiate` | H 记 call 边界，内部状态不入账；place 记初次实例化，根 channel 的 incarnation 事件与 place/retire 共同推出重启时的全部重新实例化。想活过重启的东西自己从账本重建 |
+| 生命周期物理事件只落 G 的首 channel；A 经门发 `reconcile` | `runtime._lifecycle` / `realize.py` / `registrar.py` | c0 是唯一生命周期/形态边界；物理不渗透内脏，内脏只看到 actor 协作（T25/T26/T28/T31） |
 | 程序在 R 进程内跑：没有隔离、没有超时；L 最多 16 轮；L 的模型原文不入账 | `omega.Exec.load` / `actors/l.py` | Ω 是契约边界不是进程边界；隔离与上限是工程（不要）。oracle 是完整 actor，端点回话在它的 run 里面（DALEK 1.4） |
 | 帧语法是 L 的 text 的事（`>>> 地址` 起、单独一行 `<<<` 收）；R 记 call 用同一格式写 step.out | `actors/l.py` / `runtime.parse` | LLM 要能拼写 call；用什么记号是 L 的 text 的工程，R 不认识它 |
 | 程序的 cwd = P（每次事件 `os.chdir`） | `runtime._invoke` | C 用文件系统 pack（H5/H7）；工程 |

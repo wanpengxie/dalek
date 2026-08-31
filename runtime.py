@@ -22,8 +22,8 @@ call 的地址
 账本    每次 call 两行 msg（请求、返回）；每次调用一行 step（out = 它发出的每个 call，加一帧 re = 它的返回值；err = 异常）。
         实例化失败的成员每次被调用都 err；调用抛异常也 err——器官的失败不是机器的失败。
 接待员  只由 place 行的 in 决定，没有默认：G 不写就没有（外来消息落空）。
-起停    醒来：折叠 H 后若已出生，每个有接待员的 channel 记一行 msg world→接待员 up（第几条 up = 第几次 incarnation；重启 = 重新实例化，Σ 归零）。
-        停下：SIGTERM → 每个 channel 记一行 down → 跑到静止 → 退出。硬杀 = 有 up 没 down；没写 step 行的消息重启后重跑（at-least-once）。
+起停    物理只在机器的生命周期边界（G 的首 channel）留痕：已出生的机器醒来/停下时，各记一行 msg _root→接待员 up/down。
+        内部 channel 不被 R 直接注入物理消息；边界 actor 如需通知内脏，经门用普通协作消息翻译。硬杀 = 最后的 start/up 无 down；未写 step 的消息重启后重跑。
         channel 存在 ⇔ 账本至少一条 place 行；空账本（损伤）= 不存在，create 返回 new。
 入口    每个 channel 一个收件箱 in/<name>.jsonl（Port 的接收侧）：一行 → msg 给接待员（事件），署名指回发信端点的门（没有则 door）。
         根收件箱 in/_root.jsonl 在 channel 之前存在：开着 ⇔ 所有账本无 msg 行。开着时接受两个 syscall（by=_root）
@@ -43,7 +43,6 @@ from omega import Exec, Store, Port
 KINDS = ("program", "door")
 ROOT = "_root"
 LEDGER = "0"                                   # 每个 channel 的读地址：写给它 = 读它；不是成员，不放、不退、不遗传
-WORLD = "world"                                # 起停的署名：up / down 是世界说的，不是成员说的
 
 
 def _spawn(P: Path, d: str) -> str:
@@ -125,20 +124,26 @@ class Runtime:
         return self
 
     def wake(self) -> "Runtime":
-        """醒来入账：已出生（根门已关）的机器，每个有接待员的 channel 追加 msg world→接待员 "up"。第几条 up = 第几次 incarnation。
-        重启 = 重新折叠 = 重新实例化每个 actor（Σ 归零），这一行让它在 H 里可见。未出生不发：出生的第一条消息是父代的 start。"""
+        """醒来入账：已出生的机器只在首 channel 追加 msg _root→接待员 "up"。
+        这一个边界事件标记本次 Runtime incarnation；所有 actor 重新实例化（Σ 归零）是它与 place/retire 历史的派生事实。
+        未出生不发：出生的第一条消息仍是父代的 start。"""
         if not self.root_open:
-            for c in list(self.channels.values()):
-                if c.receptionist is not None:
-                    self.msg(c.name, WORLD, c.receptionist, "up")
+            self._lifecycle("up")
         return self
 
     def down(self) -> None:
-        """停下入账：每个有接待员的 channel 追加 "down"；之后 run 跑到静止即退出（各器官对 down 做什么由 G 定）。"""
+        """停下入账：已出生的机器只在首 channel 追加 "down"；之后 run 跑到静止即退出。"""
         self._stopping = True
-        for c in list(self.channels.values()):
-            if c.receptionist is not None:
-                self.msg(c.name, WORLD, c.receptionist, "down")
+        if not self.root_open:
+            self._lifecycle("down")
+
+    def _lifecycle(self, body: str) -> None:
+        """介质在机器生命周期边界打唯一记号。边界是 _order 的首 channel，不靠组织名字识别。
+        首 channel 损伤时不把物理事件偷偷转移给下一个内脏：那是根器官损伤，须另行定义恢复路径。"""
+        order = Store.read(self.h / "_order").split()
+        c = self.channels.get(order[0]) if order else None
+        if c is not None and c.receptionist is not None:
+            self.msg(c.name, ROOT, c.receptionist, body)
 
     def _append(self, c: Channel, row: dict) -> dict:
         row = {"seq": c.seq + 1, **row}

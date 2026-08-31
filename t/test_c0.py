@@ -22,7 +22,11 @@ T20 账本是地址 0：show 全部/窗口；账上只记事实行；带内 == �
 T21 逻辑地址：按 tag 寻址；重名由 R 分配 e1；退役按 tag，不回退到同名旧件
 T22 脚本化的 L：一次运行里读账本窗口 + 让 U 跑、看回复再测、通过后 add + 回话、不说话结束；对话逐轮增长
 T23 程序的多请求运行：读 0 → 请求另一个程序（它又读 0）→ syscall → 再请求；嵌套运行、一个 run、只有事件推游标
+T25 重启是同一个体；生命周期只在首 channel 记 _root→A up/down，内脏不受 R 广播
+T26 根 A 把 up 翻译成 reconcile 给登记员；登记处对账重建损伤 channel
+T28 进程级 SIGTERM/down、休眠来信、respawn/up，形态和游标不丢
 T30 R 分配唯一 tag（t/t1/t2）；retire 形成空洞后损伤、rebuild、再按 tag retire，实际形态与 c1 声明一致
+T31 无接待员 channel 重启后成员确实重新实例化（Σ 归零），但物理只留在根 channel
 """
 from __future__ import annotations
 import json, re, sys, tempfile, time, traceback
@@ -744,9 +748,10 @@ def test_T25_restart_is_the_same_individual():
     D = decl_of(rt); cur = dict(rt.channels["x"].cursor)
     rt.msg("x", "door", "1", "late")                                                       # 硬杀：消息落账、没人跑
     del rt
-    rt2 = up(P)                                                                             # 醒来 = 折叠 + up 入账
-    w = [(r["from"], r["body"]) for r in rows(rt2, "x", "msg") if r["from"] == "world"]
-    assert w == [("world", "up")]                                                           # 有 up 没 down = 上次是硬杀
+    rt2 = up(P)                                                                             # 醒来 = 折叠 + 根边界 up 入账
+    life = [(r["from"], r["body"]) for r in rows(rt2, "c0", "msg") if r["from"] == "_root"]
+    assert life == [("_root", "up")]                                                       # 物理只在生命周期边界留痕
+    assert not any(r["from"] in ("_root", "world") and r["body"] in ("up", "down") for r in rows(rt2, "x", "msg"))
     assert cur == {k: v for k, v in rt2.channels["x"].cursor.items()}                       # 游标不变（折出来的）
     late = [r for r in rows(rt2, "x", "msg") if r["body"] == "late"][0]
     assert late in rt2._pending(rt2.channels["x"], "1")                                     # 没写 step 的消息重跑（at-least-once）
@@ -755,8 +760,8 @@ def test_T25_restart_is_the_same_individual():
     assert decl_of(rt2) == D                                                                # 同一个体：decl 不变
     rt2.down(); rt2.run()                                                                   # 停下入账 → 跑到静止
     rt3 = up(P)
-    w = [r["body"] for r in rows(rt3, "x", "msg") if r["from"] == "world"]
-    assert w == ["up", "down", "up"]                                                        # 第几条 up = 第几次 incarnation
+    life = [r["body"] for r in rows(rt3, "c0", "msg") if r["from"] == "_root"]
+    assert life == ["up", "down", "up"]                                                   # 每次醒/停只有一条机器级边界事件
     del rt3
 
 
@@ -770,12 +775,15 @@ def test_T26_local_damage_rebuilt_from_registry():
     (P / "h" / "c8.jsonl").unlink()                                                        # 本地损伤：一个器官的账没了
     rt2 = up(P)
     assert "c8" not in rt2.channels                                                        # channel 存在 ⇔ 账本至少一条 place 行
-    rt2.run()                                                                               # up → 登记员对账 → rebuild → c0 重造
+    assert [r["body"] for r in rows(rt2, "c0", "msg") if r["from"] == "_root"][-1:] == ["up"]
+    rt2.run()                                                                               # c0/A 把 up 翻译成 reconcile → c1 对账 → rebuild
     c8 = rt2.channels["c8"]
     assert c8.actors["1"].text == ECHO and c8.actors["1"].tag == "e" and c8.receptionist == "1"
     assert c8.actors["2"].kind == "door" and c8.actors["2"].text == "c0"                   # 连线也回来了
     assert rows(rt2, "c8", "msg") == []                                                    # 新器官：同样的 text、空的账本（照 spec 重造，不是照 WAL 重放）
     assert len([r for r in rows(rt2, "c1", "msg") if r["body"].startswith("placed c8")]) == registered   # 不重复登记
+    assert any(r["body"] == "reconcile" for r in rows(rt2, "c1", "msg"))                    # 内脏收到的是 A 的协作，不是物理 up
+    assert not any(r["from"] in ("_root", "world") and r["body"] in ("up", "down") for r in rows(rt2, "c1", "msg"))
     assert any(r["from"] == "channel.create" and "exists" in r["body"] for r in rows(rt2, "c0", "msg"))  # 没损伤的：exists 跳过
     assert decl_of(rt2) == D                                                               # 期望 == 实际
 
@@ -795,6 +803,27 @@ def test_T30_unique_tags_survive_retire_and_rebuild():
     actual = [a.tag for a in rt2.channels["x"].actors.values() if not a.retired]
     declared_tags = [m["tag"] for c in decl_of(rt2)["channels"] if c["name"] == "x" for m in c["members"]]
     assert actual == declared_tags == ["t"]
+
+
+def test_T31_root_lifecycle_reinstantiates_channel_without_receptionist():
+    stateful = ('n = 0\n'
+                'def run(m):\n'
+                '    global n\n'
+                '    n += 1\n'
+                '    return str(n)\n')
+    G = G0()
+    G["channels"].append({"name": "y", "members": [{"kind": "program", "text": stateful, "tag": "state"}]})  # 合法：无接待员
+    rt, P = fresh(G); start(P, G); rt.run()
+    for body in ("one", "two"):
+        rt.msg("y", "door", "1", body); rt.run()
+    assert [dict(frames_of(s)).get("re") for s in rows(rt, "y", "step")] == ["1", "2"]       # 同一实例的易失状态
+    del rt
+    rt2 = up(P)                                                                               # load 已重新 exec y/1，即使 y 没有接待员
+    rt2.msg("y", "door", "1", "three"); rt2.run()
+    assert dict(frames_of(rows(rt2, "y", "step")[-1]))["re"] == "1"                         # Σ 归零：新 incarnation 的第一次调用
+    assert [r["body"] for r in rows(rt2, "c0", "msg") if r["from"] == "_root"] == ["up"] # 全机只有一个物理记号
+    assert not any(r["from"] in ("_root", "world") and r["body"] in ("up", "down") for r in rows(rt2, "y", "msg"))
+    assert any(r["body"] == "reconcile" for r in rows(rt2, "c1", "msg"))                    # A 仍以协作语言触发内部对账
 
 
 def test_T28_process_level_stop_and_respawn_same_individual():
@@ -820,16 +849,17 @@ def test_T28_process_level_stop_and_respawn_same_individual():
         os.killpg(pid, signal.SIGTERM)                                                            # 外面只给信号
         assert gone(pid)                                                                          # down 入账 → 静止 → 退出
         rt = Runtime(P).load()
-        assert [r["body"] for r in rows(rt, "x", "msg") if r["from"] == "world"] == ["down"]      # 优雅停：账上有 down
+        assert [r["body"] for r in rows(rt, "c0", "msg") if r["from"] == "_root"] == ["down"]    # 优雅停：根边界有 down
+        assert not any(r["from"] in ("_root", "world") and r["body"] in ("up", "down") for r in rows(rt, "x", "msg"))
         D1 = decl_of(rt)                                                                          # 机器死了，膜外读它的基因组
         say(P, "x", "late")                                                                       # 休眠中的来信：躺在收件箱等它醒
         pid = Exec.spawn(["init.py", str(P), "--serve"], cwd=P, log=P / "log")                    # 同一个 P 再起 = 同一个体醒来
-        wait_child(P, lambda c: [r["body"] for r in rows(c, "x", "msg") if r["from"] == "world"] == ["down", "up"]
+        wait_child(P, lambda c: [r["body"] for r in rows(c, "c0", "msg") if r["from"] == "_root"] == ["down", "up"]
                    and any(r["body"] == "late" for r in rows(c, "x", "msg"))
                    and rows(c, "x", "step")[-1]["upto"] >= [r for r in rows(c, "x", "msg") if r["body"] == "late"][0]["seq"])   # 醒来入账；来信被处理
         os.killpg(pid, signal.SIGTERM); assert gone(pid)
         rt2 = Runtime(P).load()
-        assert [r["body"] for r in rows(rt2, "x", "msg") if r["from"] == "world"] == ["down", "up", "down"]   # 第几条 up = 第几次 incarnation
+        assert [r["body"] for r in rows(rt2, "c0", "msg") if r["from"] == "_root"] == ["down", "up", "down"] # 生命周期仅在根边界留痕
         assert rows(rt2, "x", "place") == rows(rt, "x", "place") and decl_of(rt2) == D1           # 同一个体：形态一行没变
         hi = [r for r in rows(rt2, "x", "msg") if r["body"] == "hi"][0]
         assert rt2.channels["x"].cursor["1"] >= hi["seq"] and rt.channels["x"].cursor["1"] >= hi["seq"]   # 游标折出来，跨进程不丢
@@ -963,9 +993,9 @@ def test_T27_population_self_organizes_and_wakes_a_dead_hub():
         for A, B in ((P1, P2), (P2, P1), (P1, P0)):                                                            # ping/pong 两边账上都有
             wait_for(A, lambda c, B=B: door_msg(c, "c4", "pong", f"file:{B}#c4"), timeout=60)
             wait_for(B, lambda c, A=A: door_msg(c, "c4", "ping", f"file:{A}#c4"), timeout=60)
-        # 杀掉 dalek0（硬杀：账上有 start 没 down）
+        # 杀掉 dalek0（硬杀：根边界上有 start 没 down）
         os.killpg(pids[0], signal.SIGKILL); time.sleep(0.5)
-        n_up0 = sum(1 for r in rows(Runtime(P0).load(), "c3", "msg") if r["body"] == "up")
+        n_up0 = sum(1 for r in rows(Runtime(P0).load(), "c0", "msg") if r["from"] == "_root" and r["body"] == "up")
         say(P1, "c4", "tick")                                                                                  # d1：ping hub 无 pong，ping d2 有 pong
         wait_for(P1, lambda c: sum(1 for r in rows(c, "c4", "msg") if r["body"] == "ping" and r["from"] == "1") >= 2, timeout=30)
         wait_for(P2, lambda c: sum(1 for r in rows(c, "c4", "msg") if r["body"] == "ping") >= 2, timeout=30)   # d1↔d2 仍在 ping
@@ -973,10 +1003,12 @@ def test_T27_population_self_organizes_and_wakes_a_dead_hub():
         say(P1, "c4", "tick")                                                                                  # 上一轮 hub 没 pong → spawn P0（照 H 唤醒）
         wait_for(P1, lambda c: has_msg(c, "c4", lambda r: r["from"] == "spawn"), timeout=30)
         pids.append(int([r for r in rows(Runtime(P1).load(), "c4", "msg") if r["from"] == "spawn"][0]["body"].split("pid=")[1]))
-        wait_for(P0, lambda c: sum(1 for r in rows(c, "c3", "msg") if r["body"] == "up") == n_up0 + 1, timeout=30)   # 同一本账醒来：多一条 up
+        wait_for(P0, lambda c: sum(1 for r in rows(c, "c0", "msg") if r["from"] == "_root" and r["body"] == "up") == n_up0 + 1, timeout=30)  # 同一本账醒来
         wait_for(P1, lambda c: door_msg(c, "c4", "pong", f"file:{P0}#c3"), timeout=60)                              # hub 回来了：pong 恢复
         d0 = Runtime(P0).load()
-        assert rows(d0, "c3", "place")[0]["text"] == HUB and not any(r["body"] == "down" for r in rows(d0, "c3", "msg"))   # 硬杀：有 up 没 down
+        assert rows(d0, "c3", "place")[0]["text"] == HUB
+        assert not any(r["from"] == "_root" and r["body"] == "down" for r in rows(d0, "c0", "msg"))                # 硬杀：根边界没 down
+        assert not any(r["from"] in ("_root", "world") and r["body"] in ("up", "down") for r in rows(d0, "c3", "msg"))
     finally:
         for pid in pids:
             try: os.killpg(pid, signal.SIGKILL)

@@ -4,7 +4,8 @@
 #   placed <ch> <tag> <kind> [in] [bind=…] [iface=…]\n<text>    c0 的手放的，tag 是 R 实际分配的 channel 内唯一逻辑地址
 #   retired <ch>/<tag>
 # 请求 decl（任何人）→ 读账本、折叠、返回 decl\n<G_t>：G₀ ⊕ placed ⊖ retired。
-# 醒来 up（世界发的）→ 对账：对 decl 里每个 channel 经门向 c0 发 rebuild <name>\n<channel>；c0 回 exists / rebuilt，不用管。期望 = 登记处，实际 = R 折的。
+# 收到 c0/A 经门发来的 reconcile → 对账：对 decl 里每个 channel 经门向 c0 发 rebuild <name>\n<channel>。
+# 物理 up 只在 c0 边界留痕；c1 看到的永远是 actor 协作，期望 = 登记处，实际 = R 折的。
 #   channel 按出生 + 首次出现顺序；成员按登记顺序；门就是成员（kind=door，text 原样），不折 peers；接待员显式，没有就没有；
 #   退役的不输出；world 原样来自 born。这就是 π(A_t)：去掉不经 c0 放的门（出生证明、生子的临时门）、去掉退役；数字地址不进入登记。
 import json
@@ -68,7 +69,7 @@ def decl(G, entries):
 
 def run(m):
     body = m["body"].strip()
-    if body not in ("decl", "up"):
+    if body not in ("decl", "reconcile"):
         return
     rows = [json.loads(l) for l in call("0", "show").splitlines() if l]
     G, entries = fold(rows)

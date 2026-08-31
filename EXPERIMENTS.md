@@ -68,6 +68,9 @@
 - **抓到被试一个真 bug**：SIGKILL dalek0 后 d1 连续 tick 不 spawn。读账 + 读它写的源码定位：失联检测 `_need_spawn` 正确判真，但它写了 `call("spawn", d)`——两参数，动词进头、目录进正文；ABI 里动词调用参数必须在头行同一字符串。头行只剩 `spawn`，解析不到成员，被静默丢弃。
 
 **E2-c（修复实验；`runs/task1-d1-c2.jsonl`、`task1-d1-c4.jsonl`）**
+
+> **历史语义注记**：E2 在 M4 最初的“R 向每个有接待员的 channel 注入 `world up/down`”实现上运行，所以下述 c3/c4 up 是原始账本的真实事实，不应改写。review 后当前语义已收紧为“物理只在根 channel 记 `_root up/down`，A 经门向 c1 发 `reconcile`”，由 E3/T25–T31 见证。E2 的自组织、ABI bug、机内修复和 peer 唤醒结论不依赖物理事件在哪本内脏账本留痕。
+
 修复任务发给 **d1 自己的 c2**（附旧源码与 bug 定位；诊断在门外，修复在门内）：
 - 03:52:50 三台照 H 唤醒（各 c4 多一条 `up`）。
 - ~03:54:02（约 70 s）：d1 的 c2 写出新 reporter（源码中可指认 `call("spawn " + d)`）→ `add c4 program in bind=spawn tag=reporter iface=…` → **c4/6 接任接待员** → 经门 `retire c4/1`。旧件退役、新件同角色接替——任务 0 的机制作用于任务 1 的活器官。
@@ -81,16 +84,17 @@
 
 ## E3 · M4：生命周期（机制层实验，无 LLM）
 
-M4 的三行验收不需要作者参与，故为机制层实验（确定性，可无限重复），与 E1/E2 的真模型实验区分记录。桩 = 测试内的 `def run(m)` 小 actor；机器与进程都是真的。
+M4 的验收不需要作者参与，故为机制层实验（确定性，可无限重复），与 E1/E2 的真模型实验区分记录。桩 = 测试内的 `def run(m)` 小 actor；机器与进程都是真的。
 
 | 验收 | 实验 | 见证 |
 |---|---|---|
-| 重启 = 同一个体（进程内） | T25 | down()/up(P) 后账上 world 行序列 `up`→`down`→`up`；游标由折叠恢复；硬杀留下的无 step 消息重跑（at-least-once）；decl 不变 |
-| 重启 = 同一个体（**进程级**） | T28（2026-09-01 晚补） | 真 SIGTERM → `down` 入账 + 该事件 step + 进程退出；休眠期间的来信躺在收件箱、醒来（`Exec.spawn` 同一个 P → `up` 入账）即被处理；place 行与 decl 一行不变；world 行序列恰为 `down, up, down`（第几条 up = 第几次 incarnation） |
-| 本地维护，零时钟 | T26 | `rm h/c8.jsonl` 后 channel 不存在（存在 ⇔ 至少一条 place 行）；`up` → 登记员对 decl 逐 channel 发 `rebuild` → A：exists 跳过、new 重造（同 text、空账本，照 spec 不照 WAL）；不重复登记 |
-| 远端维护 | T27 + E2-c（真模型） | 见 E2：SIGKILL 的 dalek0 被邻居 `spawn <P>` 照 H 唤醒，账上多一条 up |
+| 重启 = 同一个体（进程内） | T25 | down()/up(P) 后只有根 channel 的 `_root` 行序列 `up`→`down`→`up`；内脏 x 零物理行；游标由折叠恢复；pending 消息重跑；decl 不变 |
+| 重启 = 同一个体（**进程级**） | T28 | 真 SIGTERM → 根 channel `down` + A 的 step + 进程退出；休眠来信醒来即处理；根边界序列恰为 `down, up, down`，内脏 x 零物理行；place、decl、游标不变 |
+| 本地维护，零时钟 | T26 | `rm h/c8.jsonl` 后 channel 不存在；根 `up` → A 经门发 `reconcile` → c1 按 decl 发 `rebuild` → A 对 exists 跳过、对 new 重造；不重复登记 |
+| 无接待员内脏的重新实例化 | T31 | y 的常驻函数在首个 incarnation 内计数 `1,2`；重启后第一次调用回到 `1`（Σ 归零）；y 账本零 up/down，全机只有根 channel 一条 `_root up` |
+| 远端维护 | T27 + E2-c（历史真模型） | SIGKILL 的 dalek0 被邻居 `spawn <P>` 照 H 唤醒，当前 T27 见证根 channel 多一条 `_root up`；E2 原账见上述历史注记 |
 
-**野外附证**（来自 E2 的过程，非独立设计）：d1/d2 在驱动收尾被 SIGTERM，账本尾部出现 `world→接待员 down`（优雅停机在真进程种群中成立）；dalek0 被 SIGKILL 属硬杀，账上有 up 没 down，重启后 pending 重跑。
+**野外附证**（来自 E2 的旧语义过程，非独立设计）：d1/d2 在驱动收尾被 SIGTERM，原账本尾部出现 `world→接待员 down`；dalek0 被 SIGKILL 后无 down，pending 重跑。当前实现的对应进程级证据由 T28 给出，物理行仅落根 channel。
 **调试记录**：一度以为 SIGTERM 后进程不退，实为**僵尸**——`Exec.spawn` 的 Popen 无人 `waitpid`，`killpg(pid, 0)` 对僵尸返回成功；R 的停机路径无缺陷（e8ae083）。
 **未覆盖**：R 在一次事件中间崩溃（step 行写了一半）——H10 残，语义未定；自停（stop 请求 / C 停自己）。
 
@@ -117,7 +121,7 @@ python3 runs/drivers/run_real.py  <key>     # E1：起机、发 task、打印 c2
 python3 runs/drivers/run_task1.py <key>     # E2-b：全链路（写器官 → spawn → 自组织 → 杀 → 唤醒）
 python3 runs/drivers/run_task1b.py          # E2-b 续跑：唤醒三台 + 心跳 + 终局（不再调模型写码）
 python3 runs/drivers/run_task1c.py          # E2-c：修复任务 + 终局（d1 的 c2 换 reporter；要 key 在机器 G 里）
-python3 t/test_c0.py                        # 机制层对照：T24 = E1 桩版；T25/T26/T28 = E3；T27 = E2 桩版；T29 = E4；29/29
+python3 t/test_c0.py                        # 机制层：T24=E1；T25/T26/T28/T31=E3；T27=E2；T29=E4；31/31
 ```
 
 模型配置以 `actors/l.py` 首行与 `ask()` 为准（4e0b54c 起：deepseek-v4-pro / 32768 / OpenAI 兼容报文，`/messages` 路径则讲 Anthropic 报文）。相关提交：cc2d239（T24）、fc29667（E1-b）、d50612d（T25–T27）、d8f4f3d（心跳）、4e0b54c（v4-pro）、a2186d2（E2）、f3dcd81（账本归档）。

@@ -203,7 +203,7 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 
 **逻辑地址**（A2）：channel 用 name；actor 用 `channel/tag`。tag 写在 G 与 place 行里，在 channel 的活跃集合内唯一；R 只按字符串判重与投递，重名请求原子分配 `tag1/tag2/…`，并在 syscall 回执中交出最终 tag。数字 `addr` 是 place 行在 H 内的物理位置，只增不复用，不进入 c1 的组织登记。`call("U", …)` 调用逻辑地址 U。成员还可带一行**接口**（`iface`：怎么叫它、回什么），同样透传——它是 oracle 的工具说明。
 
-**性质与实现分开**（2026-08-31 改）：H 记的是 **call 边界**——每条消息、每次 call、每个返回值、每次放入/退役。actor 在一次 run 里面做什么（局部变量、globals、`random`、oracle 与端点的对话）不入账，只有它经边界产生的东西在。记号：D = (G, H) 是持久状态、个体的身份；Σ 是 actor 的易失运行状态；活着的机器是 (G, H, Σ)。invoke : (Σ, m) → (Σ′, calls, reply)，calls 与 reply 入 H，Σ′ 留在活 actor 里；重启 : (G, H, Σ) → (G, H + restart, instantiate(G))。同一个 Dalek，不保证同一个易失现场——电脑重启还是那台电脑，RAM 不在了。Σ 本身是工程（想留什么，给 actor 一个 dump 字节的能力让它自己存），不是理论模型关注的对象。文件不在 Σ 里：它是膜外的世界，活过重启、不随 G 遗传；程序直接 `open` 是工程简化（DESIGN H7）。"没有私有状态"**不是**约定：常驻函数可以有内部状态。确定性的内部状态是 (text, 自上次实例化以来收到的消息) 的函数——全在 H 里，愿意可以重放（call 的返回从账上取），但没人有义务重放：想活过重启的 actor 自己读账本重建（spawn.py 找未办完的请求就是这么做的），不想的从头开始；随机的内部状态本来就不该重放，重启重新抽样，它的后果已在账上。前提只有一条：**实例化是 H 中的事件**——place 行是第一次，重启是再一次（重启入账归 M4，H10）。所以"重启 = 折叠账本 = 同一台机器"照旧成立：机器 = (G, H)，内部状态不是机器的一部分。同理，"一个真的 Ω 边界"是契约边界，不是进程边界：Exec 用进程还是在本进程里 exec，是绑定里的事，R 和理论都看不见。
+**性质与实现分开**（2026-08-31 改）：H 记的是 **call 边界**——每条消息、每次 call、每个返回值、每次放入/退役。actor 在一次 run 里面做什么（局部变量、globals、`random`、oracle 与端点的对话）不入账，只有它经边界产生的东西在。记号：D = (G, H) 是持久状态、个体的身份；Σ 是 actor 的易失运行状态；活着的机器是 (G, H, Σ)。invoke : (Σ, m) → (Σ′, calls, reply)，calls 与 reply 入 H，Σ′ 留在活 actor 里；重启 : (G, H, Σ) → (G, H + restart, instantiate(G))。同一个 Dalek，不保证同一个易失现场——电脑重启还是那台电脑，RAM 不在了。Σ 本身是工程（想留什么，给 actor 一个 dump 字节的能力让它自己存），不是理论模型关注的对象。文件不在 Σ 里：它是膜外的世界，活过重启、不随 G 遗传；程序直接 `open` 是工程简化（DESIGN H7）。"没有私有状态"**不是**约定：常驻函数可以有内部状态。确定性的内部状态是 (text, 自上次实例化以来收到的消息) 的函数——全在 H 里，愿意可以重放（call 的返回从账上取），但没人有义务重放：想活过重启的 actor 自己读账本重建（spawn.py 找未办完的请求就是这么做的），不想的从头开始；随机的内部状态本来就不该重放，重启重新抽样，它的后果已在账上。前提收紧为：**已出生机器的每次 Runtime incarnation 在 H 中有一个唯一边界事件**——首次放入是 place，出生边界是根 channel 的 start，之后每次醒来是根 channel 的 `_root→接待员 up`（M4，H10）。每个 actor 的重新实例化由这个机器级事件与它的有效 place/retire 历史推出，**不要求在 actor 所在 channel 再复制一条 up**。所以"重启 = 折叠账本 = 同一台机器"照旧成立：机器 = (G, H)，内部状态不是机器的一部分。同理，"一个真的 Ω 边界"是契约边界，不是进程边界：Exec 用进程还是在本进程里 exec，是绑定里的事，R 和理论都看不见。
 
 **kind**：两种，都是"转移表定行为 + 一个 text 参数"，区别只在 text 是什么——程序的 text 是源码（L 的源码里含端点和提示语），门的 text 是对面的地址。门最退化：text 不是行为、不是内容，是指针；但它是唯一 text 指向 channel 外面的 kind。整台机器的拓扑 = 全部门的 text 的集合。
 
@@ -417,27 +417,27 @@ c2 没有 file  →  c2 造 c2′（L 经门 add 进 c2）  →  c2′ 做到 t*
 
 转移：pack → unborn；`Exec.spawn(init, P)` → constructing；第一条 msg → alive；`stop` → dormant；**在同一个 P 上再 `Exec.spawn` → alive**（重启 = 账本非空的出生；出生 = 账本为空的重启，R 不区分）；删 H → dead。自己不能重启自己（死的东西不能动）：dormant → alive 的主语是父代、peer 或人。dormant 是合法状态（休眠、孢子、停掉未删的容器），故障只是"没人来唤醒"。
 
-**起停入账，外面只给信号**：
-- 起：R 折叠 H 后，**若根门已关**（已出生），对每个 channel 追加 `msg from=world to=接待员 body=up`。未出生（根门开着）不发——发了会关门；出生的第一条消息仍是父代的 start。**出生 = 父代的 start；醒来 = 世界的 up**，两个词、两个来源，都在账上。
-- 停：外部信号（`Exec.stop` 的 SIGTERM，或经收件箱给 C 的 stop 请求）→ R 对每个 channel 追加 `down` → 跑到静止或预算耗尽 → 退出。自停：C actor 绑定 `stop`（与 spawn 同类的 Ω 动作），走同一条路。
-- 各器官对 up/down 做什么由 G 定，不由世界定：c1 收到 up → reconcile；reporter 收到 up → hello hub、收到 down → 告别；c0 什么都不做。
-- 崩溃可判定：账本最后有 up 没有 down → 上次是硬杀，没写 step 行的 pending 消息会重跑（at-least-once；有外部效果的动作要幂等，spawn 目录已存在则不再起）。第几条 up = 第几次 incarnation。
+**起停入账，外面只给信号**：这里的 c0 是唯一的**生命周期/形态边界**，不是唯一的通信边界（普通任务仍可经门进入其他 channel）。
+- 起：R 折叠 H 后，**若根门已关**（已出生），只在 G 的首 channel 追加一条 `msg from=_root to=接待员 body=up`。`_root` 是介质的固定边界设施，不是伪 actor。未出生不发；出生的第一条消息仍是父代的 start。
+- 停：外部 SIGTERM → R 仍只在首 channel 追加 `_root→接待员 down` → 跑到静止或预算耗尽 → 退出。自停（stop 请求 / pid 可见性）仍未接。
+- 物理不直接戳 c1/c2/y。A 收到边界 `up` 后，经本机门给 c1 发普通协作消息 `reconcile`；登记员再向 c0 请求 rebuild。出生时的 `start` 广播同理：是 A 对创世 kick 的协作翻译，故保留。reporter 只处理 `start/tick`，不再处理物理 up。
+- 崩溃可判定：根 channel 最后一个开启边界（首次 `start` 或之后的 `_root up`）没有匹配的 `_root down` → 上次是硬杀。没写 step 行的 pending 消息会重跑（at-least-once；有外部效果的动作要幂等）。
 
 **自维护 = 期望与实际的对账。** 期望 = c1 的注册表（decl）；实际 = R 折叠 H 的结果。不变量：G 里每个 channel 在 H 里都有一本账且至少一条 place 行。
 
-- **本地损伤不需要时钟**：`stop → rm h/c8.jsonl → spawn → up` → c1 收到 up → 对注册表里每个 channel 向 c0 发 `rebuild <描述>`；c0 逐个 `channel.create`，**返回 new | exists**：exists 跳过，new 才 add 它的 actor 和门。幂等、无探测、一轮消息。重造出的 c8 是新器官：同样的 text、空的账本（照 spec 重造）；整机重启是 R 折叠 H（照 WAL 重放）。两种损伤两种恢复，不混。
+- **本地损伤不需要时钟**：`stop → rm h/c8.jsonl → spawn → c0:up` → A 经门发 `reconcile` 给 c1 → c1 对注册表里每个 channel 向 c0 发 `rebuild <描述>`；c0 逐个 `channel.create`，**返回 new | exists**：exists 跳过，new 才 add 它的 actor 和门。幂等、无探测、一轮消息。重造出的 c8 是新器官：同样的 text、空的账本（照 spec 重造）；整机重启是 R 折叠 H（照 WAL 重放）。两种损伤两种恢复，不混。
 - **channel 存在 ⇔ 账本里至少一条 place 行**（不看 `_order`）。
 - **远端损伤才需要时钟**：对面机器死了，本地没有文件可查，只能"ping 了没 pong"；ping/pong 链自计时但链断了 reporter 不会再醒——发现链断需要一个膜外的 tick（Ω 的时钟经门送进来，和 LLM 同类的 oracle 端点）。发现后：照 G 长一个新 hub（reporter → c0 `add c3 …`），或 peer 把 dormant 的 dalek0 再 spawn 起来（照 H 恢复，同一个个体醒来）。
 - H 坏了不可修：H 是真相。能做的是备份（工程）。
 
 验收：
 ```
-stop，rm h/c8.jsonl，spawn，→ c1 收到 up → c8 回来，text 相同，账本为空       本地维护，零时钟
-stop，spawn → decl 不变，游标不变，pending 消息重跑，账本有 down/up            重启 = 同一个体
+stop，rm h/c8.jsonl，spawn，→ c0 up → A→c1 reconcile → c8 回来       本地维护，零时钟
+stop，spawn → decl 不变，游标不变，pending 重跑，根账本有 down/up       重启 = 同一个体
 杀掉 dalek0 进程，tick → dalek1 长出 hub 或重新 spawn dalek0 → ping/pong 恢复    远端维护
 ```
 
-**要改的机制**（介质级，不认识名字）：R 起来时广播 up（仅已出生）；SIGTERM → 广播 down → 静止 → 退出；收件箱偏移从 H 派生（收进来的 msg 行带收件箱行号，关 H6）；step 之间退出。
+**介质机制**（不认识组织名字）：R 从 `_order` 取首 channel，已出生时只在此记 `_root up/down`；首 channel 损伤时不偷偷降级到下一 channel，根器官恢复另行定义。收件箱偏移从 H 派生；step 之间退出。
 
 ### 本版的不动点（定位）
 
@@ -567,7 +567,9 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5
 
 **T30 · 唯一逻辑地址（2026-09-01 晚）**：R 对同一 channel 连续请求 tag=t 分配 t、t1、t2，syscall 回执、c0 登记、c1 声明均使用最终 tag；retire t1 形成数字地址空洞，删除该 channel 账本并 rebuild 后再 retire t2，实际活跃 tag 与 decl 仍逐项一致。30/30。
 
-**M3 任务 1 + M4（2026-09-01 晨）**：一次落地。介质：`load` 纯折叠、channel 存在 ⇔ 账本至少一条 place 行；`up`（醒来入账，第几条 up = 第几次 incarnation）；`down`（SIGTERM → 入账 → 静止 → 退出）；`spawn <P>` 用目标自己的 world（同一个 P 再起 = 唤醒）。器官：A 长完发育后向每扇本机门送 `start`（出生 = 父代的 start，醒来 = 世界的 up）；A 收 `rebuild <name>\n<channel>`：create → exists 跳过 / new 才放回成员，不重复登记；登记员收 `up` → 对 decl 里每个 channel 发 rebuild（期望 = 登记处，实际 = R 折的）。任务 1：hub（c3，hello → 放回路门 → 广播 peers；ping → pong）、reporter（c4，bind=spawn；start/up/tick → 报到；peers → 对每个新端点经 c0 加门；placed → ping；tick 时 hub 没 pong → `spawn <它的 P>` 照 H 唤醒）。T25 重启 = 同一个体（up/down 序列、游标不变、pending 重跑、decl 不变）；T28 同一件事的**进程级**版（真 SIGTERM → down 入账 → 退出；休眠中的来信躺在收件箱、醒来即处理；再起同一个 P → up，place 行与 decl 一行不变——2026-09-01 晚补，此前只有进程内版）；T26 本地损伤：rm 一本账 → up → 对账 → 同 text 空账本回来、不重复登记；T27 三台机器互长门、ping/pong 两边入账、SIGKILL dalek0 → d1↔d2 仍 pong → 下一次 tick d1 spawn P0 → dalek0 同一本账醒来（多一条 up）→ hub 的 pong 恢复。27/27。剩：R 在一次事件中间崩溃（行写了一半）。**真模型版（同日晨，deepseek-v4-pro）**：c2 照规格写出 hub/reporter、装好、种群自组织全部成立；reporter 一处 ABI 错拼（`call("spawn", d)`），修复走的是机器自己的路——d1 的 c2 收修复任务，写新 reporter 同角色接替（in 接任接待员）、退旧件，然后 SIGKILL 的 dalek0 被 d1 用修好的 `call("spawn " + 目录)` 照 H 唤醒，hub 的 pong 恢复。**任务 0 的机制修了任务 1 的器官**——变异 + 接替对活器官成立。另两条野外教训进了测试与提示语：模型第一轮"说计划不写帧"（l.py 纠偏一轮）、早到的 ping 在回门放好前被丢（tick 心跳自愈，T27）。账本 `runs/task1-*.jsonl`。
+**T31 · 生命周期边界（2026-09-01 晚）**：构造一个合法的无接待员 channel y，其常驻 actor 在同一 incarnation 内计数 1、2；重启后第一次调用回到 1，直接见证重新实例化和 Σ 归零。y 账本无任何 up/down，全机只有首 channel 的一条 `_root up`；c1 只收到 A 经门发的 `reconcile`。31/31。
+
+**M3 任务 1 + M4（2026-09-01 晨；生命周期边界于同日晚收紧）**：介质的 `load` 纯折叠，channel 存在 ⇔ 账本至少一条 place 行；已出生的机器醒/停时，R 只在首 channel 记 `_root→接待员 up/down`，内脏账本不写物理事件。A 收 up 后经门给 c1 发 `reconcile`；登记员再对 decl 逐 channel 请求 rebuild。出生后 A 经门送 `start` 的协作路径保留。reporter 只用 start/tick 报到与心跳。T25/T28 证明根边界 up/down、游标恢复、pending 重跑和 decl 不变；T26 证明 `up → A:reconcile → c1:rebuild`；T31 直接覆盖无接待员 channel：成员确实重新实例化且 Σ 归零，但该内脏账本零 up/down。任务 1 的 hub/reporter、三机互长门、ping/pong、SIGKILL 后 peer spawn 原机并恢复 pong 照旧成立。真模型实验的原始账本保留当时的逐 channel world-up 语义，见 EXPERIMENTS E2 的历史注记；当前机制以 T25/T26/T27/T28/T31 为准。
 
 **M3.5（2026-09-01 凌晨，oracle 不是原语）**：审稿把 L 的 kind 从 oracle 机械改成 program，一切照跑——一个介质不认识的 kind 不该算进转移表。R 的 kind 集 = {program, door}；L = `kind=program, tag=L`；"oracle"留作理论类别词（解释器在远处的程序）。同步：DESIGN §2 状态加 Σ、易失记忆措辞；omega.py 注释；1.3 解释器是 Ω 的前提不是基因。**膜定为窄版**（同日）：膜约束的是对组织和账本的作用——进账本只有 call、改形态只有 syscall、边只有门、接收侧只认句柄；actor 在 run 里对世界的访问不是机器的动作，不入账、不遗传、不受限。强版本做得到但刻意（R 变 OS，handle 返回值把模型原文拉回 H）。H5/H7 确认关闭，L 不拿 request handle（DESIGN I6）。24/24。
 
@@ -575,7 +577,7 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5
 
 **M3.4（2026-08-31 上午，agent loop 出 R）**：审稿追问"LLM 的策略为什么写在 runtime 里"——R 里 `_oracle` 替 L 决定组装、帧、轮数，是 R 里唯一一块长得像组织的东西。定：**kind 是类别（理论），实例化是工程**；oracle 和程序同一种实例化（exec text），L 的 text = `actors/l.py` = 整个 agent loop（端点、凭据、提示语、组装、POST、解帧、轮数）。R 删 `_oracle` / `MAX_TURNS`，Ω 删 `Port.request`（Port 只剩 send/recv 给门），R 对 oracle 只认识这个词。账本、帧序、测试断言不变（L 的两次读还是经 call 入账）。T0–T23 绿。
 
-**M3.3 补（2026-08-31，定义收口，不改代码）**：审稿两条"理论裂缝"——(1) 常驻函数的 globals 是 H 之外的状态：不是裂缝，H 记 call 边界，内部状态不入账，实例化是 H 中的事件（1.7 性质与实现；重启入账归 M4）；(2) oracle 的模型原文没入账：不是裂缝，oracle 是完整 actor，`Port.request` 在它的 run 里面（1.4）。DESIGN §2 同步到 M3.3。
+**M3.3 补（2026-08-31，定义收口；M4 后精确化）**：常驻函数的 globals 是 H 之外的易失状态，H 只记 call 边界。初次实例化有 place；已出生机器重启时，一条根 channel 的 incarnation 边界事件与各 actor 的 place/retire 共同推出全部重新实例化，不在每个内脏复制 up。oracle 的模型原文不入账，因为 oracle 是完整 actor，端点对话在它的 run 里面。
 
 **M3.2（2026-08-30 深夜，运行模型；已被 M3.3 取代）**：介质的转移部分重写——"一步"从一次函数调用改成**一次运行**：初始消息 → 过程 { 请求 → 回复 }* → 结束。程序：`Exec.open` 交互进程 + 帧协议（`>>> 地址 / 正文 / <<<`，回复写回 stdin），一条消息一次运行，视图消失（程序只吃初始消息，oracle 组装时得整本账 + 成员表）；oracle：多轮对话 = agent loop（每帧一个请求，回复喂回，无帧即止）；`re` = 回复发送者；嵌套运行带 `run`，只有事件推游标；成员带 `tag`（角色寻址，后放接替）与 `iface`；门的 local 在交出账本时计算（channel 只增，local 只会由假变真）；收件箱偏移记在收进来的行上（`at`，关 H6）。realize/spawn/registrar 按 call 重写（没有 note、没有对位、没有两步）；C 的生子是两次运行。测试全部重写：T18 = 一次运行里 task → U 败 → U 过 → add；placed 是新运行 → done 经真门回到发起者，`seq(done) > seq(placed)`；T20 地址 0；T21 角色。T0–T21 绿（21 个）。
 
