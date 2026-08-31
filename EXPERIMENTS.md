@@ -80,9 +80,11 @@
 ## 复现
 
 ```
-# 任务 0（把 KEY 换成真凭据；只改 /tmp 机器的 G，不改仓库）
-python3 /tmp/run_task1.py 同目录下有 run_real.py / run_task1{,b,c}.py 三个驱动（会话产物，未入库）
-# 机制层对照：python3 t/test_c0.py   （T24 = E1 的桩版；T25–T27 = M4 与 E2 的桩版；27/27）
+python3 runs/drivers/run_real.py  <key>     # E1：起机、发 task、打印 c2 账本（机器在 /tmp，key 不落仓库）
+python3 runs/drivers/run_task1.py <key>     # E2-b：全链路（写器官 → spawn → 自组织 → 杀 → 唤醒）
+python3 runs/drivers/run_task1b.py          # E2-b 续跑：唤醒三台 + 心跳 + 终局（不再调模型写码）
+python3 runs/drivers/run_task1c.py          # E2-c：修复任务 + 终局（d1 的 c2 换 reporter；要 key 在机器 G 里）
+python3 t/test_c0.py                        # 机制层对照：T24 = E1 桩版；T25–T27 = M4 与 E2 桩版；27/27
 ```
 
 模型配置以 `actors/l.py` 首行与 `ask()` 为准（4e0b54c 起：deepseek-v4-pro / 32768 / OpenAI 兼容报文，`/messages` 路径则讲 Anthropic 报文）。相关提交：cc2d239（T24）、fc29667（E1-b）、d50612d（T25–T27）、d8f4f3d（心跳）、4e0b54c（v4-pro）、a2186d2（E2）、f3dcd81（账本归档）。
