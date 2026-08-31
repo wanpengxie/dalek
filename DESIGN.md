@@ -293,8 +293,11 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 | place 的数字 addr 只增不复用；组织协议按 tag | ABI | `channel/tag` 属于形态；数字 addr 是 H 内部位置，actor 不得硬编码 |
 | 收件箱是文件，人人可 append；text 拿着 urllib / open 也能绕过门写进别的机器 | `omega.Port.send/recv` | 膜的接收侧：收件箱只认合法句柄写入，句柄只在门那里——那时"穿过介质的只有 call"是 Port 的性质，不是约定。文件收件箱是 M1 的工程简化（2026-08-31）；其后果 = 可伪造 placed 遗传假形态（H17），真实系统靠句柄解决、演示模型靠约定 |
 | 首 channel 必须显式接待员（genesis / build 拒绝） | `genesis.py` / `realize.py` | 出生需要一个入口（理论合法性条件）；拒绝是保障 |
+| 一个 P 只有一个活 R：`--serve` 启动抢 `P/lock` 的 flock，抢不到即退出 | `init.lock` | 单写者 I1 是理论前提；flock 是工程兜底（alive→spawn 无操作、dormant→spawn 唤醒）。H18 |
 
 **H16 · C · c0 内部经合法门说假形态事实。** 原型不防：π(A) ≅ G 是 c0 维护的。工程方案：`bind=registry` 的媒介能力——R 每落一条 place/retire 行就把该行原样投给持有它的 actor（像 syscall 回执一样 `from=place`），登记事实的来源变成 R，伪造路径消失，三段记账变回同时；R 仍内容盲。代价：c1 不再是"只经门喂出来的"。
+
+**H18 · C · 同一个 P 起两个 R，双写破坏单写者 I1（工程洞，2026-09-01；codex review #3）。** `spawn <P>` 无条件起进程，没查目标是否已活。一台机器活着时再 spawn 同一个 P（reporter 失联误判、或两个 peer 同时判死各 spawn 一次），两个 R 各自把 `c.seq` 折在内存里、各自 `c.seq+1` append，**序号相撞**（实测账本 32 行去重剩 20，`_pending`/游标/折叠全乱），账本永久不可折叠——而账本是唯一真相。**已加最小工程保障**（`init.lock`）：`--serve` 的 R 进程启动即对 `P/lock` 抢 `flock(LOCK_EX|LOCK_NB)`，抢不到 = 已有活 R → `exit 3`，load/wake 之前退出，一字节不写。flock 内核在进程死亡时自动释放，正好定义 Space 五态：alive→spawn 拿不到锁 = 无操作，dormant→spawn 拿得到 = 唤醒。这是**工程保障**（DESIGN §6 类，非理论）：真实系统本就该做单实例/存活检查，演示模型用一个 P 本地锁兜住；理论层"一个 P 一个 R"是 I1 的前提，不靠锁成立。进程内 `up()`（测试、膜外读）不抢锁，避免误伤。
 
 **H17 · C · 任意 actor 伪造 placed，绕过 syscall 使假形态遗传（工程洞，2026-09-01；codex review）。** 收件箱是明文文件、`Port.send` 对谁都开，所以一个普通 program 能在 run 里 `open("in/c1.jsonl","a")` 写一行署名 `file:<P>#c0` 的 `placed …`，登记员采信 → 新 channel/成员进 `decl` 并遗传——**新能力不经 door→c0→syscall→R 就进了基因组**。比 H16 更宽：H16 只是 c0 自己作恶，H17 是任何 actor 都能走。**理论层不破**：模型里 `Port` 接收侧有写句柄，text 拿不到别人的句柄，"只有一条进入路径"成立；破的是**当前实现见证这条膜**——M1 用明文文件收件箱（同 §6 那行、I6 的"接收侧只认合法句柄"未实现）。**真实系统必须解决（句柄/能力，Atoll 已在传输层焊死）；演示模型不做——复杂度对最小理论模型太高，靠约定：不伪造收件箱。** 所以"只有一条进入路径"是**理论句**，不是本原型的实现保证。
 
