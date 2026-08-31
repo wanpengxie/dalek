@@ -77,6 +77,23 @@
 
 ---
 
+## E3 · M4：生命周期（机制层实验，无 LLM）
+
+M4 的三行验收不需要作者参与，故为机制层实验（确定性，可无限重复），与 E1/E2 的真模型实验区分记录。桩 = 测试内的 `def run(m)` 小 actor；机器与进程都是真的。
+
+| 验收 | 实验 | 见证 |
+|---|---|---|
+| 重启 = 同一个体（进程内） | T25 | down()/up(P) 后账上 world 行序列 `up`→`down`→`up`；游标由折叠恢复；硬杀留下的无 step 消息重跑（at-least-once）；decl 不变 |
+| 重启 = 同一个体（**进程级**） | T28（2026-09-01 晚补） | 真 SIGTERM → `down` 入账 + 该事件 step + 进程退出；休眠期间的来信躺在收件箱、醒来（`Exec.spawn` 同一个 P → `up` 入账）即被处理；place 行与 decl 一行不变；world 行序列恰为 `down, up, down`（第几条 up = 第几次 incarnation） |
+| 本地维护，零时钟 | T26 | `rm h/c8.jsonl` 后 channel 不存在（存在 ⇔ 至少一条 place 行）；`up` → 登记员对 decl 逐 channel 发 `rebuild` → A：exists 跳过、new 重造（同 text、空账本，照 spec 不照 WAL）；不重复登记 |
+| 远端维护 | T27 + E2-c（真模型） | 见 E2：SIGKILL 的 dalek0 被邻居 `spawn <P>` 照 H 唤醒，账上多一条 up |
+
+**野外附证**（来自 E2 的过程，非独立设计）：d1/d2 在驱动收尾被 SIGTERM，账本尾部出现 `world→接待员 down`（优雅停机在真进程种群中成立）；dalek0 被 SIGKILL 属硬杀，账上有 up 没 down，重启后 pending 重跑。
+**调试记录**：一度以为 SIGTERM 后进程不退，实为**僵尸**——`Exec.spawn` 的 Popen 无人 `waitpid`，`killpg(pid, 0)` 对僵尸返回成功；R 的停机路径无缺陷（e8ae083）。
+**未覆盖**：R 在一次事件中间崩溃（step 行写了一半）——H10 残，语义未定；自停（stop 请求 / C 停自己）。
+
+---
+
 ## 复现
 
 ```
@@ -84,7 +101,7 @@ python3 runs/drivers/run_real.py  <key>     # E1：起机、发 task、打印 c2
 python3 runs/drivers/run_task1.py <key>     # E2-b：全链路（写器官 → spawn → 自组织 → 杀 → 唤醒）
 python3 runs/drivers/run_task1b.py          # E2-b 续跑：唤醒三台 + 心跳 + 终局（不再调模型写码）
 python3 runs/drivers/run_task1c.py          # E2-c：修复任务 + 终局（d1 的 c2 换 reporter；要 key 在机器 G 里）
-python3 t/test_c0.py                        # 机制层对照：T24 = E1 桩版；T25–T27 = M4 与 E2 桩版；27/27
+python3 t/test_c0.py                        # 机制层对照：T24 = E1 桩版；T25/T26/T28 = E3；T27 = E2 桩版；28/28
 ```
 
 模型配置以 `actors/l.py` 首行与 `ask()` 为准（4e0b54c 起：deepseek-v4-pro / 32768 / OpenAI 兼容报文，`/messages` 路径则讲 Anthropic 报文）。相关提交：cc2d239（T24）、fc29667（E1-b）、d50612d（T25–T27）、d8f4f3d（心跳）、4e0b54c（v4-pro）、a2186d2（E2）、f3dcd81（账本归档）。
