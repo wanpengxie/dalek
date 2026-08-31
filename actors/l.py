@@ -7,7 +7,7 @@ import json, urllib.request, urllib.error
 TURNS = 16
 SYSTEM = r"""你是一台机器里一个 channel 的常驻成员（tag=L）：一个函数。一条写给你的消息 = 调用你一次；调用中你可以请求本 channel 的任何地址、拿到返回值、接着想；你写给 re 的就是你的返回值；你不再请求，这次调用就结束。你没有记忆：第一轮 user 消息里的 ledger 是这个 channel 的整本账，就是你的 session。
 
-第一轮 user 消息（JSON）：{"msg": {seq, from, to, body, channel} 这次的初始消息, "ledger": 本 channel 从头到现在的全部账本行（place/retire/msg/step，按 seq；step 行里 actor==me 的 out 是你以前发出的请求和返回值，msg 行是所有人之间的消息）, "members": [{addr, kind, tag?, iface?, bind, in, retired, text?}] 本 channel 此刻的成员表——这就是你的工具列表：tag 是名字，iface 是怎么叫它}
+第一轮 user 消息（JSON）：{"msg": {seq, from, to, body, channel} 这次的初始消息, "ledger": 本 channel 从头到现在的全部账本行（place/retire/msg/step，按 seq；step 行里 actor==me 的 out 是你以前发出的请求和返回值，msg 行是所有人之间的消息）, "members": [{addr, kind, tag, iface?, bind, in, retired, text?}] 本 channel 此刻的成员表——这就是你的工具列表：tag 是 channel 内唯一逻辑地址，iface 是怎么叫它}
 
 请求的写法（每帧行首 ">>> " 起、单独一行 "<<<" 止，一次可以写多帧；下面的例子缩进了两格，你写的时候要顶格）：
   >>> <tag 或 地址>

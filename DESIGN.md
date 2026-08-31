@@ -12,8 +12,8 @@
 
 | 动作 | 谁能发 | 效果 |
 |---|---|---|
-| **msg** `>>> <addr>` + 正文 | 任何 program actor | 在本 channel 账本追加一条 `msg(from=我, to=addr)`。addr 不存在 → 丢弃（只留在 step.out） |
-| **place** `>>> place <channel> <kind> [in] [bind=…]` + text | 持有 `bind=place` 的 actor | 在 `<channel>` 账本追加一条 `place`（带完整 text）；channel 不存在则这就是它的第一行；给调用者追加 `msg(from=place, body="<channel>/<addr>")` |
+| **msg** `>>> <tag>` + 正文 | 任何 program actor | R 将 channel 内逻辑 tag 解析为内部数字 addr 后追加 msg；不存在则丢弃 |
+| **place** `>>> place <channel> <kind> [in] [bind=…] [tag=…]` + text | 持有 `bind=place` 的 actor | R 分配唯一有效 tag，在账本追加带完整 text 的 place；回执为 `<channel>/<tag>` |
 | **world 动词** `>>> spawn <dir>` / `>>> stop <pid>` | 持有 `bind=<动词>` 的 actor | 一张表，用 Ω 实现（spawn 按 loader 协议起一台机器）：`Exec.spawn(init, dir)` / `Exec.stop(pid)`；给调用者追加 `msg(from=<动词>, body=…)` |
 
 门的抄写不是动作，是 door kind 的转移。**介质动作闭集 = {msg, place, spawn}。** 没有 stop、没有删、没有读账本。
@@ -53,7 +53,7 @@ Ledger = 行的序列，seq 从 1 严格递增，单写者（本机器的运行�
 行（四种，字段闭集）：
 
 ```
-place  {seq, k:"place", addr, kind ∈ {program, door}, text, bind ⊆ {syscall, spawn, stop}, in: bool, by, tag?, iface?, at?}
+place  {seq, k:"place", addr, kind ∈ {program, door}, text, bind ⊆ {syscall, spawn, stop}, in: bool, by, tag, iface?, at?}
 retire {seq, k:"retire", addr}
 msg    {seq, k:"msg",   from, to, body, run?, at?, by?}     from ∈ 地址 ∪ {0, door, channel.*, spawn, stop}
 step   {seq, k:"step",  actor, upto, out, err, run?}
@@ -64,7 +64,7 @@ step   {seq, k:"step",  actor, upto, out, err, run?}
 ```
 actors(c)        = 按 seq 折 place / retire：addr → (kind, text, bind, tag, iface, retired, fn)；addr = 该 channel 第 n 条 place 的 n
 receptionist(c)  = 最后一条 in=true 的 place 的 addr；没有就没有
-holder(c, tag)   = tag 相同、未退役、最后放的成员（角色解析）
+holder(c, tag)   = 唯一满足 tag 相同且未退役的成员；没有则为空
 cursor(c, a)     = 该 actor 最后一条不带 run 的 step 的 upto；无则 0
 pending(c, a)    = {msg 行 : to = a, 不带 run, seq > cursor(c, a)}
 offset(box)      = 带 at 的行里最大的 at（该收件箱读到哪）
@@ -86,7 +86,7 @@ dispatch(a, head, body):
   head = "0", body = "show [a] [b]" | "who"        → 追加 msg(0 → a, body, run)；返回行 / 成员表（内容可重算，不入账）
   head = "channel.* …" ∧ syscall ∈ bind(a)         → 执行；追加 msg(head → a, 回执, run)；返回回执
   head = "<动词> <参数>" ∧ 动词 ∈ bind(a)           → 执行；追加 msg(动词 → a, 结果, run)；返回结果
-  head 解析为成员 t（序号，或角色 → holder）          → 追加 msg(a → t, body, run)；t 退役则返回 ""，否则返回 invoke(t, 该行, caller = a)
+  head 解析为成员 t（tag；数字序号仅内部兼容）         → 追加 msg(a → t, body, run)；t 退役则返回 ""，否则返回 invoke(t, 该行, caller = a)
   其他                                             → 返回 ""（丢弃）
 fn(door)(m):     Port.send(text, {from: 本 channel 的端点, body})；返回 ""
 inbox(c):        收件箱新行 {from, body} @at → receptionist(c) 存在时追加 msg(from = 指回 from 的门 ∨ "door", to = receptionist, body, at)
@@ -113,6 +113,7 @@ actor 跨调用的持久记忆是账本（`call("0", …)`）；fn 里存的东�
 | I1 | 每本账单写者，seq 严格递增 | 运行时进程是唯一写者；外来消息只经收件箱 |
 | I2 | actor 的每次调用都在它的账本上（step），每次 call 都是两行 msg（请求、返回），每个放入/退役都是一行 | 转移定义 |
 | I3 | `A = fold(place / retire 行)`：place 行带完整 text、bind、tag、iface | place 行的定义 |
+| I3a | 活跃成员的 tag 在各自 channel 内唯一；未指定时以 `t` 为基名，冲突由 R 原子分配 `t1/t2/…`；数字 addr 只用于 H 内部 | `Runtime._tag`；T21/T30 |
 | I4 | 内容盲：运行时源码无组织词汇；G 全部改名后账本同构 | T6 |
 | I5 | 确定性：给定账本 + 收件箱内容 + 各 fn 在 call 边界上的行为（返回值、call 序列），追加的行序列唯一 | 调度只依赖账本状态 |
 | I6 | 膜（2026-09-01 定）：进入本 channel 账本的只有 call；改变形态的只有 syscall（bind）；出去的边只有门，进来的只有收件箱 → 接待员（接收侧只认合法句柄）。actor 在 run 里面对世界的访问（文件、网络、random）不是机器的动作：不入账、不遗传、不受限——限制它是安全，不在模型里。强版本（内外作用都走注入的 handle）做得到但刻意：它把 R 做成 OS，且 handle 的返回值会穿过 call 边界把模型原文拉回 H。**接收侧句柄本身是工程、演示模型不实现**：因此本原型里任意 actor 能伪造 placed 使假形态遗传（H17），"只有一条进入路径"是理论句而非实现保证 | dispatch / inbox 定义；Port 的句柄 |
@@ -206,7 +207,7 @@ realize(G):
       place(c.name, m.kind, m.text, in = (i+1 == c.receptionist), bind = m.bind)
   for (a, b) in G.peers: place(a, door, b); place(b, door, a)
   note 请求者
-下一步：把所有 from=place 的返回转发给便签里的请求者（"placed <channel>/<addr>"）
+下一步：把所有 from=place 的返回转发给便签里的请求者（当前 ABI 为 `placed <channel>/<tag>`）
 ```
 
 realize 不读文件、不记状态；它的记忆是写给自己的便签。add / peer 是同一规则的单步版。
@@ -255,7 +256,7 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 
 ## 5. 创世与根门（2026-08-29 补，按用户表述；**已定为 M1 的实现版本**，取代 §1.1/§4 的 place 写法）
 
-**词汇固定**：runtime 的 **syscall** 是两个词——`channel.create(name)`、`channel.add.actor(channel, kind, text, bind[, in]) → addr`（含 actor.create：actor 只在被加入 channel 时诞生）。`place` = 后者落账的行。（讨论时曾写三个词，实现并为两个：游离的 actor 没有用处。）c0 的 `add / build / spawn` 叫**请求**，是 syscall 上的程序。
+**词汇固定**：runtime 的 **syscall** 是两个词——`channel.create(name)`、`channel.add.actor(channel, kind, text, bind[, in, tag]) → channel/effective-tag`（含 actor.create：actor 只在被加入 channel 时诞生）。R 用自己从 H 折出的活跃路由表保证 tag 唯一，重名原子分配 `tag1/tag2/…`；数字 addr 只写 place 行。`place` = 后者落账的行。c0 的 `add / build / spawn` 叫**请求**，是 syscall 上的程序。
 
 **创世**（被父代 spawn 出来）：
 1. Ω.run → 进程起来（`init.py` = R 的入口）；2. R 折叠已有账本（出生时为空）；3. 根门开着——不挂在任何 channel 上（还没有 channel），Space 级，门那边送来的每一行当 syscall 执行、记进目标账本。没有第 4 步：没有 boot。
@@ -287,9 +288,9 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 | 程序在 R 进程内跑：没有隔离、没有超时；L 最多 16 轮；L 的模型原文不入账 | `omega.Exec.load` / `actors/l.py` | Ω 是契约边界不是进程边界；隔离与上限是工程（不要）。oracle 是完整 actor，端点回话在它的 run 里面（DALEK 1.4） |
 | 帧语法是 L 的 text 的事（`>>> 地址` 起、单独一行 `<<<` 收）；R 记 call 用同一格式写 step.out | `actors/l.py` / `runtime.parse` | LLM 要能拼写 call；用什么记号是 L 的 text 的工程，R 不认识它 |
 | 程序的 cwd = P（每次事件 `os.chdir`） | `runtime._invoke` | C 用文件系统 pack（H5/H7）；工程 |
-| 角色解析：后放的活成员接替 | `runtime._resolve` | 形态里的名字指向当前持有者；升级约定 |
+| tag 分配与解析：channel 内活跃 tag 唯一；重名由 R 分配后缀 | `runtime._tag` / `_resolve` | `channel/tag` 是组织层地址；数字 addr 只属于 H |
 | 门的 local 在交出账本时计算 | `runtime._annot` | 指向本机 channel 是此刻的事实；channel 只增所以单调 |
-| 地址 = 序号、退役前移，actor 不得硬编码地址 | ABI | 地址属于个体、形态不含地址（理论）；硬编码禁令由序号实现引起 |
+| place 的数字 addr 只增不复用；组织协议按 tag | ABI | `channel/tag` 属于形态；数字 addr 是 H 内部位置，actor 不得硬编码 |
 | 收件箱是文件，人人可 append；text 拿着 urllib / open 也能绕过门写进别的机器 | `omega.Port.send/recv` | 膜的接收侧：收件箱只认合法句柄写入，句柄只在门那里——那时"穿过介质的只有 call"是 Port 的性质，不是约定。文件收件箱是 M1 的工程简化（2026-08-31）；其后果 = 可伪造 placed 遗传假形态（H17），真实系统靠句柄解决、演示模型靠约定 |
 | 首 channel 必须显式接待员（genesis / build 拒绝） | `genesis.py` / `realize.py` | 出生需要一个入口（理论合法性条件）；拒绝是保障 |
 

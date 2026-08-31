@@ -184,7 +184,7 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 |---|---|---|
 | **程序** | `Exec.load(text, {call, me, channel})`：源码在这个命名空间里跑一次，定义 `run` | `run(m)`；返回值 = 回复。L 也是程序：它的 text 是整个 agent loop（端点、凭据、提示语、组装 `show`/`who`、问端点、把输出拆成帧——`>>> 地址 / 正文 / <<<` 是 LLM 拼写 `call` 的方式——每帧 `call`、返回值喂回、`>>> re` 收作返回值）。介质看到的只是一串 call 和一个返回值 |
 | **门** | 介质的函数体：`Port.send` 到 text 所指的端点 | 送出去，署名本 channel 的端点；返回空。门是连接 |
-| **放 actor**（syscall `channel.add.actor`） | 在该 channel 的下一个地址写下 kind + text（+ 角色 tag、接口 iface），在该账本记一行——**这一行带完整的 kind + text**；折叠到它就实例化 | — |
+| **放 actor**（syscall `channel.add.actor`） | R 在该 channel 的活跃路由表中分配唯一 tag（重名加数字后缀），再在下一个数字 addr 写下 kind + text + tag；**完整 text 与最终 tag 都进 place 行** | 返回 `channel/tag` |
 
 两种 kind 一行一条，加一条放 actor；没有第四行（M3.5，2026-09-01：oracle 从 kind 集里拿掉）。**"oracle"是理论里的类别词，不是介质的原语**：解释器在远处的程序，就是 L；R 认识的只有程序和门。把 L 的 kind 从 oracle 机械改成 program，整条 L→U→add 流程一字不差地跑通——所以它本来就不是一种原语；一个介质不认识的 kind 不该算进转移表。每个成员都只拿到当前那一条消息；L 的组装（成员表 = 它的工具列表）在它自己的 text 里，程序靠角色说话、要形态问 0。R 不知道 python，也不知道模型；Ω 里没有任何 LLM 专用的东西。
 
@@ -192,7 +192,7 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 
 | 地址 | 是什么 | 需要绑定 | 返回 |
 |---|---|---|---|
-| `<序号>` / `<角色>` | 本 channel 的成员：序号是个体的地址；角色是形态里的名字（place 行的 `tag`，后放的接替先放的） | 否 | 对方 `run` 的返回值 |
+| `<tag>`（数字序号仅供 R 内部回复与兼容） | 本 channel 的成员：tag 是 channel 内唯一的逻辑地址；请求重名时 R 分配 `tag1/tag2/…` | 否 | 对方 `run` 的返回值 |
 | `0` | 介质的读地址：`show [a] [b]` → 账本行（门的 place 行附此刻的 local）；`who` → 此刻的成员表 | 否 | 那些行 / 成员表 |
 | `channel.create` / `channel.add.actor` / `channel.retire.actor` | 写形态 | `syscall` | 结果或 `<参数> refused` |
 | `spawn` / `stop` | 动世界 | 同名 | pid / … |
@@ -201,7 +201,7 @@ world    随 P 运走、不含这台机器信息的三样：ω-bind（契约在�
 
 **读介质**（A1）：读不改任何东西，所以不是能力，对全部成员开放。两个读对应两个折叠：`show` 给 H（历史），`who` 给 A（此刻的形态）；c1 的 decl 是第三样——G（宣称的形态）。自省 = 这三样：我经历了什么、我现在是什么、我应当是什么。0 的回答可重算，按 1.4 的分法**账上只记事实行**（`0 → me: show a b` / `who`），内容在返回里；重演照算不照抄，账不含账。程序要历史自己 `call("0", …)`（策略在源码里）；**oracle 的读固定在它的函数体里**（组装：pi 一类 agent 的"全量 session"）。channel = session。跨 channel 仍只能经门问对方的成员。
 
-**角色**（A2）：地址有两层——**身份**（序号）属于个体，账本行用它，从不复用，不遗传；**角色**（`tag`）属于形态，写在 G 里、写在 place 行里，R 不解释、只做字符串匹配，可遗传。`call("U", …)` = 调用当前持有角色 U 的活成员（后放的接替先放的；替换 = 放新的带同一角色，再退旧的——升级约定照旧）。接待员 `in` 是第一个角色。成员还可带一行**接口**（`iface`：怎么叫它、回什么），同样透传——它是 oracle 的工具说明。"形态含角色、个体含地址"和 4.3 的"地址不遗传"是同一句话的两面。
+**逻辑地址**（A2）：channel 用 name；actor 用 `channel/tag`。tag 写在 G 与 place 行里，在 channel 的活跃集合内唯一；R 只按字符串判重与投递，重名请求原子分配 `tag1/tag2/…`，并在 syscall 回执中交出最终 tag。数字 `addr` 是 place 行在 H 内的物理位置，只增不复用，不进入 c1 的组织登记。`call("U", …)` 调用逻辑地址 U。成员还可带一行**接口**（`iface`：怎么叫它、回什么），同样透传——它是 oracle 的工具说明。
 
 **性质与实现分开**（2026-08-31 改）：H 记的是 **call 边界**——每条消息、每次 call、每个返回值、每次放入/退役。actor 在一次 run 里面做什么（局部变量、globals、`random`、oracle 与端点的对话）不入账，只有它经边界产生的东西在。记号：D = (G, H) 是持久状态、个体的身份；Σ 是 actor 的易失运行状态；活着的机器是 (G, H, Σ)。invoke : (Σ, m) → (Σ′, calls, reply)，calls 与 reply 入 H，Σ′ 留在活 actor 里；重启 : (G, H, Σ) → (G, H + restart, instantiate(G))。同一个 Dalek，不保证同一个易失现场——电脑重启还是那台电脑，RAM 不在了。Σ 本身是工程（想留什么，给 actor 一个 dump 字节的能力让它自己存），不是理论模型关注的对象。文件不在 Σ 里：它是膜外的世界，活过重启、不随 G 遗传；程序直接 `open` 是工程简化（DESIGN H7）。"没有私有状态"**不是**约定：常驻函数可以有内部状态。确定性的内部状态是 (text, 自上次实例化以来收到的消息) 的函数——全在 H 里，愿意可以重放（call 的返回从账上取），但没人有义务重放：想活过重启的 actor 自己读账本重建（spawn.py 找未办完的请求就是这么做的），不想的从头开始；随机的内部状态本来就不该重放，重启重新抽样，它的后果已在账上。前提只有一条：**实例化是 H 中的事件**——place 行是第一次，重启是再一次（重启入账归 M4，H10）。所以"重启 = 折叠账本 = 同一台机器"照旧成立：机器 = (G, H)，内部状态不是机器的一部分。同理，"一个真的 Ω 边界"是契约边界，不是进程边界：Exec 用进程还是在本进程里 exec，是绑定里的事，R 和理论都看不见。
 
@@ -353,12 +353,12 @@ m 造 G′ ≠ 自己的机器，其 decl() == G′                           �
 
 ### M2 · c1：登记与 decl（周日 2026-08-30）——已落地，见 4.6 / 4.7
 
-- c1 = 注册了登记员的 channel（基因组登记处，见 0.0 的 A_t / G_t / π）。**c1 存的是 c0 的承诺，不是 R 的事实**：`placed`/`retired` 的语义是"基因组应当有/不再有它"，登记处只知道 c0 说了什么，不知道 syscall 是否真的发生（"c1 记的是已发生的事实"只有在 R 把 place 行投回登记员时才成立——那是一种实现，DESIGN H16）。**三段因果记账**是 c0 的次序约定，不是 c1 的语义：syscall 落到目标账本 → 下一步 c0 收到回执 → 成功了才经门送 c1（`born`：脐带放的；`placed`/`retired`：c0 的手做的，带真实地址）。保留这个次序的理由：G 只在损伤后领先 A，建造中最多落后一步，M4 对账的方向单一（A 追 G）。`decl` = G₀ ⊕ placed ⊖ retired：门就是成员，接待员显式、没有就没有，退役的不输出。c1 不读 P、不写文件。π(A) ≅ G = 这个次序约定 + M4 的对账，由 c0 维护（0.0）。
+- c1 = 注册了登记员的 channel（基因组登记处，见 0.0 的 A_t / G_t / π）。**c1 存的是 c0 的承诺，不是 R 的事实**：`placed`/`retired` 的语义是"基因组应当有/不再有它"。三段因果记账是 c0 的次序约定：syscall 落到目标账本 → c0 收到含最终 tag 的回执 → 成功后经门送 c1（`born`：脐带放的；`placed`/`retired`：c0 的手做的，按 `channel/tag`）。c1 不保存数字 addr；重建压缩物理地址不影响登记。`decl` = G₀ ⊕ placed ⊖ retired。
 - **升级纪律**：先 add 新的，再由新的（或第三者）退旧的；器官不登记自己的死亡；接待员先换再退；换登记链路也一样（先加新门再退旧门）。原型把其中几条做成了 R 的拒绝——那是工程保障，不是理论，见 DESIGN §6。
 - （R 的拒绝与事实来源规则是工程保障，见 DESIGN §6。）
 - 失败模型：崩在两步之间，回执与 note 仍是账上的 pending 行，重启后补登记；崩在一步之中（step 行已写、动作只执行了一半）是 H10，M4 处理。
 - C actor 的 pack 改用 `c1.decl()`，不再抄 P 里的 G.json（关 H4）。
-- **退役是第三个 syscall**（2026-08-30 定）：`channel.retire.actor <channel>/<addr>` → 该 channel 账本追加一条 `retire` 行；`_fold` 把该 actor 标为退役，R 不再给它 step（写给它的消息留在账上、不投递）；decl 自然略过；地址不复用（序号只增）。理由：退役是形态改动，形态改动必须是 syscall、落在账上、由 R 照账执行，否则"任何形态改动都在账上"对退役不成立；只在 c1 表上划掉会留下"没人叫但叫了会应"的僵尸器官。
+- **退役是第三个 syscall**（2026-08-30 定；2026-09-01 改为逻辑地址）：`channel.retire.actor <channel>/<tag>` → R 在活跃路由表中解析到数字 addr，并向该 channel 账本追加一条 `retire` 行；`_fold` 把该 actor 标为退役，R 不再给它 step。c1 同样按 `channel/tag` 折叠，数字地址不进入组织协议。
   两种 delete 分清：**抹掉**（拿走或改写账本行）被原则排除——place 行不可变，actor 的 text 不能改，改 = 放新的，所以没有 replace，替换 = add 新 + retire 旧，新的拿新地址；**退役**是追加，不违反任何原则，冯诺依曼的自动机可以拆开合成物，细胞有凋亡。形态与历史仍然分开：历史里它永远在，形态里它没了。
 
 验收：
@@ -375,7 +375,7 @@ c2 = L + U 接成的 channel（coding agent，"code mode"）。两个演示任�
 
 **任务 0 · c2 → c2′：改进器改进自己**（Trusting Trust 的启发；Yampolskiy 的 Level 3——改进"改进机制"本身）
 
-- 变异 + 选择，没有别的。**变异**：给 c2 一个它做不到的任务，c2 造出 c2′——几段新 text（一个新工具、或一个新 L、或改过的提示语），经 c0 `add` 装进 c2（同角色接替旧的），c1 记。**选择**在门外：人（或测试台）看 c2′ 做不做得到那件事；做到就采纳（`retire` 旧零件），做不到就退。机器不带考卷：回归、比对、判据全是膜外的 policy，不假装内生。
+- 变异 + 选择，没有别的。**变异**：给 c2 一个它做不到的任务，c2 造出 c2′——几段新 text，经 c0 `add` 装进 c2；若请求的 tag 已占用，R 给候选分配带数字后缀的新逻辑地址，c1 记最终 tag。**选择**在门外：测试候选 tag；做到就 `retire` 旧零件，做不到就退候选。
 - 机制上没有新东西：**改进器改进自己和改进任何东西是同一条 syscall**，因为改进器不是特殊的，只是 G 里的几段 text；项目是 channel，零件可换。这本身就是要演示的命题。
 - Trusting Trust 的教训不是"自编译"，是**不要原地改**：改坏了自己的 U，就再也验不出任何东西。所以永远是 add 新 + `retire` 旧，改动在账上、在 decl 里，膜外看得见。
 - 攻击面因此说清：G 和 H 全是文本，没有二进制，"看不见的传染"只能藏在 Ω 的 python 和 **L 的权重**里——L 是本体系里那台不透明编译器。DDC 的对策可用：两个不同的 L（两个 oracle 成员）各生成一次 c2′，比对（记为论文里一句话，不做）。
@@ -441,7 +441,7 @@ stop，spawn → decl 不变，游标不变，pending 消息重跑，账本有 d
 
 ### 本版的不动点（定位）
 
-**G.world = R**（可描述，但机器内无人读、只抄）——**谱系级变异已见证（T29，2026-09-01）**：世界变异从**打包器官**进入。换 world = 换 C：C′ = spawn.py + pack 前给 `G.world["runtime.py"]` 打补丁（幂等），add tag=C 接替 + retire 旧 C，然后普通地 spawn。子代跑 R′（每一行带标记）、发育正常、born 把 world′ 记进登记处（decl.world 含补丁 = 可遗传）、**在 R′ 上仍能 spawn 孙代**（不动点成立），孙代继承 world′ 与 C′；父代的行始终没有标记（运行时对个体不可改）。R、Ω、syscall、A 零改动——打包器是器官不是物理。仍未做的是**开放的**世界变异（c2 自己发明新 R 并验证其合法性）；除此之外本版不再把 world 当不动点：介质的不动点，世界的版本的不动点，不是机器的版本的——同一个 world 服务所有 G。构造器没有世界侧的不动点：递归的底是人造 dalek0。构造器（realize、C、登记 actor 的源码）在 G 里，改它们的 text 子代就变——机制上已经允许变异，本版只是**不验证**变异后的构造器是否仍是合法构造器。
+**G.world = R**（可描述，但机器内无人读、只抄）——**谱系级变异已见证（T29，2026-09-01）**：世界变异从**打包器官**进入。换 world = 换 C：C′ = spawn.py + pack 前给 `G.world["runtime.py"]` 打补丁（幂等）；当前协议先退役旧 C、再把 C′ 放到已经空闲的逻辑地址 C，然后普通地 spawn。子代跑 R′、发育正常、decl.world 含补丁，并能在 R′ 上继续 spawn 孙代；孙代继承 world′ 与 C′，父代不变。仍未做的是开放的世界变异（c2 自己发明新 R 并验证其合法性）。
 
 但这是本版选定的不动点，不是理论上的不动点。理论上没有东西是不动点：**c2 总是可以重新编码它们**——运行时和 c0、c1 都只是源码；再往下，连 Ω 的编译器本身也不是不动点：c2 可以在旧 Exec 上写出一个新的解释器 / 编译器，谱系可以整体迁到它上面（这正是编译器自举一路做到 hex0 的事）。路径都一样：写出新版本，pack 一个子代用新版本跑，用自举不动点验收：
 
@@ -465,7 +465,7 @@ m**.decl() == m*.decl()，且 m** 能继续造
 
 | k | 字段 | 谁写 |
 |---|---|---|
-| `place` | `seq, addr, kind, text, bind, in, by, tag?, iface?, at?` | R 执行 `channel.add.actor` 时；**带完整 text**；`by` = 发起者地址，或 `_root`（经根门，`at` = 根收件箱偏移） |
+| `place` | `seq, addr, kind, text, bind, in, by, tag, iface?, at?` | R 执行 `channel.add.actor` 时；tag 由 R 保证活跃唯一，addr 仅供 H 内部；**带完整 text** |
 | `retire` | `seq, addr` | R 执行 `channel.retire.actor` 时；该 actor 不再排运行，地址不复用（退役当前接待员会被拒绝，见 DESIGN §6） |
 | `msg` | `seq, from, to, body, run?, at?, by?` | 成员的请求与回复；门抄来的消息；syscall 的回执；0 的事实行。`run` = 所属事件的 seq（运行中产生的都带）；`at` = 收件箱偏移（收进来的带；`by=_root` 是经根门的第一条） |
 | `step` | `seq, actor, upto, out, err, run?` | 一次运行结束：初始消息 seq、它说过的全部帧、错误。带 `run` 的是嵌套运行，不推游标 |
@@ -487,13 +487,13 @@ def run(m):                                   # m = {"seq", "from", "to", "body"
     rows = [json.loads(l) for l in call("0", "show").splitlines()]
     return "saw %d" % len(rows)               # 返回值 = 回复；None/空 = 没有
 ```
-`call(地址, 正文) → 返回值`：地址见 1.7 的表（序号 / 角色 / 0 / syscall / 动词 / 门）。嵌套 = 调用栈；A 调 B、B 又调 A 是合法的重入。`me` 是自己的序号，`channel` 是所在 channel 的名字。
+`call(地址, 正文) → 返回值`：组织成员使用 tag；数字序号只供 R 内部回复与兼容；另有 0 / syscall / 动词 / 门。`me` 仍是 H 内部数字序号，`channel` 是所在 channel 的名字。
 
 账本：每次 `call` 两行 msg（请求、返回，带 `run`），每次调用一行 step（`out` = 它发出的每个 call 记成帧 `>>> 地址 / 正文 / <<<`，末尾一帧 `re` = 它的返回值；`err` = 异常的 traceback）。实例化失败（语法错、没定义 `run`）：place 行照落，该成员每次被调用都 err；调用抛异常也 err，游标照推——器官的失败不是机器的失败（T16）。没有超时、没有隔离（工程，不要）。
 
 一个 `def add(a, b)` 怎么成为 actor：同一段 text 里再定义 `run(body)` 做正文约定（`a, b = json.loads(body)`），`iface` 写 `[a, b] -> a+b`；R 不读正文，JSON 是 actor 与调用者之间的约定。
 
-**地址不遗传，角色遗传**：序号是本 channel 内、本个体内的；退役与追加会让子代的序号前移。actor 不得硬编码序号——找人用角色（`tag`），读形态用 `call("0","who")`，读历史用 `call("0","show")`。
+**物理地址不遗传，逻辑地址遗传**：数字序号是 H 内部位置，退役与重建会前移；`channel/tag` 写在 G 中并遗传。actor 不得硬编码数字序号。
 
 ### 4.4 门与 Port
 
@@ -518,16 +518,16 @@ python init.py <P> [--serve]      起 R，折叠已有账本，驱动；--serve 
 |---|---|
 | `build <门> <创造者地址>\n<G>` | 经门发 syscall 造 G 的第一个 channel（c0）；最后放出生证明门；返回 `built <门>`。首 channel 没有接待员 → 返回 `invalid`，不造 |
 | `start\n<G>` | 出生：本地 syscall 长出 G 的其余 channel 与全部连线（发育，每条 syscall 一次 call、回执即返回值）；然后把 `born`（world + c0 的成员）交给登记员，长出的每一件以 `placed` 登记。已有内门（已发育）则忽略 |
-| `add <channel> <kind> [in] [bind=…] [tag=…] [iface=…]\n<text>` | 本地：`channel.create`（幂等）+ `channel.add.actor`；送登记员；返回 `placed <ch>/<addr>` 或 `refused …` |
+| `add <channel> <kind> [in] [bind=…] [tag=…] [iface=…]\n<text>` | 本地：`channel.create` + `channel.add.actor`；R 分配 channel 内唯一 tag（重名加数字后缀）；返回 `placed <ch>/<最终 tag>` |
 | `peer <a> <b>` | 本地两扇门（角色 = 对面的名字） |
-| `retire <channel>/<addr>` | `channel.retire.actor`；登记员的门在 syscall 之后再找（退的可能正是旧门） |
+| `retire <channel>/<tag>` | `channel.retire.actor`；R 解析 tag 到 H 内部数字地址；登记员按 tag 划掉 |
 | `spawn …` | 调用 C |
 | `decl` | 送登记员的门（连接，不返回）；回答 `decl\n<G>` 从门回来是新的事件，A 再调用 C |
 | `spawn <name>`（C） | 调用 1：请求 A `decl`。调用 2（`decl\n<G>` 到来）：读账本找到还没办完的 spawn 请求 → pack → `spawn` → 放两扇门（根门、子代 c0）→ 调用 A `build`（嵌套，拿到 `built`）→ 经根门 `msg c0\nstart\n<G>` → 调用请求者 `spawned` |
 
-**记账次序**：realize 每条 syscall 的回执在返回值里（同一次调用），落地后把带完整 text 的 `placed <ch> <addr> <kind> [in] [bind=…] [tag=…] [iface=…]\n<text>` / `retired …` 送给登记员，再把 `placed <ch>/<addr>` / `retired <ch>/<addr>` 作为返回值回请求者——出生时长出的器官也逐件登记；脐带放的（c0 的成员）由 `born`（world + c0）登记。出生证明门和 C 为生子放的两扇门不经 realize，所以不登记、不遗传（这就是 π 去掉的东西）。c1 存的是 c0 的承诺（0.0），做成了才登记是 c0 的次序约定。
+**记账次序**：R 先落 place/retire，再把最终 `channel/tag` 作为 syscall 回执；realize 将 `placed <ch> <tag> <kind> …\n<text>` / `retired <ch>/<tag>` 送给登记员，再把同一逻辑地址回给请求者。c0/c1 不查重、不改名，只透传 R 的实际结果。
 
-**c1 的登记员**（`actors/registrar.py`，无绑定）：收到 `decl` → `call("0","show")` 整本账 → 折写给自己的消息 → 返回 `decl\n<G>`。只认来自本机 channel 的门（0 交出的 place 行带此刻的 local，含已退役——历史的解释不随拓扑漂，权威随"先加新门再退旧门"迁移）的 `born / placed / retired`：`born` 给 G₀，`placed` 追加条目（带真实地址、角色、接口），`retired` 划掉；`decl` → G₀ ⊕ placed ⊖ retired：channel 按出生 + 首次出现顺序（= `_order`），成员按地址，**门就是成员**（`peers: []`），接待员显式，退役的不输出，world 原样来自 born。不读任何文件。
+**c1 的登记员**（`actors/registrar.py`，无绑定）：收到 `decl` → 折自己账上的 `born / placed / retired`。`placed` 保存 R 最终分配的 tag，`retired` 按 tag 划掉；不保存数字 addr。因此 retire 空洞后的 rebuild 可以任意压缩数字地址，`decl` 与实际逻辑形态仍一致（T30）。
 
 ### 4.8 c2：作者（L）与执行器（U）
 
@@ -535,7 +535,7 @@ c2 = {1 L：`kind=program, in, tag=L`（理论里的 oracle）；2 U：`kind=pro
 
 **L 的实例化**（M3.4）：和程序一样——`Exec.load(text, {call, me, channel})` 一次，得到常驻的 `run`。text（`actors/l.py`）里是整个 agent loop：第一行 `ENDPOINT, MODEL, KEY` 三个常量，`SYSTEM` 是提示语；`run(m)` 组装 = `call("0","show")` + `call("0","who")` + 初始消息作第一轮 user 消息（两次读和任何程序读账本一样入账）；POST 端点；每轮输出按帧拆，`>>> re` 收作返回值，其余每帧 `call(地址, 正文)`、返回值收成 `[{to, reply}]` 作下一轮 user 消息；没有帧就结束；最多 16 轮。端点的失败抛异常 → 这次调用 err，机器不死。
 
-**定义一个新的 L** = 放一个 `kind=program, tag=L` 的成员：参数只有 text（一段源码：端点、凭据、提示语、组装、帧语法、轮数全在里面）、`tag`、`iface`、`in`、`bind`。同一个 c2 可以放两个 L（不同模型 / 提示语 / 组装）；L 能写出新的 L（text 就是一段 python），经 c0 add，子代继承——**agent loop 本身是可遗传、可变异的形态**：换组装方式、折叠 context、换帧语法，都是 add 新 L + retire 旧的，不用换 R。介质定死的只有 `run(m)` 和 `call`。
+**定义一个新的 L** = 放一个 `kind=program, tag=L` 的成员：参数只有 text、tag、iface、in、bind。若活跃 L 已存在，R 会把新件命名为 L1（再重名则 L2）；它们是两个可分别调用的逻辑地址。接任接待员后可以按 tag 退旧 L。L 能写出新的 L，经 c0 add，子代继承——**agent loop 本身是可遗传、可变异的形态**。介质定死的只有 `run(m)` 和 `call`。
 
 **U**（`actors/u.py`）：`run\n<代码>` 或 `test\n<代码>\n===\n<测试>` → 用和 R **同一个 exec** 在进程内实例化候选（命名空间里有真的 `call`、`me`、`channel`），得到它的 `run`；测试代码在 `{run, candidate, call}` 里 exec，没有异常 = 通过 → 返回 `result <退出码>\n<输出>`（stdout 收下来，每行缩进两格）。被测的是一个活函数，能问 c1、能读 0（in vivo）；它拿到的能力 = U 的能力（U 没有 syscall 绑定，候选也没有）。机器里的编译器就是机器的物理：Trusting Trust 的那句话成了字面事实。
 
@@ -564,6 +564,8 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5
 **M3.3（2026-08-31 凌晨，actor 是常驻函数）**：推翻 M3.2 的进程 + 管道。actor 折叠到 place 行时实例化一次（`Exec.load(text, {call, me, channel})`，Python 的 exec——选 Python 的理由），挂在地址上、活到退役；每条消息调同一个 `run(m)`，**返回值就是回复**；`call` 是每个 actor 专属的真函数（闭包），嵌套 = 调用栈，前面放的用得了后面放的。三种 kind = 三种得到函数的方式（程序 exec 源码；oracle 介质的函数体，帧只是 LLM 拼写 call 的方式，`>>> re` 是返回值；门 `Port.send`）。0 加 `who`（此刻的成员表）：自省 = show（H）+ who（A）+ decl（G）。U 用同一个 exec 在进程内实例化候选、给真 `call`、把 `run` 交给测试（in vivo）。没有帧协议、没有助手代码、没有进程、没有超时。Ω 是契约边界不是进程边界。realize/spawn/registrar/u 全部 `def run(m)`；测试的小 actor 同样。T0–T23 绿（23 个）。
 
 **T29 · 换 world 的自举不动点（2026-09-01 午）**：见"本版的不动点"一节。四条断言全绿：个体不可改 / 子代跑 R′ / decl 遗传 world′ / R′ 上繁殖成立（孙代）。29/29。
+
+**T30 · 唯一逻辑地址（2026-09-01 晚）**：R 对同一 channel 连续请求 tag=t 分配 t、t1、t2，syscall 回执、c0 登记、c1 声明均使用最终 tag；retire t1 形成数字地址空洞，删除该 channel 账本并 rebuild 后再 retire t2，实际活跃 tag 与 decl 仍逐项一致。30/30。
 
 **M3 任务 1 + M4（2026-09-01 晨）**：一次落地。介质：`load` 纯折叠、channel 存在 ⇔ 账本至少一条 place 行；`up`（醒来入账，第几条 up = 第几次 incarnation）；`down`（SIGTERM → 入账 → 静止 → 退出）；`spawn <P>` 用目标自己的 world（同一个 P 再起 = 唤醒）。器官：A 长完发育后向每扇本机门送 `start`（出生 = 父代的 start，醒来 = 世界的 up）；A 收 `rebuild <name>\n<channel>`：create → exists 跳过 / new 才放回成员，不重复登记；登记员收 `up` → 对 decl 里每个 channel 发 rebuild（期望 = 登记处，实际 = R 折的）。任务 1：hub（c3，hello → 放回路门 → 广播 peers；ping → pong）、reporter（c4，bind=spawn；start/up/tick → 报到；peers → 对每个新端点经 c0 加门；placed → ping；tick 时 hub 没 pong → `spawn <它的 P>` 照 H 唤醒）。T25 重启 = 同一个体（up/down 序列、游标不变、pending 重跑、decl 不变）；T28 同一件事的**进程级**版（真 SIGTERM → down 入账 → 退出；休眠中的来信躺在收件箱、醒来即处理；再起同一个 P → up，place 行与 decl 一行不变——2026-09-01 晚补，此前只有进程内版）；T26 本地损伤：rm 一本账 → up → 对账 → 同 text 空账本回来、不重复登记；T27 三台机器互长门、ping/pong 两边入账、SIGKILL dalek0 → d1↔d2 仍 pong → 下一次 tick d1 spawn P0 → dalek0 同一本账醒来（多一条 up）→ hub 的 pong 恢复。27/27。剩：R 在一次事件中间崩溃（行写了一半）。**真模型版（同日晨，deepseek-v4-pro）**：c2 照规格写出 hub/reporter、装好、种群自组织全部成立；reporter 一处 ABI 错拼（`call("spawn", d)`），修复走的是机器自己的路——d1 的 c2 收修复任务，写新 reporter 同角色接替（in 接任接待员）、退旧件，然后 SIGKILL 的 dalek0 被 d1 用修好的 `call("spawn " + 目录)` 照 H 唤醒，hub 的 pong 恢复。**任务 0 的机制修了任务 1 的器官**——变异 + 接替对活器官成立。另两条野外教训进了测试与提示语：模型第一轮"说计划不写帧"（l.py 纠偏一轮）、早到的 ping 在回门放好前被丢（tick 心跳自愈，T27）。账本 `runs/task1-*.jsonl`。
 

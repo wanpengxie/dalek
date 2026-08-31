@@ -1,12 +1,12 @@
 # c1 的登记员：基因组登记处，不是镜子。这段源码是 G 里的 text；R 放入时 exec 一次得到常驻的 run(m)。没有任何绑定：它读账本和别人一样——call("0", "show")。
 # 它只折自己的账本，不碰文件。形态登记三种（c0 的宣称——基因组的 commit，不是 R 的事实），只认来自本机 channel 的门（0 交出的 place 行 local 的门，含已退役——历史的解释不随拓扑漂）：
-#   born\n<G>                                         脐带放的：world + 第一个 channel 的成员（地址 = 序号）
+#   born\n<G>                                         脐带放的：world + 第一个 channel 的成员（G 中 tag 已唯一）
 #   placed <ch> <tag> <kind> [in] [bind=…] [iface=…]\n<text>    c0 的手放的，tag 是 R 实际分配的 channel 内唯一逻辑地址
 #   retired <ch>/<tag>
 # 请求 decl（任何人）→ 读账本、折叠、返回 decl\n<G_t>：G₀ ⊕ placed ⊖ retired。
 # 醒来 up（世界发的）→ 对账：对 decl 里每个 channel 经门向 c0 发 rebuild <name>\n<channel>；c0 回 exists / rebuilt，不用管。期望 = 登记处，实际 = R 折的。
-#   channel 按出生 + 首次出现顺序；成员按地址；门就是成员（kind=door，text 原样），不折 peers；接待员显式，没有就没有；
-#   退役的不输出；world 原样来自 born。这就是 π(A_t)：去掉不经 c0 放的门（出生证明、生子的临时门）、去掉退役、地址重排。
+#   channel 按出生 + 首次出现顺序；成员按登记顺序；门就是成员（kind=door，text 原样），不折 peers；接待员显式，没有就没有；
+#   退役的不输出；world 原样来自 born。这就是 π(A_t)：去掉不经 c0 放的门（出生证明、生子的临时门）、去掉退役；数字地址不进入登记。
 import json
 
 

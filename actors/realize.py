@@ -3,7 +3,7 @@
 # 请求：
 #   build <门> <创造者地址>\n<G JSON>      经门造一台机器的 c0：只造 G 的第一个 channel，最后放出生证明门；返回 built <门>
 #   start\n<G JSON>                        出生：本地长出其余 channel 与连线（发育）；然后把 born（world + c0 的成员）交给登记员，
-#                                          长出来的每一件以 placed（带真实地址）登记
+#                                          长出来的每一件以 placed（带 R 最终分配的 tag）登记
 #   add <channel> <kind> [in] [bind=..] [tag=..] [iface=..]\n<text>   本地放一个 actor（channel 不存在则先 create）；返回 R 分配的 placed <ch>/<tag>
 #   peer <a> <b>                            本地两扇互指的门（角色 = 对面的名字）
 #   retire <channel>/<tag>                  退役

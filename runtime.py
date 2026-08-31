@@ -12,10 +12,10 @@ call    每个 actor 专属的闭包 call(地址, 正文) → 返回值：解析
         这是 actor 作用于机器的唯一方式；它在 run 里面对世界做的事（文件、网络）介质不知道、不记。
         运行中产生的每一行都带 run=<事件 seq>；只有事件推游标。前面放的 actor 用得了后面放的：名字在调用那一刻解析。
 call 的地址
-  <序号> 或 <角色>                                           本 channel 的成员：序号是个体的地址，角色是形态里的名字（place 行的 tag，后放的接替先放的）
+  <tag>（数字序号仍供 R 内部回复/兼容）                     本 channel 的成员：tag 是 channel 内唯一逻辑地址；重名时 R 分配 tag1、tag2
   0                                                          介质的读地址，人人可用：show [a] [b] → 账本行（门的 place 行附此刻的 local）；who → 此刻的成员表
                                                              账上记事实行 msg from=0 body="show a b" / "who"，内容可重算不入账
-  channel.create <name> / channel.add.actor <channel> <kind> [in] [bind=…] [tag=…] [iface=…] / channel.retire.actor <channel>/<addr>
+  channel.create <name> / channel.add.actor <channel> <kind> [in] [bind=…] [tag=…] [iface=…] / channel.retire.actor <channel>/<tag>
                                                              syscall；需 bind=syscall；返回结果或 "<参数> refused"
   <动词> <参数>                                                绑定了的 world 动词（ACTIONS：起一台机器 / 停一个进程）；需 bind=<动词>
   写给门 = 送出去，返回空；写给不存在的地址 = 丢弃，返回空；写给请求者 = 再调用它一次（可重入）
@@ -169,7 +169,7 @@ class Runtime:
     def root_open(self) -> bool:
         return not any(r["k"] == "msg" for c in self.channels.values() for r in c.rows)
 
-    # ------------------------------------------------------------ 实例化：三种得到函数的方式
+    # ------------------------------------------------------------ 实例化：两种得到函数的方式
     def _caller(self, c: Channel, a: Actor):
         def call(to, body=""):
             return self._dispatch(c, a, str(to), "" if body is None else str(body))
@@ -298,8 +298,8 @@ class Runtime:
     # ------------------------------------------------------------ 读介质
     def _resolve(self, c: Channel, head: str) -> Actor | None:
         if head in c.actors:
-            return c.actors[head]                                      # 序号：个体的地址
-        return next((a for a in reversed(list(c.actors.values())) if a.tag == head and not a.retired), None)   # 角色：后放的接替
+            return c.actors[head]                                      # 数字序号：H 内部回复与兼容
+        return next((a for a in c.actors.values() if a.tag == head and not a.retired), None)   # tag：channel 内唯一逻辑地址
 
     def _annot(self, r: dict) -> dict:
         """交出去的账本行：门的 place 行附上此刻的 local（指向本机 channel 吗）。channel 只增不减，local 只会由假变真。"""

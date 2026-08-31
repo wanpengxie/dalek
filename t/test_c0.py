@@ -22,6 +22,7 @@ T20 账本是地址 0：show 全部/窗口；账上只记事实行；带内 == �
 T21 逻辑地址：按 tag 寻址；重名由 R 分配 e1；退役按 tag，不回退到同名旧件
 T22 脚本化的 L：一次运行里读账本窗口 + 让 U 跑、看回复再测、通过后 add + 回话、不说话结束；对话逐轮增长
 T23 程序的多请求运行：读 0 → 请求另一个程序（它又读 0）→ syscall → 再请求；嵌套运行、一个 run、只有事件推游标
+T30 R 分配唯一 tag（t/t1/t2）；retire 形成空洞后损伤、rebuild、再按 tag retire，实际形态与 c1 声明一致
 """
 from __future__ import annotations
 import json, re, sys, tempfile, time, traceback
@@ -519,7 +520,7 @@ def test_T18_c2_hosts_oracle_guided_synthesis_loop():
         assert [h for h, _ in fr] == ["0", "0", "U", "U", "c0"] and fr[4][1].startswith("add c3 program in tag=hello iface=hi -> hello\n")   # 组装两读 + 三个请求
         results = [m["body"] for m in ms if m["from"] == "2" and m["to"] == "1"]
         assert len(results) == 2 and not results[0].startswith("result 0") and results[1].startswith("result 0")   # U：先败后通过，都在运行里
-        placed = [m for m in ms if m["from"] == "3" and m["body"].startswith("placed c3/1")][0]
+        placed = [m for m in ms if m["from"] == "3" and m["body"].startswith("placed c3/hello")][0]
         assert all(m["run"] == task["seq"] for m in ms if task["seq"] < m["seq"] < placed["seq"] and m["from"] in ("1", "2"))
         assert "run" not in placed                                                                  # c0 的回执经门回来：新的事件
         done = [m for m in ms if m["body"].startswith("done\n")][0]
@@ -584,10 +585,12 @@ def test_T21_roles():
     rt, P = fresh(G, creator=None)
     rt.msg("c0", "door", "2", "go"); rt.run()
     assert ("re", "got:echo:hi") in frames_of(rows(rt, "c0", "step")[-1])            # 按角色找到 1
-    rt.add("c0", "program", ECHO2, tag="e"); rt.msg("c0", "door", "2", "go"); rt.run()
-    assert ("re", "got:echo2:hi") in frames_of(rows(rt, "c0", "step")[-1])           # 后放的接替
-    rt.retire("c0", "3", by="door", by_channel=None); rt.msg("c0", "door", "2", "go"); rt.run()
-    assert ("re", "got:echo:hi") in frames_of(rows(rt, "c0", "step")[-1])            # 退役后回到前一个
+    assert rt.add("c0", "program", ECHO2, tag="e") == "e1"                           # e 已占用，R 原子分配 e1
+    assert rt._resolve(rt.channels["c0"], "e").addr == "1" and rt._resolve(rt.channels["c0"], "e1").addr == "3"
+    rt.msg("c0", "door", "2", "go"); rt.run()
+    assert ("re", "got:echo:hi") in frames_of(rows(rt, "c0", "step")[-1])            # e 仍是原来的逻辑地址
+    assert rt.retire("c0", "e1", by="door", by_channel=None)
+    assert rt._resolve(rt.channels["c0"], "e1") is None and rt._resolve(rt.channels["c0"], "e").addr == "1"
     assert rt._resolve(rt.channels["c0"], "nobody") is None
 
 
@@ -777,6 +780,23 @@ def test_T26_local_damage_rebuilt_from_registry():
     assert decl_of(rt2) == D                                                               # 期望 == 实际
 
 
+def test_T30_unique_tags_survive_retire_and_rebuild():
+    G = G0(); rt, P = fresh(G); start(P, G); rt.run()
+    for i in range(3):
+        rt.msg("c0", "door", "1", "add x program" + (" in" if i == 0 else "") + " tag=t\n" + ECHO); rt.run()
+    assert [a.tag for a in rt.channels["x"].actors.values()] == ["t", "t1", "t2"]          # R 唯一分配，不是 c0/c1 猜名
+    assert [r["body"].split()[2] for r in rows(rt, "c1", "msg") if r["body"].startswith("placed x ")] == ["t", "t1", "t2"]
+    rt.msg("c0", "door", "1", "retire x/t1"); rt.run()                                   # 形成物理地址空洞
+    del rt
+    (P / "h" / "x.jsonl").unlink()
+    rt2 = up(P); rt2.run()                                                                    # c1 用逻辑 tag 重建，数字地址可以压缩
+    assert [(a.addr, a.tag) for a in rt2.channels["x"].actors.values() if not a.retired] == [("1", "t"), ("2", "t2")]
+    rt2.msg("c0", "door", "1", "retire x/t2"); rt2.run()                                # 不会误退旧物理地址对应的 t
+    actual = [a.tag for a in rt2.channels["x"].actors.values() if not a.retired]
+    declared_tags = [m["tag"] for c in decl_of(rt2)["channels"] if c["name"] == "x" for m in c["members"]]
+    assert actual == declared_tags == ["t"]
+
+
 def test_T28_process_level_stop_and_respawn_same_individual():
     import os, signal
     def gone(pid, timeout=10.0):
@@ -836,8 +856,8 @@ def test_T29_lineage_changes_the_world_individual_cannot():
     G = G0()
     rt, P = fresh(G); start(P, G); rt.run()
     cp = CP()
-    rt.msg("c0", "door", "1", "add c0 program tag=C bind=syscall,spawn\n" + cp); rt.run()      # 变异：C′ 同角色接替
-    rt.msg("c0", "door", "1", "retire c0/2"); rt.run()                                          # 采纳：退旧打包器
+    rt.msg("c0", "door", "1", "retire c0/C"); rt.run()                                         # C 不是接待员：先退旧件，释放逻辑地址
+    rt.msg("c0", "door", "1", "add c0 program tag=C bind=syscall,spawn\n" + cp); rt.run()      # 新 C 占据同一逻辑地址
     assert rt.channels["c0"].actors["2"].retired and rt.channels["c0"].actors["5"].tag == "C"
     rt.msg("c0", "door", "1", "spawn w2"); rt.run()                                             # 普通地生：走的已是 C′
     d = P / "spawn" / "w2"
@@ -874,7 +894,7 @@ REPORTER = (ROOT / "actors" / "reporter.py").read_text(encoding="utf-8").rstrip(
 
 
 class HubL(StubL):
-    """任务 1 的 L：task → 装 hub 进 c3；placed c3/1 → 装 reporter 进 c4（bind=spawn）；placed c4/1 → 连线 c0–c3、c0–c4，给 c4 一扇指向本机 hub 的门（外部形式，遗传）。"""
+    """任务 1 的 L：task → 装 hub 进 c3；placed c3/hub → 装 reporter 进 c4；placed c4/reporter → 连线并放 hub 门。"""
     def __init__(self, P0):
         super().__init__(); HubL.P0 = P0
     @staticmethod
@@ -883,9 +903,9 @@ class HubL(StubL):
         b = json.loads(messages[0]["content"])["msg"]["body"]
         if b.startswith("task\n"):
             return f">>> c0\nadd c3 program in tag=hub iface=hello <endpoint> | ping -> pong\n{HUB}\n<<<"
-        if b.startswith("placed c3/1"):
+        if b.startswith("placed c3/hub"):
             return f">>> c0\nadd c4 program in bind=spawn tag=reporter iface=tick | peers <endpoint..> | ping -> pong\n{REPORTER}\n<<<"
-        if b.startswith("placed c4/1"):
+        if b.startswith("placed c4/reporter"):
             return f">>> c0\npeer c0 c3\n<<<\n>>> c0\npeer c0 c4\n<<<\n>>> c0\nadd c4 door tag=hub\nfile:{HubL.P0}#c3\n<<<"
         return ""
 
