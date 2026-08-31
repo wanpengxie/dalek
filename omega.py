@@ -4,7 +4,7 @@
 它只认识：源码、进程、字节、路径、端点。第一个实现：Linux + python3 + 文件系统。
 """
 from __future__ import annotations
-import json, os, subprocess, sys, signal, traceback
+import json, os, subprocess, sys, traceback
 from pathlib import Path
 
 
@@ -28,14 +28,6 @@ class Exec:
         if log:
             out.close()                                  # 子进程已继承句柄，父进程不留
         return p.pid
-
-    @staticmethod
-    def stop(pid: int) -> None:
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-
 
 class Store:
     """持久字节介质：读、写、原子追加（一行一条，flush + fsync）。"""

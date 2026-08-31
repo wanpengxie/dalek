@@ -14,7 +14,7 @@
 |---|---|---|
 | **msg** `>>> <tag>` + 正文 | 任何 program actor | R 将 channel 内逻辑 tag 解析为内部数字 addr 后追加 msg；不存在则丢弃 |
 | **place** `>>> place <channel> <kind> [in] [bind=…] [tag=…]` + text | 持有 `bind=place` 的 actor | R 分配唯一有效 tag，在账本追加带完整 text 的 place；回执为 `<channel>/<tag>` |
-| **world 动词** `>>> spawn <dir>` / `>>> stop <pid>` | 持有 `bind=<动词>` 的 actor | 一张表，用 Ω 实现（spawn 按 loader 协议起一台机器）：`Exec.spawn(init, dir)` / `Exec.stop(pid)`；给调用者追加 `msg(from=<动词>, body=…)` |
+| **world 动词** `>>> spawn <dir>` / `>>> stop`（无参） | 持有 `bind=<动词>` 的 actor | 一张表，用 Ω 实现：`spawn` 按 loader 协议起一台机器（`Exec.spawn(init, dir)`）；`stop` 停**本 Space**——只置意向，根边界的 down 由主循环在两个事件之间写。给调用者追加 `msg(from=<动词>, body=…)`。Ω 不再提供"杀某个 pid"：物理强杀是膜外的事，不是机器的能力 |
 
 门的抄写不是动作，是 door kind 的转移。**介质动作闭集 = {msg, place, spawn}。** 没有 stop、没有删、没有读账本。
 
@@ -146,7 +146,7 @@ actor 跨调用的持久记忆是账本（`call("0", …)`）；fn 里存的东�
 
 **H9 · B · L 的端点。** 关闭（M3.0，2026-08-30）：text 第一行 `<url> <model> <key>`，其余提示语；R 调 `Port.request(text, 视图)`，Port 讲 Anthropic messages 报文；失败记 err。见 DALEK 1.7（oracle 与门的区分）与 4.8。M3.4：`Port.request` 删除——端点、报文、组装、帧都在 L 的 text（`actors/l.py`）里，R 与 Ω 没有 LLM 专用的东西。
 
-**H10 · B · 崩溃语义。** 大半已关（M4，2026-09-01）：actor 失败 → err 入账、机器不死（T16）；**重启入账**收紧为一条机器级边界行——已出生时只在 `_order` 的首 channel 记 `_root→接待员 up/down`，其他 channel 永远不受 R 的物理广播。硬杀 = 根 channel 最后的开启边界（start 或 up）没有匹配 down；pending 重跑（T25/T28）。A 把 up 翻译为给 c1 的 `reconcile`，本地损伤照登记处重建（T26）。T31 证明无接待员 channel 的 actor 仍被重新实例化、Σ 归零，而其账本无 up/down：重新实例化是根事件与 place/retire 的派生事实，不是逐 actor 行。剩：R 在一次事件中间崩溃（行写了一半，动作执行了一半）——未定。
+**H10 · B · 崩溃语义。** 大半已关（M4，2026-09-01）：actor 失败 → err 入账、机器不死（T16）；**重启入账**收紧为一条机器级边界行——已出生时只在 `_order` 的首 channel 记 `_root→接待员 up/down`，其他 channel 永远不受 R 的物理广播。硬杀 = 根 channel 最后的开启边界（start 或 up）没有匹配 down；pending 重跑（T25/T28）。A 把 up 翻译为给 c1 的 `reconcile`，本地损伤照登记处重建（T26）。T31 证明无接待员 channel 的 actor 仍被重新实例化、Σ 归零，而其账本无 up/down：重新实例化是根事件与 place/retire 的派生事实，不是逐 actor 行。剩：R 在一次事件中间崩溃（行写了一半，动作执行了一半）——未定。 **关机三层（2026-09-01 晚）**：意图是 policy；唯一合法路径是 `门/actor → A:stop → C:stop → C 调无参 stop 动词 → R 置意向 → 主循环在事件之间写根边界 down → 跑到静止 → 退出`（对象天然是本 Space，不需要 pid；停成员是 retire）；外部 SIGTERM/SIGKILL 不是合法停止而是故障，不写 down。R 不再装 SIGTERM 处理器——它从前会在 `_append` 算完序号、`_fold` 之前重入，写出重复 seq（与 H18 同类的账本损坏，实测可复现）。判定：根边界最后一个开启边界没有配对的 down = 上次非协议终止（T28/T32）。
 
 **H11 · B · 运行时的"返回消息"是伪发送者。** `from ∈ {place, spawn}` 不是地址。要写进 ABI：视图里的 from 可能是介质词。
 
@@ -295,6 +295,7 @@ realize 不读文件、不记状态；它的记忆是写给自己的便签。add
 | 收件箱是文件，人人可 append；text 拿着 urllib / open 也能绕过门写进别的机器 | `omega.Port.send/recv` | 膜的接收侧：收件箱只认合法句柄写入，句柄只在门那里——那时"穿过介质的只有 call"是 Port 的性质，不是约定。文件收件箱是 M1 的工程简化（2026-08-31）；其后果 = 可伪造 placed 遗传假形态（H17），真实系统靠句柄解决、演示模型靠约定 |
 | 首 channel 必须显式接待员（genesis / build 拒绝） | `genesis.py` / `realize.py` | 出生需要一个入口（理论合法性条件）；拒绝是保障 |
 | 一个 P 只有一个活 R：`--serve` 启动抢 `P/lock` 的 flock，抢不到即退出 | `init.lock` | 单写者 I1 是理论前提；flock 是工程兜底（alive→spawn 无操作、dormant→spawn 唤醒）。H18 |
+| 关机只有一条路：`stop` 动词置意向，主循环在两个事件之间写 down；没有 SIGTERM 处理器 | `runtime._stop` / `runtime.run` | 停止是内到外的组织动作（意图是 policy，路径是机制）；信号处理器写账会重入 `_append` 撞序号 |
 
 **H16 · C · c0 内部经合法门说假形态事实。** 原型不防：π(A) ≅ G 是 c0 维护的。工程方案：`bind=registry` 的媒介能力——R 每落一条 place/retire 行就把该行原样投给持有它的 actor（像 syscall 回执一样 `from=place`），登记事实的来源变成 R，伪造路径消失，三段记账变回同时；R 仍内容盲。代价：c1 不再是"只经门喂出来的"。
 

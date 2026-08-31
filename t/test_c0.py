@@ -27,6 +27,7 @@ T26 根 A 把 up 翻译成 reconcile 给登记员；登记处对账重建损伤 
 T28 进程级 SIGTERM/down、休眠来信、respawn/up，形态和游标不丢
 T30 R 分配唯一 tag（t/t1/t2）；retire 形成空洞后损伤、rebuild、再按 tag retire，实际形态与 c1 声明一致
 T31 无接待员 channel 重启后成员确实重新实例化（Σ 归零），但物理只留在根 channel
+T32 关机三层：外部 kill 不写 down（异常终止），经门 stop → A → C → stop 动词 → 根边界 down → 自行退出
 """
 from __future__ import annotations
 import json, re, sys, tempfile, time, traceback
@@ -214,7 +215,7 @@ def test_T4_root_door():
     assert list(rt.channels) == ["c0"] and rt.root_open                         # 膜外只造 c0
     c0 = rt.channels["c0"]
     assert all(r["by"] == "_root" for r in rows(rt, "c0", "place")) and not rows(rt, "c0", "msg")
-    assert c0.actors["1"].bind == ("syscall",) and c0.actors["1"].tag == "A" and c0.actors["2"].bind == ("syscall", "spawn")
+    assert c0.actors["1"].bind == ("syscall",) and c0.actors["1"].tag == "A" and c0.actors["2"].bind == ("syscall", "spawn", "stop")
     assert c0.actors["3"].text == "human" and c0.receptionist == "1"
     start(P, G); rt.run()                                                      # 第一条消息：关门；c0 自己长其余
     assert not rt.root_open and list(rt.channels) == ["c0", "c1", "x"]
@@ -287,7 +288,7 @@ def test_T7_spawn_child_built_by_parent_A():
         cc = child.channels["c0"]
         assert [a.kind for a in cc.actors.values()] == ["program"] * 3 + ["door"] * 3                # realize, C, 请求者, 门→c1, 门→x, 出生证明
         assert all(r["by"] == "_root" for r in rows(child, "c0", "place"))                            # c0（含它的门）全由膜外（父代）造
-        assert cc.actors["1"].text == G["channels"][0]["members"][0]["text"] and cc.actors["2"].bind == ("syscall", "spawn")
+        assert cc.actors["1"].text == G["channels"][0]["members"][0]["text"] and cc.actors["2"].bind == ("syscall", "spawn", "stop")
         assert cc.actors["6"].text == f"file:{P}#c0"                                                  # 出生证明指回父代，放在最后
         m0 = rows(child, "c0", "msg")[0]
         assert (m0["from"], m0["to"]) == ("6", "1") and m0["body"].startswith("start\n") and not child.root_open   # 关门 = 切离
@@ -758,7 +759,7 @@ def test_T25_restart_is_the_same_individual():
     rt2.run()
     assert any(r["k"] == "step" and r["actor"] == "1" and r["upto"] >= late["seq"] for r in rows(rt2, "x", "step"))
     assert decl_of(rt2) == D                                                                # 同一个体：decl 不变
-    rt2.down(); rt2.run()                                                                   # 停下入账 → 跑到静止
+    rt2.msg("c0", "door", "1", "stop"); rt2.run()                                           # 合法关机：门 → A → C → stop 动词 → 根边界 down
     rt3 = up(P)
     life = [r["body"] for r in rows(rt3, "c0", "msg") if r["from"] == "_root"]
     assert life == ["up", "down", "up"]                                                   # 每次醒/停只有一条机器级边界事件
@@ -846,10 +847,11 @@ def test_T28_process_level_stop_and_respawn_same_individual():
         wait_child(P, lambda c: "x" in c.channels and rows(c, "x", "step"))                       # 出生、发育、x 收到 start
         say(P, "x", "hi")
         wait_child(P, lambda c: any(r["body"] == "hi" for r in rows(c, "x", "msg")) and rows(c, "x", "step")[-1]["upto"] >= [r for r in rows(c, "x", "msg") if r["body"] == "hi"][0]["seq"])
-        os.killpg(pid, signal.SIGTERM)                                                            # 外面只给信号
-        assert gone(pid)                                                                          # down 入账 → 静止 → 退出
+        say(P, "c0", "stop")                                                                      # 合法关机：外面只提请求，执行的是 c0 里的 A→C
+        assert gone(pid)                                                                          # 机器自己停：写 down → 跑到静止 → 进程退出
         rt = Runtime(P).load()
-        assert [r["body"] for r in rows(rt, "c0", "msg") if r["from"] == "_root"] == ["down"]    # 优雅停：根边界有 down
+        assert [r["body"] for r in rows(rt, "c0", "msg") if r["from"] == "_root"] == ["down"]    # 协议关机：根边界有 down
+        assert [r["body"] for r in rows(rt, "c0", "msg") if r["from"] == "stop"] == ["stopping"] # 回执：C 调了无参 stop 动词
         assert not any(r["from"] in ("_root", "world") and r["body"] in ("up", "down") for r in rows(rt, "x", "msg"))
         D1 = decl_of(rt)                                                                          # 机器死了，膜外读它的基因组
         say(P, "x", "late")                                                                       # 休眠中的来信：躺在收件箱等它醒
@@ -857,12 +859,56 @@ def test_T28_process_level_stop_and_respawn_same_individual():
         wait_child(P, lambda c: [r["body"] for r in rows(c, "c0", "msg") if r["from"] == "_root"] == ["down", "up"]
                    and any(r["body"] == "late" for r in rows(c, "x", "msg"))
                    and rows(c, "x", "step")[-1]["upto"] >= [r for r in rows(c, "x", "msg") if r["body"] == "late"][0]["seq"])   # 醒来入账；来信被处理
-        os.killpg(pid, signal.SIGTERM); assert gone(pid)
+        say(P, "c0", "stop"); assert gone(pid)
         rt2 = Runtime(P).load()
         assert [r["body"] for r in rows(rt2, "c0", "msg") if r["from"] == "_root"] == ["down", "up", "down"] # 生命周期仅在根边界留痕
         assert rows(rt2, "x", "place") == rows(rt, "x", "place") and decl_of(rt2) == D1           # 同一个体：形态一行没变
         hi = [r for r in rows(rt2, "x", "msg") if r["body"] == "hi"][0]
         assert rt2.channels["x"].cursor["1"] >= hi["seq"] and rt.channels["x"].cursor["1"] >= hi["seq"]   # 游标折出来，跨进程不丢
+    finally:
+        try: os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+
+
+def test_T32_external_kill_is_not_a_legal_stop():
+    """三层里的第三层：外面直接杀进程不是合法停止，是故障。没有 down；下次醒来看到最后的开启边界没有配对的 down，据此判定上次异常终止。"""
+    import os, signal
+    def gone(pid, timeout=10.0):
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            try:
+                w, _ = os.waitpid(pid, os.WNOHANG)
+                if w == pid: return True
+            except ChildProcessError:
+                return True
+            time.sleep(0.1)
+        return False
+    def life(rt):
+        return [r["body"] for r in rows(rt, "c0", "msg") if r["from"] == "_root"]
+    def unclean(rt):
+        """上次是异常终止吗：根边界上最后一个开启边界（出生 / up）之后没有 down。"""
+        w = life(rt)
+        return not w or w[-1] == "up"
+    G = G0()
+    P = pack(G, Path(tempfile.mkdtemp(prefix="dalek-")))
+    pid = Exec.spawn(["init.py", str(P), "--serve"], cwd=P, log=P / "log")
+    try:
+        construct(P, G); start(P, G)
+        wait_child(P, lambda c: "c1" in c.channels and rows(c, "c1", "msg"))
+        os.killpg(pid, signal.SIGTERM); assert gone(pid)                       # SIGTERM 不再有处理器：进程直接消失
+        rt = Runtime(P).load()
+        assert life(rt) == [] and unclean(rt)                                  # 出生后被杀：根边界没有任何 up/down → 异常终止
+        pid = Exec.spawn(["init.py", str(P), "--serve"], cwd=P, log=P / "log")  # 醒来
+        wait_child(P, lambda c: life(c) == ["up"])
+        os.killpg(pid, signal.SIGKILL); assert gone(pid)                        # 强杀
+        rt = Runtime(P).load()
+        assert life(rt) == ["up"] and unclean(rt)                               # 有 up 没 down → 上次异常终止
+        pid = Exec.spawn(["init.py", str(P), "--serve"], cwd=P, log=P / "log")
+        wait_child(P, lambda c: life(c) == ["up", "up"])
+        say(P, "c0", "stop"); assert gone(pid)                                  # 这一次走协议
+        rt = Runtime(P).load()
+        assert life(rt) == ["up", "up", "down"] and not unclean(rt)             # 有 down ⇔ 经自身生命周期协议关闭
+        assert decl_of(rt) == decl_of(Runtime(P).load())                        # 三次起停之后仍是同一个体
     finally:
         try: os.killpg(pid, signal.SIGKILL)
         except ProcessLookupError: pass

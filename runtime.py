@@ -17,13 +17,16 @@ call 的地址
                                                              账上记事实行 msg from=0 body="show a b" / "who"，内容可重算不入账
   channel.create <name> / channel.add.actor <channel> <kind> [in] [bind=…] [tag=…] [iface=…] / channel.retire.actor <channel>/<tag>
                                                              syscall；需 bind=syscall；返回结果或 "<参数> refused"
-  <动词> <参数>                                                绑定了的 world 动词（ACTIONS：起一台机器 / 停一个进程）；需 bind=<动词>
+  <动词> [参数]                                                绑定了的 world 动词（ACTIONS：`spawn <目录>` 起一台机器 / `stop` 停本机）；需 bind=<动词>
   写给门 = 送出去，返回空；写给不存在的地址 = 丢弃，返回空；写给请求者 = 再调用它一次（可重入）
 账本    每次 call 两行 msg（请求、返回）；每次调用一行 step（out = 它发出的每个 call，加一帧 re = 它的返回值；err = 异常）。
         实例化失败的成员每次被调用都 err；调用抛异常也 err——器官的失败不是机器的失败。
 接待员  只由 place 行的 in 决定，没有默认：G 不写就没有（外来消息落空）。
 起停    物理只在机器的生命周期边界（G 的首 channel）留痕：已出生的机器醒来/停下时，各记一行 msg _root→接待员 up/down。
-        内部 channel 不被 R 直接注入物理消息；边界 actor 如需通知内脏，经门用普通协作消息翻译。硬杀 = 最后的 start/up 无 down；未写 step 的消息重启后重跑。
+        内部 channel 不被 R 直接注入物理消息；边界 actor 如需通知内脏，经门用普通协作消息翻译。
+        醒来是外到内（先有物理才有身体）：R 写 up，接待员把它翻译成协作。停下是内到外：唯一合法路径是持 bind=stop 的成员调无参 `stop`
+        （对象天然是本 Space；停一个成员是 retire，不是 stop）→ R 置意向 → 在两个事件之间写 down → 跑完账上已有的事 → 退出。
+        外面直接杀进程不是合法停止而是故障：没有 down，下次醒来看到最后的 start/up 没有配对的 down，据此判定上次异常终止。未写 step 的消息重启后重跑。
         channel 存在 ⇔ 账本至少一条 place 行；空账本（损伤）= 不存在，create 返回 new。
 入口    每个 channel 一个收件箱 in/<name>.jsonl（Port 的接收侧）：一行 → msg 给接待员（事件），署名指回发信端点的门（没有则 door）。
         根收件箱 in/_root.jsonl 在 channel 之前存在：开着 ⇔ 所有账本无 msg 行。开着时接受两个 syscall（by=_root）
@@ -34,7 +37,7 @@ call 的地址
 它不认识任何组织词汇。检验：把 G 里所有名字换掉，本文件的行为逐字节不变。
 """
 from __future__ import annotations
-import json, os, re, signal, time, traceback
+import json, os, re, time, traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from omega import Exec, Store, Port
@@ -45,19 +48,21 @@ ROOT = "_root"
 LEDGER = "0"                                   # 每个 channel 的读地址：写给它 = 读它；不是成员，不放、不退、不遗传
 
 
-def _spawn(P: Path, d: str) -> str:
+def _spawn(rt: "Runtime", d: str) -> str:
     """起一台机器：<d> 相对本机目录或绝对路径。用目标目录自己的 world（init.py）跑它——同一个 P 再起一次 = 唤醒（同一个体醒来）。"""
-    target = (P / d).resolve()
+    target = (rt.P / d).resolve()
     pid = Exec.spawn(["init.py", str(target), "--serve"], cwd=target, log=target / "log")
     return f"{d} pid={pid}"
 
 
-def _stop(P: Path, pid: str) -> str:
-    Exec.stop(int(pid))
-    return f"{pid} stopped"
+def _stop(rt: "Runtime") -> str:
+    """停下本机：合法关闭协议的最后一步。**无参数**——对象天然是当前 Space（不是别的进程：那是膜外的物理强杀；也不是某个成员：停成员是 retire）。
+    只置意向，不在这里写行：根边界的 down 由主循环在两个事件之间写，不插进调用者的运行里（那会撞序号）。"""
+    rt._stopping = True
+    return "stopping"
 
 
-ACTIONS = {"spawn": _spawn, "stop": _stop}
+ACTIONS = {"spawn": (_spawn, 1), "stop": (_stop, 0)}          # 动词 → (实现, 参数个数)
 BINDS = ("syscall", *ACTIONS)
 
 
@@ -95,7 +100,8 @@ class Runtime:
         self.offsets: dict[str, int] = {}
         self._events: list[int] = []           # 正在处理的事件（调用栈的根）
         self._calls: list[list[str]] = []      # 每层调用发出的 call（写进 step.out）
-        self._stopping = False                       # down 之后：静止即退出
+        self._stopping = False                       # 有人调过 stop：不再收新信，跑完就退出
+        self._downed = False                         # 根边界的 down 已写（一次）
 
     # ------------------------------------------------------------ 端点
     def ep(self, box: str) -> str:
@@ -130,12 +136,6 @@ class Runtime:
         if not self.root_open:
             self._lifecycle("up")
         return self
-
-    def down(self) -> None:
-        """停下入账：已出生的机器只在首 channel 追加 "down"；之后 run 跑到静止即退出。"""
-        self._stopping = True
-        if not self.root_open:
-            self._lifecycle("down")
 
     def _lifecycle(self, body: str) -> None:
         """介质在机器生命周期边界打唯一记号。边界是 _order 的首 channel，不靠组织名字识别。
@@ -346,8 +346,8 @@ class Runtime:
                 return ""
             self.msg(c.name, r[0], a.addr, r[1], run=root)
             return r[1]
-        if t[0] in ACTIONS and t[0] in a.bind and len(t) == 2:
-            res = ACTIONS[t[0]](self.P, t[1])
+        if t[0] in ACTIONS and t[0] in a.bind and len(t) == ACTIONS[t[0]][1] + 1:
+            res = ACTIONS[t[0]][0](self, *t[1:])
             self.msg(c.name, t[0], a.addr, res, run=root)
             return res
         tgt = self._resolve(c, t[0]) if len(t) == 1 else None
@@ -394,12 +394,18 @@ class Runtime:
 
     # ------------------------------------------------------------ 驱动
     def run(self, max_steps: int = 10_000, serve: bool = False, poll: float = 0.2) -> int:
-        """驱动到静止。serve：静止后轮询收件箱；收到 SIGTERM → down 入账 → 跑到静止 → 返回（外面只给信号，停是账上的事）。"""
+        """驱动到静止。serve：静止后轮询收件箱。
+        关机只有一条路：持 bind=stop 的成员调 `stop` → 置意向 → 这里在两个事件之间写根边界的 down → 跑完账上已有的事 → 退出。
+        置了意向就不再收新信（留在收件箱等下次醒来），所以关机一定终止。外面直接杀进程不走这条路：没有 down，下次醒来据此判定上次是异常终止。"""
         steps = 0
-        if serve:
-            signal.signal(signal.SIGTERM, lambda *_: self.down())
         while steps < max_steps:
-            self.drain()
+            if self._stopping:
+                if not self._downed:                                 # 安全点：不在别人的运行里插行
+                    self._downed = True
+                    if not self.root_open:
+                        self._lifecycle("down")
+            else:
+                self.drain()                                         # 关机中不再收新信
             progressed = False
             for c in list(self.channels.values()):
                 best = None

@@ -419,9 +419,10 @@ c2 没有 file  →  c2 造 c2′（L 经门 add 进 c2）  →  c2′ 做到 t*
 
 **起停入账，外面只给信号**：这里的 c0 是唯一的**生命周期/形态边界**，不是唯一的通信边界（普通任务仍可经门进入其他 channel）。
 - 起：R 折叠 H 后，**若根门已关**（已出生），只在 G 的首 channel 追加一条 `msg from=_root to=接待员 body=up`。`_root` 是介质的固定边界设施，不是伪 actor。未出生不发；出生的第一条消息仍是父代的 start。
-- 停：外部 SIGTERM → R 仍只在首 channel 追加 `_root→接待员 down` → 跑到静止或预算耗尽 → 退出。自停（stop 请求 / pid 可见性）仍未接。
+- 停（2026-09-01 晚定，**三层**）：**(1) 意图是 policy**——某个 actor 为什么想停、什么时候停、接不接受外部建议，全在它自己的 text 里，R 不判断。**(2) 唯一合法的关闭协议**：`actor 或外部门 → c0/A: stop → C: stop → C 以 bind=stop 调无参 `stop` → R 置意向 → 在两个事件之间写根边界 down → 跑完账上已有的事 → 退出`。stop 的对象天然是当前 Space，不需要 pid；外部经门发 stop 仍然合法——外面只提请求，执行关闭的是机器内部的 c0/C。**(3) 物理强杀**：外面直接给进程发 SIGTERM/SIGKILL 不是合法停止，是故障——进程消失、不写 down。R 不再装信号处理器（它从前那样做还会重入 `_append` 撞序号）。
+  于是 down 有了干净的含义：**有 down，必然是 Dalek 经自身生命周期协议完成了关闭；没有 down，就是被杀或崩溃。** 对象也分清了：停整个 Space 是 `stop`，停某个成员是 `retire <channel>/<tag>`（T28/T32）。
 - 物理不直接戳 c1/c2/y。A 收到边界 `up` 后，经本机门给 c1 发普通协作消息 `reconcile`；登记员再向 c0 请求 rebuild。出生时的 `start` 广播同理：是 A 对创世 kick 的协作翻译，故保留。reporter 只处理 `start/tick`，不再处理物理 up。
-- 崩溃可判定：根 channel 最后一个开启边界（首次 `start` 或之后的 `_root up`）没有匹配的 `_root down` → 上次是硬杀。没写 step 行的 pending 消息会重跑（at-least-once；有外部效果的动作要幂等）。
+- 崩溃可判定：根 channel 最后一个开启边界（首次 `start` 或之后的 `_root up`）没有匹配的 `_root down` → 上次是非协议终止（被杀或崩溃）。没写 step 行的 pending 消息会重跑（at-least-once；有外部效果的动作要幂等）。
 
 **自维护 = 期望与实际的对账。** 期望 = c1 的注册表（decl）；实际 = R 折叠 H 的结果。不变量：G 里每个 channel 在 H 里都有一本账且至少一条 place 行。
 

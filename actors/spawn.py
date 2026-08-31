@@ -1,5 +1,5 @@
 # c0 的起子代（C）。这段源码是 G 里的 text；持有 bind=syscall,spawn。R 放入时 exec 一次得到常驻的 run(m)。
-# 请求：spawn <name>（来自 r）
+# 请求：spawn <name>（来自 r）；stop（来自 A）：调无参的 world 动词 stop 停本机——对象天然是本 Space，不需要 pid；停一个成员是 retire，不是 stop
 #   调用 1：向 A 要 decl（A 转给登记员；答案 decl\n<G> 经门回来，A 再转给我——那是下一次调用）
 #   调用 2（decl\n<G>）：读账本找到还没办完的 spawn 请求；pack——G.world 写成 spawn/<name>/ 下的文件，G.json 原样放旁边（抄，不读）；
 #      spawn spawn/<name>（子代 R 起来，根门开）；放两扇门（子代根门、子代第一个 channel）；
@@ -14,6 +14,8 @@ def receptionist():
 
 def run(m):
     head, _, rest = m["body"].partition("\n"); t = head.split()
+    if t == ["stop"] and not rest.strip():
+        return call("stop")                                  # bind=stop：R 置意向、在两个事件之间写根边界的 down，跑完退出
     if t and t[0] == "spawn" and len(t) == 2:
         a = receptionist()
         if a: call(a, "decl")

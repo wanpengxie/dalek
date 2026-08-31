@@ -8,6 +8,7 @@
 #   peer <a> <b>                            本地两扇互指的门（角色 = 对面的名字）
 #   retire <channel>/<tag>                  退役
 #   spawn …                                 转给 C
+#   stop                                    转给 C（它持 bind=stop）：合法关机的唯一入口。外面经门发 stop 也合法——外面只提请求，执行的是机器内部
 #   decl                                    转给登记员；登记员的回答 decl\n<G> 从门回来后转给 C
 #   rebuild <channel>\n<{name, members, receptionist}>   对账：channel.create → exists 跳过；new 才把成员逐个放回去，不再登记（登记处本来就有）
 #   start 长完之后给每扇本机门那边送一句 start；这是 A 对出生 kick 的协作翻译，不是 R 对内脏的广播
@@ -136,6 +137,8 @@ def run(m):
         return place(f"channel.retire.actor {t[1]}")
     if op == "spawn":
         call("C", m["body"]); return
+    if op == "stop" and len(t) == 1 and not rest.strip():
+        return call("C", "stop")                             # 关机：意图在门外或某个器官，执行在 C；R 不判断
     if op == "decl" and not rest.strip():
         reg = registry_door()
         if reg: call(reg, "decl")
