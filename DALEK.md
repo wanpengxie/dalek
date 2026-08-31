@@ -441,7 +441,7 @@ stop，spawn → decl 不变，游标不变，pending 消息重跑，账本有 d
 
 ### 本版的不动点（定位）
 
-**G.world = R**（可描述，但机器内无人读、只抄）本版不处理其变异，**作为当前理论的不动点**：介质的不动点，世界的版本的不动点，不是机器的版本的——同一个 world 服务所有 G。构造器没有世界侧的不动点：递归的底是人造 dalek0。构造器（realize、C、登记 actor 的源码）在 G 里，改它们的 text 子代就变——机制上已经允许变异，本版只是**不验证**变异后的构造器是否仍是合法构造器。
+**G.world = R**（可描述，但机器内无人读、只抄）——**谱系级变异已见证（T29，2026-09-01）**：世界变异从**打包器官**进入。换 world = 换 C：C′ = spawn.py + pack 前给 `G.world["runtime.py"]` 打补丁（幂等），add tag=C 接替 + retire 旧 C，然后普通地 spawn。子代跑 R′（每一行带标记）、发育正常、born 把 world′ 记进登记处（decl.world 含补丁 = 可遗传）、**在 R′ 上仍能 spawn 孙代**（不动点成立），孙代继承 world′ 与 C′；父代的行始终没有标记（运行时对个体不可改）。R、Ω、syscall、A 零改动——打包器是器官不是物理。仍未做的是**开放的**世界变异（c2 自己发明新 R 并验证其合法性）；除此之外本版不再把 world 当不动点：介质的不动点，世界的版本的不动点，不是机器的版本的——同一个 world 服务所有 G。构造器没有世界侧的不动点：递归的底是人造 dalek0。构造器（realize、C、登记 actor 的源码）在 G 里，改它们的 text 子代就变——机制上已经允许变异，本版只是**不验证**变异后的构造器是否仍是合法构造器。
 
 但这是本版选定的不动点，不是理论上的不动点。理论上没有东西是不动点：**c2 总是可以重新编码它们**——运行时和 c0、c1 都只是源码；再往下，连 Ω 的编译器本身也不是不动点：c2 可以在旧 Exec 上写出一个新的解释器 / 编译器，谱系可以整体迁到它上面（这正是编译器自举一路做到 hex0 的事）。路径都一样：写出新版本，pack 一个子代用新版本跑，用自举不动点验收：
 
@@ -562,6 +562,8 @@ M1 当时开着的洞（H3、H4 已由 M2 关闭，H9 已由 M3.0 关闭）：H5
 **M2.4（同日晚，措辞收口）**：清掉 A/B 混用——c1 存的是 c0 的承诺（genome commit），不是 R 的结构事实；三段因果记账降为 c0 的次序约定；"纪律是物理"改为"R 拒绝是工程保障、理论上是升级约定"。不改代码。T0–T17 绿。
 
 **M3.3（2026-08-31 凌晨，actor 是常驻函数）**：推翻 M3.2 的进程 + 管道。actor 折叠到 place 行时实例化一次（`Exec.load(text, {call, me, channel})`，Python 的 exec——选 Python 的理由），挂在地址上、活到退役；每条消息调同一个 `run(m)`，**返回值就是回复**；`call` 是每个 actor 专属的真函数（闭包），嵌套 = 调用栈，前面放的用得了后面放的。三种 kind = 三种得到函数的方式（程序 exec 源码；oracle 介质的函数体，帧只是 LLM 拼写 call 的方式，`>>> re` 是返回值；门 `Port.send`）。0 加 `who`（此刻的成员表）：自省 = show（H）+ who（A）+ decl（G）。U 用同一个 exec 在进程内实例化候选、给真 `call`、把 `run` 交给测试（in vivo）。没有帧协议、没有助手代码、没有进程、没有超时。Ω 是契约边界不是进程边界。realize/spawn/registrar/u 全部 `def run(m)`；测试的小 actor 同样。T0–T23 绿（23 个）。
+
+**T29 · 换 world 的自举不动点（2026-09-01 午）**：见"本版的不动点"一节。四条断言全绿：个体不可改 / 子代跑 R′ / decl 遗传 world′ / R′ 上繁殖成立（孙代）。29/29。
 
 **M3 任务 1 + M4（2026-09-01 晨）**：一次落地。介质：`load` 纯折叠、channel 存在 ⇔ 账本至少一条 place 行；`up`（醒来入账，第几条 up = 第几次 incarnation）；`down`（SIGTERM → 入账 → 静止 → 退出）；`spawn <P>` 用目标自己的 world（同一个 P 再起 = 唤醒）。器官：A 长完发育后向每扇本机门送 `start`（出生 = 父代的 start，醒来 = 世界的 up）；A 收 `rebuild <name>\n<channel>`：create → exists 跳过 / new 才放回成员，不重复登记；登记员收 `up` → 对 decl 里每个 channel 发 rebuild（期望 = 登记处，实际 = R 折的）。任务 1：hub（c3，hello → 放回路门 → 广播 peers；ping → pong）、reporter（c4，bind=spawn；start/up/tick → 报到；peers → 对每个新端点经 c0 加门；placed → ping；tick 时 hub 没 pong → `spawn <它的 P>` 照 H 唤醒）。T25 重启 = 同一个体（up/down 序列、游标不变、pending 重跑、decl 不变）；T28 同一件事的**进程级**版（真 SIGTERM → down 入账 → 退出；休眠中的来信躺在收件箱、醒来即处理；再起同一个 P → up，place 行与 decl 一行不变——2026-09-01 晚补，此前只有进程内版）；T26 本地损伤：rm 一本账 → up → 对账 → 同 text 空账本回来、不重复登记；T27 三台机器互长门、ping/pong 两边入账、SIGKILL dalek0 → d1↔d2 仍 pong → 下一次 tick d1 spawn P0 → dalek0 同一本账醒来（多一条 up）→ hub 的 pong 恢复。27/27。剩：R 在一次事件中间崩溃（行写了一半）。**真模型版（同日晨，deepseek-v4-pro）**：c2 照规格写出 hub/reporter、装好、种群自组织全部成立；reporter 一处 ABI 错拼（`call("spawn", d)`），修复走的是机器自己的路——d1 的 c2 收修复任务，写新 reporter 同角色接替（in 接任接待员）、退旧件，然后 SIGKILL 的 dalek0 被 d1 用修好的 `call("spawn " + 目录)` 照 H 唤醒，hub 的 pong 恢复。**任务 0 的机制修了任务 1 的器官**——变异 + 接替对活器官成立。另两条野外教训进了测试与提示语：模型第一轮"说计划不写帧"（l.py 纠偏一轮）、早到的 ping 在回门放好前被丢（tick 心跳自愈，T27）。账本 `runs/task1-*.jsonl`。
 

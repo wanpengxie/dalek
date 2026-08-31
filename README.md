@@ -52,6 +52,7 @@ tail -f /tmp/d0/h/c2.jsonl; cat /tmp/me/in/me.jsonl
 - 2026-09-01 凌晨：M3.5 oracle 不是原语——R 的 kind 集 = {program, door}，L = `kind=program, tag=L`；oracle 留作理论类别词。膜定为窄版（DESIGN I6）。24/24。
 - 2026-09-01 晨：M3 任务 1 + M4——up/down 入账（第几条 up = 第几次 incarnation）、channel 存在 ⇔ 有 place 行、A 的 start 广播与 rebuild、登记员 up 对账；hub/reporter（`actors/hub.py`、`actors/reporter.py`）；T25/T28 重启 = 同一个体（进程内 + 真 SIGTERM 进程级：down/up 入账、休眠来信醒来即处理、形态一行不变）、T26 本地损伤重建、T27 三台机器自组织 + SIGKILL dalek0 后被 d1 照 H 唤醒。27/27。
 - 2026-09-01 晨：**真模型任务 1**（deepseek-v4-pro，thinking 默认开）——c2 自己写出 hub/reporter 并装好连线，spawn d1/d2，三台互长门、ping/pong；reporter 有一处 ABI bug（`call("spawn", d)` 两参数，动词参数须在头行），**用机器自己的路修**：给 d1 的 c2 发修复任务 → 写新 reporter → `add c4 … in tag=reporter` 接替接待员 → `retire c4/1` → SIGKILL dalek0 → d1 连续 tick 后 `spawn` 唤醒它（同一本账多一条 up）→ hub pong 恢复。账本在 `runs/task1-*.jsonl`。
+- 2026-09-01 午：**T29 换 world 的自举不动点**——换打包器官 C′（pack 前给 runtime.py 打幂等标记），子代跑 R′、decl 遗传 world′、R′ 上能生孙代；父代不受影响。R/Ω/syscall 零改动。29/29。
 - 待：R 事件中崩溃的中间态（H10 残）、自停（stop 请求 / C 停自己——pid 怎么可见是设计点）、H16、长账本的折叠器官。
 
 ## 文件

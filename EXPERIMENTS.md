@@ -94,6 +94,18 @@ M4 的三行验收不需要作者参与，故为机制层实验（确定性，�
 
 ---
 
+## E4 · 换 world 的自举不动点（机制层 T29；真模型版未做）
+
+**命题**："运行时对个体不可改，谱系可改"——机器能产出一个跑在**修改过的 R′**上的子代，且该子代仍是完整的 Dalek（能繁殖），变异随登记处遗传。
+
+**方法**：世界变异从**打包器官**进入。C′ = spawn.py + 一处幂等变换（pack 前把 `G.world["runtime.py"]` 的 `_append` 行改为附加 `"w": 2` 字段——R′ 写的每一行带可观测标记）；`add c0 program tag=C bind=syscall,spawn`（同角色接替）→ `retire` 旧 C → 普通 `spawn`。R / Ω / syscall / A 零改动。
+
+**结果**（T29，确定性）：父代所有行无标记（个体不可改）；子代 runtime.py 含标记、**每一行**带 `"w": 2`（跑在 R′ 上）、发育正常；`decl(子代).world` 含标记（born 把 world′ 记进登记处 → 可遗传）；子代 `spawn` 孙代成功（**不动点**：R′ 上繁殖仍成立），孙代继承 world′ 与 C′（变换幂等空转）。
+
+**边界**：变异内容是实验者规定的（打标记），C′ 只是载体；"机器自己发明并验证新 R"（开放演化）不在本实验内。真模型版（模型照 diff 规格写 C′）未做。
+
+---
+
 ## 复现
 
 ```
@@ -101,7 +113,7 @@ python3 runs/drivers/run_real.py  <key>     # E1：起机、发 task、打印 c2
 python3 runs/drivers/run_task1.py <key>     # E2-b：全链路（写器官 → spawn → 自组织 → 杀 → 唤醒）
 python3 runs/drivers/run_task1b.py          # E2-b 续跑：唤醒三台 + 心跳 + 终局（不再调模型写码）
 python3 runs/drivers/run_task1c.py          # E2-c：修复任务 + 终局（d1 的 c2 换 reporter；要 key 在机器 G 里）
-python3 t/test_c0.py                        # 机制层对照：T24 = E1 桩版；T25/T26/T28 = E3；T27 = E2 桩版；28/28
+python3 t/test_c0.py                        # 机制层对照：T24 = E1 桩版；T25/T26/T28 = E3；T27 = E2 桩版；T29 = E4；29/29
 ```
 
 模型配置以 `actors/l.py` 首行与 `ask()` 为准（4e0b54c 起：deepseek-v4-pro / 32768 / OpenAI 兼容报文，`/messages` 路径则讲 Anthropic 报文）。相关提交：cc2d239（T24）、fc29667（E1-b）、d50612d（T25–T27）、d8f4f3d（心跳）、4e0b54c（v4-pro）、a2186d2（E2）、f3dcd81（账本归档）。
