@@ -37,7 +37,7 @@
 | 30 | `done\n…读回 hello` → 门 me；发起者收件箱收到，署名 `file:<P>#c2` |
 
 产物：`P/notes.txt == "hello"`。全程约 70–90 s，两次调用共约 6 轮 HTTP。
-遗传（`runs/task0-deepseek-child-c2.jsonl`）：`spawn kid` 后子代 c2/5 = file，text 逐字节相同，`decl(child)==decl(parent)`；子代目录**无** notes.txt；对子代 file 发 `read notes.txt` → err `FileNotFoundError`；`write notes.txt\nmine` → 子代自己的文件出现。
+遗传（`runs/task0-deepseek-child-c2.jsonl`）：`spawn kid` 后子代 c2/5 = file，text 逐字节相同，`decl(child)==decl(parent)`；子代目录**无** notes.txt；对子代 file 发 `read notes.txt` → err `FileNotFoundError`；`write notes.txt\nmine` → 子代自己的文件出现、父代的不动（此两针最初只在桩版 T24 的子代上验过，后补在真模型子代上重验，行在归档账本尾部）。
 
 **结论**：验收句成立——c2 没有 file → c2 造（写、测、两轮 debug）→ add 进本 channel → 用它做到 → done → 子代继承零件不继承文件。新能力进入机器的路只有一条：门 → c0 → syscall → R 放入实例化 → 登记 → 回执成为下一次调用。
 **效度威胁**：提示语例子点名了 file（造什么被引导；怎么造、怎么进来无引导）；n=1；E1-a 与 E1-b 差一段提示语，构成"text 即策略"的对照但非受控重复。

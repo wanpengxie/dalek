@@ -3,3 +3,7 @@
 {"seq": 3, "k": "place", "addr": "3", "kind": "door", "text": "c0", "bind": [], "in": false, "by": "1", "tag": "c0"}
 {"seq": 4, "k": "place", "addr": "4", "kind": "door", "text": "file:/tmp/me-real#me", "bind": [], "in": false, "by": "1", "tag": "me"}
 {"seq": 5, "k": "place", "addr": "5", "kind": "program", "text": "def run(m):\n    body = m[\"body\"]\n    if body.startswith(\"write \"):\n        rest = body[6:]\n        path, _, text = rest.partition(\"\\n\")\n        with open(path, \"w\") as f:\n            f.write(text)\n        return \"written\"\n    elif body.startswith(\"read \"):\n        path = body[5:].strip()\n        with open(path, \"r\") as f:\n            return f.read().strip()\n    return \"error\"", "bind": [], "in": false, "by": "1", "tag": "file", "iface": "write <path>\\n<text> | read <path> -> written / file content"}
+{"seq": 6, "k": "msg", "from": "door", "to": "5", "body": "read notes.txt"}
+{"seq": 7, "k": "step", "actor": "5", "upto": 6, "out": "", "err": "Traceback (most recent call last):\n  File \"/home/xiewanpeng/.atoll/device/daemons/local-device/channels/c0.atoll-research/dalek/runtime.py\", line 355, in _invoke\n    r = a.fn(self._mview(c, m))\n        ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"<actor>\", line 11, in run\nFileNotFoundError: [Errno 2] No such file or directory: 'notes.txt'\n"}
+{"seq": 8, "k": "msg", "from": "door", "to": "5", "body": "write notes.txt\nmine"}
+{"seq": 9, "k": "step", "actor": "5", "upto": 8, "out": ">>> re\nwritten\n<<<", "err": ""}
