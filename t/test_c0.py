@@ -750,19 +750,25 @@ def test_T25_restart_is_the_same_individual():
     rt.msg("x", "door", "1", "late")                                                       # 硬杀：消息落账、没人跑
     del rt
     rt2 = up(P)                                                                             # 醒来 = 折叠 + 根边界 up 入账
-    life = [(r["from"], r["body"]) for r in rows(rt2, "c0", "msg") if r["from"] == "_root"]
-    assert life == [("_root", "up")]                                                       # 物理只在生命周期边界留痕
-    assert not any(r["from"] in ("_root", "world") and r["body"] in ("up", "down") for r in rows(rt2, "x", "msg"))
+    assert life(rt2) == ["up"] and life(rt2, "x") == []                                     # 物理只在生命周期边界留痕
     assert cur == {k: v for k, v in rt2.channels["x"].cursor.items()}                       # 游标不变（折出来的）
     late = [r for r in rows(rt2, "x", "msg") if r["body"] == "late"][0]
     assert late in rt2._pending(rt2.channels["x"], "1")                                     # 没写 step 的消息重跑（at-least-once）
     rt2.run()
     assert any(r["k"] == "step" and r["actor"] == "1" and r["upto"] >= late["seq"] for r in rows(rt2, "x", "step"))
     assert decl_of(rt2) == D                                                                # 同一个体：decl 不变
+    for body in ("a", "b"):
+        rt2.msg("x", "door", "1", body)                                                     # 关机时账上还堆着没做的事
     rt2.msg("c0", "door", "1", "stop"); rt2.run()                                           # 合法关机：门 → A → C → stop 动词 → 根边界 down
+    assert life(rt2) == ["up", "down"]
+    assert [r["body"] for r in rt2._pending(rt2.channels["x"], "1")] == ["a", "b"]           # 直接放弃：剩下的事一件不做
+    assert rows(rt2, "c0", "down")[-1]["seq"] == rt2.channels["c0"].seq                      # down 是最后一行，且不投递给任何人
+    assert rt2._pending(rt2.channels["c0"], rt2.channels["c0"].receptionist) == []
     rt3 = up(P)
-    life = [r["body"] for r in rows(rt3, "c0", "msg") if r["from"] == "_root"]
-    assert life == ["up", "down", "up"]                                                   # 每次醒/停只有一条机器级边界事件
+    assert life(rt3) == ["up", "down", "up"]                                              # 每次醒/停只有一条机器级边界事件
+    rt3.run()
+    assert [r["body"] for r in rt3._pending(rt3.channels["x"], "1")] == []                  # 放弃的事下次醒来照样重跑（at-least-once 兜住）
+    assert [dict(frames_of(st)).get("re") for st in rows(rt3, "x", "step") if "run" not in st][-2:] == ["echo:a", "echo:b"]
     del rt3
 
 
@@ -822,8 +828,7 @@ def test_T31_root_lifecycle_reinstantiates_channel_without_receptionist():
     rt2 = up(P)                                                                               # load 已重新 exec y/1，即使 y 没有接待员
     rt2.msg("y", "door", "1", "three"); rt2.run()
     assert dict(frames_of(rows(rt2, "y", "step")[-1]))["re"] == "1"                         # Σ 归零：新 incarnation 的第一次调用
-    assert [r["body"] for r in rows(rt2, "c0", "msg") if r["from"] == "_root"] == ["up"] # 全机只有一个物理记号
-    assert not any(r["from"] in ("_root", "world") and r["body"] in ("up", "down") for r in rows(rt2, "y", "msg"))
+    assert life(rt2) == ["up"] and life(rt2, "y") == []                                    # 全机只有一个物理记号
     assert any(r["body"] == "reconcile" for r in rows(rt2, "c1", "msg"))                    # A 仍以协作语言触发内部对账
 
 
@@ -850,18 +855,18 @@ def test_T28_process_level_stop_and_respawn_same_individual():
         say(P, "c0", "stop")                                                                      # 合法关机：外面只提请求，执行的是 c0 里的 A→C
         assert gone(pid)                                                                          # 机器自己停：写 down → 跑到静止 → 进程退出
         rt = Runtime(P).load()
-        assert [r["body"] for r in rows(rt, "c0", "msg") if r["from"] == "_root"] == ["down"]    # 协议关机：根边界有 down
+        assert life(rt) == ["down"] and life(rt, "x") == []                                     # 协议关机：根边界有 down，内脏没有
         assert [r["body"] for r in rows(rt, "c0", "msg") if r["from"] == "stop"] == ["stopping"] # 回执：C 调了无参 stop 动词
-        assert not any(r["from"] in ("_root", "world") and r["body"] in ("up", "down") for r in rows(rt, "x", "msg"))
+        assert rows(rt, "c0", "down")[-1]["seq"] == rt.channels["c0"].seq                        # down 是最后一行：写在放弃之后
         D1 = decl_of(rt)                                                                          # 机器死了，膜外读它的基因组
         say(P, "x", "late")                                                                       # 休眠中的来信：躺在收件箱等它醒
         pid = Exec.spawn(["init.py", str(P), "--serve"], cwd=P, log=P / "log")                    # 同一个 P 再起 = 同一个体醒来
-        wait_child(P, lambda c: [r["body"] for r in rows(c, "c0", "msg") if r["from"] == "_root"] == ["down", "up"]
+        wait_child(P, lambda c: life(c) == ["down", "up"]
                    and any(r["body"] == "late" for r in rows(c, "x", "msg"))
                    and rows(c, "x", "step")[-1]["upto"] >= [r for r in rows(c, "x", "msg") if r["body"] == "late"][0]["seq"])   # 醒来入账；来信被处理
         say(P, "c0", "stop"); assert gone(pid)
         rt2 = Runtime(P).load()
-        assert [r["body"] for r in rows(rt2, "c0", "msg") if r["from"] == "_root"] == ["down", "up", "down"] # 生命周期仅在根边界留痕
+        assert life(rt2) == ["down", "up", "down"]                                              # 生命周期仅在根边界留痕
         assert rows(rt2, "x", "place") == rows(rt, "x", "place") and decl_of(rt2) == D1           # 同一个体：形态一行没变
         hi = [r for r in rows(rt2, "x", "msg") if r["body"] == "hi"][0]
         assert rt2.channels["x"].cursor["1"] >= hi["seq"] and rt.channels["x"].cursor["1"] >= hi["seq"]   # 游标折出来，跨进程不丢
@@ -883,8 +888,6 @@ def test_T32_external_kill_is_not_a_legal_stop():
                 return True
             time.sleep(0.1)
         return False
-    def life(rt):
-        return [r["body"] for r in rows(rt, "c0", "msg") if r["from"] == "_root"]
     def unclean(rt):
         """上次是异常终止吗：根边界上最后一个开启边界（出生 / up）之后没有 down。"""
         w = life(rt)
@@ -1004,6 +1007,13 @@ def c4_doors(rt: Runtime) -> set:
 
 def has_msg(rt: Runtime, ch: str, pred) -> bool:
     return ch in rt.channels and any(pred(r) for r in rows(rt, ch, "msg"))
+
+
+def life(rt: Runtime, ch: str = "c0") -> list:
+    """根边界上的生命周期事件：醒来是投递给接待员的 msg up，停下是不投递的 {k:"down"} 标记。"""
+    if ch not in rt.channels: return []
+    return [("up" if r["k"] == "msg" else "down") for r in rt.channels[ch].rows
+            if (r["k"] == "msg" and r.get("from") == "_root") or r["k"] == "down"]
 
 
 def door_msg(rt: Runtime, ch: str, body: str, text: str) -> bool:

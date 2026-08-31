@@ -1,6 +1,6 @@
 """运行时 R：极小状态空间 + 转移表。内容盲。
 
-状态    每个 channel 一本只追加的账本（h/<name>.jsonl，四种行 place / retire / msg / step）+ 每个 actor 一个游标。
+状态    每个 channel 一本只追加的账本（h/<name>.jsonl，五种行 place / retire / msg / step / down）+ 每个 actor 一个游标。
         全部由账本折叠重建，包括各收件箱读到哪（收进来的行带 at=收件箱偏移）和每个活成员的函数对象（重新实例化）。
 actor   是常驻函数：折叠到 place 行时实例化一次（fn），挂在地址上，活到退役。两种 kind = 两种得到函数的方式：
   program   Exec.load(text, {call, me, channel})：源码在这个命名空间里跑一次，定义 run(m)；以后每条消息调同一个 run
@@ -24,8 +24,10 @@ call 的地址
 接待员  只由 place 行的 in 决定，没有默认：G 不写就没有（外来消息落空）。
 起停    物理只在机器的生命周期边界（G 的首 channel）留痕：已出生的机器醒来/停下时，各记一行 msg _root→接待员 up/down。
         内部 channel 不被 R 直接注入物理消息；边界 actor 如需通知内脏，经门用普通协作消息翻译。
-        醒来是外到内（先有物理才有身体）：R 写 up，接待员把它翻译成协作。停下是内到外：唯一合法路径是持 bind=stop 的成员调无参 `stop`
-        （对象天然是本 Space；停一个成员是 retire，不是 stop）→ R 置意向 → 在两个事件之间写 down → 跑完账上已有的事 → 退出。
+        醒来是外到内（先有物理才有身体）：R 写一条投递给接待员的 msg `up`——此刻机器静止，不叫醒它就没有任何东西会动。
+        停下是内到外：唯一合法路径是持 bind=stop 的成员调无参 `stop`（对象天然是本 Space；停一个成员是 retire，不是 stop）
+        → R 置意向 → 当前调用结束后放弃剩下的事 → 在根边界记一行 `{k:"down"}` → 退出。**down 不投递给任何人**：动作已经发生了，没人需要被叫醒；
+        写在最后一刻，所以"有 down ⟺ 上次是自己走协议关的"。想在死前道别是第一层的事（policy）：决定停机的器官在调 stop 之前自己说。
         外面直接杀进程不是合法停止而是故障：没有 down，下次醒来看到最后的 start/up 没有配对的 down，据此判定上次异常终止。未写 step 的消息重启后重跑。
         channel 存在 ⇔ 账本至少一条 place 行；空账本（损伤）= 不存在，create 返回 new。
 入口    每个 channel 一个收件箱 in/<name>.jsonl（Port 的接收侧）：一行 → msg 给接待员（事件），署名指回发信端点的门（没有则 door）。
@@ -101,7 +103,6 @@ class Runtime:
         self._events: list[int] = []           # 正在处理的事件（调用栈的根）
         self._calls: list[list[str]] = []      # 每层调用发出的 call（写进 step.out）
         self._stopping = False                       # 有人调过 stop：不再收新信，跑完就退出
-        self._downed = False                         # 根边界的 down 已写（一次）
 
     # ------------------------------------------------------------ 端点
     def ep(self, box: str) -> str:
@@ -132,18 +133,19 @@ class Runtime:
     def wake(self) -> "Runtime":
         """醒来入账：已出生的机器只在首 channel 追加 msg _root→接待员 "up"。
         这一个边界事件标记本次 Runtime incarnation；所有 actor 重新实例化（Σ 归零）是它与 place/retire 历史的派生事实。
-        未出生不发：出生的第一条消息仍是父代的 start。"""
-        if not self.root_open:
-            self._lifecycle("up")
+        未出生不发：出生的第一条消息仍是父代的 start。
+        醒来必须是一次**投递**：此刻机器完全静止，不叫醒接待员就没有任何东西会动。停下相反，见 run 的 down。"""
+        c = self._boundary() if not self.root_open else None
+        if c is not None:
+            self.msg(c.name, ROOT, c.receptionist, "up")
         return self
 
-    def _lifecycle(self, body: str) -> None:
-        """介质在机器生命周期边界打唯一记号。边界是 _order 的首 channel，不靠组织名字识别。
+    def _boundary(self) -> "Channel | None":
+        """机器的生命周期边界 = _order 的首 channel，不靠组织名字识别。
         首 channel 损伤时不把物理事件偷偷转移给下一个内脏：那是根器官损伤，须另行定义恢复路径。"""
         order = Store.read(self.h / "_order").split()
         c = self.channels.get(order[0]) if order else None
-        if c is not None and c.receptionist is not None:
-            self.msg(c.name, ROOT, c.receptionist, body)
+        return c if c is not None and c.receptionist is not None else None
 
     def _append(self, c: Channel, row: dict) -> dict:
         row = {"seq": c.seq + 1, **row}
@@ -395,19 +397,16 @@ class Runtime:
     # ------------------------------------------------------------ 驱动
     def run(self, max_steps: int = 10_000, serve: bool = False, poll: float = 0.2) -> int:
         """驱动到静止。serve：静止后轮询收件箱。
-        关机只有一条路：持 bind=stop 的成员调 `stop` → 置意向 → 这里在两个事件之间写根边界的 down → 跑完账上已有的事 → 退出。
-        置了意向就不再收新信（留在收件箱等下次醒来），所以关机一定终止。外面直接杀进程不走这条路：没有 down，下次醒来据此判定上次是异常终止。"""
+        关机只有一条路：持 bind=stop 的成员调 `stop` → 置意向 → 当前这次调用照常结束 → **放弃剩下的事**（不收新信、不再取事件）→ 在根边界记一行 down → 退出。
+        放弃是安全的：没写 step 行的消息下次醒来照样重跑（at-least-once），所以 down 不必表示"做完了"，只表示"这次关闭是自己走协议关的"。
+        外面直接杀进程不走这条路：没有 down，下次醒来看到最后的开启边界没有配对的 down，据此判定上次异常终止。"""
         steps = 0
-        while steps < max_steps:
-            if self._stopping:
-                if not self._downed:                                 # 安全点：不在别人的运行里插行
-                    self._downed = True
-                    if not self.root_open:
-                        self._lifecycle("down")
-            else:
-                self.drain()                                         # 关机中不再收新信
+        while steps < max_steps and not self._stopping:
+            self.drain()
             progressed = False
             for c in list(self.channels.values()):
+                if self._stopping:
+                    break                                            # 有人调过 stop：这一轮剩下的 channel 也不再取事件
                 best = None
                 for addr, x in c.actors.items():
                     if x.retired:
@@ -418,9 +417,12 @@ class Runtime:
                 if best:
                     self._invoke(c, best[0], best[1]); steps += 1; progressed = True
             if not progressed:
-                if not serve or self._stopping:
+                if not serve:
                     break
                 time.sleep(poll)
+        c = self._boundary() if self._stopping and not self.root_open else None
+        if c is not None:
+            self._append(c, {"k": "down"})              # 关闭的完成标记：不投递给任何人（死后无人可叫醒），只记一笔
         return steps
 
 

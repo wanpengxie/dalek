@@ -50,13 +50,14 @@ S = (order, {name → Ledger}, Σ)        Σ = {actor → fn 的内部状态}：
 Ledger = 行的序列，seq 从 1 严格递增，单写者（本机器的运行时进程）
 ```
 
-行（四种，字段闭集）：
+行（五种，字段闭集）：
 
 ```
 place  {seq, k:"place", addr, kind ∈ {program, door}, text, bind ⊆ {syscall, spawn, stop}, in: bool, by, tag, iface?, at?}
 retire {seq, k:"retire", addr}
 msg    {seq, k:"msg",   from, to, body, run?, at?, by?}     from ∈ 地址 ∪ {0, door, channel.*, spawn, stop}
 step   {seq, k:"step",  actor, upto, out, err, run?}
+down   {seq, k:"down"}                                      关闭的完成标记：不是消息，没有收信人（死后无人可叫醒）
 ```
 
 派生量（全部由行折叠得到）：
@@ -116,7 +117,7 @@ actor 跨调用的持久记忆是账本（`call("0", …)`）；fn 里存的东�
 | I3a | 活跃成员的 tag 在各自 channel 内唯一；未指定时以 `t` 为基名，冲突由 R 原子分配 `t1/t2/…`；数字 addr 只用于 H 内部 | `Runtime._tag`；T21/T30 |
 | I4 | 内容盲：运行时源码无组织词汇；G 全部改名后账本同构 | T6 |
 | I5 | 确定性：给定账本 + 收件箱内容 + 各 fn 在 call 边界上的行为（返回值、call 序列），追加的行序列唯一 | 调度只依赖账本状态 |
-| I6 | 膜（2026-09-01 定）：进入本 channel 账本的只有 call；改变形态的只有 syscall（bind）；出去的边只有门，进来的只有收件箱 → 接待员（接收侧只认合法句柄）。actor 在 run 里面对世界的访问（文件、网络、random）不是机器的动作：不入账、不遗传、不受限——限制它是安全，不在模型里。强版本（内外作用都走注入的 handle）做得到但刻意：它把 R 做成 OS，且 handle 的返回值会穿过 call 边界把模型原文拉回 H。**接收侧句柄本身是工程、演示模型不实现**：因此本原型里任意 actor 能伪造 placed 使假形态遗传（H17），"只有一条进入路径"是理论句而非实现保证 | dispatch / inbox 定义；Port 的句柄 |
+| I6 | 膜（2026-09-01 定）：进入本 channel 账本的只有 call（介质自己的两笔除外：醒来的 up 与关闭的 down，都只落根边界）；改变形态的只有 syscall（bind）；出去的边只有门，进来的只有收件箱 → 接待员（接收侧只认合法句柄）。actor 在 run 里面对世界的访问（文件、网络、random）不是机器的动作：不入账、不遗传、不受限——限制它是安全，不在模型里。强版本（内外作用都走注入的 handle）做得到但刻意：它把 R 做成 OS，且 handle 的返回值会穿过 call 边界把模型原文拉回 H。**接收侧句柄本身是工程、演示模型不实现**：因此本原型里任意 actor 能伪造 placed 使假形态遗传（H17），"只有一条进入路径"是理论句而非实现保证 | dispatch / inbox 定义；Port 的句柄 |
 
 ### 2.5 运行时明确不做的
 
@@ -146,7 +147,7 @@ actor 跨调用的持久记忆是账本（`call("0", …)`）；fn 里存的东�
 
 **H9 · B · L 的端点。** 关闭（M3.0，2026-08-30）：text 第一行 `<url> <model> <key>`，其余提示语；R 调 `Port.request(text, 视图)`，Port 讲 Anthropic messages 报文；失败记 err。见 DALEK 1.7（oracle 与门的区分）与 4.8。M3.4：`Port.request` 删除——端点、报文、组装、帧都在 L 的 text（`actors/l.py`）里，R 与 Ω 没有 LLM 专用的东西。
 
-**H10 · B · 崩溃语义。** 大半已关（M4，2026-09-01）：actor 失败 → err 入账、机器不死（T16）；**重启入账**收紧为一条机器级边界行——已出生时只在 `_order` 的首 channel 记 `_root→接待员 up/down`，其他 channel 永远不受 R 的物理广播。硬杀 = 根 channel 最后的开启边界（start 或 up）没有匹配 down；pending 重跑（T25/T28）。A 把 up 翻译为给 c1 的 `reconcile`，本地损伤照登记处重建（T26）。T31 证明无接待员 channel 的 actor 仍被重新实例化、Σ 归零，而其账本无 up/down：重新实例化是根事件与 place/retire 的派生事实，不是逐 actor 行。剩：R 在一次事件中间崩溃（行写了一半，动作执行了一半）——未定。 **关机三层（2026-09-01 晚）**：意图是 policy；唯一合法路径是 `门/actor → A:stop → C:stop → C 调无参 stop 动词 → R 置意向 → 主循环在事件之间写根边界 down → 跑到静止 → 退出`（对象天然是本 Space，不需要 pid；停成员是 retire）；外部 SIGTERM/SIGKILL 不是合法停止而是故障，不写 down。R 不再装 SIGTERM 处理器——它从前会在 `_append` 算完序号、`_fold` 之前重入，写出重复 seq（与 H18 同类的账本损坏，实测可复现）。判定：根边界最后一个开启边界没有配对的 down = 上次非协议终止（T28/T32）。
+**H10 · B · 崩溃语义。** 大半已关（M4，2026-09-01）：actor 失败 → err 入账、机器不死（T16）；**重启入账**收紧为一条机器级边界行——已出生时只在 `_order` 的首 channel 记 `_root→接待员 up/down`，其他 channel 永远不受 R 的物理广播。硬杀 = 根 channel 最后的开启边界（start 或 up）没有匹配 down；pending 重跑（T25/T28）。A 把 up 翻译为给 c1 的 `reconcile`，本地损伤照登记处重建（T26）。T31 证明无接待员 channel 的 actor 仍被重新实例化、Σ 归零，而其账本无 up/down：重新实例化是根事件与 place/retire 的派生事实，不是逐 actor 行。剩：R 在一次事件中间崩溃（行写了一半，动作执行了一半）——未定。 **关机三层（2026-09-01 晚）**：意图是 policy；唯一合法路径是 `门/actor → A:stop → C:stop → C 调无参 stop 动词 → R 置意向 → 当前调用结束后**放弃剩下的事** → 在根边界记一行 `{k:"down"}` → 退出`（对象天然是本 Space，不需要 pid；停成员是 retire）。**放弃而不排空**是有意的：没写 step 行的消息下次醒来照样重跑（at-least-once 已经兜住），于是 down 不必表示"做完了"，只表示"这次关闭是自己走协议关的"——写在最后一刻，"有 down ⟺ 上次经协议干净关闭"才是双向命题（若边写边排空，崩在排空途中会留下 down 却不干净，判定就会给出错误答案）。down **不投递给任何人**：醒来必须是投递（机器静止，不叫醒就没有东西会动），停下不必（动作已经发生）；这个不对称由方向决定。想在死前道别是第一层的事：决定停机的器官在调 stop 之前自己说。外部 SIGTERM/SIGKILL 不是合法停止而是故障，不写 down。R 不再装 SIGTERM 处理器——它从前会在 `_append` 算完序号、`_fold` 之前重入，写出重复 seq（与 H18 同类的账本损坏，实测可复现）。判定：根边界最后一个开启边界没有配对的 down = 上次非协议终止（T28/T32）。
 
 **H11 · B · 运行时的"返回消息"是伪发送者。** `from ∈ {place, spawn}` 不是地址。要写进 ABI：视图里的 from 可能是介质词。
 
