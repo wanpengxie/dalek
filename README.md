@@ -2,7 +2,7 @@
 
 **A constructive agent machine**
 
-[中文](README.zh-CN.md) · [Paper (PDF)](Dalek.pdf)
+[中文](README.zh-CN.md) · [English paper (PDF)](Dalek.pdf) · [Chinese translation (PDF)](Dalek.zh-CN.pdf)
 
 Dalek is a small, runnable research prototype that treats an AI agent as a machine with its own boundary, blueprint, history, and construction process—not merely as a language model surrounded by tools.
 
@@ -108,7 +108,8 @@ The LLM-backed experiments are described in Section 4 of the [paper](Dalek.pdf),
 | [`src/actors/`](src/actors/) | Source text of the machine's organs |
 | [`src/t/test_c0.py`](src/t/test_c0.py) | Deterministic mechanism tests |
 | [`src/runs/`](src/runs/) | Original ledgers and drivers from the LLM-backed experiments |
-| [`Dalek.pdf`](Dalek.pdf) | English paper |
+| [`Dalek.pdf`](Dalek.pdf) | Authoritative English paper |
+| [`Dalek.zh-CN.pdf`](Dalek.zh-CN.pdf) | Chinese translation for reading and discussion |
 
 ## Scope and safety
 
@@ -124,4 +125,6 @@ The complete argument, model, machine definition, ledger walkthroughs, discussio
 
 > Wanpeng Xie. **Dalek: A Constructive Agent Machine — Self-Maintenance, Self-Evolution, Self-Reproduction, and Self-Organization by Construction.**
 
-[Download the English paper](Dalek.pdf).
+The English manuscript is authoritative. The Chinese edition is a synchronized translation for reading and discussion.
+
+[Download the English paper](Dalek.pdf) · [Download the Chinese translation](Dalek.zh-CN.pdf)

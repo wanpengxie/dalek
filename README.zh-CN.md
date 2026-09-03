@@ -2,7 +2,7 @@
 
 **一台构造性 Agent 机器**
 
-[English](README.md) · [论文（英文 PDF）](Dalek.pdf)
+[English](README.md) · [英文论文（PDF）](Dalek.pdf) · [中文译稿（PDF）](Dalek.zh-CN.pdf)
 
 Dalek 是一个小型、可运行的研究原型。它不把 Agent 仅仅看成“一个语言模型加上一圈工具”，而是把它构造成一台拥有自身边界、蓝图、历史和构造过程的机器。
 
@@ -108,7 +108,8 @@ python3 init.py /path/to/a/machine --serve
 | [`src/actors/`](src/actors/) | 机器各个器官的源码文本 |
 | [`src/t/test_c0.py`](src/t/test_c0.py) | 确定性的机制测试 |
 | [`src/runs/`](src/runs/) | 真模型实验留下的原始账本与驱动脚本 |
-| [`Dalek.pdf`](Dalek.pdf) | 英文论文 |
+| [`Dalek.pdf`](Dalek.pdf) | 权威英文论文 |
+| [`Dalek.zh-CN.pdf`](Dalek.zh-CN.pdf) | 供阅读与讨论的中文译稿 |
 
 ## 范围与安全说明
 
@@ -124,4 +125,6 @@ python3 init.py /path/to/a/machine --serve
 
 > Wanpeng Xie. **Dalek: A Constructive Agent Machine — Self-Maintenance, Self-Evolution, Self-Reproduction, and Self-Organization by Construction.**
 
-[下载英文论文](Dalek.pdf)。
+英文手稿是权威版本；中文版本是与之同步、供阅读和讨论使用的译稿。
+
+[下载英文论文](Dalek.pdf) · [下载中文译稿](Dalek.zh-CN.pdf)
